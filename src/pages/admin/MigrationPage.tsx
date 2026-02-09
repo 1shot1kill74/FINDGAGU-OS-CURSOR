@@ -4,7 +4,7 @@
  * - JPG: 원가표 → vendor_price_book
  * - 드래그앤드롭, 리뷰 테이블, Storage 업로드, is_test: true
  */
-import React, { useState, useCallback, useMemo, useEffect } from 'react'
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Upload, Loader2, CheckCircle, AlertCircle, FileText, Image, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -17,7 +17,7 @@ import { computeFinalTotals } from '@/components/estimate/EstimateForm'
 import type { Json } from '@/types/database'
 import {
   parseFileWithAI,
-  getFileCategory,
+  detectIsOurCompanyEstimate,
   type ParsedEstimateFromPDF,
   type ParsedVendorPrice,
   type ParsedVendorPriceItem,
@@ -66,7 +66,67 @@ function normalizePhone(s: string): string {
   return String(s || '').replace(/\D/g, '').slice(-11) || ''
 }
 
+/** Mac/한글 파일명 인코딩 문제 방지 — timestamp + 안전한 영문 확장자로 치환 */
+function toSafeStoragePath(originalName: string, prefix = 'estimate'): string {
+  const ext = (originalName.split('.').pop() ?? '').toLowerCase()
+  const safeExt = ['pdf', 'jpg', 'jpeg', 'png'].includes(ext) ? (ext === 'jpeg' ? 'jpg' : ext) : 'bin'
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}.${safeExt}`
+}
+
+/** Storage 업로드용 contentType — file.type이 비거나 잘못됐을 때 확장자로 보완 (Win/Mac/Chrome 호환) */
+function getContentTypeForUpload(file: File, bucket: 'estimate' | 'vendor'): string {
+  const ext = (file.name.split('.').pop() ?? '').toLowerCase()
+  const extMap: Record<string, string> =
+    bucket === 'estimate'
+      ? { pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg' }
+      : { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg' }
+  const fromExt = extMap[ext]
+  const fromFile = file.type?.trim()
+  if (fromFile && /^(application\/pdf|image\/(jpeg|jpg|png))$/i.test(fromFile)) return fromFile
+  return fromExt || fromFile || (bucket === 'estimate' ? 'application/pdf' : 'image/jpeg')
+}
+
 const DEFAULT_VENDOR_NAME = '한국 프라임'
+
+/** 업로드 성공 시 누적 표시용 — 최신순 정렬, 클릭 시 견적 상세 보기 */
+interface UploadedEstimateItem {
+  filename: string
+  grand_total: number
+  /** 견적서 원본의 견적일 (YYYY-MM-DD) */
+  quoteDate: string
+  uploadedAt: string
+  consultationId: string
+  estimateId: string
+  status: string
+}
+
+/** 중복 체크용 시간 창 (밀리초) — 동일 파일명/금액이 이 시간 내에 있으면 경고 */
+const DUPLICATE_CHECK_WINDOW_MS = 5 * 60 * 1000
+
+const UPLOADED_ITEMS_STORAGE_KEY = 'findgagu-migration-uploaded-estimates'
+
+function loadUploadedItemsFromStorage(): UploadedEstimateItem[] {
+  try {
+    const raw = localStorage.getItem(UPLOADED_ITEMS_STORAGE_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .filter((x): x is Record<string, unknown> => x != null && typeof x === 'object')
+      .map((x) => ({
+        filename: String(x.filename ?? ''),
+        grand_total: Number(x.grand_total) || 0,
+        quoteDate: String(x.quoteDate ?? ''),
+        uploadedAt: String(x.uploadedAt ?? ''),
+        consultationId: String(x.consultationId ?? ''),
+        estimateId: String(x.estimateId ?? ''),
+        status: String(x.status ?? '저장완료'),
+      }))
+      .filter((x) => x.estimateId && x.consultationId)
+  } catch {
+    return []
+  }
+}
 
 export default function MigrationPage() {
   const navigate = useNavigate()
@@ -77,8 +137,87 @@ export default function MigrationPage() {
   const [dragOver, setDragOver] = useState(false)
   const [saving, setSaving] = useState<string | null>(null)
   const [savingBulk, setSavingBulk] = useState(false)
+  /** 업로드 성공한 견적 리스트 (localStorage에 영구 저장, 서버 재시작·새로고침 후에도 유지) */
+  const [uploadedItems, setUploadedItems] = useState<UploadedEstimateItem[]>(loadUploadedItemsFromStorage)
   /** 견적서 파일별 매칭된 상담 (기존 상담 연결 시) */
   const [matchedConsultation, setMatchedConsultation] = useState<Record<string, { id: string; company_name: string } | null>>({})
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(UPLOADED_ITEMS_STORAGE_KEY, JSON.stringify(uploadedItems))
+    } catch {
+      // quota exceeded 등
+    }
+  }, [uploadedItems])
+
+  /** DB에 없는 항목 정리 — localStorage에는 있지만 DB에서 삭제된 견적 제거 */
+  useEffect(() => {
+    if (uploadedItems.length === 0) return
+    let cancelled = false
+    const run = async () => {
+      const ids = uploadedItems.map((u) => u.estimateId)
+      const { data } = await supabase.from('estimates').select('id').in('id', ids)
+      if (cancelled) return
+      const existingIds = new Set((data ?? []).map((r) => r.id))
+      const valid = uploadedItems.filter((u) => existingIds.has(u.estimateId))
+      if (valid.length !== uploadedItems.length) {
+        setUploadedItems(valid)
+        toast.info('DB에서 삭제된 항목을 목록에서 제거했습니다.')
+      }
+    }
+    run()
+    return () => { cancelled = true }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps -- 마운트 시 1회
+
+  /** 마운트 시 DB에서 is_test 견적 조회 → localStorage에 없는 항목 병합 (서버 재시작 등으로 누락된 데이터 복구) */
+  useEffect(() => {
+    let cancelled = false
+    const run = async () => {
+      const { data: estData } = await supabase
+        .from('estimates')
+        .select('id, consultation_id, grand_total, created_at, payload')
+        .eq('is_test', true)
+        .order('created_at', { ascending: false })
+        .limit(200)
+      if (cancelled || !estData?.length) return
+      const consultIds = [...new Set(estData.map((e) => e.consultation_id))]
+      const { data: consultData } = await supabase
+        .from('consultations')
+        .select('id, company_name')
+        .in('id', consultIds)
+      const consultMap = new Map((consultData ?? []).map((c) => [c.id, c.company_name ?? '']))
+      const existingIds = new Set(loadUploadedItemsFromStorage().map((u) => u.estimateId))
+      const payloads = estData as Array<{ id: string; consultation_id: string; grand_total: number; created_at: string; payload?: { quoteDate?: string; _migration_original_filename?: string } | null }>
+      const toAdd: UploadedEstimateItem[] = payloads
+        .filter((e) => !existingIds.has(e.id))
+        .map((e) => {
+          const company = consultMap.get(e.consultation_id) || ''
+          const originalFilename = e.payload?._migration_original_filename
+          const filename = originalFilename || (company ? `[DB복원] ${company}_견적` : `[DB복원] ${e.id.slice(0, 8)}`)
+          return {
+            filename,
+            grand_total: Number(e.grand_total) || 0,
+            quoteDate: e.payload?.quoteDate ?? e.created_at.slice(0, 10) ?? '',
+            uploadedAt: e.created_at,
+            consultationId: e.consultation_id,
+            estimateId: e.id,
+            status: '저장완료',
+          }
+        })
+      if (toAdd.length > 0) {
+        setUploadedItems((prev) => {
+          const prevIds = new Set(prev.map((u) => u.estimateId))
+          const newOnes = toAdd.filter((t) => !prevIds.has(t.estimateId))
+          return newOnes.length > 0 ? [...newOnes, ...prev] : prev
+        })
+      }
+    }
+    run()
+    return () => { cancelled = true }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps -- 마운트 시 1회만
+
+  /** 거래처 탭에서 판매 탭으로 이동 시 자동 AI 분석 대기용 */
+  const pendingAnalysisIdRef = useRef<string | null>(null)
 
   const addFiles = useCallback((newFiles: FileList | File[]) => {
     const list = Array.from(newFiles).filter((f) => f.size > 0)
@@ -86,7 +225,7 @@ export default function MigrationPage() {
       id: `${f.name}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
       file: f,
       status: '대기' as FileStatus,
-      category: getFileCategory(f),
+      category: 'Estimates' as FileCategory,
       parsedEstimate: null,
       parsedVendor: null,
       error: null,
@@ -134,16 +273,17 @@ export default function MigrationPage() {
     if (!item) return
     setFiles((prev) => prev.map((f) => (f.id === id ? { ...f, status: '분석중' as FileStatus, error: null } : f)))
     try {
-      const { category, result } = await parseFileWithAI(item.file)
+      const { result } = await parseFileWithAI(item.file, { mode: 'estimates' })
+      const estimateData = result.type === 'Estimates' ? result.data : null
       setFiles((prev) =>
         prev.map((f) =>
           f.id === id
             ? {
                 ...f,
                 status: '검수대기' as FileStatus,
-                category,
-                parsedEstimate: result.type === 'Estimates' ? result.data : null,
-                parsedVendor: result.type === 'VendorPrice' ? result.data : null,
+                category: 'Estimates' as FileCategory,
+                parsedEstimate: estimateData,
+                parsedVendor: null,
                 error: null,
               }
             : f
@@ -164,6 +304,26 @@ export default function MigrationPage() {
     if (!item) return
     setVendorPriceFiles((prev) => prev.map((f) => (f.id === id ? { ...f, status: '분석중' as FileStatus, error: null } : f)))
     try {
+      const isOurEstimate = await detectIsOurCompanyEstimate(item.file)
+      if (isOurEstimate && window.confirm('우리 회사 견적서가 감지되었습니다. 판매 탭으로 이동할까요?')) {
+        const newId = `${item.file.name}-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        const migrationFile: MigrationFile = {
+          id: newId,
+          file: item.file,
+          status: '대기',
+          category: 'Estimates',
+          parsedEstimate: null,
+          parsedVendor: null,
+          error: null,
+          savedId: null,
+        }
+        setVendorPriceFiles((prev) => prev.filter((f) => f.id !== id))
+        setFiles((prev) => [...prev, migrationFile])
+        setActiveTab('estimates')
+        pendingAnalysisIdRef.current = newId
+        toast.success('판매 견적서 탭으로 이동했습니다. AI 분석을 시작합니다.')
+        return
+      }
       const { result } = await parseFileWithAI(item.file, { mode: 'vendor_price' })
       if (result.type !== 'VendorPrice') throw new Error('원가 데이터를 추출할 수 없습니다.')
       setVendorPriceFiles((prev) =>
@@ -274,6 +434,14 @@ export default function MigrationPage() {
     setFiles((prev) => prev.filter((f) => f.id !== id))
   }, [])
 
+  /** 거래처 탭 → 판매 탭 이동 시 대기 중인 파일 자동 AI 분석 */
+  useEffect(() => {
+    const pendingId = pendingAnalysisIdRef.current
+    if (!pendingId || !files.some((f) => f.id === pendingId)) return
+    pendingAnalysisIdRef.current = null
+    startAnalysis(pendingId)
+  }, [files, startAnalysis])
+
   /** 견적서 검수대기 파일의 연락처/성함으로 기존 상담 검색 */
   useEffect(() => {
     const toSearch = files.filter((f) => f.status === '검수대기' && f.parsedEstimate)
@@ -325,22 +493,15 @@ export default function MigrationPage() {
 
       setSaving(id)
       try {
-        const ext = item.file.name.split('.').pop() ?? ''
-        const storagePath = `${crypto.randomUUID()}_${Date.now()}.${ext}`
+        const storagePath = toSafeStoragePath(item.file.name)
 
         if (item.category === 'Estimates' && item.parsedEstimate) {
           const { siteName, region, industry, quoteDate, recipientContact, rows, customer_name, customer_phone, site_location, total_amount } = item.parsedEstimate
           const createdAt = toCreatedAtISO(quoteDate)
           const contact = (customer_phone ?? recipientContact ?? '').trim() || '000-0000-0000'
-          const companyName = (customer_name ?? siteName ?? '').trim() || siteName
+          const companyName = ((customer_name ?? siteName ?? '').trim() || siteName || '').trim() || '알 수 없는 고객'
 
-          const { error: uploadErr } = await supabase.storage.from(BUCKET_ESTIMATES).upload(storagePath, item.file, {
-            contentType: item.file.type,
-            upsert: true,
-          })
-          if (uploadErr) throw uploadErr
-
-          const payload: EstimateFormData = {
+          const payload: EstimateFormData & { _migration_original_filename?: string } = {
             mode: 'FINAL',
             recipientName: companyName,
             recipientContact: contact,
@@ -351,9 +512,31 @@ export default function MigrationPage() {
             sealImageUrl: '',
             rows,
             footerNotes: '과거 데이터 마이그레이션',
+            _migration_original_filename: item.file.name,
           }
           const { supplyTotal, vat, grandTotal } = computeFinalTotals(payload)
           const finalAmount = total_amount && total_amount > 0 ? total_amount : grandTotal
+
+          // 중복 체크: 동일 파일명 또는 동일 금액이 짧은 시간 내에 있으면 경고
+          const now = Date.now()
+          const recentCutoff = now - DUPLICATE_CHECK_WINDOW_MS
+          const duplicate = uploadedItems.some((u) => {
+            if (u.uploadedAt && new Date(u.uploadedAt).getTime() < recentCutoff) return false
+            if (u.filename === item.file.name) return true
+            if (u.grand_total === finalAmount) return true
+            return false
+          })
+          if (duplicate) {
+            toast.warning('이미 업로드된 견적 같습니다.')
+            setSaving(null)
+            return
+          }
+
+          const { error: uploadErr } = await supabase.storage.from(BUCKET_ESTIMATES).upload(storagePath, item.file, {
+            contentType: getContentTypeForUpload(item.file, 'estimate'),
+            upsert: true,
+          })
+          if (uploadErr) throw uploadErr
           const consultStatus: '계약완료' | '견적발송' | '상담중' = finalAmount > 0 ? '계약완료' : '견적발송'
 
           let consultationId: string
@@ -402,29 +585,49 @@ export default function MigrationPage() {
             consultationId = consultation!.id
           }
 
-          const { error: estErr } = await supabase.from('estimates').insert({
-            consultation_id: consultationId,
-            payload: payload as unknown as Json,
-            supply_total: supplyTotal,
-            vat,
-            grand_total: grandTotal,
-            approved_at: new Date().toISOString(),
-            final_proposal_data: payload as unknown as Json,
-            created_at: createdAt,
-            is_test: true,
-          })
+          const payloadForDb = { ...payload, _migration_original_filename: item.file.name } as unknown as Json
+          const { data: insertedEst, error: estErr } = await supabase
+            .from('estimates')
+            .insert({
+              consultation_id: consultationId,
+              payload: payloadForDb,
+              supply_total: supplyTotal,
+              vat,
+              grand_total: grandTotal,
+              approved_at: new Date().toISOString(),
+              final_proposal_data: payloadForDb,
+              created_at: createdAt,
+              is_test: true,
+            })
+            .select('id')
+            .single()
           if (estErr) throw estErr
+          const estimateId = (insertedEst as { id: string } | null)?.id ?? ''
 
           setFiles((prev) =>
             prev.map((f) => (f.id === id ? { ...f, status: '완료' as FileStatus, savedId: consultationId } : f))
           )
-          toast.success('상담 및 견적 데이터가 저장되었습니다.')
-          navigate('/consultation')
+          setUploadedItems((prev) => [
+            {
+              filename: item.file.name,
+              grand_total: finalAmount,
+              quoteDate: item.parsedEstimate.quoteDate ?? '',
+              uploadedAt: new Date().toISOString(),
+              consultationId,
+              estimateId,
+              status: '저장완료',
+            },
+            ...prev,
+          ])
+          const toastMsg = existing?.id
+            ? `기존 상담 [${existing.company_name || companyName}]에 견적 1건 연결됨.`
+            : `상담 카드 [${companyName}] 생성됨. 견적 1건 연결됨.`
+          toast.success(toastMsg)
         } else if (item.category === 'VendorPrice' && item.parsedVendor?.items?.length) {
           const items = item.parsedVendor.items
 
           const { error: uploadErr } = await supabase.storage.from(BUCKET_VENDOR).upload(storagePath, item.file, {
-            contentType: item.file.type,
+            contentType: getContentTypeForUpload(item.file, 'vendor'),
             upsert: true,
           })
           if (uploadErr) throw uploadErr
@@ -460,7 +663,7 @@ export default function MigrationPage() {
         setSaving(null)
       }
     },
-    [files, navigate, matchedConsultation]
+    [files, navigate, matchedConsultation, uploadedItems]
   )
 
   const handleBulkVendorSave = useCallback(async () => {
@@ -473,10 +676,9 @@ export default function MigrationPage() {
     try {
       const rows: Array<{ product_name: string; cost: number; image_url: string; vendor_name: string; spec: string | null; description: string | null; is_test: boolean }> = []
       for (const vf of withItems) {
-        const ext = vf.file.name.split('.').pop() ?? ''
-        const storagePath = `${crypto.randomUUID()}_${Date.now()}.${ext}`
+        const storagePath = toSafeStoragePath(vf.file.name, 'vendor')
         const { error: uploadErr } = await supabase.storage.from(BUCKET_VENDOR).upload(storagePath, vf.file, {
-          contentType: vf.file.type,
+          contentType: getContentTypeForUpload(vf.file, 'vendor'),
           upsert: true,
         })
         if (uploadErr) throw uploadErr
@@ -580,7 +782,7 @@ export default function MigrationPage() {
               <Upload className="mx-auto h-10 w-10 text-muted-foreground mb-2" />
               <p className="text-sm text-muted-foreground">PDF(견적서) 또는 JPG(원가표)를 드래그하여 놓거나 클릭하여 선택하세요.</p>
               <p className="text-xs text-muted-foreground mt-1">
-                PDF → Estimates(상담·견적) | JPG → VendorPrice(원가표) 자동 분류
+                현재 탭 기준으로 판매 단가(견적서) 추출
               </p>
               <input
                 type="file"
@@ -617,10 +819,12 @@ export default function MigrationPage() {
                   <span className="truncate text-sm font-medium">{f.file.name}</span>
                   <span
                     className={`text-xs px-2 py-0.5 rounded ${
-                      f.category === 'Estimates' ? 'bg-blue-500/20 text-blue-700 dark:text-blue-400' : 'bg-violet-500/20 text-violet-700 dark:text-violet-400'
+                      f.category === 'Estimates'
+                        ? 'bg-green-500/20 text-green-700 dark:text-green-400'
+                        : 'bg-blue-500/20 text-blue-700 dark:text-blue-400'
                     }`}
                   >
-                    {f.category}
+                    {f.category === 'Estimates' ? '판매 단가' : '매입 원가'}
                   </span>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
@@ -767,7 +971,7 @@ export default function MigrationPage() {
                             <th className="border-b border-border px-2 py-2 text-left min-w-[100px]">품목</th>
                             <th className="border-b border-border px-2 py-2 text-left min-w-[120px]">규격</th>
                             <th className="border-b border-border px-2 py-2 text-left w-16">수량</th>
-                            <th className="border-b border-border px-2 py-2 text-right min-w-[90px]">단가</th>
+                            <th className="border-b border-border px-2 py-2 text-right min-w-[90px]">판매가(원)</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -908,6 +1112,79 @@ export default function MigrationPage() {
             </li>
           ))}
         </ul>
+
+            {/* 업로드 성공한 견적 실시간 누적 리스트 — 최신순 */}
+            {uploadedItems.length > 0 && (
+              <div className="mt-6 border border-border rounded-lg overflow-hidden">
+                <div className="px-4 py-2 border-b border-border bg-muted/40 flex items-center justify-between gap-2">
+                  <span className="text-sm font-medium">업로드 완료 목록 ({uploadedItems.length}건)</span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                    onClick={() => {
+                      setUploadedItems([])
+                      localStorage.removeItem(UPLOADED_ITEMS_STORAGE_KEY)
+                      toast.success('목록을 비웠습니다.')
+                    }}
+                  >
+                    <Trash2 className="h-3.5 w-3.5 mr-1" />
+                    목록 비우기
+                  </Button>
+                </div>
+                <div className="overflow-x-auto max-h-[40vh] overflow-y-auto">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 bg-muted/80 z-10">
+                      <tr>
+                        <th className="border-b border-border px-3 py-2 text-left w-12">No</th>
+                        <th className="border-b border-border px-3 py-2 text-left min-w-[180px]">파일명</th>
+                        <th className="border-b border-border px-3 py-2 text-right min-w-[100px]">금액</th>
+                        <th className="border-b border-border px-3 py-2 text-left min-w-[100px]">견적일</th>
+                        <th className="border-b border-border px-3 py-2 text-left min-w-[140px]">업로드 시간</th>
+                        <th className="border-b border-border px-3 py-2 text-left min-w-[80px]">상태</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {uploadedItems.map((u, idx) => (
+                        <tr
+                          key={`${u.estimateId}-${u.uploadedAt}`}
+                          className="border-b border-border last:border-0 hover:bg-primary/5 cursor-pointer transition-colors"
+                          onClick={() =>
+                            navigate('/consultation', {
+                              state: {
+                                focusConsultationId: u.consultationId,
+                                openEstimateTab: true,
+                                openEstimateId: u.estimateId,
+                              },
+                            })
+                          }
+                        >
+                          <td className="px-3 py-2 text-muted-foreground">{idx + 1}</td>
+                          <td className="px-3 py-2 font-medium truncate max-w-[200px]" title={u.filename}>
+                            {u.filename}
+                          </td>
+                          <td className="px-3 py-2 text-right">{u.grand_total.toLocaleString()}원</td>
+                          <td className="px-3 py-2 text-muted-foreground">
+                            {u.quoteDate
+                              ? new Date(u.quoteDate + 'T00:00:00').toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' })
+                              : '-'}
+                          </td>
+                          <td className="px-3 py-2 text-muted-foreground">
+                            {new Date(u.uploadedAt).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' })}
+                          </td>
+                          <td className="px-3 py-2">
+                            <span className="text-xs px-2 py-0.5 rounded bg-green-500/20 text-green-700 dark:text-green-400">
+                              {u.status}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </>
         )}
 
@@ -972,8 +1249,11 @@ export default function MigrationPage() {
                 </div>
                 <ul className="divide-y divide-border max-h-40 overflow-y-auto">
                   {vendorPriceFiles.map((f) => (
-                    <li key={f.id} className="flex items-center justify-between px-4 py-2 text-sm">
-                      <span className="truncate">{f.file.name}</span>
+                    <li key={f.id} className="flex items-center justify-between px-4 py-2 text-sm gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="truncate">{f.file.name}</span>
+                        <span className="text-xs px-2 py-0.5 rounded bg-blue-500/20 text-blue-700 dark:text-blue-400 shrink-0">매입 원가</span>
+                      </div>
                       <div className="flex items-center gap-2 shrink-0">
                         <span
                           className={`text-xs px-2 py-0.5 rounded ${

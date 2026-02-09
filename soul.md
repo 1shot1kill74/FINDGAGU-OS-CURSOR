@@ -41,3 +41,9 @@ FindGagu OS: Project Soul (ivory-os) 1. Captain & Partner - Captain: 대표님 (
 - **FAQ_DATA 키 문법:** `channelTalkService.ts`에서 **A/S** 키를 `'A/S'`(따옴표)로 변경해 Expected "}" but found "/" 문법 에러 해결. 특수문자·일반 키 모두 따옴표로 감싸 안정성 확보.
 - **AS 매칭:** "AS 문의드려요"처럼 슬래시 없이 입력해도 A/S 답변이 나오도록 **'AS'** 키 추가. A/S·AS 동일 답변(FAQ_ANSWER_AS) 사용. 시뮬레이터(`/admin/test-console`)에서 문의 입력 시 FAQ 3단계 자동 응답 검증 가능.
 - **문서·세이브 포인트:** BLUEPRINT에 "5) 채널톡 시뮬레이터 및 FAQ 자동 응답" 섹션 추가. CONTEXT·JOURNAL·soul.md에 오늘 내용 반영. JOURNAL에 **세이브 포인트 2026-02-09 (FAQ·채널톡)** — git tag save-20260209-faq-channel 참고.
+
+13. 2026-02-10 반영 (MigrationPage·ConsultationManagement — 파일명·저장=확정·6개월 통계·원가)
+- **MigrationPage:** `toSafeStoragePath`로 Mac/한글 파일명 MIME 오류 방지. timestamp+영문 확장자(pdf/jpg/png). 견적·원가 업로드 적용. 저장 시 approved_at 자동(기존 확인).
+- **저장 = 확정:** ConsultationManagement 임시저장(handleEstimateSaveDraft) 시 insert/update 모두 approved_at 설정.
+- **6개월 견적 통계:** estimatesLast6Months(6개월 이내, is_visible). 최대·최소·**실제 중간값**(정렬 후 중앙에 가까운 견적) + estimate_id 매핑. 원가: vendor_price_book/products 조회 후 합산.
+- **견적 이력 UI:** [최대|중간|최소|원가] 4지표. 최대/중간/최소 클릭 → 견적서 팝업. 툴팁 "해당 견적서 보기", cursor-pointer.

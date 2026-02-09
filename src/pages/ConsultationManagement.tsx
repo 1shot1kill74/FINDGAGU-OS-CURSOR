@@ -21,11 +21,12 @@ import {
 import { PortfolioBankModal } from '@/components/portfolio/PortfolioBankModal'
 import { CONSULTATION_INDUSTRY_OPTIONS } from '@/data/referenceCases'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { subMonths, startOfMonth } from 'date-fns'
+import { subMonths, startOfMonth, startOfDay } from 'date-fns'
 import { EstimateForm, type EstimateFormData, type EstimateFormHandle, ProposalPreviewContent, FinalEstimatePreviewContent, computeProposalTotals, computeFinalTotals, createEmptyRow } from '@/components/estimate/EstimateForm'
 import { ConsultationChat, type ConsultationMessage } from '@/components/chat/ConsultationChat'
 import { OrderDocumentsGallery } from '@/components/order/OrderDocumentsGallery'
 import { insertSystemLog } from '@/lib/activityLog'
+import { getVendorPriceRecommendation } from '@/lib/estimateRecommendationService'
 import { getDataByProductTags } from '@/lib/productDataMatching'
 import { exportEstimateToPdf, exportEstimateToImage, buildEstimateImageFilename, buildEstimatePdfFilename } from '@/lib/estimatePdfExport'
 import { isValidUUID } from '@/lib/uuid'
@@ -972,7 +973,7 @@ export default function ConsultationManagement() {
 
   const [listTab, setListTab] = useState<ListTab>('전체')
   const [searchQuery, setSearchQuery] = useState('')
-  const [dateRange, setDateRange] = useState<DateRangeKey>('thisMonth')
+  const [dateRange, setDateRange] = useState<DateRangeKey>('all')
   const [listPage, setListPage] = useState(0)
   /** admin 권한 — 시스템 메시지 영구 삭제 버튼 노출. localStorage 'findgagu-role' === 'admin' 또는 URL ?admin=1 */
   const isAdmin = useMemo(() => {
@@ -1667,19 +1668,33 @@ export default function ConsultationManagement() {
 
   /** 제품별 시공 현장·시공 사례 뱅크 등에서 링크로 진입 시 해당 상담 자동 선택 + 역방향 견적(제품 담기) */
   useEffect(() => {
-    const state = location.state as { focusConsultationId?: string; addEstimateProductName?: string } | null
+    const state = location.state as {
+      focusConsultationId?: string
+      addEstimateProductName?: string
+      openEstimateTab?: boolean
+      openEstimateId?: string
+    } | null
     const focusId =
       (state?.focusConsultationId != null ? String(state.focusConsultationId).trim() : null) ??
       (typeof location.search === 'string' ? new URLSearchParams(location.search).get('focus') : null) ??
       null
     const addProduct =
       state?.addEstimateProductName != null ? String(state.addEstimateProductName).trim() : ''
+    const openEstimateId = state?.openEstimateId != null ? String(state.openEstimateId).trim() : null
 
     if (focusId && focusId.length > 0) {
       setSelectedLead(focusId)
       setScrollToLeadId(focusId)
       setHighlightedLeadId(focusId)
       setTimeout(() => setHighlightedLeadId(null), 2000)
+      // 마이그레이션 등에서 openEstimateTab 요청 시 견적 탭으로 전환 → estimatesList 즉시 로드
+      if (state?.openEstimateTab) {
+        setDetailPanelTab('estimate')
+      }
+      // 마이그레이션 업로드 목록에서 행 클릭 시 견적 상세 팝업 오픈
+      if (openEstimateId && openEstimateId.length > 0) {
+        setPrintEstimateId(openEstimateId)
+      }
     }
 
     if (addProduct.length > 0) {
@@ -1829,11 +1844,87 @@ export default function ConsultationManagement() {
     return Array.from(byId.values()).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
   }, [pastEstimatesForGuide, estimatesList])
 
-  /** 필터 적용 견적 목록 (전체 / 임시 저장만) */
+  /** 필터 적용 견적 목록 (전체 / 임시 저장만) — 기간 제한 없이 해당 고객의 모든 과거 견적. 최신순 정렬 */
   const filteredEstimateList = useMemo(() => {
-    if (estimateListFilter === 'draft') return estimatesList.filter((e) => !e.approved_at)
-    return estimatesList
+    const base = estimateListFilter === 'draft' ? estimatesList.filter((e) => !e.approved_at) : estimatesList
+    return [...base].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
   }, [estimatesList, estimateListFilter])
+
+  /** 연도별 그룹 — 리스트 렌더링용. { year: number, items: [] }[] 형태 */
+  const estimateListByYear = useMemo(() => {
+    const groups = new Map<number, typeof filteredEstimateList>()
+    for (const est of filteredEstimateList) {
+      const y = new Date(est.created_at).getFullYear()
+      if (!groups.has(y)) groups.set(y, [])
+      groups.get(y)!.push(est)
+    }
+    return Array.from(groups.entries())
+      .sort(([a], [b]) => b - a)
+      .map(([year, items]) => ({ year, items }))
+  }, [filteredEstimateList])
+
+  /** 1년 경과 여부 — 아카이브 스타일용 (created_at 기준) */
+  const archiveCutoff = useMemo(() => startOfDay(subMonths(new Date(), 12)).getTime(), [])
+
+  /** 최근 12개월 내 저장된 견적 — 통계용(현재 시세 파악). 날짜는 startOfDay로 느슨하게 */
+  const estimatesLast12Months = useMemo(() => {
+    const cutoff = startOfDay(subMonths(new Date(), 12)).toISOString()
+    return estimatesList.filter((e) => e.created_at >= cutoff)
+  }, [estimatesList])
+
+  /** 최근 1년 통계: 최대·최소·중간값 + 각 estimate_id 매핑. 현재 시세 파악용 */
+  const estimateStats = useMemo(() => {
+    const list = estimatesLast12Months
+    if (list.length === 0) return null
+    const sorted = [...list].sort((a, b) => Number(a.grand_total) - Number(b.grand_total))
+    const maxEst = sorted[sorted.length - 1]
+    const minEst = sorted[0]
+    const midIdx = Math.floor(sorted.length / 2)
+    const medianValue = sorted.length % 2 === 1
+      ? Number(sorted[midIdx].grand_total)
+      : (Number(sorted[midIdx - 1].grand_total) + Number(sorted[midIdx].grand_total)) / 2
+    const medianEst = sorted.reduce((best, cur) => {
+      const curVal = Number(cur.grand_total)
+      const curDiff = Math.abs(curVal - medianValue)
+      const bestDiff = Math.abs(Number(best.grand_total) - medianValue)
+      return curDiff < bestDiff ? cur : best
+    })
+    return {
+      max: { value: Number(maxEst.grand_total), estimateId: maxEst.id },
+      min: { value: Number(minEst.grand_total), estimateId: minEst.id },
+      median: { value: Math.round(Number(medianEst.grand_total)), estimateId: medianEst.id },
+    }
+  }, [estimatesLast12Months])
+
+  /** 원가 합계 — 가장 최근 견적(12개월 내)의 품목 기준 vendor_price_book/products 조회 */
+  const [costSum, setCostSum] = useState<number | null>(null)
+  useEffect(() => {
+    if (!selectedLead || !estimatesLast12Months.length) {
+      setCostSum(null)
+      return
+    }
+    let cancelled = false
+    const latest = [...estimatesLast12Months].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0]
+    const data = (latest.final_proposal_data ?? latest.payload) as { rows?: Array<{ name?: string; qty?: string }> } | undefined
+    const rows = data?.rows ?? []
+    if (rows.length === 0) {
+      setCostSum(null)
+      return
+    }
+    const run = async () => {
+      let sum = 0
+      for (const r of rows) {
+        const name = (r.name ?? '').trim()
+        const qty = Math.max(0, parseFloat(String(r.qty ?? '0').replace(/,/g, '')) || 0)
+        if (!name || qty <= 0) continue
+        const rec = await getVendorPriceRecommendation(supabase, name)
+        if (rec && !cancelled) sum += rec.cost * qty
+      }
+      if (!cancelled) setCostSum(sum)
+    }
+    void run()
+    return () => { cancelled = true }
+  }, [selectedLead, estimatesLast12Months, supabase])
 
   /** 상세 패널 금액: 실제 유효 견적(estimatesList)이 있으면 그 합계로 검증, 없으면 카드 저장값 사용 */
   const validatedDisplayAmount = useMemo(() => {
@@ -2069,12 +2160,13 @@ export default function ConsultationManagement() {
     }
   }
 
-  /** 견적서 임시저장 — payload에 draft: true, DB에만 반영 */
+  /** 견적서 임시저장 — payload에 draft: true, DB에만 반영. 저장 = 확정이므로 approved_at 자동 설정 */
   const handleEstimateSaveDraft = async (consultationId: string) => {
     const formHandle = estimateFormRef.current
     if (!formHandle) return
     const data = formHandle.getCurrentData()
     const payload = { ...data, draft: true } as unknown as Record<string, unknown>
+    const approvedAt = new Date().toISOString()
     try {
       if (estimateModalEditId) {
         const { error } = await supabase
@@ -2084,6 +2176,7 @@ export default function ConsultationManagement() {
             supply_total: data.supplyTotal,
             vat: data.vat,
             grand_total: data.grandTotal,
+            approved_at: approvedAt,
           })
           .eq('id', estimateModalEditId)
         if (error) throw error
@@ -2099,6 +2192,7 @@ export default function ConsultationManagement() {
           supply_total: data.supplyTotal,
           vat: data.vat,
           grand_total: data.grandTotal,
+          approved_at: approvedAt,
         })
         if (error) throw error
         toast.success('임시저장되었습니다.')
@@ -2865,6 +2959,41 @@ export default function ConsultationManagement() {
                         </Button>
                       </div>
                     )}
+                    {estimateStats && (
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 mb-3 py-2 px-3 rounded-lg border border-border bg-muted/30 text-sm">
+                        <span className="text-muted-foreground shrink-0">최근 1년 시세:</span>
+                        <button
+                          type="button"
+                          title="해당 견적서 보기"
+                          className="cursor-pointer hover:text-primary hover:underline"
+                          onClick={() => setPrintEstimateId(estimateStats.max.estimateId)}
+                        >
+                          최대: {estimateStats.max.value.toLocaleString()}원
+                        </button>
+                        <span className="text-muted-foreground">|</span>
+                        <button
+                          type="button"
+                          title="해당 견적서 보기"
+                          className="cursor-pointer hover:text-primary hover:underline"
+                          onClick={() => setPrintEstimateId(estimateStats.median.estimateId)}
+                        >
+                          중간: {estimateStats.median.value.toLocaleString()}원
+                        </button>
+                        <span className="text-muted-foreground">|</span>
+                        <button
+                          type="button"
+                          title="해당 견적서 보기"
+                          className="cursor-pointer hover:text-primary hover:underline"
+                          onClick={() => setPrintEstimateId(estimateStats.min.estimateId)}
+                        >
+                          최소: {estimateStats.min.value.toLocaleString()}원
+                        </button>
+                        <span className="text-muted-foreground">|</span>
+                        <span className="text-muted-foreground">
+                          원가: {costSum != null ? costSum.toLocaleString() : '-'}원
+                        </span>
+                      </div>
+                    )}
                     <h3 className="text-xs font-semibold text-muted-foreground mb-2">기존 견적 이력</h3>
                     {estimatesLoading ? (
                       <p className="text-sm text-muted-foreground">불러오는 중…</p>
@@ -2873,91 +3002,121 @@ export default function ConsultationManagement() {
                         {estimateListFilter === 'draft' ? '임시 저장된 견적이 없습니다.' : '저장된 견적서가 없습니다. 위에서 신규 견적을 작성해 보세요.'}
                       </p>
                     ) : (
-                      <ul className="space-y-2 overflow-y-auto flex-1 min-h-0">
-                        {filteredEstimateList.map((est) => {
-                          const payload = est.payload as { draft?: boolean } & Record<string, unknown>
-                          const status = payload?.draft ? '임시저장' : (est.approved_at ? '발행됨' : '발행')
-                          const isApproved = !!est.approved_at
-                          const isSelected = selectedEstimateIds.includes(est.id)
-                          return (
-                            <li key={est.id} className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm flex flex-wrap items-center gap-2">
-                              <label className="flex items-center gap-1.5 shrink-0 cursor-pointer">
-                                <input
-                                  type="checkbox"
-                                  checked={isSelected}
-                                  onChange={() => {
-                                    setSelectedEstimateIds((prev) =>
-                                      prev.includes(est.id) ? prev.filter((id) => id !== est.id) : [...prev, est.id]
-                                    )
-                                  }}
-                                  className="rounded border-border"
-                                />
-                                <span className="sr-only">선택</span>
-                              </label>
-                              <div className="flex-1 min-w-0">
-                                <p className="font-medium text-foreground">{new Date(est.created_at).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' })}</p>
-                                <p className="text-muted-foreground">총액 {Number(est.grand_total).toLocaleString()}원 · {status}</p>
-                              </div>
-                              <div className="flex items-center gap-1.5 shrink-0">
-                                {isApproved ? (
-                                  <>
-                                    <Button
-                                      type="button"
-                                      variant="outline"
-                                      size="sm"
-                                      className="gap-1"
-                                      onClick={async () => {
-                                        const url = `${window.location.origin}/p/estimate/${est.id}`
-                                        await navigator.clipboard.writeText(url)
-                                        toast.success('공유 링크가 복사되었습니다.')
-                                      }}
-                                    >
-                                      <Copy className="h-3.5 w-3.5" />
-                                      링크 복사
-                                    </Button>
-                                    <Button
-                                      type="button"
-                                      variant="outline"
-                                      size="sm"
-                                      className="gap-1"
-                                      onClick={() => setPrintEstimateId(est.id)}
-                                    >
-                                      <FileText className="h-3.5 w-3.5" />
-                                      PDF
-                                    </Button>
-                                  </>
-                                ) : (
-                                  <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => {
-                                      setEstimateModalEditId(est.id)
-                                      setEstimateModalInitialData((est.payload ?? {}) as Partial<EstimateFormData>)
-                                      setEstimateModalOpen(true)
-                                    }}
+                      <div className="space-y-4 overflow-y-auto flex-1 min-h-0">
+                        {estimateListByYear.map(({ year, items }) => (
+                          <div key={year}>
+                            <div className="text-xs font-semibold text-muted-foreground py-1.5 border-b border-border/80 mb-2 sticky top-0 bg-background/95 backdrop-blur-sm z-10">
+                              {year}년
+                            </div>
+                            <ul className="space-y-2">
+                              {items.map((est) => {
+                                const payload = est.payload as { draft?: boolean } & Record<string, unknown>
+                                const status = payload?.draft ? '임시저장' : (est.approved_at ? '발행됨' : '발행')
+                                const isApproved = !!est.approved_at
+                                const isSelected = selectedEstimateIds.includes(est.id)
+                                const isArchive = new Date(est.created_at).getTime() < archiveCutoff
+                                return (
+                                  <li
+                                    key={est.id}
+                                    className={cn(
+                                      'rounded-lg border px-3 py-2 text-sm flex flex-wrap items-center gap-2 transition-colors',
+                                      isArchive
+                                        ? 'border-border/60 bg-slate-100/80 dark:bg-slate-800/40 text-muted-foreground'
+                                        : 'border-border bg-muted/30'
+                                    )}
                                   >
-                                    수정
-                                  </Button>
-                                )}
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  className="gap-1 text-destructive hover:text-destructive hover:bg-destructive/10"
-                                  onClick={() => {
-                                    setSelectedEstimateIds((prev) => (prev.includes(est.id) ? prev : [...prev, est.id]))
-                                    setEstimateDeleteConfirmOpen(true)
-                                  }}
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                  삭제
-                                </Button>
-                              </div>
-                            </li>
-                          )
-                        })}
-                      </ul>
+                                    {isArchive && (
+                                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200/80 dark:bg-slate-700/60 text-slate-600 dark:text-slate-400 shrink-0">
+                                        아카이브
+                                      </span>
+                                    )}
+                                    <label className="flex items-center gap-1.5 shrink-0 cursor-pointer">
+                                      <input
+                                        type="checkbox"
+                                        checked={isSelected}
+                                        onChange={() => {
+                                          setSelectedEstimateIds((prev) =>
+                                            prev.includes(est.id) ? prev.filter((id) => id !== est.id) : [...prev, est.id]
+                                          )
+                                        }}
+                                        className="rounded border-border"
+                                      />
+                                      <span className="sr-only">선택</span>
+                                    </label>
+                                    <div className="flex-1 min-w-0">
+                                      <p className="font-medium text-foreground">{new Date(est.created_at).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' })}</p>
+                                      <button
+                                        type="button"
+                                        className="text-muted-foreground cursor-pointer hover:text-primary hover:underline text-left"
+                                        title="해당 견적서 보기"
+                                        onClick={() => setPrintEstimateId(est.id)}
+                                      >
+                                        총액 {Number(est.grand_total).toLocaleString()}원 · {status}
+                                      </button>
+                                    </div>
+                                    <div className="flex items-center gap-1.5 shrink-0">
+                                      {isApproved ? (
+                                        <>
+                                          <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            className="gap-1"
+                                            onClick={async () => {
+                                              const url = `${window.location.origin}/p/estimate/${est.id}`
+                                              await navigator.clipboard.writeText(url)
+                                              toast.success('공유 링크가 복사되었습니다.')
+                                            }}
+                                          >
+                                            <Copy className="h-3.5 w-3.5" />
+                                            링크 복사
+                                          </Button>
+                                          <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            className="gap-1"
+                                            onClick={() => setPrintEstimateId(est.id)}
+                                          >
+                                            <FileText className="h-3.5 w-3.5" />
+                                            PDF
+                                          </Button>
+                                        </>
+                                      ) : (
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          size="sm"
+                                          onClick={() => {
+                                            setEstimateModalEditId(est.id)
+                                            setEstimateModalInitialData((est.payload ?? {}) as Partial<EstimateFormData>)
+                                            setEstimateModalOpen(true)
+                                          }}
+                                        >
+                                          수정
+                                        </Button>
+                                      )}
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        className="gap-1 text-destructive hover:text-destructive hover:bg-destructive/10"
+                                        onClick={() => {
+                                          setSelectedEstimateIds((prev) => (prev.includes(est.id) ? prev : [...prev, est.id]))
+                                          setEstimateDeleteConfirmOpen(true)
+                                        }}
+                                      >
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                        삭제
+                                      </Button>
+                                    </div>
+                                  </li>
+                                )
+                              })}
+                            </ul>
+                          </div>
+                        ))}
+                      </div>
                     )}
                   </div>
                 </div>
@@ -3146,7 +3305,14 @@ export default function ConsultationManagement() {
             <div className="print-container flex-1 min-h-0 overflow-y-auto p-4 pb-10 print:max-h-none print:p-6 print:pb-6" data-estimate-print-area style={{ maxHeight: 'calc(90vh - 56px)' }}>
               {printEstimateId && (() => {
                 const est = estimatesList.find((e) => e.id === printEstimateId)
-                if (!est) return null
+                if (!est) {
+                  return estimatesLoading ? (
+                    <div className="flex items-center justify-center py-12 text-muted-foreground">
+                      <Loader2 className="h-6 w-6 animate-spin mr-2" />
+                      불러오는 중…
+                    </div>
+                  ) : null
+                }
                 const rawData = (est.approved_at && est.final_proposal_data ? est.final_proposal_data : est.payload) as unknown as EstimateFormData
                 const rawRows = rawData.rows ?? []
                 const paddedRows = rawRows.length >= 20 ? rawRows.slice(0, 20) : [...rawRows, ...Array.from({ length: 20 - rawRows.length }, (_, i) => createEmptyRow(rawRows.length + i))]

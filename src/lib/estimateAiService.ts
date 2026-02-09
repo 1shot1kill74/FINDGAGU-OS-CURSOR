@@ -249,6 +249,13 @@ function mockParseWithPromptStyle(text: string): QuickCommandResult {
   if (possibleName && qty > 0)
     return { type: 'needs_unit_price', name: possibleName, qty }
 
+  // 단일 품명만 입력 시 — DB(원가표/제품) 조회용 past_price
+  const simpleProduct = t.split(/\s+/).filter(Boolean)
+  if (simpleProduct.length <= 2 && !/\d/.test(t)) {
+    const name = simpleProduct.join(' ').trim()
+    if (name.length >= 2) return { type: 'past_price', productName: name }
+  }
+
   return { type: 'unknown' }
 }
 

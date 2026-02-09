@@ -535,3 +535,59 @@ git checkout save-20260209-faq-channel
 - `src/lib/channelTalkService.ts` — FAQ_ANSWER_AS, FAQ_DATA 키 따옴표·'AS' 추가.
 - `BLUEPRINT.md` — 섹션 3에 "5) 채널톡 시뮬레이터 및 FAQ 자동 응답" 추가.
 - `CONTEXT.md`, `JOURNAL.md`, `soul.md` — 2026-02-09 FAQ·세이브 포인트 반영.
+
+---
+
+# 2026-02-10 기록 (MigrationPage 파일명·저장=확정·6개월 견적 통계·원가 연동)
+
+## 1. 오늘의 활동 요약
+- **MigrationPage:** Mac 환경 파일명 인코딩 문제 방지용 `toSafeStoragePath` 적용. 저장 시 `approved_at` 자동 설정(기존 적용 확인).
+- **ConsultationManagement:** 임시저장 = 확정(approved_at), 6개월 견적 통계(최대/최소/실제 중간값 + estimate_id), 원가 연동, 견적 이력 UI 4가지 지표(클릭 가능·툴팁) 반영.
+
+## 2. 상세 결정·구현 사항
+
+### [MigrationPage — 파일명 인코딩]
+- **toSafeStoragePath(originalName, prefix):** 원본 파일명 대신 `{prefix}_{timestamp}_{random}.{safeExt}` 형식. pdf/jpg/jpeg/png만 허용, jpeg→jpg 통일. Mac/한글 파일명으로 인한 MIME 오류·저장 실패 방지.
+- **적용:** 견적 PDF/이미지 업로드(prefix: estimate), 원가표 업로드(prefix: vendor) 모두 적용.
+
+### [ConsultationManagement — 저장 = 확정]
+- **handleEstimateSaveDraft:** insert/update 시 `approved_at: new Date().toISOString()` 추가. 별도 승인 없이 저장 즉시 확정 데이터로 처리.
+
+### [6개월 견적 통계]
+- **estimatesLast6Months:** subMonths(now, 6) 이후 created_at, is_visible=true. approved_at 필터 없음.
+- **estimateStats:** 최대(max)·최소(min)·중간(median). **중간값**은 max/min 평균이 아니라, grand_total 정렬 후 실제 발행 견적 중 **중앙에 가장 가까운 값** 선택. 각 지표에 estimate_id 매핑.
+
+### [원가 연동]
+- **costSum:** 최근 견적 1건의 rows 기준. 품명별 getVendorPriceRecommendation 호출 → vendor_price_book 또는 products에서 원가 조회 → (원가 × 수량) 합산.
+
+### [견적 이력 UI]
+- **위치:** 견적 관리 탭, "기존 견적 이력" 제목 위.
+- **형식:** `[최대: 122,000원 | 중간: 110,000원 | 최소: 94,500원 | 원가: 85,000원]`
+- **클릭:** 최대/중간/최소 수치 클릭 시 setPrintEstimateId(해당 estimate_id) → 견적서 상세(인쇄/PDF) 팝업.
+- **UX:** title="해당 견적서 보기" 툴팁, cursor-pointer, hover:text-primary hover:underline.
+
+## 3. 변경된 주요 파일
+- `src/pages/admin/MigrationPage.tsx` — toSafeStoragePath, storagePath 변경(견적·원가).
+- `src/pages/ConsultationManagement.tsx` — getVendorPriceRecommendation import, handleEstimateSaveDraft approved_at, estimatesLast6Months·estimateStats·costSum, 견적 이력 4지표 UI.
+
+---
+
+# 세이브 포인트 2026-02-10 (마이그레이션·통계·아카이브 완료)
+
+**이 시점까지 반영된 작업을 롤백할 때 참고용입니다.**
+
+## 포함된 작업 요약
+- **ConsultationManagement:** 6개월→12개월 통계(최근 1년 시세), 전체 이력 리스트(기간 제한 없음), 연도별 그룹·아카이브 스타일, 조회 기간 기본값 '전체', 금액 클릭→견적 상세 팝업
+- **MigrationPage:** 업로드 완료 목록 localStorage 영구 저장, DB 복원·원본 파일명(payload._migration_original_filename), 견적일 컬럼, 중복 체크, 목록 비우기·DB 미존재 항목 자동 정리, 클릭→상담 견적 상세
+- **데이터:** 통계 vs 리스트 분리(12개월 시세 / 전체 아카이브), dateRange 기본 'all'
+
+## 롤백 시 (Git 사용 시)
+```bash
+git checkout save-20260210-migration-stats
+# 또는 특정 파일만 복원 시 해당 커밋에서 파일 체크아웃
+```
+
+## 변경된 주요 파일
+- `src/pages/ConsultationManagement.tsx` — estimatesLast12Months, estimateListByYear, archiveCutoff, dateRange default 'all'
+- `src/pages/admin/MigrationPage.tsx` — uploadedItems localStorage, DB 복원, _migration_original_filename, 견적일 컬럼, 목록 비우기
+- `BLUEPRINT.md`, `CONTEXT.md`, `JOURNAL.md`, `soul.md`

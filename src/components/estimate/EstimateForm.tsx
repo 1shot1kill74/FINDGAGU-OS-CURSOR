@@ -312,7 +312,7 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
     unitPrice: number
     specQuestion?: string
   } | null>(null)
-  const [pastPriceResult, setPastPriceResult] = useState<{ name: string; unitPrice: number } | null>(null)
+  const [pastPriceResult, setPastPriceResult] = useState<{ name: string; unitPrice: number; cost?: number; source?: 'past_estimate' | 'vendor_price_book' | 'products' } | null>(null)
   const [galleryProductTag, setGalleryProductTag] = useState<string | null>(null)
   const [hasGalleryDataByProduct, setHasGalleryDataByProduct] = useState<Record<string, boolean>>({})
   /** 퀵 커맨드로 행 추가 시 onBlur가 발생하지 않으므로, 추가 직후 원가 자동 매칭용 */
@@ -432,8 +432,8 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
   )
 
   const applyPastPrice = useCallback(
-    (fullKey: string, unitPrice: number) => {
-      addRowFromQuickCommand({ name: fullKey, qty: 1, unitPrice, spec: null })
+    (fullKey: string, unitPrice: number, costPrice?: number) => {
+      addRowFromQuickCommand({ name: fullKey, qty: 1, unitPrice, spec: null, costPrice })
       setPastPriceResult(null)
       setQuickCommandInput('')
     },
@@ -842,11 +842,23 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
           break
         }
         case 'past_price': {
-          const price = searchPastPrice(res.productName)
+          const productName = res.productName?.trim() || ''
+          if (!productName) break
+          const price = searchPastPrice(productName)
           if (price != null) {
-            setPastPriceResult({ name: res.productName, unitPrice: price })
+            setPastPriceResult({ name: productName, unitPrice: price, source: 'past_estimate' })
           } else {
-            toast.info(`'${res.productName}'에 대한 과거 단가 이력이 없습니다.`)
+            const vendor = await getVendorPriceRecommendation(supabase, productName)
+            if (vendor) {
+              setPastPriceResult({
+                name: productName,
+                unitPrice: vendor.unitPrice,
+                cost: vendor.cost,
+                source: vendor.source,
+              })
+            } else {
+              toast.info(`'${productName}'에 대한 원가·단가 이력이 없습니다. (원가표·제품DB 확인)`)
+            }
           }
           break
         }
@@ -872,7 +884,7 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
           break
       }
     } finally {
-      setTimeout(() => setIsProcessingQuickCommand(false), 500)
+      setIsProcessingQuickCommand(false)
     }
   }, [quickCommandInput, pendingQuickCommand, isProcessingQuickCommand, addRowFromQuickCommand, searchPastPrice, applyTargetPricing, applyTargetMargin])
 
@@ -1077,6 +1089,7 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
             variant="outline"
             size="icon"
             className="h-9 w-9 shrink-0"
+            disabled={isProcessingQuickCommand}
             onClick={handleQuickCommandSubmit}
             title="추가"
           >
@@ -1090,15 +1103,28 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
         )}
         {pastPriceResult && (
           <div className="mt-1.5 flex flex-wrap items-center gap-2">
-            <p className="text-sm text-foreground">
-              지난번엔 <span className="font-semibold text-primary">{formatNumber(pastPriceResult.unitPrice)}원</span>에 나갔습니다.
-            </p>
+            {pastPriceResult.source === 'vendor_price_book' || pastPriceResult.source === 'products' ? (
+              <p className="text-sm text-foreground">
+                {pastPriceResult.source === 'vendor_price_book' ? '원가표' : '제품DB'} 기준 — 원가{' '}
+                <span className="font-semibold text-primary">{formatNumber(pastPriceResult.cost ?? 0)}원</span>
+                {pastPriceResult.cost != null && (
+                  <>
+                    , 권장 단가(마진30%){' '}
+                    <span className="font-semibold text-primary">{formatNumber(pastPriceResult.unitPrice)}원</span>
+                  </>
+                )}
+              </p>
+            ) : (
+              <p className="text-sm text-foreground">
+                지난번엔 <span className="font-semibold text-primary">{formatNumber(pastPriceResult.unitPrice)}원</span>에 나갔습니다.
+              </p>
+            )}
             <Button
               type="button"
               variant="outline"
               size="sm"
               className="h-7 text-xs"
-              onClick={() => applyPastPrice(pastPriceResult.name, pastPriceResult.unitPrice)}
+              onClick={() => applyPastPrice(pastPriceResult.name, pastPriceResult.unitPrice, pastPriceResult.cost)}
             >
               적용할까요?
             </Button>
