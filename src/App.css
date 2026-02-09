@@ -1,0 +1,101 @@
+.app {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 2rem;
+  text-align: center;
+}
+
+.app h1 {
+  font-size: 2.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.app p {
+  color: #888;
+}
+
+/* A4 PDF 출력 규격 정밀 최적화. 원가·마진율은 print:hidden으로 인쇄 시 절대 비노출 */
+@media print {
+  /* 1. 용지 여백 및 사이즈 강제 지정 */
+  @page {
+    size: A4;
+    margin: 10mm;
+  }
+
+  body {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* 2. 출력용 컨테이너 너비 고정 (A4 210mm - 좌우 여백 10mm * 2) */
+  .print-container {
+    width: 190mm !important;
+    max-width: 190mm !important;
+    margin: 0 auto;
+    padding: 0;
+    box-shadow: none;
+    border: none;
+  }
+
+  /* 3. 불필요한 UI 숨기기 (헤더, 사이드바, 수정 버튼 등) */
+  .no-print,
+  header,
+  nav,
+  button {
+    display: none !important;
+  }
+
+  /* 4. 페이지 끊김 방지 (견적서 행이 잘리지 않게) */
+  tr,
+  .estimate-item {
+    page-break-inside: avoid;
+  }
+
+  /* 5. 원가·마진율 인쇄 시 비노출 (보안) */
+  .print\:hidden {
+    display: none !important;
+  }
+
+  .print\:w-\[210mm\] {
+    width: 210mm !important;
+    max-width: 210mm !important;
+  }
+
+  /* 견적서 PDF: 본문 숨기고 인쇄 영역만 1장 출력 */
+  body.print-estimate-pdf * {
+    visibility: hidden;
+  }
+  body.print-estimate-pdf [data-estimate-print-area],
+  body.print-estimate-pdf [data-estimate-print-area] * {
+    visibility: visible;
+  }
+  body.print-estimate-pdf [data-estimate-print-area] {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 190mm !important;
+    max-width: 190mm !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    margin: 0 auto;
+    box-shadow: none !important;
+    border: none !important;
+  }
+  body.print-estimate-pdf [data-estimate-print-area].print-container article {
+    width: 100% !important;
+    max-width: 190mm !important;
+    box-shadow: none !important;
+  }
+  body.print-estimate-pdf [data-estimate-print-area] table {
+    min-width: 0 !important;
+    width: 100% !important;
+    table-layout: fixed;
+  }
+  body.print-estimate-pdf [data-estimate-print-area] th,
+  body.print-estimate-pdf [data-estimate-print-area] td {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.375; /* 타이트한 행에서도 글자 겹침 방지 */
+  }
+}
