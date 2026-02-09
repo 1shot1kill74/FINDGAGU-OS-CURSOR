@@ -884,6 +884,8 @@ export default function ConsultationManagement() {
   const [measurementModalOpen, setMeasurementModalOpen] = useState(false)
   /** 상담 상세 패널 탭: 상담 히스토리 | 실측 자료 | 견적 관리 */
   const [detailPanelTab, setDetailPanelTab] = useState<'history' | 'measurement' | 'estimate'>('history')
+  /** 마이그레이션 동기화 후 ConsultationChat 재조회용 */
+  const [chatRefreshKey, setChatRefreshKey] = useState(0)
   /** 시스템 로그 딥링크 시 하이라이트할 메시지 id */
   const [highlightMessageId, setHighlightMessageId] = useState<string | null>(null)
   /** 상담 배지 클릭 시 리스트 스크롤 타깃 (효과 후 클리어) */
@@ -1011,7 +1013,7 @@ export default function ConsultationManagement() {
     const base = leads.filter((l) => inRange(l) && matchSearch(l))
     const ended = base.filter(isEnded)
     const active = base.filter((l) => !isEnded(l))
-    const completedCount = base.filter((l) => l.workflowStage === '시공완료').length
+    const completedCount = base.filter((l) => l.workflowStage === '시공완료' && l.status !== '거절').length
     const cancelCount = base.filter((l) => l.status === '거절').length
     return {
       전체: active.length,
@@ -1049,7 +1051,7 @@ export default function ConsultationManagement() {
       (l.contact || '').replace(/\D/g, '').includes(qDigits) ||
       (qDigits.length === 4 && (l.contact || '').replace(/\D/g, '').endsWith(qDigits))
     let list = leads.filter((l) => inRange(l) && matchSearch(l))
-    if (listTab === '종료') list = list.filter((l) => l.workflowStage === '시공완료')
+    if (listTab === '종료') list = list.filter((l) => l.workflowStage === '시공완료' && l.status !== '거절')
     else if (listTab === '캔슬') list = list.filter((l) => l.status === '거절')
     else {
       list = list.filter((l) => !isEnded(l))
@@ -1059,6 +1061,17 @@ export default function ConsultationManagement() {
     }
     return [...list].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
   }, [leads, listTab, searchQuery, dateRange])
+
+  /** 진행상태 탭 변경 시 최상단 상담카드 자동 선택 — 오른쪽 히스토리 패널 자동 갱신 */
+  useEffect(() => {
+    if (filteredLeads.length > 0) {
+      setSelectedLead(filteredLeads[0].id)
+    } else {
+      setSelectedLead(null)
+    }
+    // listTab만 의존: 탭 전환 시에만 최상단 선택. filteredLeads는 listTab 변경과 동시에 재계산됨
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- listTab 전환 시에만 동작
+  }, [listTab])
 
   const totalPages = Math.max(1, Math.ceil(filteredLeads.length / LIST_PAGE_SIZE))
   const paginatedLeads = useMemo(
@@ -1754,6 +1767,102 @@ export default function ConsultationManagement() {
     setEstimateModalOpen(false)
   }, [selectedLead])
 
+  /** 기존 마이그레이션 상담 동기화: metadata.estimate_history 비어있는데 estimates 있으면 보정 */
+  useEffect(() => {
+    if (!selectedLeadData?.id) return
+    const meta = selectedLeadData.metadata ?? {}
+    const isMigration =
+      meta.migration_tag === '과거데이터' || meta.source === '마이그레이션'
+    if (!isMigration || selectedLeadData.estimateHistory.length > 0) return
+
+    let cancelled = false
+    const consultationId = selectedLeadData.id
+    const companyName = selectedLeadData.company || selectedLeadData.displayName || '마이그레이션'
+
+    supabase
+      .from('estimates')
+      .select('id, grand_total, created_at, payload')
+      .eq('consultation_id', consultationId)
+      .eq('is_visible', true)
+      .order('created_at', { ascending: false })
+      .then(async ({ data: estList, error: estErr }) => {
+        if (cancelled || estErr || !estList?.length) return
+
+        const history = estList.map((e, i) => {
+          const payload = (e.payload as Record<string, unknown>) ?? {}
+          const issuedAt =
+            (payload.quoteDate as string) ??
+            (payload.estimateDate as string) ??
+            (payload.quote_date as string) ??
+            (e.created_at as string) ??
+            new Date().toISOString()
+          return {
+            version: i + 1,
+            issued_at: String(issuedAt).slice(0, 10),
+            amount: Number(e.grand_total) || 0,
+            summary: undefined,
+            is_final: true,
+          } as EstimateHistoryItem
+        })
+        const nextHistory = history.sort(
+          (a, b) => new Date(b.issued_at).getTime() - new Date(a.issued_at).getTime()
+        )
+        const nextMeta = {
+          ...meta,
+          estimate_history: nextHistory,
+        } as unknown as Json
+
+        const { error: updateErr } = await supabase
+          .from('consultations')
+          .update({ metadata: nextMeta })
+          .eq('id', consultationId)
+        if (updateErr) {
+          console.error('[마이그레이션 동기화] metadata 업데이트 실패:', updateErr)
+          return
+        }
+
+        const { data: existingMsgs } = await supabase
+          .from('consultation_messages')
+          .select('id, metadata')
+          .eq('consultation_id', consultationId)
+          .eq('message_type', 'SYSTEM')
+        const loggedEstIds = new Set(
+          (existingMsgs ?? [])
+            .map((m) => (m.metadata as Record<string, unknown>)?.estimate_id as string)
+            .filter(Boolean)
+        )
+
+        for (const e of estList) {
+          if (loggedEstIds.has(e.id)) continue
+          await insertSystemLog(supabase, {
+            consultation_id: consultationId,
+            event_type: 'estimate_issued',
+            actor_name: companyName,
+            detail: '견적서가 등록되었습니다. (마이그레이션)',
+            metadata: { type: 'estimate_issued', estimate_id: e.id },
+          })
+        }
+
+        if (cancelled) return
+        setLeads((prev) =>
+          prev.map((l) =>
+            l.id !== consultationId
+              ? l
+              : {
+                  ...l,
+                  metadata: nextMeta as Record<string, unknown>,
+                  estimateHistory: nextHistory,
+                  displayAmount: getDisplayAmount(nextHistory, l.expectedRevenue),
+                }
+          )
+        )
+        setChatRefreshKey((k) => k + 1)
+        toast.success('마이그레이션 견적 이력이 동기화되었습니다. 상담 히스토리를 확인해 주세요.')
+      })
+
+    return () => { cancelled = true }
+  }, [selectedLeadData])
+
   /** 현재 상담 건의 발주서 목록 조회 (order_documents) — 실측·갤러리 탭용 */
   useEffect(() => {
     if (!selectedLead) {
@@ -1792,7 +1901,11 @@ export default function ConsultationManagement() {
 
   /** 현재 상담 건의 견적서 목록 조회 (estimates 테이블) */
   useEffect(() => {
-    if (!selectedLead || detailPanelTab !== 'estimate') {
+    if (!selectedLead) {
+      setEstimatesList([])
+      return
+    }
+    if (detailPanelTab !== 'estimate' && !estimateModalOpen) {
       setEstimatesList([])
       return
     }
@@ -1815,9 +1928,9 @@ export default function ConsultationManagement() {
         setEstimatesList((data ?? []) as Array<{ id: string; consultation_id: string; payload: Record<string, unknown>; final_proposal_data: Record<string, unknown> | null; supply_total: number; vat: number; grand_total: number; approved_at: string | null; created_at: string }>)
       })
     return () => { cancelled = true }
-  }, [selectedLead, detailPanelTab])
+  }, [selectedLead, detailPanelTab, estimateModalOpen])
 
-  /** AI 추천 가이드용 과거 견적 로드 (견적 모달 오픈 시 최근 80건) */
+  /** AI 추천 가이드용 과거 견적 로드 (견적 모달 오픈 시 최근 200건 — 마이그레이션·과거 이력 포함) */
   useEffect(() => {
     if (!estimateModalOpen) return
     let cancelled = false
@@ -1826,7 +1939,7 @@ export default function ConsultationManagement() {
       .select('id, consultation_id, payload, final_proposal_data, approved_at, created_at')
       .eq('is_visible', true)
       .order('created_at', { ascending: false })
-      .limit(80)
+      .limit(200)
       .then(({ data, error }) => {
         if (cancelled || error) return
         setPastEstimatesForGuide((data ?? []) as Array<{ id: string; consultation_id: string; payload: Record<string, unknown>; final_proposal_data: Record<string, unknown> | null; approved_at: string | null; created_at: string }>)
@@ -1865,66 +1978,6 @@ export default function ConsultationManagement() {
 
   /** 1년 경과 여부 — 아카이브 스타일용 (created_at 기준) */
   const archiveCutoff = useMemo(() => startOfDay(subMonths(new Date(), 12)).getTime(), [])
-
-  /** 최근 12개월 내 저장된 견적 — 통계용(현재 시세 파악). 날짜는 startOfDay로 느슨하게 */
-  const estimatesLast12Months = useMemo(() => {
-    const cutoff = startOfDay(subMonths(new Date(), 12)).toISOString()
-    return estimatesList.filter((e) => e.created_at >= cutoff)
-  }, [estimatesList])
-
-  /** 최근 1년 통계: 최대·최소·중간값 + 각 estimate_id 매핑. 현재 시세 파악용 */
-  const estimateStats = useMemo(() => {
-    const list = estimatesLast12Months
-    if (list.length === 0) return null
-    const sorted = [...list].sort((a, b) => Number(a.grand_total) - Number(b.grand_total))
-    const maxEst = sorted[sorted.length - 1]
-    const minEst = sorted[0]
-    const midIdx = Math.floor(sorted.length / 2)
-    const medianValue = sorted.length % 2 === 1
-      ? Number(sorted[midIdx].grand_total)
-      : (Number(sorted[midIdx - 1].grand_total) + Number(sorted[midIdx].grand_total)) / 2
-    const medianEst = sorted.reduce((best, cur) => {
-      const curVal = Number(cur.grand_total)
-      const curDiff = Math.abs(curVal - medianValue)
-      const bestDiff = Math.abs(Number(best.grand_total) - medianValue)
-      return curDiff < bestDiff ? cur : best
-    })
-    return {
-      max: { value: Number(maxEst.grand_total), estimateId: maxEst.id },
-      min: { value: Number(minEst.grand_total), estimateId: minEst.id },
-      median: { value: Math.round(Number(medianEst.grand_total)), estimateId: medianEst.id },
-    }
-  }, [estimatesLast12Months])
-
-  /** 원가 합계 — 가장 최근 견적(12개월 내)의 품목 기준 vendor_price_book/products 조회 */
-  const [costSum, setCostSum] = useState<number | null>(null)
-  useEffect(() => {
-    if (!selectedLead || !estimatesLast12Months.length) {
-      setCostSum(null)
-      return
-    }
-    let cancelled = false
-    const latest = [...estimatesLast12Months].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0]
-    const data = (latest.final_proposal_data ?? latest.payload) as { rows?: Array<{ name?: string; qty?: string }> } | undefined
-    const rows = data?.rows ?? []
-    if (rows.length === 0) {
-      setCostSum(null)
-      return
-    }
-    const run = async () => {
-      let sum = 0
-      for (const r of rows) {
-        const name = (r.name ?? '').trim()
-        const qty = Math.max(0, parseFloat(String(r.qty ?? '0').replace(/,/g, '')) || 0)
-        if (!name || qty <= 0) continue
-        const rec = await getVendorPriceRecommendation(supabase, name)
-        if (rec && !cancelled) sum += rec.cost * qty
-      }
-      if (!cancelled) setCostSum(sum)
-    }
-    void run()
-    return () => { cancelled = true }
-  }, [selectedLead, estimatesLast12Months, supabase])
 
   /** 상세 패널 금액: 실제 유효 견적(estimatesList)이 있으면 그 합계로 검증, 없으면 카드 저장값 사용 */
   const validatedDisplayAmount = useMemo(() => {
@@ -2851,6 +2904,7 @@ export default function ConsultationManagement() {
                           contact={selectedLeadData.contact ?? ''}
                           companyName={selectedLeadData.displayName || selectedLeadData.company || '(업체명 없음)'}
                           isAdmin={isAdmin}
+                          refreshKey={chatRefreshKey}
                           googleChatWebhookUrl={
                             (import.meta.env.VITE_GOOGLE_CHAT_WEBHOOK_CHAT as string | undefined) ||
                             (import.meta.env.VITE_GOOGLE_CHAT_WEBHOOK_ANNOUNCEMENT as string | undefined) ||
@@ -2863,9 +2917,11 @@ export default function ConsultationManagement() {
                             if (meta.estimate_id) {
                               setDetailPanelTab('estimate')
                               setHighlightMessageId(null)
-                              const { data: est } = await supabase.from('estimates').select('id, payload').eq('id', meta.estimate_id).single()
+                              const { data: est } = await supabase.from('estimates').select('id, payload, created_at, approved_at').eq('id', meta.estimate_id).single()
+                              const p = (est?.payload ?? {}) as Partial<EstimateFormData> & Record<string, unknown>
+                              const fallbackDate = (est?.created_at ?? est?.approved_at ?? '').toString().slice(0, 16).replace('T', ' ')
                               setEstimateModalEditId(meta.estimate_id)
-                              setEstimateModalInitialData((est?.payload ?? null) as Partial<EstimateFormData> | null)
+                              setEstimateModalInitialData({ ...p, quoteDate: p.quoteDate || fallbackDate } as Partial<EstimateFormData>)
                               setEstimateModalOpen(true)
                             } else if (meta.message_id) {
                               setDetailPanelTab('history')
@@ -2957,41 +3013,6 @@ export default function ConsultationManagement() {
                           <Trash2 className="h-3.5 w-3.5" />
                           선택 삭제
                         </Button>
-                      </div>
-                    )}
-                    {estimateStats && (
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 mb-3 py-2 px-3 rounded-lg border border-border bg-muted/30 text-sm">
-                        <span className="text-muted-foreground shrink-0">최근 1년 시세:</span>
-                        <button
-                          type="button"
-                          title="해당 견적서 보기"
-                          className="cursor-pointer hover:text-primary hover:underline"
-                          onClick={() => setPrintEstimateId(estimateStats.max.estimateId)}
-                        >
-                          최대: {estimateStats.max.value.toLocaleString()}원
-                        </button>
-                        <span className="text-muted-foreground">|</span>
-                        <button
-                          type="button"
-                          title="해당 견적서 보기"
-                          className="cursor-pointer hover:text-primary hover:underline"
-                          onClick={() => setPrintEstimateId(estimateStats.median.estimateId)}
-                        >
-                          중간: {estimateStats.median.value.toLocaleString()}원
-                        </button>
-                        <span className="text-muted-foreground">|</span>
-                        <button
-                          type="button"
-                          title="해당 견적서 보기"
-                          className="cursor-pointer hover:text-primary hover:underline"
-                          onClick={() => setPrintEstimateId(estimateStats.min.estimateId)}
-                        >
-                          최소: {estimateStats.min.value.toLocaleString()}원
-                        </button>
-                        <span className="text-muted-foreground">|</span>
-                        <span className="text-muted-foreground">
-                          원가: {costSum != null ? costSum.toLocaleString() : '-'}원
-                        </span>
                       </div>
                     )}
                     <h3 className="text-xs font-semibold text-muted-foreground mb-2">기존 견적 이력</h3>
@@ -3089,7 +3110,12 @@ export default function ConsultationManagement() {
                                           size="sm"
                                           onClick={() => {
                                             setEstimateModalEditId(est.id)
-                                            setEstimateModalInitialData((est.payload ?? {}) as Partial<EstimateFormData>)
+                                            const p = (est.payload ?? {}) as Partial<EstimateFormData> & Record<string, unknown>
+                                            const fallbackDate = (est.created_at ?? est.approved_at ?? '').toString().slice(0, 16).replace('T', ' ')
+                                            setEstimateModalInitialData({
+                                              ...p,
+                                              quoteDate: p.quoteDate || fallbackDate,
+                                            } as Partial<EstimateFormData>)
                                             setEstimateModalOpen(true)
                                           }}
                                         >
@@ -3316,7 +3342,8 @@ export default function ConsultationManagement() {
                 const rawData = (est.approved_at && est.final_proposal_data ? est.final_proposal_data : est.payload) as unknown as EstimateFormData
                 const rawRows = rawData.rows ?? []
                 const paddedRows = rawRows.length >= 20 ? rawRows.slice(0, 20) : [...rawRows, ...Array.from({ length: 20 - rawRows.length }, (_, i) => createEmptyRow(rawRows.length + i))]
-                const data = { ...rawData, rows: paddedRows }
+                const fallbackQuoteDate = (est.created_at ?? est.approved_at ?? '').toString().slice(0, 16).replace('T', ' ')
+                const data = { ...rawData, rows: paddedRows, quoteDate: rawData?.quoteDate || fallbackQuoteDate }
                 return data.mode === 'PROPOSAL'
                   ? <ProposalPreviewContent data={data} totals={computeProposalTotals(data)} />
                   : <FinalEstimatePreviewContent data={data} totals={computeFinalTotals(data)} />
@@ -3433,7 +3460,13 @@ export default function ConsultationManagement() {
                   }
                   pastEstimates={selectedLeadData ? mergedPastEstimatesForGuide : []}
                   onApproved={selectedLeadData ? (data) => void handleEstimateApproved(selectedLeadData.id, data) : undefined}
-                  onRequestEstimatePreview={(_consultationId, estimateId) => setPrintEstimateId(estimateId)}
+                  onRequestEstimatePreview={(consultationId, estimateId) => {
+                    if (selectedLead !== consultationId) {
+                      setSelectedLead(consultationId)
+                      setDetailPanelTab('estimate')
+                    }
+                    setPrintEstimateId(estimateId)
+                  }}
                   onRequestPriceBookImage={(url) => setPriceBookImageUrl(url)}
                   hideInternalActions
                   showProfitabilityPanel

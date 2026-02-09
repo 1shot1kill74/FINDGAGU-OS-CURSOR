@@ -245,12 +245,17 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
   { initialData, initialMode = 'FINAL', pastEstimates = [], onApproved, onConvertToFinal, hideInternalActions, showProfitabilityPanel = false, onRequestEstimatePreview, onRequestPriceBookImage, className },
   ref
 ) {
+  /** datetime-local용 견적일시 정규화: 빈값·YYYY-MM-DD → 유효 형식 */
+  const normalizeQuoteDate = (val: string | undefined | null): string => {
+    const s = String(val ?? '').trim()
+    if (!s) return new Date().toISOString().slice(0, 16).replace('T', ' ')
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return `${s} 00:00`
+    return s.includes('T') ? s.replace('T', ' ') : s
+  }
   const [mode, setMode] = useState<EstimateMode>(initialData?.mode ?? initialMode)
   const [recipientName, setRecipientName] = useState(initialData?.recipientName ?? '')
   const [recipientContact, setRecipientContact] = useState(initialData?.recipientContact ?? '')
-  const [quoteDate, setQuoteDate] = useState(
-    initialData?.quoteDate ?? new Date().toISOString().slice(0, 16).replace('T', ' ')
-  )
+  const [quoteDate, setQuoteDate] = useState(() => normalizeQuoteDate(initialData?.quoteDate))
   const [footerNotes, setFooterNotes] = useState(initialData?.footerNotes ?? '')
   const [approved, setApproved] = useState(false)
 
@@ -384,7 +389,9 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
       const aiReason = payload.ai_reason?.trim() ?? undefined
       const isConfirmed = payload.is_confirmed === true
       const costPrice = payload.costPrice != null && payload.costPrice > 0 ? payload.costPrice : undefined
-      const displayPrice = costPrice != null ? roundToPriceUnit(costPrice / (1 - DEFAULT_MARGIN_PERCENT / 100)) : payload.unitPrice
+      // DB 검증된 가격만 사용. unitPrice 0 = 비교대상 미선택/직접입력 → 빈 칸으로 추가
+      const displayPrice = costPrice != null ? roundToPriceUnit(costPrice / (1 - DEFAULT_MARGIN_PERCENT / 100)) : (payload.unitPrice > 0 ? payload.unitPrice : 0)
+      const unitPriceStr = displayPrice > 0 ? String(displayPrice) : ''
       setRows((prev) => {
         const emptyIdx = prev.findIndex((r) => !getRowDisplayName(r).trim())
         const newData: Partial<EstimateRow> = {
@@ -393,7 +400,7 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
           color,
           qty: String(payload.qty),
           unit: 'EA',
-          unitPrice: String(displayPrice),
+          unitPrice: unitPriceStr,
           ...(mode === 'PROPOSAL' ? {} : { note: '' }),
           ...(aiUncertain ? { aiUncertain: true, aiReason } : {}),
           ...(isConfirmed ? { is_confirmed: true } : {}),
@@ -412,7 +419,7 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
             color,
             qty: String(payload.qty),
             unit: 'EA',
-            unitPrice: String(displayPrice),
+            unitPrice: unitPriceStr,
             ...(mode === 'PROPOSAL' ? {} : { note: '' }),
             ...(aiUncertain ? { aiUncertain: true, aiReason } : {}),
             ...(isConfirmed ? { is_confirmed: true } : {}),
@@ -822,13 +829,31 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
               })
             })
           })
-          const recs = searchPastCaseRecommendations({
+          let recs = searchPastCaseRecommendations({
             name: res.name,
             spec: res.spec ?? null,
             color: res.color ?? null,
             products: productsList,
             pastCaseRows,
           })
+          if (recs.length === 0) {
+            const vendor = await getVendorPriceRecommendation(supabase, res.name)
+            if (vendor) {
+              recs = [{
+                case_id: `vendor-${vendor.id}`,
+                name: vendor.product_name,
+                size: null,
+                color: null,
+                price: vendor.unitPrice,
+                matchStatus: { name: true, size: false, color: false },
+                costPrice: vendor.cost,
+                consultation_id: undefined,
+                estimate_id: undefined,
+                appliedDate: vendor.appliedDate,
+                siteName: undefined,
+              }]
+            }
+          }
           setPendingAddRowFromQuick({
             name: res.name,
             qty: res.qty,
@@ -841,44 +866,11 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
           setQuickRecommendations(recs)
           break
         }
-        case 'past_price': {
-          const productName = res.productName?.trim() || ''
-          if (!productName) break
-          const price = searchPastPrice(productName)
-          if (price != null) {
-            setPastPriceResult({ name: productName, unitPrice: price, source: 'past_estimate' })
-          } else {
-            const vendor = await getVendorPriceRecommendation(supabase, productName)
-            if (vendor) {
-              setPastPriceResult({
-                name: productName,
-                unitPrice: vendor.unitPrice,
-                cost: vendor.cost,
-                source: vendor.source,
-              })
-            } else {
-              toast.info(`'${productName}'에 대한 원가·단가 이력이 없습니다. (원가표·제품DB 확인)`)
-            }
-          }
-          break
-        }
         case 'target_total':
           applyTargetPricing(res.amount)
           break
         case 'target_margin':
           applyTargetMargin(res.marginPercent)
-          break
-        case 'needs_unit_price':
-          toast.info('단가는 얼마로 책정할까요?', { description: '예: 12 (만원) 또는 25만원' })
-          break
-        case 'needs_spec':
-          setPendingQuickCommand({
-            name: res.name,
-            qty: res.qty,
-            unitPrice: res.unitPrice,
-            specQuestion: res.specQuestion,
-          })
-          queueMicrotask(() => quickCommandInputRef.current?.focus())
           break
         default:
           break
@@ -1077,12 +1069,12 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
             ref={quickCommandInputRef}
             type="text"
             autoComplete="off"
-            placeholder={needsSpec ? '1200 600 720 또는 없음' : '예: 스마트A 1200 600 720 10 15만'}
+            placeholder={needsSpec ? '1200 600 720 또는 없음' : '예 : 스마트A 1200 600 740 모번 10개'}
             value={quickCommandInput}
             onChange={handleQuickCommandChange}
             onKeyDown={handleQuickCommandKeyDown}
             onKeyPress={handleQuickCommandKeyPress}
-            className="h-9 text-sm flex-1"
+            className="h-9 text-sm flex-1 bg-amber-50 dark:bg-amber-950/30 border-amber-200/80 focus-visible:ring-amber-400"
           />
           <Button
             type="button"
@@ -1137,12 +1129,12 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
             </button>
           </div>
         )}
-        {/* 과거 사례 추천 — 사용자 선택 시에만 행에 바인딩 (AI는 검색 도우미) */}
+        {/* 비교대상 — AI 퀵 커맨드 입력 시 아래에 표시, 작성자가 선택하면 견적 품목에 반영 */}
         {pendingAddRowFromQuick && quickRecommendations !== null && (
           <div className="mt-2 space-y-2">
             {quickRecommendations.length > 0 ? (
               <>
-                <p className="text-xs font-medium text-muted-foreground">과거 작업 케이스 추천 (선택 시 해당 행에 반영)</p>
+                <p className="text-xs font-medium text-muted-foreground">비교대상 (선택 시 견적 품목에 반영)</p>
                 <div className="flex flex-wrap gap-2">
                   {quickRecommendations.map((c) => {
                     const ms = c.matchStatus
@@ -1159,33 +1151,52 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
                       <div className="min-w-0 flex-1">
                         <p className="font-medium truncate">{c.name}{c.size ? ` · ${c.size}` : ''}{c.color ? ` / ${c.color}` : ''}</p>
                         <p className="text-xs text-muted-foreground">
-                          종전 원가: {c.costPrice != null && c.costPrice > 0 ? `${formatNumber(c.costPrice)}원` : '—'} · {matchText}
+                          종전 단가: {formatNumber(c.price)}원 · 원가: {c.costPrice != null && c.costPrice > 0 ? `${formatNumber(c.costPrice)}원` : '—'} · {matchText}
                         </p>
+                        {(c.siteName || c.appliedDate) && (
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {c.siteName || ''}{c.siteName && c.appliedDate ? ' · ' : ''}{c.appliedDate ? formatDateYYMMDD(c.appliedDate) : ''}
+                          </p>
+                        )}
                       </div>
-                      <Button
-                        type="button"
-                        variant="default"
-                        size="sm"
-                        className="h-8 shrink-0"
-                        onClick={() => {
-                          addRowFromQuickCommand({
-                            name: pendingAddRowFromQuick.name,
-                            qty: pendingAddRowFromQuick.qty,
-                            unitPrice: c.price,
-                            spec: pendingAddRowFromQuick.spec ?? c.size,
-                            color: pendingAddRowFromQuick.color ?? c.color,
-                            is_confirmed: true,
-                            costPrice: c.costPrice,
-                          })
-                        }}
-                      >
-                        선택
-                      </Button>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {c.consultation_id && c.estimate_id && onRequestEstimatePreview ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-8 text-xs"
+                            onClick={() => onRequestEstimatePreview(c.consultation_id!, c.estimate_id!)}
+                            title="견적서 원본 보기"
+                          >
+                            원본보기
+                          </Button>
+                        ) : null}
+                        <Button
+                          type="button"
+                          variant="default"
+                          size="sm"
+                          className="h-8 shrink-0"
+                          onClick={() => {
+                            addRowFromQuickCommand({
+                              name: pendingAddRowFromQuick.name,
+                              qty: pendingAddRowFromQuick.qty,
+                              unitPrice: c.price,
+                              spec: pendingAddRowFromQuick.spec ?? c.size,
+                              color: pendingAddRowFromQuick.color ?? c.color,
+                              is_confirmed: true,
+                              costPrice: c.costPrice,
+                            })
+                          }}
+                        >
+                          선택
+                        </Button>
+                      </div>
                     </div>
                     )
                   })}
                 </div>
-                <p className="text-xs text-muted-foreground">위 추천이 없으면 직접 입력하세요.</p>
+                <p className="text-xs text-muted-foreground">위 비교대상이 없으면 직접 입력으로 추가하세요.</p>
                 <Button
                   type="button"
                   variant="outline"
@@ -1202,7 +1213,7 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
               </>
             ) : (
               <>
-                <p className="text-sm text-amber-700 dark:text-amber-400 font-medium">새로운 조합입니다. 직접 입력하시겠습니까?</p>
+                <p className="text-sm text-amber-700 dark:text-amber-400 font-medium">비교대상이 없습니다. 신제품 등 연관 데이터가 없을 수 있습니다. 품명, 규격, 수량, 단가를 모두 입력해 주세요.</p>
                 <Button
                   type="button"
                   variant="outline"

@@ -158,17 +158,17 @@ function normalizeApiResult(raw: Record<string, unknown>): QuickCommandResult {
   const color = raw.color != null && raw.color !== '' ? String(raw.color).trim() : null
   const isUncertain = raw.is_uncertain === true
   const aiReason = raw.ai_reason != null && String(raw.ai_reason).trim() !== '' ? String(raw.ai_reason).trim() : undefined
-  if (req === 'add_row' && name && !Number.isNaN(qty) && qty > 0 && !Number.isNaN(unitPrice) && unitPrice > 0)
+  if (req === 'add_row' && name && !Number.isNaN(qty) && qty > 0 && !Number.isNaN(unitPrice) && unitPrice >= 0)
     return { type: 'add_row', name, qty, unitPrice, spec: spec || null, color, is_uncertain: isUncertain, ai_reason: aiReason }
-  if (req === 'past_price' && productName) return { type: 'past_price', productName }
+  if (req === 'past_price' && productName) return { type: 'add_row', name: productName, qty: 1, unitPrice: 0, spec: null, color: null }
   if (req === 'target_total' && !Number.isNaN(amount) && amount > 0) return { type: 'target_total', amount }
   const marginPercent = typeof raw.marginPercent === 'number' ? raw.marginPercent : parseFloat(String(raw.marginPercent || ''))
   if (req === 'target_margin' && !Number.isNaN(marginPercent) && marginPercent >= 0 && marginPercent <= 100)
     return { type: 'target_margin', marginPercent }
-  if (req === 'needs_spec' && name && !Number.isNaN(qty) && !Number.isNaN(unitPrice))
-    return { type: 'needs_spec', name, qty, unitPrice, specQuestion: getSpecQuestionForItem(name) }
+  if (req === 'needs_spec' && name && !Number.isNaN(qty) && !Number.isNaN(unitPrice) && unitPrice > 0)
+    return { type: 'add_row', name, qty, unitPrice, spec: spec || null, color: color || null }
   if (req === 'needs_unit_price' && name && !Number.isNaN(qty) && qty > 0)
-    return { type: 'needs_unit_price', name, qty }
+    return { type: 'add_row', name, qty, unitPrice: 0, spec: spec || null, color: color || null }
   return { type: 'unknown' }
 }
 
@@ -179,7 +179,7 @@ function mockParseWithPromptStyle(text: string): QuickCommandResult {
 
   if (/이전\s+.+\s+단가/i.test(t)) {
     const name = t.replace(/이전\s+/, '').replace(/\s+단가.*/, '').trim()
-    return name ? { type: 'past_price', productName: name } : null
+    return name ? { type: 'add_row', name, qty: 1, unitPrice: 0, spec: null, color: null } : null
   }
   if (/총액\s+.+\s*에\s*맞춰/i.test(t)) {
     const amt = parseAmountToWon(t.replace(/총액\s+/, '').replace(/\s*에\s*맞춰.*/, '').trim())
@@ -239,21 +239,36 @@ function mockParseWithPromptStyle(text: string): QuickCommandResult {
       }
     }
     return {
-      type: 'needs_spec',
-      name: possibleName,
-      qty,
-      unitPrice: price,
-      specQuestion: getSpecQuestionForItem(possibleName),
-    }
+        type: 'add_row',
+        name: possibleName,
+        qty,
+        unitPrice: price,
+        spec: null,
+        color: colorToken,
+      }
   }
-  if (possibleName && qty > 0)
-    return { type: 'needs_unit_price', name: possibleName, qty }
+  if (possibleName && qty > 0) {
+    const parsedSpecForPartial = parseSpecToFormat(t)
+    return { type: 'add_row', name: possibleName, qty, unitPrice: 0, spec: parsedSpecForPartial, color: colorToken }
+  }
 
-  // 단일 품명만 입력 시 — DB(원가표/제품) 조회용 past_price
+  // 단일 품명 또는 품명+일부 정보 — 유사 사례 검색용 add_row (단가 0 = DB에서 찾아 선택)
   const simpleProduct = t.split(/\s+/).filter(Boolean)
-  if (simpleProduct.length <= 2 && !/\d/.test(t)) {
-    const name = simpleProduct.join(' ').trim()
-    if (name.length >= 2) return { type: 'past_price', productName: name }
+  if (simpleProduct.length >= 1) {
+    const name = simpleProduct[0] ?? ''
+    if (name.length >= 2) {
+      const hasNumber = /\d/.test(t)
+      const qty = hasNumber && numMatches ? parseInt(numMatches[0] ?? '1', 10) : 1
+      const parsedSpec = hasNumber ? parseSpecToFormat(t) : null
+      return {
+        type: 'add_row',
+        name: simpleProduct.join(' ').trim(),
+        qty: qty > 0 ? qty : 1,
+        unitPrice: 0,
+        spec: parsedSpec,
+        color: colorToken,
+      }
+    }
   }
 
   return { type: 'unknown' }
@@ -415,9 +430,9 @@ export function searchPastCaseRecommendations(params: {
       return true
     })
   }
-  const exact = dedupe(exactMatch).slice(0, 1)
-  const rest = dedupe(out).filter((r) => !exact.some((e) => e.case_id === r.case_id)).slice(0, 3)
-  return [...exact, ...rest].slice(0, 3)
+  const exact = dedupe(exactMatch).slice(0, 2)
+  const rest = dedupe(out).filter((r) => !exact.some((e) => e.case_id === r.case_id)).slice(0, 5)
+  return [...exact, ...rest].slice(0, 5)
 }
 
 /**
@@ -454,7 +469,7 @@ export async function parseQuickCommand(
   return mockParseWithPromptStyle(t)
 }
 
-// PDF/JPG 파일 OpenAI 기반 데이터 추출 (데이터 통합 마이그레이션용)
+// PDF/JPG 파일 Gemini 기반 데이터 추출 (데이터 통합 마이그레이션용)
 export {
   parseFileWithAI,
   getFileCategory,

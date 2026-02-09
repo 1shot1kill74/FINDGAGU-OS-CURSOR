@@ -65,6 +65,8 @@ export interface ConsultationChatProps {
   onFocusConsultation?: (consultationId: string) => void
   /** true일 때만 시스템 메시지에 영구 삭제 버튼 노출 (admin 권한) */
   isAdmin?: boolean
+  /** 변경 시 메시지 재조회 (마이그레이션 동기화 등) */
+  refreshKey?: number
 }
 
 function normalizeContact(c: string): string {
@@ -90,6 +92,7 @@ export function ConsultationChat({
   highlightMessageId,
   onFocusConsultation,
   isAdmin = false,
+  refreshKey = 0,
 }: ConsultationChatProps) {
   const STORAGE_KEY = 'findgagu-chat-showAllHistory'
   const [showAllCustomer, setShowAllCustomer] = useState(() => {
@@ -191,7 +194,7 @@ export function ConsultationChat({
     setLoading(true)
     setHasMore(true)
     loadMessages().finally(() => setLoading(false))
-  }, [consultationId, showAllCustomer])
+  }, [consultationId, showAllCustomer, refreshKey])
 
   useEffect(() => {
     if (highlightMessageId) highlightRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })

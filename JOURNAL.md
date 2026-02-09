@@ -151,7 +151,7 @@ Journal: Project Ivory-OS Development 2024-02-05 (Day 1) - 진행 상황: 프로
 ## 2. 상세 결정·구현 사항
 
 ### [역할 분리]
-- **estimateAiService.ts:** `parseQuickCommand(text, context?)` → `QuickCommandResult` JSON. 타입: `add_row`, `past_price`, `target_total`, `needs_unit_price`, `needs_spec`, `spec_reply`, `unknown`. TODO: OpenAI/Gemini API로 교체.
+- **estimateAiService.ts:** `parseQuickCommand(text, context?)` → `QuickCommandResult` JSON. 타입: `add_row`, `past_price`, `target_total`, `needs_unit_price`, `needs_spec`, `spec_reply`, `unknown`. PDF/JPG 파싱은 Gemini API 사용.
 - **estimateUtils.ts:** `parseAmountToWon`(금액 문자열 → 원화), `scaleFactorToTarget`(총액 맞춤 배율). 복잡한 케이스는 코드로 방어하지 않음.
 - **EstimateForm.tsx:** `aiParse()` 호출 후 `switch (res.type)`로 분기. `addRowFromQuickCommand`, `applyTargetPricing`, `searchPastPrice` 등 핸들러만 사용.
 

@@ -1,12 +1,118 @@
 /**
- * PDF/JPG 파일 OpenAI 기반 데이터 추출
- * - PDF: GPT-4o로 현장명, 지역, 업종, 품목 리스트 추출
- * - JPG: GPT-4o Vision으로 거래처명, 제품명, 규격, 원가 추출
+ * PDF/JPG 파일 AI 데이터 추출 — Gemini 2.0 Flash (메인) + OpenAI GPT-4o (폴백)
+ * - 메인: Gemini 2.0 Flash — 표 구조·파인드가구 키워드 인식 등 향상된 비전 활용
+ * - 폴백: Gemini 할당량/서버 에러/지연 시 OpenAI GPT-4o로 재시도
  */
+import { GoogleGenerativeAI } from '@google/generative-ai'
+import { toast } from 'sonner'
 import type { EstimateRow } from '@/components/estimate/EstimateForm'
+
+const GEMINI_API_KEY = (
+  import.meta.env.VITE_GOOGLE_GEMINI_API_KEY ??
+  import.meta.env.GOOGLE_GEMINI_API_KEY ??
+  import.meta.env.VITE_GEMINI_API_KEY
+) as string | undefined
 
 const OPENAI_API_KEY = import.meta.env.VITE_OPENAI_API_KEY as string | undefined
 const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions'
+
+const GEMINI_MODEL = 'gemini-2.0-flash'
+
+/** 무료 티어 분당 호출 제한 관련 에러인지 판별 */
+function isRateLimitError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err)
+  const lower = msg.toLowerCase()
+  return (
+    lower.includes('429') ||
+    lower.includes('resource_exhausted') ||
+    lower.includes('quota') ||
+    lower.includes('rate limit') ||
+    lower.includes('per minute') ||
+    lower.includes('requests per minute') ||
+    lower.includes('too many requests')
+  )
+}
+
+/** 사용자 친화적 에러로 변환 (무료 티어 제한 시) */
+function toUserFriendlyError(err: unknown): Error {
+  if (isRateLimitError(err)) {
+    return new Error(
+      'Gemini API 무료 티어의 분당 호출 제한에 걸렸습니다. 1분 후 다시 시도해 주세요.'
+    )
+  }
+  return err instanceof Error ? err : new Error(String(err))
+}
+
+/** Gemini 실패 시 OpenAI 폴백 대상인지 (할당량/서버에러/지연) */
+function isGeminiFallbackTarget(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err)
+  const lower = msg.toLowerCase()
+  return (
+    isRateLimitError(err) ||
+    lower.includes('500') ||
+    lower.includes('503') ||
+    lower.includes('timeout') ||
+    lower.includes('network') ||
+    lower.includes('fetch') ||
+    lower.includes('server') ||
+    lower.includes('unavailable') ||
+    lower.includes('resource_exhausted')
+  )
+}
+
+/**
+ * OpenAI Chat Completions API (GPT-4o) — Gemini 폴백용
+ * userParts: 텍스트 또는 [텍스트, { inlineData }]
+ */
+async function callOpenAI(
+  systemInstruction: string,
+  userParts: Array<string | { inlineData: { data: string; mimeType: string } }>
+): Promise<string> {
+  if (!OPENAI_API_KEY?.trim()) {
+    throw new Error('폴백용 VITE_OPENAI_API_KEY가 .env에 설정되지 않았습니다.')
+  }
+  const contentParts: Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string; detail?: 'high' } }> = []
+  for (const p of userParts) {
+    if (typeof p === 'string') {
+      contentParts.push({ type: 'text', text: p })
+    } else if (p.inlineData) {
+      const mime = (p.inlineData.mimeType || 'image/jpeg').split(';')[0]!.trim()
+      contentParts.push({
+        type: 'image_url',
+        image_url: {
+          url: `data:${mime};base64,${p.inlineData.data}`,
+          detail: 'high',
+        },
+      })
+    }
+  }
+  const userContent = contentParts.length === 1 && contentParts[0]!.type === 'text'
+    ? contentParts[0]!.text
+    : contentParts
+  const res = await fetch(OPENAI_API_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: 'gpt-4o',
+      messages: [
+        { role: 'system', content: systemInstruction },
+        { role: 'user', content: userContent },
+      ],
+      max_tokens: 4096,
+    }),
+  })
+  if (!res.ok) {
+    const err = await res.text()
+    throw new Error(`OpenAI API 오류 (${res.status}): ${err.slice(0, 200)}`)
+  }
+  const json = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> }
+  const text = json.choices?.[0]?.message?.content?.trim() ?? ''
+  if (!text) throw new Error('OpenAI AI 분석 결과가 비어 있습니다.')
+  return text
+}
 
 export type FileCategory = 'Estimates' | 'VendorPrice'
 
@@ -18,17 +124,13 @@ export interface ParsedEstimateFromPDF {
   quoteDate: string
   recipientContact: string
   rows: EstimateRow[]
-  /** 고객/수신명 (견적서 수신처) */
   customer_name?: string
-  /** 연락처 (전화번호) */
   customer_phone?: string
-  /** 현장 주소/지역 (상세 주소 포함 가능) */
   site_location?: string
-  /** 견적 총액 (원). 문서에 명시된 경우 추출, 없으면 0 */
   total_amount?: number
 }
 
-/** 원가표 품목 1건 (복합 표·수기 메모 추출) */
+/** 원가표 품목 1건 */
 export interface ParsedVendorPriceItem {
   vendor_name: string
   product_name: string
@@ -37,7 +139,7 @@ export interface ParsedVendorPriceItem {
   description: string
 }
 
-/** JPG 파싱 결과 (원가표) — 여러 품목 배열 */
+/** JPG 파싱 결과 (원가표) */
 export interface ParsedVendorPrice {
   items: ParsedVendorPriceItem[]
 }
@@ -52,7 +154,6 @@ export interface ParsedVendorPriceLegacy {
 
 export type ParsedResult = { type: 'Estimates'; data: ParsedEstimateFromPDF } | { type: 'VendorPrice'; data: ParsedVendorPrice }
 
-/** 우리 회사 판매 견적서 식별 키워드 — 둘 다 있어야 Estimates */
 const COMPANY_KEYWORDS = ['파인드가구', '김지윤'] as const
 
 function hasCompanyKeywords(text: string): boolean {
@@ -63,7 +164,6 @@ function hasCompanyKeywords(text: string): boolean {
 
 /**
  * 문서 상단·직인 근처에서 '파인드가구'와 '김지윤'을 찾아라.
- * 둘 다 있으면 우리 회사의 판매 견적서다.
  */
 async function detectCategoryFromContent(file: File): Promise<FileCategory> {
   const ext = (file.name.split('.').pop() ?? '').toLowerCase()
@@ -74,17 +174,11 @@ async function detectCategoryFromContent(file: File): Promise<FileCategory> {
   if (['jpg', 'jpeg', 'png'].includes(ext)) {
     const base64 = await fileToBase64(file)
     const mimeType = getMimeFromExtension(file)
-    const sysPrompt = `문서 상단이나 직인(도장) 근처에서 '파인드가구'와 '김지윤' 텍스트를 찾아라. 둘 다 있으면 우리 회사의 판매 견적서다.
+    const sysPrompt = `이미지에서 '파인드가구'와 '김지윤' 키워드를 찾아라. 문서 상단·직인(도장)·헤더 근처를 집중 확인. 둘 다 있으면 우리 회사 판매 견적서.
 다음 JSON만 출력: {"hasFindgagu": true/false, "hasKimJiyoon": true/false}`
-    const content = await callOpenAI([
-      { role: 'system', content: sysPrompt },
-      {
-        role: 'user',
-        content: [
-          { type: 'text' as const, text: '이 이미지에 "파인드가구"와 "김지윤"이 둘 다 보이는지 확인하세요.' },
-          { type: 'image_url' as const, image_url: { url: `data:${mimeType};base64,${base64}`, detail: 'low' as const } },
-        ],
-      },
+    const content = await callAIWithFallback(sysPrompt, [
+      '이 이미지에 "파인드가구"와 "김지윤"이 둘 다 보이는지 확인하세요.',
+      { inlineData: { data: base64, mimeType } },
     ])
     if (!content) return 'VendorPrice'
     try {
@@ -102,7 +196,7 @@ function getFileCategory(file: File): FileCategory {
   const ext = (file.name.split('.').pop() ?? '').toLowerCase()
   if (ext === 'pdf') return 'Estimates'
   if (['jpg', 'jpeg', 'png'].includes(ext)) return 'VendorPrice'
-  return 'Estimates' // 기본값
+  return 'Estimates'
 }
 
 /** PDF에서 텍스트 추출 (pdfjs-dist) */
@@ -125,14 +219,12 @@ async function extractTextFromPDF(file: File): Promise<string> {
   return texts.join('\n\n')
 }
 
-/** 파일 확장자 → MIME (file.type이 비거나 잘못됐을 때 사용, Win/Mac 호환) */
 function getMimeFromExtension(file: File): string {
   const ext = (file.name.split('.').pop() ?? '').toLowerCase()
   const map: Record<string, string> = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp' }
   return map[ext] || file.type || 'image/jpeg'
 }
 
-/** JPG를 base64로 인코딩 */
 async function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -146,39 +238,49 @@ async function fileToBase64(file: File): Promise<string> {
   })
 }
 
-/** OpenAI Chat API 호출 */
-async function callOpenAI(
-  messages: Array<{
-    role: 'system' | 'user'
-    content: string | Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string; detail?: 'low' | 'high' | 'auto' } }>
-  }>
+/**
+ * Gemini 2.0 Flash 호출 (google-generative-ai SDK)
+ */
+async function callGeminiSDK(
+  systemInstruction: string,
+  userParts: Array<string | { inlineData: { data: string; mimeType: string } }>
 ): Promise<string> {
-  if (!OPENAI_API_KEY?.trim()) {
-    throw new Error('VITE_OPENAI_API_KEY가 설정되지 않았습니다. .env에 OpenAI API 키를 추가하세요.')
+  if (!GEMINI_API_KEY?.trim()) {
+    throw new Error('GOOGLE_GEMINI_API_KEY(또는 VITE_GOOGLE_GEMINI_API_KEY)가 .env에 설정되지 않았습니다.')
   }
-  const res = await fetch(OPENAI_API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${OPENAI_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o',
-      messages,
-      max_tokens: 4096,
-    }),
+  const genAI = new GoogleGenerativeAI(GEMINI_API_KEY)
+  const model = genAI.getGenerativeModel({
+    model: GEMINI_MODEL,
+    systemInstruction,
+    generationConfig: { maxOutputTokens: 4096 },
   })
-  if (!res.ok) {
-    const err = await res.text()
-    throw new Error(`OpenAI API 오류 (${res.status}): ${err.slice(0, 200)}`)
+  const result = await model.generateContent(userParts)
+  const response = result.response
+  const text = response.text?.()?.trim() ?? ''
+  if (!text) {
+    console.error('[parseFileWithAI] Gemini API 응답이 비어 있습니다.')
+    throw new Error('AI 분석 결과가 비어 있습니다.')
   }
-  const json = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> }
-  const content = json.choices?.[0]?.message?.content?.trim() ?? ''
-  if (!content) {
-    console.error('[parseFileWithAI] OpenAI API 응답이 비어 있습니다.', { json: JSON.stringify(json).slice(0, 200) })
-    throw new Error('AI 분석 결과가 비어 있습니다. API 응답을 확인해 주세요.')
+  return text
+}
+
+/**
+ * 메인: Gemini 2.0 → 폴백: OpenAI GPT-4o
+ * Gemini가 할당량/서버에러/지연 시 OpenAI로 재시도, 사모님께 안내 토스트 표시
+ */
+async function callAIWithFallback(
+  systemInstruction: string,
+  userParts: Array<string | { inlineData: { data: string; mimeType: string } }>
+): Promise<string> {
+  try {
+    return await callGeminiSDK(systemInstruction, userParts)
+  } catch (geminiErr) {
+    if (isGeminiFallbackTarget(geminiErr) && OPENAI_API_KEY?.trim()) {
+      toast.info('제미나이가 응답하지 않아 오픈AI로 분석 중입니다...', { duration: 4000 })
+      return await callOpenAI(systemInstruction, userParts)
+    }
+    throw toUserFriendlyError(geminiErr)
   }
-  return content
 }
 
 /** JSON 블록 파싱 (마크다운 코드 블록 제거) */
@@ -189,7 +291,6 @@ function parseJsonBlock(text: string): Record<string, unknown> {
   return JSON.parse(cleaned) as Record<string, unknown>
 }
 
-/** EstimateRow 정규화 */
 function normalizeRow(raw: Record<string, unknown>, index: number): EstimateRow {
   return {
     no: String(raw.no ?? index + 1),
@@ -204,11 +305,30 @@ function normalizeRow(raw: Record<string, unknown>, index: number): EstimateRow 
 
 export type ParseMode = 'default' | 'estimates' | 'vendor_price'
 
-/**
- * PDF/JPG 파일을 OpenAI로 파싱하여 구조화된 데이터 반환
- * @param file - 업로드된 파일
- * @param options.mode - 'estimates'이면 판매 견적서(selling_price), 'vendor_price'이면 매입 원가(cost_price) 추출
- */
+/** 비전 전용: 원가표 이미지 분석 (Gemini 2.0 향상된 비전 — 표 구조 인식) */
+const VISION_VENDOR_PROMPT = `당신은 원가표/가격표 이미지 분석 전문가입니다. Gemini 2.0의 향상된 비전 능력으로 표 구조와 수기 메모를 정교하게 인식합니다.
+
+**표(Table) 구조 인식**:
+- 행·열 구조를 정확히 파악하고, 병합된 셀·여러 열의 품목·가격 열을 구분
+- 표 외부의 도면 옆 수기 메모, 손글씨 단가·품명·규격도 모두 추출
+- 흐릿하거나 작은 글씨, 저해상도도 놓치지 말 것
+
+**추출 규칙**: 가격은 ₩·원·콤마 제거 후 숫자만(cost_price). 한글·숫자·영문 정확 인식.
+
+**출력** (유효한 JSON만, items 배열 필수):
+{"items":[{"vendor_name":"","product_name":"","size":"","cost_price":숫자,"description":""}]}`
+
+/** 비전 전용: 견적서 이미지 분석 (Gemini 2.0 — 파인드가구 키워드·표 구조 최우선) */
+const VISION_ESTIMATE_PROMPT = `당신은 가구 견적서 이미지 분석 전문가입니다. Gemini 2.0의 향상된 비전으로 다음을 최우선 수행합니다.
+
+**1) '파인드가구' & '김지윤' 식별**: 문서 상단·직인(도장) 근처에서 반드시 확인. 둘 다 있으면 우리 회사 판매 견적서.
+
+**2) 표(Table) 구조**: 품목·규격·수량·단가·금액 열을 정확히 구분. 병합 셀·여러 행 구조 이해.
+
+**추출 필드**: siteName, region, industry, quoteDate(YYYY-MM-DD), recipientContact, customer_name, customer_phone, site_location, total_amount, rows[{no,name,spec,qty,unit,unitPrice,note}]. unitPrice=판매가(원), spec="1200×600×720".
+
+**규칙**: 추출 불가 필드는 빈 문자열·null·0. 유효한 JSON만 출력.`
+
 export async function parseFileWithAI(
   file: File,
   options?: { mode?: ParseMode }
@@ -220,24 +340,19 @@ export async function parseFileWithAI(
     : forceVendorPrice ? 'VendorPrice'
     : await detectCategoryFromContent(file)
 
-  // 원가 등록 모드: PDF도 원가 추출
   if (forceVendorPrice) {
     const ext = (file.name.split('.').pop() ?? '').toLowerCase()
     const isPdf = ext === 'pdf'
-    const VENDOR_PROMPT =
-      '현재 탭 목적: 매입 원가 등록. 오로지 제품명, 규격, 매입 원가(cost_price) 추출에만 집중하라. 모든 품목을 items 배열로 반환하라. 가격 필드명은 반드시 cost_price 사용.'
+    const basePrompt = '매입 원가 등록. 제품명, 규격, 매입 원가(cost_price) 추출. items 배열, cost_price 필드명 사용.'
+    const jsonFormat = '{ "items": [ { "product_name", "size", "cost_price", "description" } ] }'
 
     if (isPdf) {
       const text = await extractTextFromPDF(file)
       if (!text.trim()) throw new Error('PDF에서 텍스트를 추출할 수 없습니다.')
-      const sysPrompt = `${VENDOR_PROMPT}\n출력 형식: { "items": [ { "product_name": "제품명", "size": "규격", "cost_price": 숫자, "description": "색상/특이사항" } ] }\n반드시 유효한 JSON만 출력하세요.`
-    const content = await callOpenAI([
-      { role: 'system', content: sysPrompt },
-      { role: 'user', content: text.slice(0, 15000) },
-    ])
-    if (!content) throw new Error('AI 분석 결과가 비어 있습니다.')
-    console.log('[parseFileWithAI] PDF(vendor) 파싱 완료, content 길이:', content.length)
-    const parsed = parseJsonBlock(content)
+      const sysPrompt = `${basePrompt}\n출력: ${jsonFormat}\n유효한 JSON만 출력.`
+      const content = await callAIWithFallback(sysPrompt, [text.slice(0, 15000)])
+      if (!content) throw new Error('AI 분석 결과가 비어 있습니다.')
+      const parsed = parseJsonBlock(content)
       const rawItems = Array.isArray(parsed.items) ? parsed.items : []
       const items: ParsedVendorPriceItem[] = rawItems.map((r: unknown) => {
         const row = typeof r === 'object' && r !== null ? (r as Record<string, unknown>) : {}
@@ -251,30 +366,17 @@ export async function parseFileWithAI(
           description: String(row.description ?? row.note ?? ''),
         }
       })
-      return {
-        category: 'VendorPrice',
-        result: { type: 'VendorPrice', data: { items } },
-      }
+      return { category: 'VendorPrice', result: { type: 'VendorPrice', data: { items } } }
     }
-    // 이미지: Vision API
+
     const base64 = await fileToBase64(file)
     const mimeType = getMimeFromExtension(file)
-    const sysPrompt = `${VENDOR_PROMPT}\n출력 형식: { "items": [ { "product_name": "제품명", "size": "규격", "cost_price": 숫자, "description": "색상/특이사항" } ] }\n표·수기 메모 모두 포함. cost_price는 숫자만(원). 반드시 유효한 JSON만 출력하세요.`
-    const content = await callOpenAI([
-      { role: 'system', content: sysPrompt },
-      {
-        role: 'user',
-        content: [
-          { type: 'text' as const, text: '이 원가 명세서에서 모든 품목을 추출하세요.' },
-          {
-            type: 'image_url' as const,
-            image_url: { url: `data:${mimeType};base64,${base64}`, detail: 'high' as const },
-          },
-        ],
-      },
+    const sysPrompt = `${VISION_VENDOR_PROMPT}\n${basePrompt}\n${jsonFormat}`
+    const content = await callAIWithFallback(sysPrompt, [
+      '이 원가 명세서 이미지에서 표와 도면 옆 수기 메모를 모두 분석해, 모든 품목을 items 배열로 추출하세요.',
+      { inlineData: { data: base64, mimeType } },
     ])
     if (!content) throw new Error('AI 분석 결과가 비어 있습니다.')
-    console.log('[parseFileWithAI] 이미지(vendor) 파싱 완료, content 길이:', content.length)
     const parsed = parseJsonBlock(content)
     const rawItems = Array.isArray(parsed.items) ? parsed.items : []
     const items: ParsedVendorPriceItem[] = rawItems.map((r: unknown) => {
@@ -298,67 +400,39 @@ export async function parseFileWithAI(
         description: String(parsed.description ?? ''),
       })
     }
-    return {
-      category: 'VendorPrice',
-      result: { type: 'VendorPrice', data: { items } },
-    }
+    return { category: 'VendorPrice', result: { type: 'VendorPrice', data: { items } } }
   }
 
   if (category === 'Estimates') {
     const ext = (file.name.split('.').pop() ?? '').toLowerCase()
     const isPdf = ext === 'pdf'
-
-    const tabHint = forceEstimates
-      ? '현재 탭 목적: 판매 견적서 등록. 품목 단가는 판매가(selling_price)이므로 unitPrice 필드로 추출하라. '
-      : ''
-    const sysPrompt = `당신은 가구 견적서 문서 분석 전문가입니다. ${tabHint}문서 상단이나 직인 근처에서 '파인드가구'와 '김지윤'을 찾아라. 둘 다 있으면 우리 회사의 판매 견적서다.
-주어진 ${isPdf ? '텍스트' : '이미지'}에서 다음 정보를 JSON으로 추출하세요.
-- siteName: 현장명 (업체/학교/학원명)
-- region: 지역 (예: 서울, 경기, 부산)
-- industry: 업종 (예: 초등학교, 중학교, 학원, 오피스)
-- quoteDate: 견적일 또는 발행일을 반드시 찾아서 추출 (YYYY-MM-DD 형식. "견적일", "발행일", "작성일", "날짜" 등 문서에 기재된 날짜. 없으면 오늘)
-- recipientContact: 연락처/전화번호 (없으면 빈 문자열)
-- customer_name: 고객/수신명 (견적서 수신처, 수하인. siteName과 동일할 수 있음)
-- customer_phone: 연락처/전화번호 (recipientContact와 동일 값 가능)
-- site_location: 현장 주소/지역 (상세 주소 포함, 예: "서울 강남구 XX동 123")
-- total_amount: 견적 총액(원). "총 금액", "합계", "공급가액 합계" 등 문서에 명시된 최종 금액 숫자만. 없으면 0
-- rows: 품목 배열. 각 항목은 { no, name, spec, qty, unit, unitPrice, note } 포함. unitPrice는 판매가(원), 숫자만. spec은 "1200×600×720" 형식.
-추출 불가한 필드는 빈 문자열, null 또는 0. 반드시 유효한 JSON만 출력하세요.`
+    const tabHint = forceEstimates ? '판매 견적서 등록. 품목 단가는 판매가(unitPrice) 추출. ' : ''
+    const sysPrompt = isPdf
+      ? `가구 견적서 문서 분석. ${tabHint}파인드가구·김지윤 확인. 텍스트에서 JSON 추출: siteName, region, industry, quoteDate(YYYY-MM-DD), recipientContact, customer_name, customer_phone, site_location, total_amount, rows[{no,name,spec,qty,unit,unitPrice,note}]. 유효한 JSON만 출력.`
+      : `${VISION_ESTIMATE_PROMPT}\n${tabHint}`
 
     let content: string
     if (isPdf) {
       const text = await extractTextFromPDF(file)
       if (!text.trim()) throw new Error('PDF에서 텍스트를 추출할 수 없습니다.')
-      content = (await callOpenAI([
-        { role: 'system', content: sysPrompt },
-        { role: 'user', content: text.slice(0, 12000) },
-      ])) ?? ''
+      content = (await callAIWithFallback(sysPrompt, [text.slice(0, 12000)])) ?? ''
     } else {
       const base64 = await fileToBase64(file)
       const mimeType = getMimeFromExtension(file)
-      content = (await callOpenAI([
-        { role: 'system', content: sysPrompt },
-        {
-          role: 'user',
-          content: [
-            { type: 'text' as const, text: '이 견적서 이미지에서 모든 정보를 추출하세요.' },
-            { type: 'image_url' as const, image_url: { url: `data:${mimeType};base64,${base64}`, detail: 'high' as const } },
-          ],
-        },
+      content = (await callAIWithFallback(sysPrompt, [
+        '이 견적서 이미지에서 모든 정보를 추출하세요.',
+        { inlineData: { data: base64, mimeType } },
       ])) ?? ''
     }
     if (!content) throw new Error('AI 분석 결과가 비어 있습니다.')
-    console.log(`[parseFileWithAI] ${isPdf ? 'PDF' : '이미지'}(견적서) 파싱 완료, content 길이:`, content.length)
     const parsed = parseJsonBlock(content)
     const rowsRaw = Array.isArray(parsed.rows) ? parsed.rows : []
     const rows: EstimateRow[] = rowsRaw.map((r, i) =>
       normalizeRow(typeof r === 'object' && r !== null ? (r as Record<string, unknown>) : {}, i)
     )
-
     const today = new Date().toISOString().slice(0, 10)
     const quoteDate = String(parsed.quoteDate ?? '').trim()
     const validDate = /^\d{4}-\d{2}-\d{2}$/.test(quoteDate) ? quoteDate : today
-
     const customerName = String(parsed.customer_name ?? parsed.siteName ?? '').trim()
     const customerPhone = String(parsed.customer_phone ?? parsed.recipientContact ?? '').trim()
     const siteLocation = String(parsed.site_location ?? parsed.region ?? '').trim()
@@ -366,7 +440,6 @@ export async function parseFileWithAI(
     if (totalAmount <= 0 && typeof parsed.total_amount === 'string') {
       totalAmount = parseInt(String(parsed.total_amount).replace(/\D/g, ''), 10) || 0
     }
-
     return {
       category: 'Estimates',
       result: {
@@ -387,57 +460,16 @@ export async function parseFileWithAI(
     }
   }
 
-  // JPG: Vision API
   const base64 = await fileToBase64(file)
   const mimeType = getMimeFromExtension(file)
-
-  const sysPrompt = `당신은 원가표/가격표 이미지 분석 전문가입니다. 현재 탭 목적: 매입 원가 등록. 가격 필드명은 반드시 cost_price 사용.
-이미지에서 다음을 모두 찾아 JSON으로 추출하세요.
-
-1) **표(Table)**: 행·열 구조로 된 품목 리스트
-2) **도면 옆 수기 메모**: 손글씨, 메모, 옆에 적힌 단가·품명
-
-**출력 형식 (반드시 items 배열)**:
-{
-  "items": [
-    {
-      "vendor_name": "거래처명(회사명/상호)",
-      "product_name": "제품명(품목명)",
-      "size": "규격 (예: 1200×600×720, W×D×H. 없으면 빈 문자열)",
-      "cost_price": 숫자,
-      "description": "색상/특이사항 (없으면 빈 문자열)"
-    }
-  ]
-}
-
-**규칙**:
-- 품목이 1개여도 items 배열로 반환
-- 표의 모든 행 + 수기 메모의 모든 품목을 개별 items 요소로 추가
-- cost_price: 숫자만(원). ₩, 원, 콤마 제거
-- 한글·숫자·영문·손글씨를 정확히 읽고, 놓친 행 없이 모두 추출
-- 반드시 유효한 JSON만 출력`
-
-  const content = await callOpenAI([
-    { role: 'system', content: sysPrompt },
-    {
-      role: 'user',
-      content: [
-        { type: 'text' as const, text: '이 원가표/견적서 이미지에서 표와 도면 옆 수기 메모를 모두 분석해, 모든 품목을 items 배열로 추출하세요.' },
-        {
-          type: 'image_url' as const,
-          image_url: {
-            url: `data:${mimeType};base64,${base64}`,
-            detail: 'high' as const,
-          },
-        },
-      ],
-    },
+  const content = await callAIWithFallback(VISION_VENDOR_PROMPT, [
+    '이 원가표/견적서 이미지에서 표와 도면 옆 수기 메모를 모두 분석해, 모든 품목을 items 배열로 추출하세요.',
+    { inlineData: { data: base64, mimeType } },
   ])
   if (!content) throw new Error('AI 분석 결과가 비어 있습니다.')
-  console.log('[parseFileWithAI] 이미지(원가표) 파싱 완료, content 길이:', content.length)
   const parsed = parseJsonBlock(content)
   const rawItems = Array.isArray(parsed.items) ? parsed.items : []
-  const items: ParsedVendorPriceItem[] = rawItems.map((r: unknown, i: number) => {
+  const items: ParsedVendorPriceItem[] = rawItems.map((r: unknown) => {
     const row = typeof r === 'object' && r !== null ? (r as Record<string, unknown>) : {}
     const costVal = row.cost_price ?? row.cost
     const cost = typeof costVal === 'number' ? costVal : parseInt(String(costVal ?? 0).replace(/\D/g, ''), 10) || 0
@@ -449,26 +481,18 @@ export async function parseFileWithAI(
       description: String(row.description ?? row.note ?? ''),
     }
   })
-
-  // items가 비어 있으면 레거시 단일 객체 패턴 fallback
   if (items.length === 0) {
-    console.warn('[parseFileWithAI] 원가표 추출 결과 items가 비어 있어 fallback 적용.', { parsed: JSON.stringify(parsed).slice(0, 300) })
-    const cost = typeof parsed.cost === 'number' ? parsed.cost : parseInt(String(parsed.cost ?? 0).replace(/\D/g, ''), 10) || 0
     items.push({
       vendor_name: String(parsed.vendor_name ?? parsed.vendorName ?? ''),
       product_name: String(parsed.product_name ?? parsed.productName ?? ''),
       size: String(parsed.size ?? parsed.spec ?? ''),
-      cost_price: cost,
+      cost_price: typeof parsed.cost === 'number' ? parsed.cost : parseInt(String(parsed.cost ?? 0).replace(/\D/g, ''), 10) || 0,
       description: String(parsed.description ?? parsed.note ?? ''),
     })
   }
-  return {
-    category: 'VendorPrice',
-    result: { type: 'VendorPrice', data: { items } },
-  }
+  return { category: 'VendorPrice', result: { type: 'VendorPrice', data: { items } } }
 }
 
-/** 우리 회사 견적서 여부 (파인드가구 & 김지윤 동시 존재) — 거래처 탭 경고용 */
 export async function detectIsOurCompanyEstimate(file: File): Promise<boolean> {
   const category = await detectCategoryFromContent(file)
   return category === 'Estimates'

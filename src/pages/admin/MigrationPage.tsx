@@ -23,6 +23,7 @@ import {
   type ParsedVendorPriceItem,
   type FileCategory,
 } from '@/lib/parseFileWithAI'
+import { insertSystemLog } from '@/lib/activityLog'
 
 const SUPPLIER_FIXED = {
   bizNumber: '374-81-02631',
@@ -501,11 +502,15 @@ export default function MigrationPage() {
           const contact = (customer_phone ?? recipientContact ?? '').trim() || '000-0000-0000'
           const companyName = ((customer_name ?? siteName ?? '').trim() || siteName || '').trim() || '알 수 없는 고객'
 
+          const quoteDateForPayload =
+            (quoteDate && /^\d{4}-\d{2}-\d{2}$/.test(quoteDate))
+              ? `${quoteDate} 00:00`
+              : new Date(createdAt).toISOString().slice(0, 16).replace('T', ' ')
           const payload: EstimateFormData & { _migration_original_filename?: string } = {
             mode: 'FINAL',
             recipientName: companyName,
             recipientContact: contact,
-            quoteDate,
+            quoteDate: quoteDateForPayload,
             bizNumber: SUPPLIER_FIXED.bizNumber,
             address: SUPPLIER_FIXED.address,
             supplierContact: SUPPLIER_FIXED.contact,
@@ -603,6 +608,41 @@ export default function MigrationPage() {
             .single()
           if (estErr) throw estErr
           const estimateId = (insertedEst as { id: string } | null)?.id ?? ''
+
+          // 견적 이력(metadata.estimate_history) 및 상담 히스토리(consultation_messages) 반영
+          const { data: curConsult } = await supabase.from('consultations').select('metadata').eq('id', consultationId).single()
+          const meta = (curConsult as { metadata?: Record<string, unknown> } | null)?.metadata ?? {}
+          const metaObj = typeof meta === 'object' && meta !== null ? meta : {}
+          const rawHistory = Array.isArray(metaObj.estimate_history) ? metaObj.estimate_history : []
+          const history = rawHistory
+            .filter((e): e is Record<string, unknown> => e != null && typeof e === 'object')
+            .map((e) => ({
+              version: typeof e.version === 'number' ? e.version : 0,
+              issued_at: typeof e.issued_at === 'string' ? e.issued_at : new Date().toISOString().slice(0, 10),
+              amount: typeof e.amount === 'number' ? e.amount : Number(e.amount) || 0,
+              summary: typeof e.summary === 'string' ? e.summary : undefined,
+              is_final: e.is_final === true,
+            }))
+          const maxVersion = history.length > 0 ? Math.max(...history.map((e) => e.version)) : 0
+          const issuedAt = (item.parsedEstimate.quoteDate ?? new Date().toISOString()).toString().slice(0, 10)
+          const newItem = {
+            version: maxVersion + 1,
+            issued_at: issuedAt,
+            amount: finalAmount,
+            summary: undefined,
+            is_final: true,
+          }
+          const nextHistory = [...history, newItem].sort((a, b) => new Date(b.issued_at).getTime() - new Date(a.issued_at).getTime())
+          const nextMeta = { ...metaObj, estimate_history: nextHistory } as unknown as Json
+          await supabase.from('consultations').update({ metadata: nextMeta }).eq('id', consultationId)
+
+          await insertSystemLog(supabase, {
+            consultation_id: consultationId,
+            event_type: 'estimate_issued',
+            actor_name: companyName || '마이그레이션',
+            detail: '견적서가 등록되었습니다. (마이그레이션)',
+            metadata: { type: 'estimate_issued', estimate_id: estimateId },
+          })
 
           setFiles((prev) =>
             prev.map((f) => (f.id === id ? { ...f, status: '완료' as FileStatus, savedId: consultationId } : f))
@@ -722,7 +762,11 @@ export default function MigrationPage() {
     return out
   }, [vendorPriceFiles])
 
-  const hasOpenAIKey = Boolean(import.meta.env.VITE_OPENAI_API_KEY?.trim())
+  const hasGeminiKey = Boolean(
+    (import.meta.env.VITE_GOOGLE_GEMINI_API_KEY ??
+      import.meta.env.GOOGLE_GEMINI_API_KEY ??
+      import.meta.env.VITE_GEMINI_API_KEY)?.trim()
+  )
 
   return (
     <div className="min-h-screen bg-background p-6">
@@ -736,10 +780,10 @@ export default function MigrationPage() {
           </div>
         </div>
 
-        {!hasOpenAIKey && (
+        {!hasGeminiKey && (
           <div className="flex items-center gap-2 p-4 rounded-lg bg-amber-500/10 text-amber-700 dark:text-amber-400 text-sm">
             <AlertCircle className="h-5 w-5 shrink-0" />
-            .env에 VITE_OPENAI_API_KEY를 설정하세요. OpenAI API 키가 없으면 AI 분석을 사용할 수 없습니다.
+            .env에 GOOGLE_GEMINI_API_KEY(또는 VITE_GOOGLE_GEMINI_API_KEY)를 설정하세요. Gemini API 키가 없으면 AI 분석을 사용할 수 없습니다.
           </div>
         )}
 
@@ -848,7 +892,7 @@ export default function MigrationPage() {
                       size="sm"
                       variant="outline"
                       onClick={() => startAnalysis(f.id)}
-                      disabled={!hasOpenAIKey}
+                      disabled={!hasGeminiKey}
                     >
                       AI 분석
                     </Button>
@@ -1143,6 +1187,7 @@ export default function MigrationPage() {
                         <th className="border-b border-border px-3 py-2 text-left min-w-[100px]">견적일</th>
                         <th className="border-b border-border px-3 py-2 text-left min-w-[140px]">업로드 시간</th>
                         <th className="border-b border-border px-3 py-2 text-left min-w-[80px]">상태</th>
+                        <th className="border-b border-border px-2 py-2 w-12" />
                       </tr>
                     </thead>
                     <tbody>
@@ -1177,6 +1222,35 @@ export default function MigrationPage() {
                             <span className="text-xs px-2 py-0.5 rounded bg-green-500/20 text-green-700 dark:text-green-400">
                               {u.status}
                             </span>
+                          </td>
+                          <td className="px-2 py-2" onClick={(e) => e.stopPropagation()}>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 w-8 p-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+                              onClick={async () => {
+                                if (!confirm(`'${u.filename}' 데이터를 삭제하고 다시 업로드하시겠습니까?`)) return
+                                try {
+                                  const { data: msgs } = await supabase.from('consultation_messages').select('id').eq('consultation_id', u.consultationId)
+                                  if (msgs?.length) await supabase.from('consultation_messages').delete().eq('consultation_id', u.consultationId)
+                                  await supabase.from('estimates').delete().eq('id', u.estimateId)
+                                  await supabase.from('consultations').delete().eq('id', u.consultationId)
+                                  setUploadedItems((prev) => {
+                                    const next = prev.filter((x) => x.estimateId !== u.estimateId)
+                                    localStorage.setItem(UPLOADED_ITEMS_STORAGE_KEY, JSON.stringify(next))
+                                    return next
+                                  })
+                                  toast.success('삭제되었습니다. 다시 업로드해 주세요.')
+                                } catch (err) {
+                                  toast.error('삭제 실패')
+                                  console.error(err)
+                                }
+                              }}
+                              title="삭제 후 재업로드"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
                           </td>
                         </tr>
                       ))}
@@ -1242,7 +1316,7 @@ export default function MigrationPage() {
                 <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-muted/40">
                   <span className="text-sm font-medium">업로드된 파일 ({vendorPriceFiles.length}개)</span>
                   {vendorPriceFiles.some((f) => f.status === '대기') && (
-                    <Button type="button" size="sm" variant="outline" onClick={startAllVendorAnalysis} disabled={!hasOpenAIKey}>
+                    <Button type="button" size="sm" variant="outline" onClick={startAllVendorAnalysis} disabled={!hasGeminiKey}>
                       전체 AI 분석
                     </Button>
                   )}
@@ -1264,7 +1338,7 @@ export default function MigrationPage() {
                           {f.status}
                         </span>
                         {f.status === '대기' && (
-                          <Button type="button" size="sm" variant="ghost" onClick={() => startVendorAnalysis(f.id)} disabled={!hasOpenAIKey}>
+                          <Button type="button" size="sm" variant="ghost" onClick={() => startVendorAnalysis(f.id)} disabled={!hasGeminiKey}>
                             AI 분석
                           </Button>
                         )}

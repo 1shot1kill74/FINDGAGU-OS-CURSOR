@@ -9,7 +9,7 @@ FindGagu OS: Project Soul (ivory-os) 1. Captain & Partner - Captain: 대표님 (
 - **데이터 일원화 유지:** 견적 편집은 임시저장(payload), 발행 시점은 final_proposal_data로 고정하여 데이터 무결성 확보.
 
 7. 2026-02-07 반영 (AI 견적 도우미 & 코드 단순화)
-- **LLM API 활용:** 자연어 분석(규격 추출, 단가 인식 등)은 복잡한 if-else·정규식 대신, 추후 OpenAI/Gemini API에 프롬프트를 던져 JSON 결과만 받아오는 구조로 설계.
+- **LLM API 활용:** 자연어 분석(규격 추출, 단가 인식 등)은 복잡한 if-else·정규식 대신, Gemini API에 프롬프트를 던져 JSON 결과만 받아오는 구조. PDF/JPG AI 추출도 Gemini 사용.
 - **기능 분리:** 데이터 입력 칸과 AI 퀵 커맨드 입력창은 UI만 담당. 파싱은 `estimateAiService.parseQuickCommand`(현재 Mock). 계산은 `estimateUtils`(금액 파싱·총액 배율) 단일 유틸로 처리.
 - **Mock 우선:** 실제 AI 연결 전까지 결과값만 가짜(Mock)로 리턴하여 코드 양 축소. 추후 API 교체 시 estimateAiService 한 곳만 수정.
 
