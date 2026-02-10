@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils'
 import { X, Send, ImageIcon, Info, FileText } from 'lucide-react'
 import { toast } from 'sonner'
 import { parseQuickCommand as aiParse, searchPastCaseRecommendations, type PastCaseRecommendation, type PastCaseCandidate } from '@/lib/estimateAiService'
-import { getVendorPriceRecommendation, type VendorPriceRecommendation } from '@/lib/estimateRecommendationService'
+import { getVendorPriceRecommendation, getVendorPriceRecommendations, type VendorPriceRecommendation } from '@/lib/estimateRecommendationService'
 import { parseAmountToWon, scaleFactorToTarget, computeTotalCost, adjustUnitPricesToTargetMargin, roundToPriceUnit, getMarginSignalClass, formatDateYYMMDD, GUIDE_PAST_DATE_CLASS, GUIDE_VENDOR_DATE_CLASS } from '@/lib/estimateUtils'
 import { EstimateRowGalleryDialog } from '@/components/estimate/EstimateRowGalleryDialog'
 import { getDataByProductTag } from '@/lib/productDataMatching'
@@ -836,24 +836,33 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
             products: productsList,
             pastCaseRows,
           })
-          if (recs.length === 0) {
-            const vendor = await getVendorPriceRecommendation(supabase, res.name)
-            if (vendor) {
-              recs = [{
-                case_id: `vendor-${vendor.id}`,
-                name: vendor.product_name,
-                size: null,
-                color: null,
-                price: vendor.unitPrice,
-                matchStatus: { name: true, size: false, color: false },
-                costPrice: vendor.cost,
-                consultation_id: undefined,
-                estimate_id: undefined,
-                appliedDate: vendor.appliedDate,
-                siteName: undefined,
-              }]
-            }
-          }
+          // 올데이C 검색 시 올데이CA 등 원가표 결과도 함께 보이도록 항상 원가표 조회 후 병합
+          const vendors = await getVendorPriceRecommendations(supabase, res.name)
+          const vendorRecs: PastCaseRecommendation[] = vendors.map((v) => ({
+            case_id: `vendor-${v.id}`,
+            name: v.product_name,
+            size: v.spec ?? null,
+            color: null,
+            price: v.unitPrice,
+            matchStatus: { name: true, size: false, color: false },
+            costPrice: v.cost,
+            consultation_id: undefined,
+            estimate_id: undefined,
+            appliedDate: v.appliedDate,
+            siteName: v.site_name ?? undefined,
+            source: v.source,
+            image_url: v.image_url,
+          }))
+          // 과거 견적·제품과 동일 품명+규격 중복 제거 후 병합, 최대 8건
+          const dedupeKey = (c: PastCaseRecommendation) => `${(c.name ?? '').trim()}|${(c.size ?? '').trim()}|${(c.color ?? '').trim()}`
+          const seen = new Set<string>()
+          const merged = [...recs, ...vendorRecs].filter((c) => {
+            const key = dedupeKey(c)
+            if (seen.has(key)) return false
+            seen.add(key)
+            return true
+          })
+          recs = merged.slice(0, 8)
           setPendingAddRowFromQuick({
             name: res.name,
             qty: res.qty,
@@ -1151,11 +1160,20 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
                       <div className="min-w-0 flex-1">
                         <p className="font-medium truncate">{c.name}{c.size ? ` · ${c.size}` : ''}{c.color ? ` / ${c.color}` : ''}</p>
                         <p className="text-xs text-muted-foreground">
-                          종전 단가: {formatNumber(c.price)}원 · 원가: {c.costPrice != null && c.costPrice > 0 ? `${formatNumber(c.costPrice)}원` : '—'} · {matchText}
+                          {c.source === 'vendor_price_book'
+                            ? `원가: ${c.costPrice != null && c.costPrice > 0 ? `${formatNumber(c.costPrice)}원` : '—'} · ${matchText}`
+                            : `종전 단가: ${formatNumber(c.price)}원 · 원가: ${c.costPrice != null && c.costPrice > 0 ? `${formatNumber(c.costPrice)}원` : '—'} · ${matchText}`}
                         </p>
-                        {(c.siteName || c.appliedDate) && (
+                        {(c.siteName || c.appliedDate) && c.source !== 'vendor_price_book' && (
                           <p className="text-xs text-muted-foreground mt-0.5">
                             {c.siteName || ''}{c.siteName && c.appliedDate ? ' · ' : ''}{c.appliedDate ? formatDateYYMMDD(c.appliedDate) : ''}
+                          </p>
+                        )}
+                        {c.source && (
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            출처: {c.source === 'vendor_price_book' ? '원가표' : '제품DB'}
+                            {c.source === 'vendor_price_book' && c.size ? ` · 외경 ${c.size}` : ''}
+                            {c.source === 'vendor_price_book' && c.siteName ? ` · 현장명 ${c.siteName}` : ''}
                           </p>
                         )}
                       </div>
@@ -1168,6 +1186,17 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
                             className="h-8 text-xs"
                             onClick={() => onRequestEstimatePreview(c.consultation_id!, c.estimate_id!)}
                             title="견적서 원본 보기"
+                          >
+                            원본보기
+                          </Button>
+                        ) : c.image_url && onRequestPriceBookImage ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-8 text-xs"
+                            onClick={() => onRequestPriceBookImage(c.image_url!)}
+                            title="원가표 원본 보기"
                           >
                             원본보기
                           </Button>

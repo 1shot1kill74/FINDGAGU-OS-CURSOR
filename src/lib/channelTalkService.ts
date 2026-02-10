@@ -149,8 +149,8 @@ export const FAQ_DATA: Record<string, string> = {
   'AS': FAQ_ANSWER_AS,
 }
 
-/** 문의 텍스트에서 FAQ 키워드 매칭 (첫 번째 매칭 키워드 반환, 없으면 null) */
-function matchFaqKeyword(inquiry: string): string | null {
+/** 문의 텍스트에서 FAQ 키워드 매칭 (첫 번째 매칭 키워드 반환, 없으면 null). 웹훅 Edge Function에서 동일 로직 사용 */
+export function matchFaqKeyword(inquiry: string): string | null {
   const t = (inquiry || '').trim()
   if (!t) return null
   for (const keyword of Object.keys(FAQ_DATA)) {

@@ -130,13 +130,21 @@ export interface ParsedEstimateFromPDF {
   total_amount?: number
 }
 
-/** 원가표 품목 1건 */
+/** 원가표 품목 1건 — 현장명/품명/색상/수량/단가/외경사이즈 */
 export interface ParsedVendorPriceItem {
   vendor_name: string
   product_name: string
   size: string
   cost_price: number
   description: string
+  /** 현장명 — "[파인드가구] 루브르"에서 "루브르" 추출 */
+  site_name?: string
+  /** 색상 (예: 기성칼라) */
+  color?: string
+  /** 견적일 YYYY-MM-DD — 검수 시 필요 시 입력, 기본 빈칸 */
+  quote_date?: string
+  /** 메모 — 상판 모번 23T, 그외 18T 라이트그레이 등 상세 사양 */
+  memo?: string
 }
 
 /** JPG 파싱 결과 (원가표) */
@@ -305,18 +313,25 @@ function normalizeRow(raw: Record<string, unknown>, index: number): EstimateRow 
 
 export type ParseMode = 'default' | 'estimates' | 'vendor_price'
 
-/** 비전 전용: 원가표 이미지 분석 (Gemini 2.0 향상된 비전 — 표 구조 인식) */
-const VISION_VENDOR_PROMPT = `당신은 원가표/가격표 이미지 분석 전문가입니다. Gemini 2.0의 향상된 비전 능력으로 표 구조와 수기 메모를 정교하게 인식합니다.
+/** 비전 전용: 원가표 이미지 분석 (Gemini 2.0 향상된 비전 — 표 구조·수기 메모·도면 인식) */
+const VISION_VENDOR_PROMPT = `당신은 원가표/가격표 이미지 분석 전문가입니다. 다음 항목을 반드시 유심히 분석하세요.
 
-**표(Table) 구조 인식**:
-- 행·열 구조를 정확히 파악하고, 병합된 셀·여러 열의 품목·가격 열을 구분
-- 표 외부의 도면 옆 수기 메모, 손글씨 단가·품명·규격도 모두 추출
-- 흐릿하거나 작은 글씨, 저해상도도 놓치지 말 것
+**1) 현장명 (site_name)**: "[파인드가구] 루브르"처럼 파인드가구 옆에 적힌 부분 → "루브르"만 추출해 site_name에 저장
 
-**추출 규칙**: 가격은 ₩·원·콤마 제거 후 숫자만(cost_price). 한글·숫자·영문 정확 인식.
+**2) 품명 (product_name)**: 표·도면에 적힌 품명 (예: 올데이CA)
+
+**3) 색상 (color)**: 표에 적힌 색상 (예: 기성칼라, 라이트그레이)
+
+**4) 단가 (cost_price)**: 손글씨 "162,000" 등 수기 금액 포함, ₩·원·콤마 제거 후 숫자만
+
+**5) 외경 사이즈 (size)**: 가로×세로×높이 형식. 도면 치수에서 가로(Width), 세로(Depth, 여러 값이면 합산 예: 700+620=1320), 높이(Height) 추출 → "1000×1320×1200"
+
+**6) 메모 (memo)**: "상판 모번 23T", "그외 18T 라이트그레이" 등 불릿·추가 사양 텍스트. 도면 옆 인쇄/수기 메모를 그대로 추출. 줄바꿈은 공백으로.
+
+**추가**: description에는 색상/특이사항. memo에는 상세 사양(두께·재질·색상 배치 등).
 
 **출력** (유효한 JSON만, items 배열 필수):
-{"items":[{"vendor_name":"","product_name":"","size":"","cost_price":숫자,"description":""}]}`
+{"items":[{"vendor_name":"","product_name":"","size":"","cost_price":숫자,"description":"","site_name":"","color":"","memo":""}]}`
 
 /** 비전 전용: 견적서 이미지 분석 (Gemini 2.0 — 파인드가구 키워드·표 구조 최우선) */
 const VISION_ESTIMATE_PROMPT = `당신은 가구 견적서 이미지 분석 전문가입니다. Gemini 2.0의 향상된 비전으로 다음을 최우선 수행합니다.
@@ -343,8 +358,8 @@ export async function parseFileWithAI(
   if (forceVendorPrice) {
     const ext = (file.name.split('.').pop() ?? '').toLowerCase()
     const isPdf = ext === 'pdf'
-    const basePrompt = '매입 원가 등록. 제품명, 규격, 매입 원가(cost_price) 추출. items 배열, cost_price 필드명 사용.'
-    const jsonFormat = '{ "items": [ { "product_name", "size", "cost_price", "description" } ] }'
+    const basePrompt = `매입 원가 등록. 아래 항목 모두 추출: site_name, product_name, color, cost_price, size(외경 가로×세로×높이), memo(상판 모번 23T·그외 18T 라이트그레이 등 상세 사양). items 배열.`
+    const jsonFormat = '{ "items": [ { "site_name", "product_name", "color", "size", "cost_price", "description", "memo" } ] }'
 
     if (isPdf) {
       const text = await extractTextFromPDF(file)
@@ -353,19 +368,23 @@ export async function parseFileWithAI(
       const content = await callAIWithFallback(sysPrompt, [text.slice(0, 15000)])
       if (!content) throw new Error('AI 분석 결과가 비어 있습니다.')
       const parsed = parseJsonBlock(content)
-      const rawItems = Array.isArray(parsed.items) ? parsed.items : []
-      const items: ParsedVendorPriceItem[] = rawItems.map((r: unknown) => {
-        const row = typeof r === 'object' && r !== null ? (r as Record<string, unknown>) : {}
-        const costVal = row.cost_price ?? row.cost
-        const cost = typeof costVal === 'number' ? costVal : parseInt(String(costVal ?? 0).replace(/\D/g, ''), 10) || 0
-        return {
-          vendor_name: '',
-          product_name: String(row.product_name ?? row.productName ?? ''),
-          size: String(row.size ?? row.spec ?? ''),
-          cost_price: cost,
-          description: String(row.description ?? row.note ?? ''),
-        }
-      })
+    const rawItems = Array.isArray(parsed.items) ? parsed.items : []
+    const items: ParsedVendorPriceItem[] = rawItems.map((r: unknown) => {
+      const row = typeof r === 'object' && r !== null ? (r as Record<string, unknown>) : {}
+      const costVal = row.cost_price ?? row.cost
+      const cost = typeof costVal === 'number' ? costVal : parseInt(String(costVal ?? 0).replace(/\D/g, ''), 10) || 0
+      return {
+        vendor_name: '',
+        product_name: String(row.product_name ?? row.productName ?? ''),
+        size: String(row.size ?? row.spec ?? ''),
+        cost_price: cost,
+        description: String(row.description ?? row.note ?? ''),
+        site_name: String(row.site_name ?? '').trim() || undefined,
+        color: String(row.color ?? '').trim() || undefined,
+        quote_date: undefined,
+        memo: String(row.memo ?? '').trim() || undefined,
+      }
+    })
       return { category: 'VendorPrice', result: { type: 'VendorPrice', data: { items } } }
     }
 
@@ -389,6 +408,10 @@ export async function parseFileWithAI(
         size: String(row.size ?? row.spec ?? ''),
         cost_price: cost,
         description: String(row.description ?? row.note ?? ''),
+        site_name: String(row.site_name ?? '').trim() || undefined,
+        color: String(row.color ?? '').trim() || undefined,
+        quote_date: String(row.quote_date ?? '').trim() || undefined,
+        memo: String(row.memo ?? '').trim() || undefined,
       }
     })
     if (items.length === 0) {
@@ -398,6 +421,10 @@ export async function parseFileWithAI(
         size: String(parsed.size ?? parsed.spec ?? ''),
         cost_price: parseInt(String(parsed.cost_price ?? parsed.cost ?? 0).replace(/\D/g, ''), 10) || 0,
         description: String(parsed.description ?? ''),
+        site_name: String(parsed.site_name ?? '').trim() || undefined,
+        color: String(parsed.color ?? '').trim() || undefined,
+        quote_date: undefined,
+        memo: String(parsed.memo ?? '').trim() || undefined,
       })
     }
     return { category: 'VendorPrice', result: { type: 'VendorPrice', data: { items } } }
@@ -479,6 +506,10 @@ export async function parseFileWithAI(
       size: String(row.size ?? row.spec ?? ''),
       cost_price: cost,
       description: String(row.description ?? row.note ?? ''),
+      site_name: String(row.site_name ?? '').trim() || undefined,
+      color: String(row.color ?? '').trim() || undefined,
+      quote_date: undefined,
+      memo: String(row.memo ?? '').trim() || undefined,
     }
   })
   if (items.length === 0) {
@@ -488,6 +519,10 @@ export async function parseFileWithAI(
       size: String(parsed.size ?? parsed.spec ?? ''),
       cost_price: typeof parsed.cost === 'number' ? parsed.cost : parseInt(String(parsed.cost ?? 0).replace(/\D/g, ''), 10) || 0,
       description: String(parsed.description ?? parsed.note ?? ''),
+      site_name: String(parsed.site_name ?? '').trim() || undefined,
+      color: String(parsed.color ?? '').trim() || undefined,
+      quote_date: undefined,
+      memo: String(parsed.memo ?? '').trim() || undefined,
     })
   }
   return { category: 'VendorPrice', result: { type: 'VendorPrice', data: { items } } }

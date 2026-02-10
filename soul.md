@@ -47,3 +47,21 @@ FindGagu OS: Project Soul (ivory-os) 1. Captain & Partner - Captain: 대표님 (
 - **저장 = 확정:** ConsultationManagement 임시저장(handleEstimateSaveDraft) 시 insert/update 모두 approved_at 설정.
 - **6개월 견적 통계:** estimatesLast6Months(6개월 이내, is_visible). 최대·최소·**실제 중간값**(정렬 후 중앙에 가까운 견적) + estimate_id 매핑. 원가: vendor_price_book/products 조회 후 합산.
 - **견적 이력 UI:** [최대|중간|최소|원가] 4지표. 최대/중간/최소 클릭 → 견적서 팝업. 툴팁 "해당 견적서 보기", cursor-pointer.
+
+14. 2026-02-10 반영 (마이그레이션 섹션 분리·거래처 원가 확장·AI 퀵 커맨드)
+- **섹션 분리:** 판매 견적서 등록(상단)·거래처 원가 등록(하단) 탭 제거. 상·하 별도 섹션으로 실수 방지.
+- **거래처 원가 AI:** 현장명·품명·색상·단가(손글씨)·외경 사이즈·메모 추출. 수량 제거(원가 이상 표시 이슈).
+- **업로드 완료 목록:** 거래처 원가도 판매 견적서와 동일 테이블 + localStorage. 원본보기·삭제.
+- **메모 필드:** vendor_price_book.memo — "상판 모번 23T, 그외 18T 라이트그레이" 등 상세 사양 별도 저장.
+- **AI 퀵 커맨드:** 비교대상에 출처(원가표/제품DB)·원본보기(image_url 라이트박스) 추가.
+
+15. 2026-02-10 반영 (AI 퀵·원가표·참고 견적서 모달 — 세이브 포인트)
+- **원가표 원본보기:** vendor-assets Signed URL로 팝업 이미지 표시. 참고 견적서(PDF) 모달 z-[200]·캡처, 닫기 버튼 삭제(바깥 클릭·Escape).
+- **견적 작성창 유지:** 미리보기 닫을 때 printEstimateId·justClosedPreviewRef(300ms)로 견적 모달이 같이 닫히지 않도록 방어.
+- **마이그레이션:** DB 조회 빈 결과일 때 업로드 완료 목록 비우지 않음(새로고침 후 데이터 유지).
+- **AI 퀵 원가표:** 출처 뒤 외경·현장명, 원가만 표시(종전 단가 제거). 올데이C 검색 시 올데이CA 병합·품명·규격 중복 제거. getVendorPriceRecommendations·spec·site_name.
+
+16. 2026-02-10 반영 (무효/거절·7탭·식별자 고정·채널톡 전 이벤트 수용)
+- **안정 우선·식별자 정체성:** display_name은 웹훅에서 최초 생성 후 자동 변경하지 않음. AI 추출값은 ai_suggestions만, 상세 패널 [적용]으로 수동 반영.
+- **무효 vs 거절:** status '무효' 추가. 무효=통계 제외, 거절=사유 보존. 7탭(전체|미처리|견적중|진행중|종료|거절|무효). KPI 무효 제외 성공률. [무효 처리] 즉시, [거절 처리] 사유 모달 필수.
+- **채널톡 웹훅:** 이벤트 타입 필터 제거 — body.entity에 텍스트/유저/연락처 있으면 DB Insert. 폼·서포트봇 응답 포함 entity.fields/body.fields에서 휴대폰 추출(consultations.contact 매핑). 처리 중인 데이터 구조 로그·try-catch·완료 로그·배포 --no-verify-jwt.

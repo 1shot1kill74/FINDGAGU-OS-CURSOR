@@ -367,6 +367,11 @@ export type Database = {
           updated_at: string | null
           is_test: boolean
           is_visible: boolean
+          site_name: string | null
+          color: string | null
+          quantity: number | null
+          quote_date: string | null
+          memo: string | null
         }
         Insert: {
           id?: string
@@ -380,6 +385,11 @@ export type Database = {
           updated_at?: string | null
           is_test?: boolean
           is_visible?: boolean
+          site_name?: string | null
+          color?: string | null
+          quantity?: number | null
+          quote_date?: string | null
+          memo?: string | null
         }
         Update: {
           id?: string
@@ -393,6 +403,11 @@ export type Database = {
           updated_at?: string | null
           is_test?: boolean
           is_visible?: boolean
+          site_name?: string | null
+          color?: string | null
+          quantity?: number | null
+          quote_date?: string | null
+          memo?: string | null
         }
         Relationships: []
       }
@@ -442,6 +457,7 @@ export type Database = {
         | '계약완료'
         | '휴식기'
         | '거절'
+        | '무효'
         | 'AS_WAITING'
       ContentStatus: 'DRAFT' | 'REVIEW' | 'PUBLISHED' | 'ARCHIVED'
       LeadStatus:
@@ -577,7 +593,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
-      consultation_status: ['상담중', '견적발송', '계약완료', '휴식기', '거절', 'AS_WAITING'],
+      consultation_status: ['상담중', '견적발송', '계약완료', '휴식기', '거절', '무효', 'AS_WAITING'],
       ContentStatus: ['DRAFT', 'REVIEW', 'PUBLISHED', 'ARCHIVED'],
       LeadStatus: [
         'NEW',

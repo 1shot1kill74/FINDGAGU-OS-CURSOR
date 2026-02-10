@@ -305,6 +305,10 @@ export interface PastCaseRecommendation {
   appliedDate?: string
   /** 현장명/수신자명 (표시용) */
   siteName?: string
+  /** 외주업체 원가 출처 (vendor_price_book | products) */
+  source?: 'vendor_price_book' | 'products'
+  /** 원가표 원본 이미지 URL (vendor_price_book일 때 원본보기용) */
+  image_url?: string | null
 }
 
 /** 검색 후보 한 건 (과거 견적 행 또는 제품 마스터) */
@@ -416,6 +420,7 @@ export function searchPastCaseRecommendations(params: {
       price,
       matchStatus: { name: true, size: specSame, color: colorMatch },
       costPrice: supplyPrice,
+      source: 'products',
     }
     if (!qSpec && !qColor) exactMatch.push(rec)
     else out.push(rec)

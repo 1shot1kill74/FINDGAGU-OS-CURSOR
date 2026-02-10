@@ -6,7 +6,7 @@
  */
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Upload, Loader2, CheckCircle, AlertCircle, FileText, Image, Trash2 } from 'lucide-react'
+import { Upload, Loader2, CheckCircle, AlertCircle, FileText, Image, Trash2, ExternalLink } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
@@ -34,7 +34,6 @@ const SUPPLIER_FIXED = {
 const BUCKET_ESTIMATES = 'estimate-documents'
 const BUCKET_VENDOR = 'vendor-assets'
 
-type MigrationTab = 'estimates' | 'vendor_price'
 type FileStatus = '대기' | '분석중' | '검수대기' | '완료'
 
 interface VendorPriceFile {
@@ -43,6 +42,8 @@ interface VendorPriceFile {
   status: FileStatus
   parsedVendor: ParsedVendorPrice | null
   error: string | null
+  /** 업로드 시각 — 자동 입력 */
+  uploadedAt: string
 }
 
 interface MigrationFile {
@@ -105,6 +106,39 @@ interface UploadedEstimateItem {
 const DUPLICATE_CHECK_WINDOW_MS = 5 * 60 * 1000
 
 const UPLOADED_ITEMS_STORAGE_KEY = 'findgagu-migration-uploaded-estimates'
+const UPLOADED_VENDOR_ITEMS_STORAGE_KEY = 'findgagu-migration-uploaded-vendor'
+
+/** 거래처 원가 저장 성공 시 누적 표시용 — 업로드 완료 목록 */
+interface UploadedVendorPriceItem {
+  filename: string
+  grand_total: number
+  quoteDate: string
+  uploadedAt: string
+  status: string
+  image_url: string
+}
+
+function loadUploadedVendorItemsFromStorage(): UploadedVendorPriceItem[] {
+  try {
+    const raw = localStorage.getItem(UPLOADED_VENDOR_ITEMS_STORAGE_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .filter((x): x is Record<string, unknown> => x != null && typeof x === 'object')
+      .map((x) => ({
+        filename: String(x.filename ?? ''),
+        grand_total: Number(x.grand_total) || 0,
+        quoteDate: String(x.quoteDate ?? ''),
+        uploadedAt: String(x.uploadedAt ?? ''),
+        status: String(x.status ?? '저장완료'),
+        image_url: String(x.image_url ?? ''),
+      }))
+      .filter((x) => x.image_url)
+  } catch {
+    return []
+  }
+}
 
 function loadUploadedItemsFromStorage(): UploadedEstimateItem[] {
   try {
@@ -131,15 +165,18 @@ function loadUploadedItemsFromStorage(): UploadedEstimateItem[] {
 
 export default function MigrationPage() {
   const navigate = useNavigate()
-  const [activeTab, setActiveTab] = useState<MigrationTab>('estimates')
+  const estimatesSectionRef = useRef<HTMLDivElement>(null)
   const [vendorName, setVendorName] = useState(DEFAULT_VENDOR_NAME)
   const [files, setFiles] = useState<MigrationFile[]>([])
   const [vendorPriceFiles, setVendorPriceFiles] = useState<VendorPriceFile[]>([])
-  const [dragOver, setDragOver] = useState(false)
+  const [dragOverEstimates, setDragOverEstimates] = useState(false)
+  const [dragOverVendor, setDragOverVendor] = useState(false)
   const [saving, setSaving] = useState<string | null>(null)
   const [savingBulk, setSavingBulk] = useState(false)
   /** 업로드 성공한 견적 리스트 (localStorage에 영구 저장, 서버 재시작·새로고침 후에도 유지) */
   const [uploadedItems, setUploadedItems] = useState<UploadedEstimateItem[]>(loadUploadedItemsFromStorage)
+  /** 거래처 원가 저장 성공 리스트 (업로드 완료 목록) */
+  const [uploadedVendorItems, setUploadedVendorItems] = useState<UploadedVendorPriceItem[]>(loadUploadedVendorItemsFromStorage)
   /** 견적서 파일별 매칭된 상담 (기존 상담 연결 시) */
   const [matchedConsultation, setMatchedConsultation] = useState<Record<string, { id: string; company_name: string } | null>>({})
 
@@ -151,7 +188,15 @@ export default function MigrationPage() {
     }
   }, [uploadedItems])
 
-  /** DB에 없는 항목 정리 — localStorage에는 있지만 DB에서 삭제된 견적 제거 */
+  useEffect(() => {
+    try {
+      localStorage.setItem(UPLOADED_VENDOR_ITEMS_STORAGE_KEY, JSON.stringify(uploadedVendorItems))
+    } catch {
+      // quota exceeded 등
+    }
+  }, [uploadedVendorItems])
+
+  /** DB에 없는 항목 정리 — localStorage에는 있지만 DB에서 삭제된 견적만 제거. DB 조회가 빈 결과(RLS/오류)일 때는 목록을 비우지 않음. */
   useEffect(() => {
     if (uploadedItems.length === 0) return
     let cancelled = false
@@ -159,10 +204,37 @@ export default function MigrationPage() {
       const ids = uploadedItems.map((u) => u.estimateId)
       const { data } = await supabase.from('estimates').select('id').in('id', ids)
       if (cancelled) return
-      const existingIds = new Set((data ?? []).map((r) => r.id))
+      const rows = data ?? []
+      if (rows.length === 0) return
+      const existingIds = new Set(rows.map((r) => r.id))
       const valid = uploadedItems.filter((u) => existingIds.has(u.estimateId))
-      if (valid.length !== uploadedItems.length) {
+      if (valid.length < uploadedItems.length) {
         setUploadedItems(valid)
+        toast.info('DB에서 삭제된 항목을 목록에서 제거했습니다.')
+      }
+    }
+    run()
+    return () => { cancelled = true }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps -- 마운트 시 1회
+
+  /** DB에 없는 거래처 원가 항목 정리 — localStorage에는 있지만 DB에서 삭제된 항목만 제거. DB 조회가 빈 결과(RLS/오류)일 때는 목록을 비우지 않음. */
+  useEffect(() => {
+    if (uploadedVendorItems.length === 0) return
+    let cancelled = false
+    const run = async () => {
+      const imageUrls = [...new Set(uploadedVendorItems.map((u) => u.image_url))]
+      const { data } = await supabase
+        .from('vendor_price_book')
+        .select('image_url')
+        .in('image_url', imageUrls)
+      if (cancelled) return
+      const rows = data ?? []
+      // DB가 빈 결과를 반환한 경우(RLS, 네트워크 오류 등) 목록을 비우지 않음 — 새로고침 시 사라지는 현상 방지
+      if (rows.length === 0) return
+      const existingUrls = new Set(rows.map((r) => r.image_url))
+      const valid = uploadedVendorItems.filter((u) => existingUrls.has(u.image_url))
+      if (valid.length < uploadedVendorItems.length) {
+        setUploadedVendorItems(valid)
         toast.info('DB에서 삭제된 항목을 목록에서 제거했습니다.')
       }
     }
@@ -240,33 +312,35 @@ export default function MigrationPage() {
       const ext = (f.name.split('.').pop() ?? '').toLowerCase()
       return f.size > 0 && (['pdf', 'jpg', 'jpeg', 'png'].includes(ext))
     })
+    const now = new Date().toISOString()
     const next: VendorPriceFile[] = list.map((f) => ({
       id: `${f.name}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
       file: f,
       status: '대기' as FileStatus,
       parsedVendor: null,
       error: null,
+      uploadedAt: now,
     }))
     setVendorPriceFiles((prev) => [...prev, ...next])
   }, [])
 
-  const onDrop = useCallback(
+  const onDropEstimates = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault()
-      setDragOver(false)
+      setDragOverEstimates(false)
       addFiles(e.dataTransfer.files)
     },
     [addFiles]
   )
 
-  const onDragOver = useCallback((e: React.DragEvent) => {
+  const onDragOverEstimates = useCallback((e: React.DragEvent) => {
     e.preventDefault()
-    setDragOver(true)
+    setDragOverEstimates(true)
   }, [])
 
-  const onDragLeave = useCallback((e: React.DragEvent) => {
+  const onDragLeaveEstimates = useCallback((e: React.DragEvent) => {
     e.preventDefault()
-    setDragOver(false)
+    setDragOverEstimates(false)
   }, [])
 
   const startAnalysis = useCallback(async (id: string) => {
@@ -306,7 +380,7 @@ export default function MigrationPage() {
     setVendorPriceFiles((prev) => prev.map((f) => (f.id === id ? { ...f, status: '분석중' as FileStatus, error: null } : f)))
     try {
       const isOurEstimate = await detectIsOurCompanyEstimate(item.file)
-      if (isOurEstimate && window.confirm('우리 회사 견적서가 감지되었습니다. 판매 탭으로 이동할까요?')) {
+      if (isOurEstimate && window.confirm('우리 회사 견적서가 감지되었습니다. 판매 견적서 섹션으로 이동할까요?')) {
         const newId = `${item.file.name}-${Date.now()}-${Math.random().toString(36).slice(2)}`
         const migrationFile: MigrationFile = {
           id: newId,
@@ -320,9 +394,9 @@ export default function MigrationPage() {
         }
         setVendorPriceFiles((prev) => prev.filter((f) => f.id !== id))
         setFiles((prev) => [...prev, migrationFile])
-        setActiveTab('estimates')
         pendingAnalysisIdRef.current = newId
-        toast.success('판매 견적서 탭으로 이동했습니다. AI 분석을 시작합니다.')
+        estimatesSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        toast.success('판매 견적서 섹션으로 이동했습니다. AI 분석을 시작합니다.')
         return
       }
       const { result } = await parseFileWithAI(item.file, { mode: 'vendor_price' })
@@ -387,7 +461,7 @@ export default function MigrationPage() {
     setFiles((prev) =>
       prev.map((f) => {
         if (f.id !== id || !f.parsedVendor) return f
-        const items = [...(f.parsedVendor.items ?? []), { vendor_name: '', product_name: '', size: '', cost_price: 0, description: '' }]
+        const items = [...(f.parsedVendor.items ?? []), { vendor_name: '', product_name: '', size: '', cost_price: 0, description: '', memo: '' }]
         return { ...f, parsedVendor: { ...f.parsedVendor, items } }
       })
     )
@@ -435,7 +509,7 @@ export default function MigrationPage() {
     setFiles((prev) => prev.filter((f) => f.id !== id))
   }, [])
 
-  /** 거래처 탭 → 판매 탭 이동 시 대기 중인 파일 자동 AI 분석 */
+  /** 거래처 섹션 → 판매 견적서 섹션 이동 시 대기 중인 파일 자동 AI 분석 */
   useEffect(() => {
     const pendingId = pendingAnalysisIdRef.current
     if (!pendingId || !files.some((f) => f.id === pendingId)) return
@@ -714,7 +788,19 @@ export default function MigrationPage() {
     }
     setSavingBulk(true)
     try {
-      const rows: Array<{ product_name: string; cost: number; image_url: string; vendor_name: string; spec: string | null; description: string | null; is_test: boolean }> = []
+      const rows: Array<{
+        product_name: string
+        cost: number
+        image_url: string
+        vendor_name: string
+        spec: string | null
+        description: string | null
+        memo: string | null
+        is_test: boolean
+        site_name: string | null
+        color: string | null
+        quote_date: string | null
+      }> = []
       for (const vf of withItems) {
         const storagePath = toSafeStoragePath(vf.file.name, 'vendor')
         const { error: uploadErr } = await supabase.storage.from(BUCKET_VENDOR).upload(storagePath, vf.file, {
@@ -733,7 +819,11 @@ export default function MigrationPage() {
             vendor_name: vn,
             spec: it.size?.trim() || null,
             description: it.description?.trim() || null,
+            memo: it.memo?.trim() || null,
             is_test: true,
+            site_name: it.site_name?.trim() || null,
+            color: it.color?.trim() || null,
+            quote_date: it.quote_date?.trim() && /^\d{4}-\d{2}-\d{2}$/.test(it.quote_date) ? it.quote_date : null,
           })
         }
       }
@@ -743,6 +833,25 @@ export default function MigrationPage() {
       }
       const { error: vErr } = await supabase.from('vendor_price_book').insert(rows)
       if (vErr) throw vErr
+
+      const now = new Date().toISOString()
+      const toAdd: UploadedVendorPriceItem[] = []
+      for (const vf of withItems) {
+        const storagePath = toSafeStoragePath(vf.file.name, 'vendor')
+        const { data: urlData } = supabase.storage.from(BUCKET_VENDOR).getPublicUrl(storagePath)
+        const items = vf.parsedVendor!.items
+        const total = items.reduce((sum, it) => sum + (Number(it.cost_price) || 0), 0)
+        toAdd.push({
+          filename: vf.file.name,
+          grand_total: total,
+          quoteDate: '',
+          uploadedAt: now,
+          status: '저장완료',
+          image_url: urlData.publicUrl,
+        })
+      }
+      setUploadedVendorItems((prev) => [...toAdd, ...prev])
+
       toast.success(`원가 장부에 ${rows.length}건이 저장되었습니다.`)
       setVendorPriceFiles([])
     } catch (err) {
@@ -754,10 +863,10 @@ export default function MigrationPage() {
   }, [vendorPriceFiles, vendorName])
 
   const accumulatedVendorItems = useMemo(() => {
-    const out: Array<ParsedVendorPriceItem & { _fileId: string; _itemIndex: number }> = []
+    const out: Array<ParsedVendorPriceItem & { _fileId: string; _itemIndex: number; _uploadedAt: string; _file: File }> = []
     for (const vf of vendorPriceFiles) {
       const items = vf.parsedVendor?.items ?? []
-      items.forEach((it, i) => out.push({ ...it, _fileId: vf.id, _itemIndex: i }))
+      items.forEach((it, i) => out.push({ ...it, _fileId: vf.id, _itemIndex: i, _uploadedAt: vf.uploadedAt ?? new Date().toISOString(), _file: vf.file }))
     }
     return out
   }, [vendorPriceFiles])
@@ -787,47 +896,22 @@ export default function MigrationPage() {
           </div>
         )}
 
-        {/* 탭: 판매 견적서 등록 | 거래처 원가 등록 */}
-        <div className="flex border-b border-border">
-          <button
-            type="button"
-            onClick={() => setActiveTab('estimates')}
-            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
-              activeTab === 'estimates'
-                ? 'border-primary text-primary'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
+        {/* 섹션 1: 판매 견적서 등록 */}
+        <div ref={estimatesSectionRef} className="space-y-4">
+          <h3 className="text-lg font-semibold text-foreground">판매 견적서 등록</h3>
+          <div
+            onDrop={onDropEstimates}
+            onDragOver={onDragOverEstimates}
+            onDragLeave={onDragLeaveEstimates}
+            className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors ${
+              dragOverEstimates ? 'border-primary bg-primary/5' : 'border-border bg-muted/30'
             }`}
           >
-            판매 견적서 등록
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('vendor_price')}
-            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
-              activeTab === 'vendor_price'
-                ? 'border-primary text-primary'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            거래처 원가 등록
-          </button>
-        </div>
-
-        {activeTab === 'estimates' && (
-          <>
-            <div
-              onDrop={onDrop}
-              onDragOver={onDragOver}
-              onDragLeave={onDragLeave}
-              className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors ${
-                dragOver ? 'border-primary bg-primary/5' : 'border-border bg-muted/30'
-              }`}
-            >
-              <Upload className="mx-auto h-10 w-10 text-muted-foreground mb-2" />
-              <p className="text-sm text-muted-foreground">PDF(견적서) 또는 JPG(원가표)를 드래그하여 놓거나 클릭하여 선택하세요.</p>
-              <p className="text-xs text-muted-foreground mt-1">
-                현재 탭 기준으로 판매 단가(견적서) 추출
-              </p>
+            <Upload className="mx-auto h-10 w-10 text-muted-foreground mb-2" />
+            <p className="text-sm text-muted-foreground">PDF(견적서)를 드래그하여 놓거나 클릭하여 선택하세요.</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              판매 단가(견적서) 추출
+            </p>
               <input
                 type="file"
                 multiple
@@ -1259,186 +1343,355 @@ export default function MigrationPage() {
                 </div>
               </div>
             )}
-          </>
-        )}
+        </div>
 
-        {activeTab === 'vendor_price' && (
-          <div className="space-y-4">
-            <div className="flex flex-wrap items-center gap-4">
-              <label className="flex items-center gap-2">
-                <span className="text-sm text-muted-foreground">거래처명</span>
-                <Input
-                  value={vendorName}
-                  onChange={(e) => setVendorName(e.target.value)}
-                  placeholder={DEFAULT_VENDOR_NAME}
-                  className="w-48 h-9"
-                />
-              </label>
-            </div>
-            <div
-              onDrop={(e) => {
-                e.preventDefault()
-                setDragOver(false)
-                addVendorPriceFiles(e.dataTransfer.files)
-              }}
-              onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
-              onDragLeave={(e) => { e.preventDefault(); setDragOver(false) }}
-              className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors ${
-                dragOver ? 'border-primary bg-primary/5' : 'border-border bg-muted/30'
-              }`}
-            >
-              <Upload className="mx-auto h-10 w-10 text-muted-foreground mb-2" />
-              <p className="text-sm text-muted-foreground">원가 명세서 이미지/PDF를 드래그하거나 선택하세요. 수십 개도 한 번에 추가 가능합니다.</p>
-              <input
-                type="file"
-                multiple
-                accept=".pdf,.jpg,.jpeg,.png"
-                className="sr-only"
-                id="vendor-file-input"
-                onChange={(e) => {
-                  if (e.target.files) addVendorPriceFiles(e.target.files)
-                  e.target.value = ''
-                }}
+        {/* 섹션 2: 거래처 원가 등록 */}
+        <div className="mt-12 pt-8 border-t border-border space-y-4">
+          <h3 className="text-lg font-semibold text-foreground">거래처 원가 등록</h3>
+          <div className="flex flex-wrap items-center gap-4">
+            <label className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">거래처명</span>
+              <Input
+                value={vendorName}
+                onChange={(e) => setVendorName(e.target.value)}
+                placeholder={DEFAULT_VENDOR_NAME}
+                className="w-48 h-9"
               />
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="mt-4"
-                onClick={() => document.getElementById('vendor-file-input')?.click()}
-              >
-                파일 선택
-              </Button>
-            </div>
+            </label>
+          </div>
+          <div
+            onDrop={(e) => {
+              e.preventDefault()
+              setDragOverVendor(false)
+              addVendorPriceFiles(e.dataTransfer.files)
+            }}
+            onDragOver={(e) => { e.preventDefault(); setDragOverVendor(true) }}
+            onDragLeave={(e) => { e.preventDefault(); setDragOverVendor(false) }}
+            className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors ${
+              dragOverVendor ? 'border-primary bg-primary/5' : 'border-border bg-muted/30'
+            }`}
+          >
+            <Upload className="mx-auto h-10 w-10 text-muted-foreground mb-2" />
+            <p className="text-sm text-muted-foreground">원가 명세서 이미지/PDF를 드래그하거나 선택하세요. 수십 개도 한 번에 추가 가능합니다.</p>
+            <input
+              type="file"
+              multiple
+              accept=".pdf,.jpg,.jpeg,.png"
+              className="sr-only"
+              id="vendor-file-input"
+              onChange={(e) => {
+                if (e.target.files) addVendorPriceFiles(e.target.files)
+                e.target.value = ''
+              }}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="mt-4"
+              onClick={() => document.getElementById('vendor-file-input')?.click()}
+            >
+              파일 선택
+            </Button>
+          </div>
 
-            {vendorPriceFiles.length > 0 && (
-              <div className="border border-border rounded-lg overflow-hidden">
-                <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-muted/40">
-                  <span className="text-sm font-medium">업로드된 파일 ({vendorPriceFiles.length}개)</span>
-                  {vendorPriceFiles.some((f) => f.status === '대기') && (
-                    <Button type="button" size="sm" variant="outline" onClick={startAllVendorAnalysis} disabled={!hasGeminiKey}>
-                      전체 AI 분석
-                    </Button>
-                  )}
-                </div>
-                <ul className="divide-y divide-border max-h-40 overflow-y-auto">
-                  {vendorPriceFiles.map((f) => (
-                    <li key={f.id} className="flex items-center justify-between px-4 py-2 text-sm gap-2">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className="truncate">{f.file.name}</span>
-                        <span className="text-xs px-2 py-0.5 rounded bg-blue-500/20 text-blue-700 dark:text-blue-400 shrink-0">매입 원가</span>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span
-                          className={`text-xs px-2 py-0.5 rounded ${
-                            f.status === '검수대기' ? 'bg-amber-500/20 text-amber-700' : f.status === '분석중' ? 'bg-blue-500/20' : 'bg-muted'
-                          }`}
-                        >
-                          {f.status === '분석중' && <Loader2 className="inline h-3 w-3 animate-spin mr-1" />}
-                          {f.status}
-                        </span>
-                        {f.status === '대기' && (
-                          <Button type="button" size="sm" variant="ghost" onClick={() => startVendorAnalysis(f.id)} disabled={!hasGeminiKey}>
-                            AI 분석
-                          </Button>
-                        )}
-                        <Button type="button" variant="ghost" size="sm" className="text-destructive" onClick={() => removeVendorPriceFile(f.id)}>
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-                {vendorPriceFiles.some((f) => f.error) && (
-                  <div className="px-4 py-2 text-sm text-destructive bg-destructive/10">
-                    {vendorPriceFiles.find((f) => f.error)?.error}
-                  </div>
+          {vendorPriceFiles.length > 0 && (
+            <div className="border border-border rounded-lg overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-muted/40">
+                <span className="text-sm font-medium">업로드된 파일 ({vendorPriceFiles.length}개)</span>
+                {vendorPriceFiles.some((f) => f.status === '대기') && (
+                  <Button type="button" size="sm" variant="outline" onClick={startAllVendorAnalysis} disabled={!hasGeminiKey}>
+                    전체 AI 분석
+                  </Button>
                 )}
               </div>
-            )}
+              <ul className="divide-y divide-border max-h-40 overflow-y-auto">
+                {vendorPriceFiles.map((f) => (
+                  <li key={f.id} className="flex items-center justify-between px-4 py-2 text-sm gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="truncate">{f.file.name}</span>
+                      <span className="text-xs px-2 py-0.5 rounded bg-blue-500/20 text-blue-700 dark:text-blue-400 shrink-0">매입 원가</span>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 text-muted-foreground hover:text-foreground"
+                        onClick={() => {
+                          const url = URL.createObjectURL(f.file)
+                          window.open(url, '_blank', 'noopener')
+                          setTimeout(() => URL.revokeObjectURL(url), 60000)
+                        }}
+                        title="원본 보기"
+                      >
+                        <ExternalLink className="h-4 w-4 mr-1" />
+                        원본보기
+                      </Button>
+                      <span
+                        className={`text-xs px-2 py-0.5 rounded ${
+                          f.status === '검수대기' ? 'bg-amber-500/20 text-amber-700' : f.status === '분석중' ? 'bg-blue-500/20' : 'bg-muted'
+                        }`}
+                      >
+                        {f.status === '분석중' && <Loader2 className="inline h-3 w-3 animate-spin mr-1" />}
+                        {f.status}
+                      </span>
+                      {f.status === '대기' && (
+                        <Button type="button" size="sm" variant="ghost" onClick={() => startVendorAnalysis(f.id)} disabled={!hasGeminiKey}>
+                          AI 분석
+                        </Button>
+                      )}
+                      <Button type="button" variant="ghost" size="sm" className="text-destructive" onClick={() => removeVendorPriceFile(f.id)}>
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+              {vendorPriceFiles.some((f) => f.error) && (
+                <div className="px-4 py-2 text-sm text-destructive bg-destructive/10">
+                  {vendorPriceFiles.find((f) => f.error)?.error}
+                </div>
+              )}
+            </div>
+          )}
 
-            {accumulatedVendorItems.length > 0 && (
-              <div className="border border-border rounded-lg overflow-hidden">
-                <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-muted/40">
-                  <span className="text-sm font-medium">검수 테이블 (총 {accumulatedVendorItems.length}건)</span>
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={handleBulkVendorSave}
-                    disabled={savingBulk}
-                  >
-                    {savingBulk ? <Loader2 className="h-4 w-4 animate-spin" /> : '원가 장부 저장'}
-                  </Button>
-                </div>
-                <div className="overflow-x-auto max-h-[50vh] overflow-y-auto">
-                  <table className="w-full text-sm">
-                    <thead className="sticky top-0 bg-muted/80 z-10">
-                      <tr>
-                        <th className="border-b border-border px-2 py-2 text-left w-8">No</th>
-                        <th className="border-b border-border px-2 py-2 text-left min-w-[120px]">제품명</th>
-                        <th className="border-b border-border px-2 py-2 text-left min-w-[90px]">규격</th>
-                        <th className="border-b border-border px-2 py-2 text-right min-w-[90px]">원가(원)</th>
-                        <th className="border-b border-border px-2 py-2 text-left min-w-[100px]">색상/특이사항</th>
-                        <th className="border-b border-border px-2 py-2 w-10" />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {accumulatedVendorItems.map((row, idx) => (
-                        <tr key={`${row._fileId}-${row._itemIndex}`} className="border-b border-border last:border-0 hover:bg-muted/20">
-                          <td className="px-2 py-1.5 text-muted-foreground">{idx + 1}</td>
-                          <td className="px-2 py-1.5">
-                            <Input
-                              value={row.product_name}
-                              onChange={(e) => updateVendorPriceItem(row._fileId, row._itemIndex, 'product_name', e.target.value)}
-                              className="h-8 text-sm"
-                            />
-                          </td>
-                          <td className="px-2 py-1.5">
-                            <Input
-                              value={row.size}
-                              onChange={(e) => updateVendorPriceItem(row._fileId, row._itemIndex, 'size', e.target.value)}
-                              className="h-8 text-sm"
-                            />
-                          </td>
-                          <td className="px-2 py-1.5">
-                            <Input
-                              type="number"
-                              value={row.cost_price || ''}
-                              onChange={(e) => updateVendorPriceItem(row._fileId, row._itemIndex, 'cost_price', parseInt(e.target.value, 10) || 0)}
-                              className="h-8 text-sm text-right"
-                            />
-                          </td>
-                          <td className="px-2 py-1.5">
-                            <Input
-                              value={row.description}
-                              onChange={(e) => updateVendorPriceItem(row._fileId, row._itemIndex, 'description', e.target.value)}
-                              className="h-8 text-sm"
-                            />
-                          </td>
-                          <td className="px-2 py-1.5">
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              className="h-8 w-8 p-0 text-destructive"
-                              onClick={() => removeVendorPriceItem(row._fileId, row._itemIndex)}
-                              title="행 삭제"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <p className="px-4 py-2 text-xs text-muted-foreground border-t border-border">
-                  저장 시 vendor_name은 &quot;{vendorName || DEFAULT_VENDOR_NAME}&quot;로 통일됩니다.
-                </p>
+          {accumulatedVendorItems.length > 0 && (
+            <div className="border border-border rounded-lg overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-muted/40">
+                <span className="text-sm font-medium">검수 테이블 (총 {accumulatedVendorItems.length}건)</span>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={handleBulkVendorSave}
+                  disabled={savingBulk}
+                >
+                  {savingBulk ? <Loader2 className="h-4 w-4 animate-spin" /> : '원가 장부 저장'}
+                </Button>
               </div>
-            )}
-          </div>
-        )}
+              <div className="overflow-x-auto max-h-[50vh] overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-muted/80 z-10">
+                    <tr>
+                      <th className="border-b border-border px-2 py-2 text-left w-8">No</th>
+                      <th className="border-b border-border px-2 py-2 text-left min-w-[90px]">현장명</th>
+                      <th className="border-b border-border px-2 py-2 text-left min-w-[100px]">품명</th>
+                      <th className="border-b border-border px-2 py-2 text-left min-w-[80px]">색상</th>
+                      <th className="border-b border-border px-2 py-2 text-right min-w-[85px]">단가(원)</th>
+                      <th className="border-b border-border px-2 py-2 text-left min-w-[100px]">외경(가로×세로×높이)</th>
+                      <th className="border-b border-border px-2 py-2 text-left min-w-[140px]">메모</th>
+                      <th className="border-b border-border px-2 py-2 text-left min-w-[100px]">견적일</th>
+                      <th className="border-b border-border px-2 py-2 text-left min-w-[120px]">업로드시간</th>
+                      <th className="border-b border-border px-2 py-2 text-center w-20">원본보기</th>
+                      <th className="border-b border-border px-2 py-2 w-10" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {accumulatedVendorItems.map((row, idx) => (
+                      <tr key={`${row._fileId}-${row._itemIndex}`} className="border-b border-border last:border-0 hover:bg-muted/20">
+                        <td className="px-2 py-1.5 text-muted-foreground">{idx + 1}</td>
+                        <td className="px-2 py-1.5">
+                          <Input
+                            value={row.site_name ?? ''}
+                            onChange={(e) => updateVendorPriceItem(row._fileId, row._itemIndex, 'site_name', e.target.value)}
+                            className="h-8 text-sm"
+                            placeholder="루브르"
+                          />
+                        </td>
+                        <td className="px-2 py-1.5">
+                          <Input
+                            value={row.product_name}
+                            onChange={(e) => updateVendorPriceItem(row._fileId, row._itemIndex, 'product_name', e.target.value)}
+                            className="h-8 text-sm"
+                          />
+                        </td>
+                        <td className="px-2 py-1.5">
+                          <Input
+                            value={row.color ?? ''}
+                            onChange={(e) => updateVendorPriceItem(row._fileId, row._itemIndex, 'color', e.target.value)}
+                            className="h-8 text-sm"
+                            placeholder="기성칼라"
+                          />
+                        </td>
+                        <td className="px-2 py-1.5">
+                          <Input
+                            type="number"
+                            value={row.cost_price || ''}
+                            onChange={(e) => updateVendorPriceItem(row._fileId, row._itemIndex, 'cost_price', parseInt(e.target.value, 10) || 0)}
+                            className="h-8 text-sm text-right"
+                          />
+                        </td>
+                        <td className="px-2 py-1.5">
+                          <Input
+                            value={row.size}
+                            onChange={(e) => updateVendorPriceItem(row._fileId, row._itemIndex, 'size', e.target.value)}
+                            className="h-8 text-sm"
+                            placeholder="1000×1320×1200"
+                          />
+                        </td>
+                        <td className="px-2 py-1.5">
+                          <Input
+                            value={row.memo ?? ''}
+                            onChange={(e) => updateVendorPriceItem(row._fileId, row._itemIndex, 'memo', e.target.value)}
+                            className="h-8 text-sm"
+                            placeholder="상판 모번 23T, 그외 18T 라이트그레이"
+                          />
+                        </td>
+                        <td className="px-2 py-1.5">
+                          <Input
+                            type="date"
+                            value={row.quote_date ?? ''}
+                            onChange={(e) => updateVendorPriceItem(row._fileId, row._itemIndex, 'quote_date', e.target.value)}
+                            className="h-8 text-sm"
+                            placeholder="필요 시 입력"
+                          />
+                        </td>
+                        <td className="px-2 py-1.5 text-muted-foreground text-xs whitespace-nowrap">
+                          {new Date(row._uploadedAt).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' })}
+                        </td>
+                        <td className="px-2 py-1.5 text-center">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 px-2 text-muted-foreground hover:text-foreground"
+                            onClick={() => {
+                              const url = URL.createObjectURL(row._file)
+                              window.open(url, '_blank', 'noopener')
+                              setTimeout(() => URL.revokeObjectURL(url), 60000)
+                            }}
+                            title="원본 파일 보기"
+                          >
+                            <ExternalLink className="h-4 w-4" />
+                          </Button>
+                        </td>
+                        <td className="px-2 py-1.5">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 w-8 p-0 text-destructive"
+                            onClick={() => removeVendorPriceItem(row._fileId, row._itemIndex)}
+                            title="행 삭제"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="px-4 py-2 text-xs text-muted-foreground border-t border-border">
+                저장 시 vendor_name은 &quot;{vendorName || DEFAULT_VENDOR_NAME}&quot;로 통일됩니다.
+              </p>
+            </div>
+          )}
+
+          {/* 거래처 원가 업로드 완료 목록 — 판매 견적서와 동일 구조 */}
+          {uploadedVendorItems.length > 0 && (
+            <div className="mt-6 border border-border rounded-lg overflow-hidden">
+              <div className="px-4 py-2 border-b border-border bg-muted/40 flex items-center justify-between gap-2">
+                <span className="text-sm font-medium">업로드 완료 목록 ({uploadedVendorItems.length}건)</span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                  onClick={() => {
+                    setUploadedVendorItems([])
+                    localStorage.removeItem(UPLOADED_VENDOR_ITEMS_STORAGE_KEY)
+                    toast.success('목록을 비웠습니다.')
+                  }}
+                >
+                  <Trash2 className="h-3.5 w-3.5 mr-1" />
+                  목록 비우기
+                </Button>
+              </div>
+              <div className="overflow-x-auto max-h-[40vh] overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-muted/80 z-10">
+                      <tr>
+                      <th className="border-b border-border px-3 py-2 text-left w-12">No</th>
+                      <th className="border-b border-border px-3 py-2 text-left min-w-[180px]">파일명</th>
+                      <th className="border-b border-border px-3 py-2 text-right min-w-[100px]">금액</th>
+                      <th className="border-b border-border px-3 py-2 text-left min-w-[100px]">견적일</th>
+                      <th className="border-b border-border px-3 py-2 text-left min-w-[140px]">업로드 시간</th>
+                      <th className="border-b border-border px-3 py-2 text-left min-w-[80px]">상태</th>
+                      <th className="border-b border-border px-2 py-2 w-20 text-center">원본보기</th>
+                      <th className="border-b border-border px-2 py-2 w-12" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {uploadedVendorItems.map((u, idx) => (
+                      <tr
+                        key={`${u.image_url}-${u.uploadedAt}-${idx}`}
+                        className="border-b border-border last:border-0 hover:bg-primary/5"
+                      >
+                        <td className="px-3 py-2 text-muted-foreground">{idx + 1}</td>
+                        <td className="px-3 py-2 font-medium truncate max-w-[200px]" title={u.filename}>
+                          {u.filename}
+                        </td>
+                        <td className="px-3 py-2 text-right">{u.grand_total.toLocaleString()}원</td>
+                        <td className="px-3 py-2 text-muted-foreground">
+                          {u.quoteDate
+                            ? new Date(u.quoteDate + 'T00:00:00').toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' })
+                            : '-'}
+                        </td>
+                        <td className="px-3 py-2 text-muted-foreground">
+                          {new Date(u.uploadedAt).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' })}
+                        </td>
+                        <td className="px-3 py-2">
+                          <span className="text-xs px-2 py-0.5 rounded bg-green-500/20 text-green-700 dark:text-green-400">
+                            {u.status}
+                          </span>
+                        </td>
+                        <td className="px-2 py-2 text-center">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 px-2 text-muted-foreground hover:text-foreground"
+                            onClick={() => window.open(u.image_url, '_blank', 'noopener')}
+                            title="원본 보기"
+                          >
+                            <ExternalLink className="h-4 w-4" />
+                          </Button>
+                        </td>
+                        <td className="px-2 py-2">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 w-8 p-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+                            onClick={async () => {
+                              if (!confirm(`'${u.filename}' 데이터를 삭제하시겠습니까?`)) return
+                              try {
+                                const { error } = await supabase
+                                  .from('vendor_price_book')
+                                  .delete()
+                                  .eq('image_url', u.image_url)
+                                if (error) throw error
+                                setUploadedVendorItems((prev) => prev.filter((x) => x.image_url !== u.image_url || x.uploadedAt !== u.uploadedAt))
+                                toast.success('삭제되었습니다.')
+                              } catch (err) {
+                                toast.error('삭제 실패')
+                                console.error(err)
+                              }
+                            }}
+                            title="삭제"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
 
         <div className="pt-6 border-t border-border">
           <p className="text-xs text-muted-foreground">

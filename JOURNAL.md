@@ -538,6 +538,52 @@ git checkout save-20260209-faq-channel
 
 ---
 
+# 2026-02-10 기록 (마이그레이션 섹션 분리·거래처 원가 확장·AI 퀵 커맨드 출처)
+
+## 1. 오늘의 활동 요약
+- **데이터 통합 마이그레이션:** 탭 제거, 판매 견적서(상단)·거래처 원가(하단) 별도 섹션 구성. 거래처 원가 AI 분석 항목 확장(현장명·품명·색상·단가·외경·메모). 업로드 완료 목록·원본보기·메모 필드 추가. 수량 필드 제거.
+- **AI 퀵 커맨드:** 비교대상 카드에 외주업체 원가 출처(원가표/제품DB) 및 원본보기 버튼 추가.
+
+## 2. 상세 결정·구현 사항
+
+### [마이그레이션 섹션 분리]
+- 탭(판매 견적서 | 거래처 원가) 제거. 같은 창 공유로 인한 실수 방지.
+- 상단: 판매 견적서 등록 (드래그존·파일 목록·업로드 완료 목록)
+- 하단: 거래처 원가 등록 (거래처명·드래그존·업로드 파일·검수 테이블·업로드 완료 목록)
+- 각 섹션별 독립 드래그존(dragOverEstimates, dragOverVendor)
+
+### [거래처 원가 AI 분석 확장]
+- **현장명(site_name):** "[파인드가구] 루브르" → "루브르" 추출
+- **품명, 색상, 단가:** 손글씨 162,000원 포함
+- **외경 사이즈:** 가로×세로×높이 (예: 1000×1320×1200)
+- **메모:** "상판 모번 23T", "그외 18T 라이트그레이" 등 상세 사양
+- **수량 제거:** 원가 이상 표시 이슈로 수량 컬럼 삭제
+
+### [거래처 원가 업로드 완료 목록]
+- 판매 견적서와 동일 테이블: No·파일명·금액·견적일·업로드시간·상태·원본보기·삭제
+- localStorage(UPLOADED_VENDOR_ITEMS_STORAGE_KEY) 영구 저장
+- 목록 비우기, DB 미존재 항목 자동 정리
+- 원본보기: image_url 새 탭 오픈
+
+### [메모 필드]
+- vendor_price_book.memo 컬럼 추가
+- ParsedVendorPriceItem.memo, 검수 테이블 메모 컬럼
+- AI 프롬프트에 memo 추출 규칙 반영
+
+### [AI 퀵 커맨드 비교대상]
+- PastCaseRecommendation에 source, image_url 추가
+- 출처: 원가표(vendor_price_book) / 제품DB(products)
+- 원본보기: image_url 있을 때 onRequestPriceBookImage 호출 → 라이트박스
+
+## 3. 변경된 주요 파일
+- `src/pages/admin/MigrationPage.tsx` — 섹션 분리, accumulatedVendorItems·검수 테이블 확장, 업로드 완료 목록, 메모
+- `src/lib/parseFileWithAI.ts` — VISION_VENDOR_PROMPT·ParsedVendorPriceItem 확장
+- `src/components/estimate/EstimateForm.tsx` — 비교대상 출처·원본보기
+- `src/lib/estimateAiService.ts` — PastCaseRecommendation source, image_url
+- Supabase: vendor_price_book site_name, color, quantity, quote_date, memo 컬럼
+
+---
+
 # 2026-02-10 기록 (MigrationPage 파일명·저장=확정·6개월 견적 통계·원가 연동)
 
 ## 1. 오늘의 활동 요약
@@ -591,3 +637,107 @@ git checkout save-20260210-migration-stats
 - `src/pages/ConsultationManagement.tsx` — estimatesLast12Months, estimateListByYear, archiveCutoff, dateRange default 'all'
 - `src/pages/admin/MigrationPage.tsx` — uploadedItems localStorage, DB 복원, _migration_original_filename, 견적일 컬럼, 목록 비우기
 - `BLUEPRINT.md`, `CONTEXT.md`, `JOURNAL.md`, `soul.md`
+
+---
+
+# 2026-02-10 기록 (AI 퀵 커맨드·원가표·참고 견적서 모달 UX)
+
+## 1. 오늘의 활동 요약
+- **AI 퀵 커맨드 원본보기:** 원가표 원본 이미지가 팝업에 안 보이던 문제 — vendor-assets 비공개 버킷 대비 Signed URL 생성 후 표시. 참고 견적서(PDF) 모달 z-[200]·캡처로 견적 작성창이 같이 닫히지 않도록 방어.
+- **마이그레이션:** DB 조회 빈 결과일 때 업로드 완료 목록을 비우지 않도록 수정(새로고침 후 데이터 유지).
+- **원가표 비교대상:** 출처 뒤 외경사이즈·현장명 표시, 원가표는 원가만 표시(종전 단가 제거). 올데이C 검색 시 올데이CA 포함·품명·규격 기준 중복 제거.
+- **참고 견적서 모달:** 닫기 버튼 제거(바깥 클릭·Escape로 닫기). 미리보기 닫을 때 견적 한 줄도 없는 상태에서 작성창이 닫히지 않도록 printEstimateId·justClosedPreviewRef 방어.
+
+## 2. 상세 결정·구현 사항
+
+### [원가표 원본보기]
+- **Signed URL:** priceBookImageUrl이 vendor-assets public URL이면 경로 추출 후 createSignedUrl(3600초)로 표시 URL 생성. priceBookImageDisplayUrl state로 분리, 로딩 문구 표시.
+- **참고 견적서(PDF) 모달:** z-[200], onPointerDownCapture/onClickCapture로 클릭이 견적 모달로 전달되지 않도록 함. 닫기 버튼 삭제.
+
+### [견적 작성창 닫힘 방지]
+- **justClosedPreviewRef + 300ms:** 미리보기 닫을 때 ref true 설정, 300ms 후 false. 견적 모달 onOpenChange(false) 시 printEstimateId 있거나 justClosedPreviewRef면 닫지 않고 return.
+
+### [마이그레이션 업로드 완료 목록]
+- DB 정리 useEffect에서 rows.length === 0이면 목록을 비우지 않음(RLS/오류 시 새로고침 후 사라지는 현상 방지).
+
+### [AI 퀵 커맨드 원가표]
+- **getVendorPriceRecommendations:** 다건 조회(limit 10), 품명·규격 기준 중복 제거. spec(외경)·site_name(현장명) 반환.
+- **원가만 표시:** 출처가 원가표일 때 "종전 단가" 제거, "원가: N원"만 표시. 출처 줄에 "· 외경 {size}"·"· 현장명 {siteName}" 추가.
+- **올데이C → 올데이CA:** 과거 견적 결과와 원가표 결과 항상 병합, 품명·규격·색상 기준 dedupe 후 최대 8건.
+
+### [DB 정리]
+- vendor_price_book 품명·규격별 중복 행 정리(최신 1건만 유지). 올데이CA 1000×1280×1200 삭제, 상판 모변 23T는 1000×1320×1200 행 memo로 병합.
+
+## 3. 변경된 주요 파일
+- `src/pages/ConsultationManagement.tsx` — priceBookImageDisplayUrl·Signed URL, 참고 견적서 z-[200]·캡처·닫기 버튼 삭제, justClosedPreviewRef·onOpenChange 방어
+- `src/pages/admin/MigrationPage.tsx` — DB 정리 시 rows.length === 0이면 return
+- `src/lib/estimateRecommendationService.ts` — getVendorPriceRecommendations, spec·site_name, 중복 제거
+- `src/components/estimate/EstimateForm.tsx` — 원가표 원가만 표시, 출처 뒤 외경·현장명, vendor 병합·dedupe
+
+---
+
+# 세이브 포인트 2026-02-10 (AI 퀵·원가표·참고 견적서 모달)
+
+**이 시점까지 반영된 작업을 롤백할 때 참고용입니다.**
+
+## 포함된 작업 요약
+- **원가표 원본보기:** Signed URL로 이미지 표시, 참고 견적서 모달 z-[200]·캡처, 닫기 버튼 삭제.
+- **견적 작성창 유지:** 미리보기 닫을 때 printEstimateId·justClosedPreviewRef(300ms)로 견적 모달 닫힘 방지.
+- **마이그레이션:** DB 조회 빈 결과일 때 업로드 완료 목록 비우지 않음.
+- **AI 퀵 커맨드:** 원가표 출처 뒤 외경·현장명, 원가만 표시(종전 단가 제거). 올데이C 검색 시 올데이CA 병합·중복 제거. getVendorPriceRecommendations·spec·site_name.
+
+## 롤백 시 (Git 사용 시)
+```bash
+git add -A
+git commit -m "checkpoint: AI 퀵 원가표·참고 견적서 모달 UX·마이그레이션 목록 유지"
+git tag save-20260210-ai-quick-estimate-modal
+
+# 이후 이 시점으로 복귀
+git checkout save-20260210-ai-quick-estimate-modal
+```
+
+## 변경된 주요 파일
+- `src/pages/ConsultationManagement.tsx` — 원가표 Signed URL, 참고 견적서 모달, justClosedPreviewRef
+- `src/pages/admin/MigrationPage.tsx` — DB 정리 시 빈 결과 방어
+- `src/lib/estimateRecommendationService.ts` — getVendorPriceRecommendations, spec, site_name, 중복 제거
+- `src/components/estimate/EstimateForm.tsx` — 원가만 표시, 외경·현장명, vendor 병합
+- `BLUEPRINT.md`, `CONTEXT.md`, `JOURNAL.md`, `soul.md`
+
+---
+
+# 2026-02-10 기록 (상담 무효/거절 분리·7탭·AI 제안·채널톡 웹훅 전 이벤트 수용)
+
+## 1. 오늘의 활동 요약
+- **상담 UI:** 무효 vs 거절 분리, 7탭(전체|미처리|견적중|진행중|종료|거절|무효), KPI(무효 제외 성공률), 상세 패널 [무효 처리]/[거절 처리]. 식별자 고정 및 AI 제안(metadata.ai_suggestions) 수동 [적용].
+- **채널톡 웹훅:** 이벤트 타입 필터 제거, 모든 수신에 대해 entity/폼 필드에서 연락처·메시지 추출 후 DB Insert 시도. 로깅·try-catch·완료 로그·배포 옵션 반영.
+
+## 2. 상세 결정·구현 사항
+
+### [무효 vs 거절]
+- **DB:** `consultation_status` enum에 '무효' 추가(마이그레이션 add_consultation_status_invalid).
+- **무효:** 단순 이탈, 통계에서 완전 제외. [무효 처리] 클릭 시 팝업 없이 즉시 status '무효' 저장.
+- **거절:** 영업 실패, metadata.cancel_reason 보존. [거절 처리] 시 거절 사유 입력 모달 필수 후 저장.
+- **KPI:** total_valid_leads = count(status != '무효'), success_rate = 시공완료(비거절·비무효) / total_valid_leads. 상단 "유효 상담 N건 · 성공률 M% (무효 제외)" 표시.
+
+### [7탭·상태 바]
+- **탭:** 전체|미처리|견적중|진행중|종료|거절|무효. 업무 단계별 우선순위 파악.
+- **상태 바:** 7버튼(접수|견적|계약|완료|AS|무효|거절). 무효/거절 클릭 시 각각 즉시 무효 처리·거절 사유 모달.
+- **카드:** 거절 건 2행에 거절 사유 강조, 무효 건 카드 opacity-60.
+
+### [식별자·AI 제안]
+- **식별자 고정:** 채널톡 웹훅에서 최초 생성된 display_name은 후속 메시지로 자동 변경하지 않음.
+- **ai_suggestions:** 추출 상호·평수·업종은 metadata.ai_suggestions에만 저장. 상담 상세 패널 "AI가 분석한 정보가 있습니다" + [상호/평수/업종] [적용] 버튼으로 수동 반영.
+
+### [채널톡 웹훅 — 모든 이벤트 수용]
+- **이벤트 필터 제거:** body.type/event로 스킵하지 않음. body.entity에 텍스트·유저·연락처 중 하나라도 있으면 extractFromPayload 호출 후 DB Insert 경로 진행.
+- **연락처 추출:** user → entity → body → **entity.fields / body.fields**(폼 응답) → 메시지 본문 순. extractPhoneFromFields로 phone, 휴대폰, 연락처, 전화번호 등 키 및 한국 휴대폰 패턴 매칭.
+- **로깅:** 수신 이벤트 타입, "처리 중인 데이터 구조:" JSON.stringify(body), DB Insert 시도 데이터·에러 상세·Insert 성공, "--- 함수 실행 완료 ---" 등 분기별 완료 로그.
+- **안정성:** 전체 try-catch, catch에서 console.error 상세, 모든 supabase.from().insert/update에 await. SUPABASE_SERVICE_ROLE_KEY 확인 로그.
+- **배포:** `npx supabase functions deploy channel-talk-webhook --no-verify-jwt`. (테스트용 서명 검증 bypass는 운영 전 복구.)
+
+## 3. 변경된 주요 파일
+- `src/pages/ConsultationManagement.tsx` — ListTab 7탭, endSubTab 제거, tabCounts/filteredLeads, handleInvalidLead, KPI, 상태 바 무효/거절, 상세 패널 버튼·AI 제안 UI
+- `src/types/database.ts` — consultation_status '무효'
+- `supabase/functions/channel-talk-webhook/index.ts` — 이벤트 필터 제거, extractFromPayload·extractPhoneFromFields 보강, 로깅·try-catch·완료 로그
+- `supabase/migrations/20260210180000_add_consultation_status_invalid.sql`
+- `BLUEPRINT.md`, `CONTEXT.md`, `soul.md`
