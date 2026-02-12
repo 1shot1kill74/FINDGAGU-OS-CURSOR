@@ -42,7 +42,7 @@ export interface ConsultationMessage {
   consultation_id: string
   sender_id: string
   content: string
-  message_type: 'TEXT' | 'FILE' | 'SYSTEM'
+  message_type: 'TEXT' | 'FILE' | 'SYSTEM' | 'USER'
   file_url: string | null
   file_name: string | null
   created_at: string
@@ -165,6 +165,7 @@ export function ConsultationChat({
       } else {
         setConsultationLabels({})
       }
+
       let query = supabase
         .from('consultation_messages')
         .select('id, consultation_id, sender_id, content, message_type, file_url, file_name, created_at, metadata, is_visible')

@@ -13,6 +13,8 @@ export type QuickCommandResult =
   | { type: 'needs_unit_price'; name: string; qty: number }
   | { type: 'needs_spec'; name: string; qty: number; unitPrice: number; specQuestion?: string }
   | { type: 'spec_reply'; spec: string | null; color?: string | null }
+  /** 업로드 견적서 참조 — getEstimateFileUrlsByProjectName(projectName)로 Signed URL 조회 후 AI에 전달 */
+  | { type: 'reference_past_estimate'; projectName: string }
   | { type: 'unknown' }
   | null
 
@@ -45,6 +47,7 @@ export const ESTIMATE_SYSTEM_PROMPT = `너는 가구 전문가의 비서야. 사
 - 마진율 맞춤: requestType "target_margin", marginPercent(0~100).
 - 규격 필요: requestType "needs_spec", name, qty, unitPrice.
 - 단가 필요: requestType "needs_unit_price", name, qty.
+- 예전 견적 참고: requestType "reference_past_estimate", productName에 프로젝트/업체명 (예: 종로학원). consultation_estimate_files의 Signed URL을 AI에 전달해 내용 분석.
 - 판단 불가: requestType "unknown".`
 
 // ——— Few-shot 예시 (순서 뒤죽박죽·비정형 입력도 인식) ———
@@ -84,6 +87,10 @@ export const ESTIMATE_FEW_SHOT_EXAMPLES: { input: string; output: string }[] = [
   {
     input: '마진율 25%에 맞춰서 단가 조정해줘',
     output: '{"requestType":"target_margin","name":null,"spec":null,"color":null,"qty":null,"unitPrice":null,"amount":null,"productName":null,"marginPercent":25}',
+  },
+  {
+    input: '종로학원 예전 견적 참고해서 짜줘',
+    output: '{"requestType":"reference_past_estimate","name":null,"spec":null,"color":null,"qty":null,"unitPrice":null,"amount":null,"productName":"종로학원","marginPercent":null}',
   },
 ]
 
@@ -169,6 +176,8 @@ function normalizeApiResult(raw: Record<string, unknown>): QuickCommandResult {
     return { type: 'add_row', name, qty, unitPrice, spec: spec || null, color: color || null }
   if (req === 'needs_unit_price' && name && !Number.isNaN(qty) && qty > 0)
     return { type: 'add_row', name, qty, unitPrice: 0, spec: spec || null, color: color || null }
+  if (req === 'reference_past_estimate' && productName)
+    return { type: 'reference_past_estimate', projectName: productName }
   return { type: 'unknown' }
 }
 
@@ -176,6 +185,13 @@ function normalizeApiResult(raw: Record<string, unknown>): QuickCommandResult {
 function mockParseWithPromptStyle(text: string): QuickCommandResult {
   const t = text.trim()
   if (!t) return null
+
+  // "종로학원 예전 견적 참고해서 짜줘" → reference_past_estimate
+  const refMatch = t.match(/(.+?)\s*예전\s*견적\s*참고/i) || t.match(/(.+?)\s*이전\s*견적\s*참고/i)
+  if (refMatch) {
+    const projectName = refMatch[1].trim()
+    if (projectName.length >= 2) return { type: 'reference_past_estimate', projectName }
+  }
 
   if (/이전\s+.+\s+단가/i.test(t)) {
     const name = t.replace(/이전\s+/, '').replace(/\s+단가.*/, '').trim()
@@ -405,9 +421,9 @@ export function searchPastCaseRecommendations(params: {
   for (const p of products) {
     const rName = normalizeNameForCompare(p.name)
     if (rName !== qName && !qName.includes(rName) && !rName.includes(qName)) continue
-    const supplyPrice = Number(p.supply_price) > 0 ? Number(p.supply_price) : 0
-    if (supplyPrice <= 0) continue
-    const price = roundToPriceUnit(supplyPrice / (1 - 0.3))
+    const sellingPrice = Number(p.supply_price) > 0 ? Number(p.supply_price) : 0
+    if (sellingPrice <= 0) continue
+    const costPrice = Math.round(sellingPrice * (1 - 0.3))
     const pSpec = (p.spec ?? '').trim() || null
     const pColor = (p.color ?? '').trim() || null
     const specSame = !qSpec || !pSpec ? qSpec === pSpec : normalizeSpecForCompare(pSpec) === qSpec
@@ -417,9 +433,9 @@ export function searchPastCaseRecommendations(params: {
       name: p.name.trim(),
       size: pSpec,
       color: pColor,
-      price,
+      price: sellingPrice,
       matchStatus: { name: true, size: specSame, color: colorMatch },
-      costPrice: supplyPrice,
+      costPrice,
       source: 'products',
     }
     if (!qSpec && !qColor) exactMatch.push(rec)

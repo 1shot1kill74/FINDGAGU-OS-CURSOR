@@ -65,3 +65,13 @@ FindGagu OS: Project Soul (ivory-os) 1. Captain & Partner - Captain: 대표님 (
 - **안정 우선·식별자 정체성:** display_name은 웹훅에서 최초 생성 후 자동 변경하지 않음. AI 추출값은 ai_suggestions만, 상세 패널 [적용]으로 수동 반영.
 - **무효 vs 거절:** status '무효' 추가. 무효=통계 제외, 거절=사유 보존. 7탭(전체|미처리|견적중|진행중|종료|거절|무효). KPI 무효 제외 성공률. [무효 처리] 즉시, [거절 처리] 사유 모달 필수.
 - **채널톡 웹훅:** 이벤트 타입 필터 제거 — body.entity에 텍스트/유저/연락처 있으면 DB Insert. 폼·서포트봇 응답 포함 entity.fields/body.fields에서 휴대폰 추출(consultations.contact 매핑). 처리 중인 데이터 구조 로그·try-catch·완료 로그·배포 --no-verify-jwt.
+
+17. 2026-02-10 반영 (쇼룸·상담 삭제·이미지 자산 상담용 — 세이브 포인트)
+- **쇼룸 전문가 코멘트 통일:** 고교학점제 카드 기준 slate 배경·텍스트·CTA(bg-slate-700)로 전 카드 통일. 관리형·스터디카페에 [상담하기] CTA 추가(학원과 동일 형태).
+- **상담 카드 영구 삭제:** /consultation 리스트 카드 우측 휴지통 버튼 → "이 상담 내역을 영구 삭제할까요?" 확인 → consultations DELETE → 새로고침 없이 카드 제거.
+- **이미지 자산 상담용 필터:** image_assets.is_consultation(boolean, default false) 컬럼 추가. 이미지 자산 관리: 카드 [상담용] 토글, 상단 [상담용 사진만 보기] 스위치(Switch). 공유 바구니 시 상담용 사진 ID를 URL·갤러리 상단 우선. PublicGalleryView 상담용 카드 뱃지·테두리 강조. 카드 우측 상단: 스코어링(AI·내부) 제거, **상담용일 때만** "상담용" 배지(상담용 아닌 건 표시 없음). Switch 컴포넌트(src/components/ui/switch.tsx) 추가.
+
+18. 2026-02-12 반영 (견적서 업로드·products 판매단가·AI 퀵 가이드 — 세이브 포인트)
+- **상담별 견적서 업로드(EstimateFilesGallery):** [판매 단가표 반영]·[견적서로 저장] 모두 products + estimates 동시 저장.
+- **products.supply_price = 판매단가:** 원가표는 원가→마진 30% 역산 판매단가. 견적서는 unitPrice 그대로. AI 퀵 가이드에서 판매단가로 인식, 원가는 역산(수익률 판단용).
+- **EstimateForm:** applySellingToRow 추가. modalOpen 시 productsList 새로고침 → AI 퀵 가이드 최신 반영.

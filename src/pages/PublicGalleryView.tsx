@@ -7,7 +7,8 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { supabase } from '@/lib/supabase'
-import { getAssetUrl } from '@/lib/imageAssetService'
+import { getAssetUrl, incrementImageAssetViewCount } from '@/lib/imageAssetService'
+import { updateInternalScoreForAsset } from '@/lib/imageScoringService'
 
 const BUCKET = 'construction-assets'
 
@@ -18,6 +19,7 @@ export interface PublicGalleryAsset {
   projectTitle: string | null
   productTags: string[]
   color: string | null
+  isConsultation?: boolean
 }
 
 function parseIds(searchParams: URLSearchParams): string[] {
@@ -41,18 +43,20 @@ export default function PublicGalleryView() {
     let cancelled = false
     setLoading(true)
     ;(async () => {
-      const { data: rows, error } = await supabase
-        .from('project_images')
-        .select('id, cloudinary_public_id, storage_path, thumbnail_path, project_title, product_tags, color')
-        .in('id', ids)
-        .eq('status', 'approved')
+      const [projRes, assetRes] = await Promise.all([
+        supabase
+          .from('project_images')
+          .select('id, cloudinary_public_id, storage_path, thumbnail_path, project_title, product_tags, color')
+          .in('id', ids)
+          .eq('status', 'approved'),
+        supabase
+          .from('image_assets')
+          .select('id, cloudinary_url, thumbnail_url, site_name, product_name, color_name, is_consultation')
+          .in('id', ids),
+      ])
       if (cancelled) return
-      if (error || !rows?.length) {
-        setAssets([])
-        setLoading(false)
-        return
-      }
-      const list: PublicGalleryAsset[] = rows.map((r: {
+
+      const fromProject: PublicGalleryAsset[] = (projRes.data ?? []).map((r: {
         id: string
         cloudinary_public_id: string
         storage_path: string | null
@@ -82,6 +86,34 @@ export default function PublicGalleryView() {
           color: r.color?.trim() || null,
         }
       })
+
+      const fromAssets: PublicGalleryAsset[] = (assetRes.data ?? []).map((r: {
+        id: string
+        cloudinary_url: string
+        thumbnail_url: string | null
+        site_name: string | null
+        product_name: string | null
+        color_name: string | null
+        is_consultation?: boolean | null
+      }) => {
+        const url = r.cloudinary_url?.trim() || ''
+        const thumbnailUrl = r.thumbnail_url?.trim() || url
+        const productTags = r.product_name?.trim() ? [r.product_name.trim()] : []
+        return {
+          id: r.id,
+          url,
+          thumbnailUrl,
+          projectTitle: r.site_name?.trim() || null,
+          productTags,
+          color: r.color_name?.trim() || null,
+          isConsultation: r.is_consultation === true,
+        }
+      })
+
+      const byId = new Map<string, PublicGalleryAsset>()
+      fromProject.forEach((a) => byId.set(a.id, a))
+      fromAssets.forEach((a) => byId.set(a.id, a))
+      const list = ids.map((id) => byId.get(id)).filter((a): a is PublicGalleryAsset => a != null)
       setAssets(list)
       setLoading(false)
     })()
@@ -122,9 +154,21 @@ export default function PublicGalleryView() {
             <button
               key={asset.id}
               type="button"
-              onClick={() => setLightboxId(asset.id)}
-              className="relative rounded-xl overflow-hidden border border-border bg-muted/30 aspect-[4/3] block w-full text-left"
+              onClick={() => {
+                setLightboxId(asset.id)
+                incrementImageAssetViewCount(asset.id)
+                  .then(() => updateInternalScoreForAsset(asset.id))
+                  .catch(() => {})
+              }}
+              className={`relative rounded-xl overflow-hidden border aspect-[4/3] block w-full text-left ${
+                asset.isConsultation ? 'border-primary ring-2 ring-primary/50 bg-primary/5' : 'border-border bg-muted/30'
+              }`}
             >
+              {asset.isConsultation && (
+                <span className="absolute top-1.5 left-1.5 z-10 rounded px-1.5 py-0.5 text-[10px] font-medium bg-primary text-primary-foreground shadow">
+                  상담용
+                </span>
+              )}
               <img
                 src={asset.thumbnailUrl}
                 alt={asset.projectTitle || asset.productTags[0] || '시공 사진'}

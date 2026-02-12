@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
-import { Upload, X, Copy, CheckCircle, AlertCircle, Search, Link2, ImageIcon, ChevronLeft, ChevronRight } from 'lucide-react'
+import { X, Copy, CheckCircle, AlertCircle, Search, Link2, ImageIcon, ChevronLeft, ChevronRight, ChevronDown, Upload } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -9,9 +9,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { Switch } from '@/components/ui/switch'
 import { supabase } from '@/lib/supabase'
 import { toast } from 'sonner'
-import { MOCK_REFERENCE_CASES } from '@/data/referenceCases'
 import {
   getAssetUrl,
   getSyncStatus,
@@ -20,21 +20,23 @@ import {
   buildImageExportPayload,
   ensureCanDelete,
   ensureCanUpdate,
-  generateFileName,
-  uploadConstructionImageDualWithProgress,
-  computeFileHash,
-  checkDuplicateByHash,
-  isCloudinaryConfigured,
   rowToProjectAsset,
   fetchAllProjectAssets,
   fetchApprovedProjectAssets,
+  fetchImageAssetTreeData,
+  incrementImageAssetViewCount,
+  incrementImageAssetShareCount,
   updateProjectAsset,
   updateProjectAssets,
+  updateImageAssetConsultation,
 } from '@/lib/imageAssetService'
+import type { ImageAssetTreeMeta } from '@/lib/imageAssetService'
+import { setImageAssetMain } from '@/lib/imageAssetUploadService'
+import { updateInternalScoreForAsset, updateInternalScoresBatch } from '@/lib/imageScoringService'
 import { isValidUUID } from '@/lib/uuid'
 import { toProductTagsArray } from '@/lib/utils'
-import { getTagMappings } from '@/lib/tagMappingService'
 import { shareGalleryKakao } from '@/lib/kakaoShare'
+import { useColorChips } from '@/hooks/useColorChips'
 import type { ProjectImageAsset, SyncStatus } from '@/types/projectImage'
 import { USAGE_TYPES, REVIEW_STATUSES, getUsageLabel, getUsageTooltip, type UsageType, type ReviewStatus } from '@/types/projectImage'
 
@@ -43,21 +45,8 @@ const COLOR_QUICK = ['화이트', '오크', '블랙', '그레이', '네이비', 
 
 const BUCKET = 'construction-assets'
 const PAGE_SIZE = 24
-type SortKey = 'latest' | 'industry' | 'popular'
+type SortKey = 'latest' | 'industry' | 'popular' | 'ai' | 'internal'
 
-/** 영업 테스트용 샘플 10건 — 현장 A(4) B(3) C(3). picsum.photos는 cloudinary_public_id seed_N 형식으로 표시됨. */
-const SEED_TEST_ROWS = [
-  { cloudinary_public_id: 'seed_100', project_title: '강남 테헤란로 오피스', industry: '오피스', product_tags: ['스마트A 책상', '올데이B 의자'], color: '화이트', usage_type: 'Marketing' as const, status: 'approved' as const },
-  { cloudinary_public_id: 'seed_101', project_title: '강남 테헤란로 오피스', industry: '오피스', product_tags: ['스마트A 책상', '올데이B 의자'], color: '화이트', usage_type: 'Marketing' as const, status: 'approved' as const },
-  { cloudinary_public_id: 'seed_102', project_title: '강남 테헤란로 오피스', industry: '오피스', product_tags: ['스마트A 책상', '올데이B 의자'], color: '화이트', usage_type: 'Marketing' as const, status: 'approved' as const },
-  { cloudinary_public_id: 'seed_103', project_title: '강남 테헤란로 오피스', industry: '오피스', product_tags: ['스마트A 책상', '올데이B 의자'], color: '화이트', usage_type: 'Marketing' as const, status: 'approved' as const },
-  { cloudinary_public_id: 'seed_104', project_title: '분당 판교 IT 타워', industry: '오피스', product_tags: ['올데이B 의자', '파티션C'], color: '블랙', usage_type: 'Marketing' as const, status: 'approved' as const },
-  { cloudinary_public_id: 'seed_105', project_title: '분당 판교 IT 타워', industry: '오피스', product_tags: ['올데이B 의자', '파티션C'], color: '블랙', usage_type: 'Marketing' as const, status: 'approved' as const },
-  { cloudinary_public_id: 'seed_106', project_title: '분당 판교 IT 타워', industry: '오피스', product_tags: ['올데이B 의자', '파티션C'], color: '블랙', usage_type: 'Marketing' as const, status: 'approved' as const },
-  { cloudinary_public_id: 'seed_107', project_title: '서초동 변호사 사무실', industry: '기타', product_tags: ['프리미엄 소파D'], color: null, usage_type: 'Mobile_Only' as const, status: 'approved' as const },
-  { cloudinary_public_id: 'seed_108', project_title: '서초동 변호사 사무실', industry: '기타', product_tags: ['프리미엄 소파D'], color: null, usage_type: 'Mobile_Only' as const, status: 'approved' as const },
-  { cloudinary_public_id: 'seed_109', project_title: '서초동 변호사 사무실', industry: '기타', product_tags: ['프리미엄 소파D'], color: null, usage_type: 'Mobile_Only' as const, status: 'approved' as const },
-]
 /** 지능형 필터: 현장별 / 제품군별 / 색상별 */
 type FilterMode = 'all' | 'by_site' | 'by_product' | 'by_color'
 
@@ -105,32 +94,6 @@ function legacyRowToAsset(row: {
   }
 }
 
-/** Mock: Cloudinary ID 시뮬레이션 (표시는 원본 URL, 마크다운은 Cloudinary URL). id는 UUID 형식 유지. */
-function getMockAssets(): ProjectImageAsset[] {
-  const out: ProjectImageAsset[] = []
-  MOCK_REFERENCE_CASES.forEach((c) => {
-    c.images.forEach((displayUrl, i) => {
-      const publicId = `mock/${c.id}-${i}`
-      out.push({
-        id: crypto.randomUUID(),
-        cloudinaryPublicId: publicId,
-        usageType: 'Marketing',
-        displayName: null,
-        url: displayUrl,
-        thumbnailUrl: displayUrl,
-        storagePath: null,
-        consultationId: null,
-        projectTitle: c.title,
-        industry: c.industry,
-        viewCount: 0,
-        createdAt: new Date().toISOString(),
-        syncStatus: 'cloudinary_only',
-      })
-    })
-  })
-  return out.reverse()
-}
-
 /** 통합 검색: 검색어를 공백으로 나눈 각 단어가 모두 포함된 자산만 노출 (제품명·색상·현장명 동시 검색) */
 function filterByUnifiedSearch(assets: ProjectImageAsset[], query: string): ProjectImageAsset[] {
   const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
@@ -167,11 +130,13 @@ export default function ImageAssetViewer() {
   const [filterMode, setFilterMode] = useState<FilterMode>('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [colorFilter, setColorFilter] = useState<string | null>(null)
+  const [productFilter, setProductFilter] = useState<string | null>(null)
   const [usageFilter, setUsageFilter] = useState<UsageType | 'all'>('all')
   const [lightboxAsset, setLightboxAsset] = useState<ProjectImageAsset | null>(null)
-  const [uploadOpen, setUploadOpen] = useState(false)
   /** 이미지 자산 관리 전용: 전체 | 검수 대기 사진 */
   const [reviewFilter, setReviewFilter] = useState<'all' | 'pending'>('all')
+  /** 이미지 자산 관리 전용: 상담용 사진만 보기 */
+  const [consultationOnlyFilter, setConsultationOnlyFilter] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkEditOpen, setBulkEditOpen] = useState(false)
   const [bulkTagsText, setBulkTagsText] = useState('')
@@ -190,6 +155,63 @@ export default function ImageAssetViewer() {
   /** 라이트박스에서 앞뒤 넘기기용 인덱스 (현재 보기 목록 기준) */
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null)
   const scrollToSiteKeyRef = useRef<string | null>(null)
+  /** 이미지 자산 관리 2컬럼: 트리 데이터·선택(현장/업종/제품)·펼침 상태 */
+  const [treeData, setTreeData] = useState<ImageAssetTreeMeta>({ years: [], industries: [], products: [] })
+  const [selectedSite, setSelectedSite] = useState<string | null>(null)
+  const [selectedIndustry, setSelectedIndustry] = useState<string | null>(null)
+  const [selectedProduct, setSelectedProduct] = useState<string | null>(null)
+  const [expandedYears, setExpandedYears] = useState<Set<string>>(new Set())
+  const [expandedRegionKeys, setExpandedRegionKeys] = useState<Set<string>>(new Set())
+  const [expandedIndustries, setExpandedIndustries] = useState(false)
+  const [expandedProducts, setExpandedProducts] = useState(false)
+  const toggleYear = useCallback((year: string) => {
+    setExpandedYears((prev) => {
+      const next = new Set(prev)
+      if (next.has(year)) next.delete(year)
+      else next.add(year)
+      return next
+    })
+  }, [])
+  const toggleRegion = useCallback((year: string, region: string) => {
+    const key = `${year}|${region}`
+    setExpandedRegionKeys((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }, [])
+  const selectSite = useCallback((site: string | null) => {
+    setSelectedSite(site)
+    setSelectedIndustry(null)
+    setSelectedProduct(null)
+  }, [])
+  const selectIndustry = useCallback((industry: string | null) => {
+    setSelectedIndustry(industry)
+    setSelectedSite(null)
+    setSelectedProduct(null)
+  }, [])
+  const selectProduct = useCallback((product: string | null) => {
+    setSelectedProduct(product)
+    setSelectedSite(null)
+    setSelectedIndustry(null)
+  }, [])
+  const { chips: colorChips } = useColorChips()
+  const isAdmin = useMemo(() => {
+    if (typeof localStorage === 'undefined') return false
+    if (localStorage.getItem('findgagu-role') === 'admin') return true
+    if (new URLSearchParams(window.location.search).get('admin') === '1') return true
+    return false
+  }, [])
+  const [backfillLoading, setBackfillLoading] = useState(false)
+  const colorByGroup = useMemo(() => {
+    const g: Record<string, string[]> = { Standard: [], Special: [], Other: [] }
+    colorChips.forEach((c) => {
+      if (g[c.color_type]) g[c.color_type].push(c.color_name)
+    })
+    return g
+  }, [colorChips])
+  const colorChipNames = useMemo(() => new Set(colorChips.map((c) => c.color_name)), [colorChips])
 
   /** imageAssetService 심장: forBank면 뱅크용(approved만), 아니면 관리용(전체). 수정 시 뱅크·견적에 즉시 반영. */
   const fetchFromDb = useCallback(async (forBank: boolean) => {
@@ -216,11 +238,25 @@ export default function ImageAssetViewer() {
     fetchFromDb(isBankView).then((list) => {
       if (cancelled) return
       if (list.length > 0) setAssets(list)
-      else setAssets(getMockAssets())
+      else setAssets([])
       setLoading(false)
     })
     return () => { cancelled = true }
   }, [fetchFromDb, isBankView])
+
+  /** 이미지 자산 관리: 트리 데이터 로드. 첫 연도 자동 펼침 */
+  useEffect(() => {
+    if (isBankView) return
+    let cancelled = false
+    fetchImageAssetTreeData().then((data) => {
+      if (cancelled) return
+      setTreeData(data)
+      if (data.years.length > 0) {
+        setExpandedYears((prev) => new Set([...prev, data.years[0].year]))
+      }
+    })
+    return () => { cancelled = true }
+  }, [isBankView])
 
   /** 뱅크 라이트박스에서 [관리 페이지에서 수정하기] 클릭 시 /image-assets 진입 + 해당 카드 포커스 */
   const location = useLocation()
@@ -305,16 +341,39 @@ export default function ImageAssetViewer() {
     []
   )
 
+  /** 이미지 자산 관리: 트리에서 현장/업종/제품 선택 시 필터 */
+  const siteFiltered = useMemo(() => {
+    if (isBankView) return assets
+    if (selectedSite) {
+      return assets.filter(
+        (a) => a.sourceTable === 'image_assets' && (a.projectTitle ?? '').trim() === selectedSite
+      )
+    }
+    if (selectedIndustry) {
+      return assets.filter((a) => (a.industry ?? '').trim() === selectedIndustry)
+    }
+    if (selectedProduct) {
+      return assets.filter((a) => (a.productTags ?? []).some((t) => t.trim() === selectedProduct))
+    }
+    return assets
+  }, [assets, isBankView, selectedSite, selectedIndustry, selectedProduct])
+
   /** 이미지 자산 관리: 검수 대기만 보기 */
   const statusFiltered = useMemo(() => {
-    if (isBankView) return assets
-    if (reviewFilter === 'pending') return assets.filter((a) => a.status === 'pending')
-    return assets
-  }, [assets, isBankView, reviewFilter])
+    if (isBankView) return siteFiltered
+    if (reviewFilter === 'pending') return siteFiltered.filter((a) => a.status === 'pending')
+    return siteFiltered
+  }, [siteFiltered, isBankView, reviewFilter])
+
+  /** 이미지 자산 관리: 상담용 사진만 보기 (is_consultation true인 image_assets만) */
+  const consultationFiltered = useMemo(() => {
+    if (isBankView || !consultationOnlyFilter) return statusFiltered
+    return statusFiltered.filter((a) => a.sourceTable === 'image_assets' && a.isConsultation === true)
+  }, [statusFiltered, isBankView, consultationOnlyFilter])
 
   const searchFiltered = useMemo(
-    () => filterByUnifiedSearch(statusFiltered, searchQuery),
-    [statusFiltered, searchQuery]
+    () => filterByUnifiedSearch(consultationFiltered, searchQuery),
+    [consultationFiltered, searchQuery]
   )
 
   const usageFiltered = useMemo(() => {
@@ -322,18 +381,38 @@ export default function ImageAssetViewer() {
     return searchFiltered.filter((a) => a.usageType === usageFilter)
   }, [searchFiltered, usageFilter])
 
+  const productFiltered = useMemo(() => {
+    if (!productFilter) return usageFiltered
+    return usageFiltered.filter((a) =>
+      (a.productTags ?? []).some((t) => (t ?? '').trim() === productFilter)
+    )
+  }, [usageFiltered, productFilter])
+
   const colorFiltered = useMemo(() => {
-    if (!colorFilter) return usageFiltered
-    return usageFiltered.filter((a) => (a.color ?? '').trim().toLowerCase() === colorFilter.toLowerCase())
-  }, [usageFiltered, colorFilter])
+    if (!colorFilter) return productFiltered
+    return productFiltered.filter((a) => (a.color ?? '').trim().toLowerCase() === colorFilter.toLowerCase())
+  }, [productFiltered, colorFilter])
 
   const sorted = useMemo(() => {
     const arr = [...colorFiltered]
     if (sort === 'latest') arr.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     else if (sort === 'industry') arr.sort((a, b) => (a.industry || '').localeCompare(b.industry || '') || new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    else if (sort === 'ai') arr.sort((a, b) => (b.aiScore ?? -1) - (a.aiScore ?? -1))
+    else if (sort === 'internal') arr.sort((a, b) => (b.internalScore ?? -1) - (a.internalScore ?? -1))
     else arr.sort((a, b) => b.viewCount - a.viewCount)
     return arr
   }, [colorFiltered, sort])
+
+  const distinctProducts = useMemo(() => {
+    const set = new Set<string>()
+    statusFiltered.forEach((a) => {
+      (a.productTags ?? []).forEach((t) => {
+        const v = (t ?? '').trim()
+        if (v) set.add(v)
+      })
+    })
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'ko'))
+  }, [statusFiltered])
 
   const distinctColors = useMemo(() => {
     const set = new Set<string>()
@@ -424,6 +503,11 @@ export default function ImageAssetViewer() {
       const idx = list.findIndex((a) => a.id === asset.id)
       setLightboxAsset(asset)
       setLightboxIndex(idx >= 0 ? idx : null)
+      if (asset.sourceTable === 'image_assets') {
+        incrementImageAssetViewCount(asset.id)
+          .then(() => updateInternalScoreForAsset(asset.id))
+          .catch(() => {})
+      }
     },
     [isBankView, bankFlatForPaging, flatForPaging]
   )
@@ -481,6 +565,29 @@ export default function ImageAssetViewer() {
     [navigate, lightboxAsset]
   )
 
+  /** 카드에서 라이트박스 없이 견적에 담기 */
+  const goToEstimateFromAsset = useCallback(
+    (asset: ProjectImageAsset) => {
+      const name = (asset.productTags?.[0] ?? asset.displayName ?? '').trim()
+      if (!name) {
+        toast.error('제품명이 없어 견적에 담을 수 없습니다.')
+        return
+      }
+      navigate('/consultation', {
+        state: {
+          ...(asset.consultationId ? { focusConsultationId: asset.consultationId } : {}),
+          addEstimateProductName: name,
+        },
+      })
+    },
+    [navigate]
+  )
+
+  /** 카드에서 URL 복사 (라이트박스 없이) */
+  const copyAssetUrl = useCallback((asset: ProjectImageAsset) => {
+    void navigator.clipboard.writeText(asset.url).then(() => toast.success('이미지 주소를 복사했습니다.'))
+  }, [])
+
   const toggleSelection = useCallback((id: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev)
@@ -502,9 +609,14 @@ export default function ImageAssetViewer() {
 
   const shareGalleryUrl = useMemo(() => {
     if (shareCartIds.size === 0) return ''
-    const ids = Array.from(shareCartIds).join(',')
-    return `${typeof window !== 'undefined' ? window.location.origin : ''}/public/share?ids=${encodeURIComponent(ids)}`
-  }, [shareCartIds])
+    const sorted = Array.from(shareCartIds).sort((a, b) => {
+      const ac = assets.find((x) => x.id === a)?.isConsultation ? 1 : 0
+      const bc = assets.find((x) => x.id === b)?.isConsultation ? 1 : 0
+      return bc - ac
+    })
+    const ids = sorted.join(',')
+    return `${typeof window !== 'undefined' ? window.location.origin : ''}/share?ids=${encodeURIComponent(ids)}`
+  }, [shareCartIds, assets])
 
   const copyShareLink = useCallback(() => {
     if (!shareGalleryUrl) {
@@ -513,8 +625,16 @@ export default function ImageAssetViewer() {
     }
     void navigator.clipboard.writeText(shareGalleryUrl).then(() => {
       toast.success('갤러리 링크가 클립보드에 복사되었습니다.')
+      shareCartIds.forEach((id) => {
+        const asset = assets.find((a) => a.id === id)
+        if (asset?.sourceTable === 'image_assets') {
+          incrementImageAssetShareCount(id)
+            .then(() => updateInternalScoreForAsset(id))
+            .catch(() => {})
+        }
+      })
     })
-  }, [shareGalleryUrl])
+  }, [shareGalleryUrl, shareCartIds, assets])
 
   const handleBulkApprove = useCallback(async () => {
     const ids = Array.from(selectedIds)
@@ -550,36 +670,38 @@ export default function ImageAssetViewer() {
     [selectedIds, fetchFromDb]
   )
 
-  const showBulkActions = !isBankView && reviewFilter === 'pending' && selectedIds.size > 0
-
-  /** 테스트 데이터 10건 DB 인서트 — 영업 테스트용. seed_N → picsum.photos 표시. */
-  const insertSeedTestData = useCallback(async () => {
-    const rows = SEED_TEST_ROWS.map((r) => ({
-      cloudinary_public_id: r.cloudinary_public_id,
-      usage_type: r.usage_type,
-      project_title: r.project_title,
-      industry: r.industry,
-      product_tags: r.product_tags,
-      color: r.color,
-      status: r.status,
-      display_name: null,
-      storage_path: null,
-      thumbnail_path: null,
-      consultation_id: null,
-      view_count: 0,
-    }))
-    const { error } = await supabase.from('project_images').insert(rows)
-    if (error) {
-      if (error.code === '23505') {
-        toast.error('테스트 데이터가 이미 있습니다. (cloudinary_public_id 중복)')
-      } else {
-        toast.error(error.message ?? '테스트 데이터 생성 실패')
+  /** image_assets 전용: 이 이미지를 해당 현장의 대표 이미지로 지정 */
+  const setAsMain = useCallback(
+    async (asset: ProjectImageAsset) => {
+      if (asset.sourceTable !== 'image_assets' || !asset.projectTitle?.trim()) return
+      const { error } = await setImageAssetMain(asset.id, asset.projectTitle)
+      if (error) {
+        toast.error(error.message)
+        return
       }
+      toast.success('대표 이미지로 지정했습니다.')
+      updateInternalScoreForAsset(asset.id).catch(() => {})
+      fetchFromDb(false).then((list) => list.length > 0 && setAssets(list))
+    },
+    [fetchFromDb]
+  )
+
+  /** image_assets 전용: 상담용 토글 — DB 업데이트 후 로컬 상태 반영 */
+  const toggleConsultation = useCallback(async (asset: ProjectImageAsset) => {
+    if (asset.sourceTable !== 'image_assets') return
+    const next = !asset.isConsultation
+    const { error } = await updateImageAssetConsultation(asset.id, next)
+    if (error) {
+      toast.error('저장에 실패했습니다.')
       return
     }
-    toast.success('테스트 데이터 10건이 생성되었습니다.')
-    fetchFromDb(false).then((list) => list.length > 0 && setAssets(list))
-  }, [fetchFromDb])
+    setAssets((prev) =>
+      prev.map((a) => (a.id === asset.id ? { ...a, isConsultation: next } : a))
+    )
+    toast.success(next ? '상담용으로 표시했습니다.' : '상담용 표시를 해제했습니다.')
+  }, [])
+
+  const showBulkActions = !isBankView && reviewFilter === 'pending' && selectedIds.size > 0
 
   return (
     <div className="min-h-screen bg-background">
@@ -649,8 +771,10 @@ export default function ImageAssetViewer() {
             className="rounded-md border border-input bg-background px-3 py-1.5 text-sm"
           >
             <option value="latest">최신순</option>
+            {!isBankView && <option value="ai">AI 추천순</option>}
+            {!isBankView && <option value="internal">내부 스코어순</option>}
             <option value="industry">업종별</option>
-            <option value="popular">인기순(조회수)</option>
+            <option value="popular">인기순</option>
           </select>
           <Button variant="outline" size="sm" className="gap-1.5 h-9 text-sm" onClick={copyAllMarkdown}>
             <Copy className="h-3.5 w-3.5" />
@@ -660,13 +784,38 @@ export default function ImageAssetViewer() {
             <Copy className="h-3.5 w-3.5" />
             Export JSON (n8n)
           </Button>
-          <Button variant="outline" size="sm" className="gap-1.5 h-9 text-sm" onClick={() => setUploadOpen(true)} title="업로드 모달 열기">
-            <Upload className="h-3.5 w-3.5" />
-            {isBankView ? '+ 사진 등록' : '업로드'}
-          </Button>
           {!isBankView && (
-            <Button variant="outline" size="sm" className="gap-1.5 h-9 text-sm text-muted-foreground border-dashed" onClick={insertSeedTestData} title="project_images에 샘플 10건 인서트 (영업 테스트용)">
-              테스트 데이터 10개 생성
+            <Link to="/image-assets/upload">
+              <Button variant="outline" size="sm" className="gap-1.5 h-9 text-sm" title="EXIF·AI 제안·컬러칩 스마트 업로드 (image_assets)">
+                <Upload className="h-4 w-4" />
+                일괄 업로드
+              </Button>
+            </Link>
+          )}
+          {!isBankView && isAdmin && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5 h-9 text-sm"
+              title="기술·활동 점수 + Gemini AI 품질(최대 8건)으로 internal_score·ai_score 일괄 갱신"
+              disabled={backfillLoading}
+              onClick={async () => {
+                setBackfillLoading(true)
+                try {
+                  const { updated, total, aiApplied } = await updateInternalScoresBatch(200, { aiLimit: 8 })
+                  const msg = aiApplied > 0
+                    ? `내부 스코어 갱신: ${updated}건 (AI ${aiApplied}건 포함, ${total}건 처리)`
+                    : `내부 스코어 갱신: ${updated}건 (${total}건 처리)`
+                  toast.success(msg)
+                  fetchFromDb(false).then((list) => { if (list.length > 0) setAssets(list) })
+                } catch (e: any) {
+                  toast.error(e?.message ?? '스코어 갱신 실패')
+                } finally {
+                  setBackfillLoading(false)
+                }
+              }}
+            >
+              {backfillLoading ? '갱신 중…' : '스코어 갱신'}
             </Button>
           )}
           </div>
@@ -685,6 +834,21 @@ export default function ImageAssetViewer() {
               className="pl-9 h-10 text-sm"
             />
           </div>
+          {!isBankView && (
+            <div className="flex items-center gap-2 shrink-0">
+              <Switch
+                id="consultation-only"
+                checked={consultationOnlyFilter}
+                onCheckedChange={(checked) => {
+                  setConsultationOnlyFilter(checked)
+                  setPage(0)
+                }}
+              />
+              <label htmlFor="consultation-only" className="text-sm text-muted-foreground whitespace-nowrap cursor-pointer">
+                상담용 사진만 보기
+              </label>
+            </div>
+          )}
         </div>
         {/* 시공 사례 뱅크: 용도 필터 (한글 라벨) */}
         {isBankView && (
@@ -737,6 +901,27 @@ export default function ImageAssetViewer() {
             >
               검수 대기 사진 ({pendingCount})
             </button>
+          </div>
+        )}
+        {/* 제품명 퀵필터 */}
+        {!isBankView && distinctProducts.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-muted-foreground shrink-0">제품명:</span>
+            {distinctProducts.map((p) => (
+              <button
+                key={p}
+                type="button"
+                onClick={() => {
+                  setProductFilter(productFilter === p ? null : p)
+                  setPage(0)
+                }}
+                className={`rounded-md px-3 py-1.5 text-sm border transition-colors ${
+                  productFilter === p ? 'border-primary bg-primary text-primary-foreground' : 'border-input bg-background hover:bg-muted'
+                }`}
+              >
+                {p}
+              </button>
+            ))}
           </div>
         )}
         {/* 색상 퀵필터 (DB color 기반) */}
@@ -812,7 +997,173 @@ export default function ImageAssetViewer() {
         </div>
       )}
 
-      <main className="p-4">
+      {/* 이미지 자산 관리: 공유 장바구니 하단 플로팅 바 */}
+      {!isBankView && shareCartIds.size > 0 && (
+        <div className="fixed bottom-0 left-0 right-0 z-20 border-t border-border bg-background/95 backdrop-blur shadow-lg px-4 py-3 flex items-center justify-between gap-4 flex-wrap">
+          <span className="text-sm font-medium text-foreground">{shareCartIds.size}장의 사진 선택됨</span>
+          <div className="flex items-center gap-2">
+            <Button variant="default" size="sm" className="gap-1.5" onClick={copyShareLink}>
+              <Link2 className="h-4 w-4" />
+              공유 URL 복사
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setShareCartIds(new Set())}>
+              선택 해제
+            </Button>
+          </div>
+        </div>
+      )}
+
+      <main className={`p-4 ${!isBankView ? 'flex gap-4' : ''} ${!isBankView && shareCartIds.size > 0 ? 'pb-24' : ''}`}>
+        {/* 이미지 자산 관리: 좌측 트리 사이드바 [연도 > 지역 > 현장명] */}
+        {!isBankView && (
+          <aside className="w-64 shrink-0 border-r border-border pr-4">
+            <div className="sticky top-20 max-h-[calc(100vh-6rem)] overflow-y-auto">
+              <h3 className="text-sm font-semibold text-foreground mb-2">현장 트리</h3>
+              <button
+                type="button"
+                onClick={() => { selectSite(null); selectIndustry(null); selectProduct(null) }}
+                className={`w-full text-left px-2 py-1.5 rounded text-sm mb-1 ${
+                  !selectedSite && !selectedIndustry && !selectedProduct ? 'bg-primary/10 text-primary font-medium' : 'hover:bg-muted text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                전체 사진
+              </button>
+              {treeData.years.length === 0 && treeData.industries.length === 0 && treeData.products.length === 0 ? (
+                <p className="text-xs text-muted-foreground py-2">로딩 중…</p>
+              ) : (
+                <div className="space-y-0.5">
+                  {treeData.years.map(({ year, regions }) => (
+                    <div key={year}>
+                      <button
+                        type="button"
+                        onClick={() => toggleYear(year)}
+                        className="w-full flex items-center gap-1 px-2 py-1 text-sm hover:bg-muted rounded"
+                      >
+                        {expandedYears.has(year) ? (
+                          <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+                        ) : (
+                          <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+                        )}
+                        <span className="font-medium">{year}년</span>
+                      </button>
+                      {expandedYears.has(year) && (
+                        <div className="ml-3 pl-2 border-l border-border space-y-0.5">
+                          {regions.map(({ region, sites }) => (
+                            <div key={`${year}-${region}`}>
+                              <button
+                                type="button"
+                                onClick={() => toggleRegion(year, region)}
+                                className="w-full flex items-center gap-1 px-2 py-1 text-sm hover:bg-muted rounded"
+                              >
+                                {expandedRegionKeys.has(`${year}|${region}`) ? (
+                                  <ChevronDown className="h-3 w-3 shrink-0" />
+                                ) : (
+                                  <ChevronRight className="h-3 w-3 shrink-0" />
+                                )}
+                                <span className="text-muted-foreground">{region}</span>
+                              </button>
+                              {expandedRegionKeys.has(`${year}|${region}`) && (
+                                <div className="ml-3 pl-2 border-l border-border space-y-0.5">
+                                  {sites.map(({ site, count }) => (
+                                    <button
+                                      key={`${year}-${region}-${site}`}
+                                      type="button"
+                                      onClick={() => selectSite(site)}
+                                      className={`w-full text-left px-2 py-1.5 rounded text-sm flex items-center justify-between gap-2 ${
+                                        selectedSite === site ? 'bg-primary/10 text-primary font-medium' : 'hover:bg-muted text-foreground hover:text-foreground'
+                                      }`}
+                                    >
+                                      <span className="truncate">{site}</span>
+                                      <span className="text-xs text-muted-foreground shrink-0">({count})</span>
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  {/* 업종 */}
+                  {treeData.industries.length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-border">
+                      <button
+                        type="button"
+                        onClick={() => setExpandedIndustries((b) => !b)}
+                        className="w-full flex items-center gap-1 px-2 py-1 text-sm hover:bg-muted rounded"
+                      >
+                        {expandedIndustries ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
+                        <span className="font-medium">업종</span>
+                      </button>
+                      {expandedIndustries && (
+                        <div className="ml-3 pl-2 border-l border-border space-y-0.5 mt-1">
+                          {treeData.industries.map(({ name, count }) => (
+                            <button
+                              key={name}
+                              type="button"
+                              onClick={() => selectIndustry(name)}
+                              className={`w-full text-left px-2 py-1.5 rounded text-sm flex items-center justify-between gap-2 ${
+                                selectedIndustry === name ? 'bg-primary/10 text-primary font-medium' : 'hover:bg-muted text-foreground hover:text-foreground'
+                              }`}
+                            >
+                              <span className="truncate">{name}</span>
+                              <span className="text-xs text-muted-foreground shrink-0">({count})</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {/* 제품명 */}
+                  {treeData.products.length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-border">
+                      <button
+                        type="button"
+                        onClick={() => setExpandedProducts((b) => !b)}
+                        className="w-full flex items-center gap-1 px-2 py-1 text-sm hover:bg-muted rounded"
+                      >
+                        {expandedProducts ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
+                        <span className="font-medium">제품명</span>
+                      </button>
+                      {expandedProducts && (
+                        <div className="ml-3 pl-2 border-l border-border space-y-0.5 mt-1">
+                          {treeData.products.map(({ name, count }) => (
+                            <button
+                              key={name}
+                              type="button"
+                              onClick={() => selectProduct(name)}
+                              className={`w-full text-left px-2 py-1.5 rounded text-sm flex items-center justify-between gap-2 ${
+                                selectedProduct === name ? 'bg-primary/10 text-primary font-medium' : 'hover:bg-muted text-foreground hover:text-foreground'
+                              }`}
+                            >
+                              <span className="truncate">{name}</span>
+                              <span className="text-xs text-muted-foreground shrink-0">({count})</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </aside>
+        )}
+
+        <div className={!isBankView ? 'flex-1 min-w-0' : ''}>
+        {/* 이미지 자산 관리: 갤러리 상단 타이틀 */}
+        {!isBankView && !loading && (
+          <h2 className="text-sm font-semibold text-foreground mb-4">
+            {selectedSite
+              ? `현장: ${selectedSite}`
+              : selectedIndustry
+                ? `업종: ${selectedIndustry}`
+                : selectedProduct
+                  ? `제품: ${selectedProduct}`
+                  : '전체 사진 (최근 업로드)'}
+          </h2>
+        )}
         {loading ? (
           <div className="py-12 text-center text-sm text-muted-foreground">불러오는 중…</div>
         ) : (isBankView ? bankDisplayGrouped : grouped) ? (
@@ -832,12 +1183,12 @@ export default function ImageAssetViewer() {
                         dropTargetId === asset.id ? 'border-primary ring-2 ring-primary/30' : 'border-border'
                       }`}
                     >
-                      {isBankView && (
+                      {(isBankView || !isBankView) && (
                         <div
                           className="absolute top-1 left-1 z-10 flex items-center justify-center w-6 h-6 rounded border bg-background/90"
                           onClick={(e) => { e.stopPropagation(); toggleShareCart(asset.id) }}
                           role="button"
-                          aria-label="공유 담기"
+                          aria-label="선택"
                         >
                           <input
                             type="checkbox"
@@ -850,10 +1201,10 @@ export default function ImageAssetViewer() {
                       )}
                       {!isBankView && reviewFilter === 'pending' && (
                         <div
-                          className="absolute top-1 left-1 z-10 flex items-center justify-center w-6 h-6 rounded border bg-background/90"
+                          className="absolute top-1 right-1 z-10 flex items-center justify-center w-6 h-6 rounded border bg-background/90"
                           onClick={(e) => { e.stopPropagation(); toggleSelection(asset.id) }}
                           role="button"
-                          aria-label="선택"
+                          aria-label="검수 선택"
                         >
                           <input
                             type="checkbox"
@@ -876,12 +1227,18 @@ export default function ImageAssetViewer() {
                           className="w-full h-full object-cover"
                           loading="lazy"
                         />
-                        <span
-                          className="absolute top-1 right-1 rounded bg-primary/90 text-primary-foreground text-[10px] px-1.5 py-0.5"
-                          title={getUsageTooltip(asset.usageType)}
-                        >
-                          {getUsageLabel(asset.usageType)}
-                        </span>
+                        {asset.isMain && (
+                          <span className="absolute top-1 left-1 rounded bg-amber-500 text-white text-[10px] px-1.5 py-0.5 font-medium" title="현장 대표 이미지">
+                            대표
+                          </span>
+                        )}
+                        <div className="absolute top-1 right-1 flex flex-col items-end gap-0.5">
+                          {asset.sourceTable === 'image_assets' && asset.isConsultation && (
+                            <span className="rounded bg-primary/90 text-primary-foreground text-[10px] px-1.5 py-0.5" title="상담용">
+                              상담용
+                            </span>
+                          )}
+                        </div>
                         <span
                           className={`absolute bottom-1 left-1 right-1 flex items-center justify-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium ${
                             asset.syncStatus === 'synced'
@@ -902,9 +1259,6 @@ export default function ImageAssetViewer() {
                       <div className="p-1.5">
                         <p className="text-xs font-medium truncate">{asset.projectTitle || '—'}</p>
                         <p className="text-[11px] text-muted-foreground truncate">{asset.industry || '—'}</p>
-                        {asset.displayName && (
-                          <p className="text-[10px] text-muted-foreground/80 truncate" title={asset.displayName}>파일명: {asset.displayName}</p>
-                        )}
                       </div>
                       </button>
                       {!isBankView && (
@@ -935,12 +1289,48 @@ export default function ImageAssetViewer() {
                                 placeholder="제품 태그 (쉼표 구분)"
                                 className="h-7 text-xs"
                               />
-                              <Input
-                                value={editingColor}
-                                onChange={(e) => setEditingColor(e.target.value)}
-                                placeholder="색상"
-                                className="h-7 text-xs"
-                              />
+                              <div className="flex flex-wrap items-center gap-1">
+                                <select
+                                  className="h-7 min-w-0 flex-1 rounded border border-input bg-background px-2 text-xs max-w-[100px]"
+                                  value={colorChipNames.has(editingColor) ? editingColor : (editingColor ? '기타' : '')}
+                                  onChange={(e) => {
+                                    const v = e.target.value
+                                    if (v === '기타') setEditingColor('')
+                                    else setEditingColor(v)
+                                  }}
+                                >
+                                  <option value="">색상 선택</option>
+                                  {colorByGroup.Standard?.length ? (
+                                    <optgroup label="기본 컬러">
+                                      {colorByGroup.Standard.map((name) => (
+                                        <option key={name} value={name}>{name}</option>
+                                      ))}
+                                    </optgroup>
+                                  ) : null}
+                                  {colorByGroup.Special?.length ? (
+                                    <optgroup label="스페셜 컬러">
+                                      {colorByGroup.Special.map((name) => (
+                                        <option key={name} value={name}>{name}</option>
+                                      ))}
+                                    </optgroup>
+                                  ) : null}
+                                  {colorByGroup.Other?.length ? (
+                                    <optgroup label="기타">
+                                      {colorByGroup.Other.map((name) => (
+                                        <option key={name} value={name}>{name}</option>
+                                      ))}
+                                    </optgroup>
+                                  ) : null}
+                                </select>
+                                {(!editingColor || !colorChipNames.has(editingColor)) && (
+                                  <Input
+                                    value={editingColor}
+                                    onChange={(e) => setEditingColor(e.target.value)}
+                                    placeholder="기타 직접입력"
+                                    className="h-7 flex-1 min-w-0 text-xs"
+                                  />
+                                )}
+                              </div>
                               <div className="flex gap-1">
                                 <Button type="button" size="sm" className="h-6 text-xs flex-1" onClick={() => saveInlineTag(asset.id, editingTagsText.split(',').map((s) => s.trim()).filter(Boolean), editingColor)}>
                                   저장
@@ -968,7 +1358,53 @@ export default function ImageAssetViewer() {
                               }}
                               onDragEnd={() => setDragPayload(null)}
                             >
-                              태그: {(asset.productTags ?? []).length ? (asset.productTags ?? []).join(', ') : '—'} · 색상: {asset.color || '—'}
+                              제품명: {(asset.productTags ?? []).length ? (asset.productTags ?? []).join(', ') : '—'} · 제품카테고리: {asset.category ?? '—'} · 색상: {asset.color || '—'}
+                            </div>
+                          )}
+                          {asset.sourceTable === 'image_assets' && (
+                            <div className="mt-1 pt-1 border-t border-border/50 flex gap-1 flex-wrap">
+                              <Button
+                                type="button"
+                                variant={asset.isConsultation ? 'secondary' : 'outline'}
+                                size="sm"
+                                className="h-6 text-[10px] shrink-0"
+                                onClick={(e) => { e.stopPropagation(); toggleConsultation(asset) }}
+                              >
+                                상담용
+                              </Button>
+                              {asset.projectTitle?.trim() && (
+                                <>
+                                  <Button
+                                    type="button"
+                                    variant={asset.isMain ? 'secondary' : 'outline'}
+                                    size="sm"
+                                    className="h-6 text-[10px] flex-1 min-w-0"
+                                    disabled={asset.isMain}
+                                    onClick={(e) => { e.stopPropagation(); setAsMain(asset) }}
+                                  >
+                                    {asset.isMain ? '대표' : '대표지정'}
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-6 text-[10px] flex-1 min-w-0"
+                                    onClick={(e) => { e.stopPropagation(); copyAssetUrl(asset) }}
+                                  >
+                                    URL복사
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-6 text-[10px] flex-1 min-w-0"
+                                    disabled={!(asset.productTags?.length || asset.displayName)}
+                                    onClick={(e) => { e.stopPropagation(); goToEstimateFromAsset(asset) }}
+                                  >
+                                    견적담기
+                                  </Button>
+                                </>
+                              )}
                             </div>
                           )}
                         </div>
@@ -990,12 +1426,12 @@ export default function ImageAssetViewer() {
                     dropTargetId === asset.id ? 'border-primary ring-2 ring-primary/30' : 'border-border'
                   }`}
                 >
-                  {isBankView && (
+                  {(isBankView || !isBankView) && (
                     <div
                       className="absolute top-1 left-1 z-10 flex items-center justify-center w-6 h-6 rounded border bg-background/90"
                       onClick={(e) => { e.stopPropagation(); toggleShareCart(asset.id) }}
                       role="button"
-                      aria-label="공유 담기"
+                      aria-label="선택"
                     >
                       <input
                         type="checkbox"
@@ -1008,10 +1444,10 @@ export default function ImageAssetViewer() {
                   )}
                   {!isBankView && reviewFilter === 'pending' && (
                     <div
-                      className="absolute top-1 left-1 z-10 flex items-center justify-center w-6 h-6 rounded border bg-background/90"
+                      className="absolute top-1 right-1 z-10 flex items-center justify-center w-6 h-6 rounded border bg-background/90"
                       onClick={(e) => { e.stopPropagation(); toggleSelection(asset.id) }}
                       role="button"
-                      aria-label="선택"
+                      aria-label="검수 선택"
                     >
                       <input
                         type="checkbox"
@@ -1034,12 +1470,18 @@ export default function ImageAssetViewer() {
                       className="w-full h-full object-cover"
                       loading="lazy"
                     />
-                    <span
-                      className="absolute top-1 right-1 rounded bg-primary/90 text-primary-foreground text-[10px] px-1.5 py-0.5"
-                      title={getUsageTooltip(asset.usageType)}
-                    >
-                      {getUsageLabel(asset.usageType)}
-                    </span>
+                    {asset.isMain && (
+                      <span className="absolute top-1 left-1 rounded bg-amber-500 text-white text-[10px] px-1.5 py-0.5 font-medium" title="현장 대표 이미지">
+                        대표
+                      </span>
+                    )}
+                    <div className="absolute top-1 right-1 flex flex-col items-end gap-0.5">
+                      {asset.sourceTable === 'image_assets' && asset.isConsultation && (
+                        <span className="rounded bg-primary/90 text-primary-foreground text-[10px] px-1.5 py-0.5" title="상담용">
+                          상담용
+                        </span>
+                      )}
+                    </div>
                     <span
                       className={`absolute bottom-1 left-1 right-1 flex items-center justify-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium ${
                         asset.syncStatus === 'synced'
@@ -1060,9 +1502,6 @@ export default function ImageAssetViewer() {
                   <div className="p-1.5">
                     <p className="text-xs font-medium truncate">{asset.projectTitle || '—'}</p>
                     <p className="text-[11px] text-muted-foreground truncate">{asset.industry || '—'}</p>
-                    {asset.displayName && (
-                      <p className="text-[10px] text-muted-foreground/80 truncate" title={asset.displayName}>파일명: {asset.displayName}</p>
-                    )}
                   </div>
                   </button>
                   {!isBankView && (
@@ -1093,12 +1532,48 @@ export default function ImageAssetViewer() {
                             placeholder="제품 태그 (쉼표 구분)"
                             className="h-7 text-xs"
                           />
-                          <Input
-                            value={editingColor}
-                            onChange={(e) => setEditingColor(e.target.value)}
-                            placeholder="색상"
-                            className="h-7 text-xs"
-                          />
+                          <div className="flex flex-wrap items-center gap-1">
+                            <select
+                              className="h-7 min-w-0 flex-1 rounded border border-input bg-background px-2 text-xs max-w-[100px]"
+                              value={colorChipNames.has(editingColor) ? editingColor : (editingColor ? '기타' : '')}
+                              onChange={(e) => {
+                                const v = e.target.value
+                                if (v === '기타') setEditingColor('')
+                                else setEditingColor(v)
+                              }}
+                            >
+                              <option value="">색상 선택</option>
+                              {colorByGroup.Standard?.length ? (
+                                <optgroup label="기본 컬러">
+                                  {colorByGroup.Standard.map((name) => (
+                                    <option key={name} value={name}>{name}</option>
+                                  ))}
+                                </optgroup>
+                              ) : null}
+                              {colorByGroup.Special?.length ? (
+                                <optgroup label="스페셜 컬러">
+                                  {colorByGroup.Special.map((name) => (
+                                    <option key={name} value={name}>{name}</option>
+                                  ))}
+                                </optgroup>
+                              ) : null}
+                              {colorByGroup.Other?.length ? (
+                                <optgroup label="기타">
+                                  {colorByGroup.Other.map((name) => (
+                                    <option key={name} value={name}>{name}</option>
+                                  ))}
+                                </optgroup>
+                              ) : null}
+                            </select>
+                            {(!editingColor || !colorChipNames.has(editingColor)) && (
+                              <Input
+                                value={editingColor}
+                                onChange={(e) => setEditingColor(e.target.value)}
+                                placeholder="기타 직접입력"
+                                className="h-7 flex-1 min-w-0 text-xs"
+                              />
+                            )}
+                          </div>
                           <div className="flex gap-1">
                             <Button type="button" size="sm" className="h-6 text-xs flex-1" onClick={() => saveInlineTag(asset.id, editingTagsText.split(',').map((s) => s.trim()).filter(Boolean), editingColor)}>
                               저장
@@ -1126,7 +1601,53 @@ export default function ImageAssetViewer() {
                           }}
                           onDragEnd={() => setDragPayload(null)}
                         >
-                          태그: {(asset.productTags ?? []).length ? (asset.productTags ?? []).join(', ') : '—'} · 색상: {asset.color || '—'}
+                          제품명: {(asset.productTags ?? []).length ? (asset.productTags ?? []).join(', ') : '—'} · 제품카테고리: {asset.category ?? '—'} · 색상: {asset.color || '—'}
+                        </div>
+                      )}
+                      {asset.sourceTable === 'image_assets' && (
+                        <div className="mt-1 pt-1 border-t border-border/50 flex gap-1 flex-wrap">
+                          <Button
+                            type="button"
+                            variant={asset.isConsultation ? 'secondary' : 'outline'}
+                            size="sm"
+                            className="h-6 text-[10px] shrink-0"
+                            onClick={(e) => { e.stopPropagation(); toggleConsultation(asset) }}
+                          >
+                            상담용
+                          </Button>
+                          {asset.projectTitle?.trim() && (
+                            <>
+                              <Button
+                                type="button"
+                                variant={asset.isMain ? 'secondary' : 'outline'}
+                                size="sm"
+                                className="h-6 text-[10px] flex-1 min-w-0"
+                                disabled={asset.isMain}
+                                onClick={(e) => { e.stopPropagation(); setAsMain(asset) }}
+                              >
+                                {asset.isMain ? '대표' : '대표지정'}
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-6 text-[10px] flex-1 min-w-0"
+                                onClick={(e) => { e.stopPropagation(); copyAssetUrl(asset) }}
+                              >
+                                URL복사
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-6 text-[10px] flex-1 min-w-0"
+                                disabled={!(asset.productTags?.length || asset.displayName)}
+                                onClick={(e) => { e.stopPropagation(); goToEstimateFromAsset(asset) }}
+                              >
+                                견적담기
+                              </Button>
+                            </>
+                          )}
                         </div>
                       )}
                     </div>
@@ -1141,6 +1662,7 @@ export default function ImageAssetViewer() {
             )}
           </>
         )}
+        </div>
       </main>
 
       {/* 라이트박스 */}
@@ -1210,6 +1732,18 @@ export default function ImageAssetViewer() {
                     <Button variant="default" size="sm" className="gap-1.5 h-9" onClick={copySiteLink} title="현장(상담) 링크 복사">
                       <Link2 className="h-4 w-4" />
                       현장 링크 공유
+                    </Button>
+                  )}
+                  {lightboxAsset.sourceTable === 'image_assets' && lightboxAsset.projectTitle?.trim() && (
+                    <Button
+                      variant={lightboxAsset.isMain ? 'secondary' : 'default'}
+                      size="sm"
+                      className="gap-1.5 h-9"
+                      disabled={lightboxAsset.isMain}
+                      onClick={() => setAsMain(lightboxAsset)}
+                    >
+                      <CheckCircle className="h-4 w-4" />
+                      {lightboxAsset.isMain ? '대표 이미지' : '대표로 지정'}
                     </Button>
                   )}
                 </div>
@@ -1282,29 +1816,6 @@ export default function ImageAssetViewer() {
         </DialogContent>
       </Dialog>
 
-      {/* 업로드 폼: 드래그앤드롭·태그 자동완성·색상 퀵·진행률 */}
-      <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
-        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>시공 이미지 업로드</DialogTitle>
-          </DialogHeader>
-          {import.meta.env.DEV && !isCloudinaryConfigured() && (
-            <p className="text-sm text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 rounded-md px-3 py-2 border border-amber-200 dark:border-amber-800">
-              현재 테스트 모드입니다. 실전 업로드를 원하시면 .env 설정을 확인하세요.
-            </p>
-          )}
-          <UploadForm
-            onSuccess={() => {
-              setUploadOpen(false)
-              fetchFromDb(isBankView).then((list) => list.length > 0 && setAssets(list))
-              toast.success(import.meta.env.DEV ? '업로드 성공!' : '업로드되었습니다.')
-            }}
-            onCancel={() => setUploadOpen(false)}
-            onError={(msg) => toast.error(msg)}
-          />
-        </DialogContent>
-      </Dialog>
-
       {/* 검수 대기 — 선택 항목 태그 일괄 수정 */}
       <Dialog open={bulkEditOpen} onOpenChange={setBulkEditOpen}>
         <DialogContent className="sm:max-w-md">
@@ -1323,12 +1834,48 @@ export default function ImageAssetViewer() {
             </div>
             <div>
               <label className="text-sm font-medium block mb-1">색상</label>
-              <Input
-                value={bulkColor}
-                onChange={(e) => setBulkColor(e.target.value)}
-                placeholder="예: 화이트, 오크"
-                className="h-10"
-              />
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  className="h-10 min-w-[140px] rounded border border-input bg-background px-3 text-sm"
+                  value={colorChipNames.has(bulkColor) ? bulkColor : (bulkColor ? '기타' : '')}
+                  onChange={(e) => {
+                    const v = e.target.value
+                    if (v === '기타') setBulkColor('')
+                    else setBulkColor(v)
+                  }}
+                >
+                  <option value="">선택</option>
+                  {colorByGroup.Standard?.length ? (
+                    <optgroup label="기본 컬러 (Standard)">
+                      {colorByGroup.Standard.map((name) => (
+                        <option key={name} value={name}>{name}</option>
+                      ))}
+                    </optgroup>
+                  ) : null}
+                  {colorByGroup.Special?.length ? (
+                    <optgroup label="스페셜 컬러 (Special)">
+                      {colorByGroup.Special.map((name) => (
+                        <option key={name} value={name}>{name}</option>
+                      ))}
+                    </optgroup>
+                  ) : null}
+                  {colorByGroup.Other?.length ? (
+                    <optgroup label="기타">
+                      {colorByGroup.Other.map((name) => (
+                        <option key={name} value={name}>{name}</option>
+                      ))}
+                    </optgroup>
+                  ) : null}
+                </select>
+                {(!bulkColor || !colorChipNames.has(bulkColor)) && (
+                  <Input
+                    value={bulkColor}
+                    onChange={(e) => setBulkColor(e.target.value)}
+                    placeholder="기타 직접입력"
+                    className="h-10 flex-1 min-w-0"
+                  />
+                )}
+              </div>
             </div>
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="outline" onClick={() => setBulkEditOpen(false)}>
@@ -1347,344 +1894,5 @@ export default function ImageAssetViewer() {
         </DialogContent>
       </Dialog>
     </div>
-  )
-}
-
-function UploadForm({
-  onSuccess,
-  onCancel,
-  onError,
-}: {
-  onSuccess: () => void
-  onCancel: () => void
-  onError: (message: string) => void
-}) {
-  const [files, setFiles] = useState<File[]>([])
-  const [usageType, setUsageType] = useState<UsageType>('Marketing')
-  const [inboundDate, setInboundDate] = useState('')
-  const [projectTitle, setProjectTitle] = useState('')
-  const [spaceType, setSpaceType] = useState('')
-  const [industry, setIndustry] = useState('')
-  const [sequenceIndex, setSequenceIndex] = useState(1)
-  const [submitting, setSubmitting] = useState(false)
-  const [uploadProgress, setUploadProgress] = useState(0)
-  const [productTags, setProductTags] = useState<string[]>([])
-  const [tagInput, setTagInput] = useState('')
-  const [tagSuggestions, setTagSuggestions] = useState<string[]>([])
-  const [showTagSuggestions, setShowTagSuggestions] = useState(false)
-  const [color, setColor] = useState('')
-  const [colorCustom, setColorCustom] = useState('')
-  const fileInputRef = useRef<HTMLInputElement | null>(null)
-  const [productNames, setProductNames] = useState<string[]>([])
-
-  useEffect(() => {
-    getTagMappings().then((rows) => {
-      const names = [...new Set(rows.map((r) => r.product_name).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'))
-      setProductNames(names)
-    })
-  }, [])
-
-  const effectiveColor = color || colorCustom.trim()
-
-  const addTag = (tag: string) => {
-    const t = tag.trim()
-    if (!t || productTags.includes(t)) return
-    setProductTags((prev) => [...prev, t])
-    setTagInput('')
-    setShowTagSuggestions(false)
-  }
-
-  const removeTag = (tag: string) => {
-    setProductTags((prev) => prev.filter((t) => t !== tag))
-  }
-
-  const filteredTagSuggestions = useMemo(() => {
-    if (!tagInput.trim()) return productNames.slice(0, 10)
-    const q = tagInput.trim().toLowerCase()
-    return productNames.filter((n) => n.toLowerCase().includes(q)).slice(0, 10)
-  }, [tagInput, productNames])
-
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    const list = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith('image/'))
-    if (list.length) setFiles((prev) => [...prev, ...list])
-  }, [])
-
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-  }, [])
-
-  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const list = Array.from(e.target.files ?? []).filter((f) => f.type.startsWith('image/'))
-    if (list.length) setFiles((prev) => [...prev, ...list])
-    e.target.value = ''
-  }
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (files.length === 0) {
-      onError('사진을 선택하거나 끌어다 놓으세요.')
-      return
-    }
-    if (!projectTitle.trim()) {
-      onError('프로젝트명(업체명)을 입력하세요.')
-      return
-    }
-    setSubmitting(true)
-    const total = files.length
-    let done = 0
-    let uploaded = 0
-    try {
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i]
-        const contentHash = await computeFileHash(file)
-        const isDup = await checkDuplicateByHash(contentHash)
-        if (isDup) {
-          toast.warning(`중복된 사진이 있어 건너뜁니다: ${file.name}`)
-          done++
-          setUploadProgress(Math.round((done / total) * 100))
-          continue
-        }
-        const publicId = generateFileName(
-          {
-            inboundDate: inboundDate.trim() || undefined,
-            companyName: projectTitle.trim(),
-            spaceType: spaceType.trim() || '공간미지정',
-          },
-          sequenceIndex + i
-        )
-        const { cloudinaryPublicId, storagePath, thumbnailPath } = await uploadConstructionImageDualWithProgress(
-          file,
-          publicId,
-          (p) => {
-            setUploadProgress(Math.round((done / total) * 100 + (p / 100) * (100 / total)))
-          }
-        )
-        done++
-        setUploadProgress(Math.round((done / total) * 100))
-        const productTagsForDb = toProductTagsArray(productTags) ?? null
-        const { error: insertError } = await supabase.from('project_images').insert({
-          cloudinary_public_id: cloudinaryPublicId,
-          display_name: publicId,
-          usage_type: usageType,
-          storage_path: storagePath,
-          thumbnail_path: thumbnailPath,
-          consultation_id: null,
-          project_title: projectTitle.trim() || null,
-          industry: industry.trim() || null,
-          view_count: 0,
-          product_tags: productTagsForDb,
-          color: effectiveColor || null,
-          status: 'pending',
-          content_hash: contentHash,
-        })
-        if (insertError) throw new Error(insertError.message)
-        uploaded++
-      }
-      if (uploaded > 0) onSuccess()
-      else if (done > 0) toast.info('중복으로 인해 새로 등록된 사진이 없습니다.')
-    } catch (err: unknown) {
-      onError(err instanceof Error ? err.message : '업로드 실패')
-    } finally {
-      setSubmitting(false)
-      setUploadProgress(0)
-    }
-  }
-
-  return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      {/* 드래그 앤 드롭 다중 파일 */}
-      <div>
-        <label className="text-sm font-medium block mb-1">사진 (여러 장 가능)</label>
-        <div
-          onDrop={handleDrop}
-          onDragOver={handleDragOver}
-          onClick={() => fileInputRef.current?.click()}
-          className="border-2 border-dashed border-border rounded-lg p-6 text-center cursor-pointer hover:border-primary/50 hover:bg-muted/30 transition-colors"
-        >
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            multiple
-            onChange={handleFileInputChange}
-            className="hidden"
-          />
-          <Upload className="mx-auto h-10 w-10 text-muted-foreground mb-2" />
-          <p className="text-sm text-muted-foreground">클릭하거나 사진을 여기에 끌어다 놓으세요</p>
-          {files.length > 0 && (
-            <p className="text-xs text-primary font-medium mt-1">{files.length}장 선택됨</p>
-          )}
-        </div>
-      </div>
-
-      <div>
-        <label className="text-sm font-medium block mb-1">프로젝트명(업체명) <span className="text-destructive">*</span></label>
-        <Input
-          value={projectTitle}
-          onChange={(e) => setProjectTitle(e.target.value)}
-          placeholder="예: 목동학원"
-          className="h-10 text-sm"
-          required
-        />
-      </div>
-      <div className="grid grid-cols-2 gap-2">
-        <div>
-          <label className="text-sm font-medium block mb-1">인입/촬영일</label>
-          <Input type="date" value={inboundDate} onChange={(e) => setInboundDate(e.target.value)} className="h-10 text-sm" />
-        </div>
-        <div>
-          <label className="text-sm font-medium block mb-1">시작 순번</label>
-          <Input
-            type="number"
-            min={1}
-            value={sequenceIndex}
-            onChange={(e) => setSequenceIndex(Math.max(1, parseInt(e.target.value, 10) || 1))}
-            className="h-10 text-sm"
-          />
-        </div>
-      </div>
-      <div>
-        <label className="text-sm font-medium block mb-1">공간 구분</label>
-        <Input
-          value={spaceType}
-          onChange={(e) => setSpaceType(e.target.value)}
-          placeholder="예: 강의실, 카운터"
-          className="h-10 text-sm"
-        />
-      </div>
-
-      {/* 제품 태그: 배열 태그 설계 — 한 장에 여러 제품 가능, 칩 형태로 다중 입력 */}
-      <div>
-        <label className="text-sm font-medium block mb-1">제품 태그 (여러 개 선택 가능, 오타 방지)</label>
-        <div className="flex flex-wrap gap-1.5 mb-1.5">
-          {productTags.map((tag) => (
-            <span
-              key={tag}
-              className="inline-flex items-center gap-1 rounded-md bg-primary/10 text-primary px-2 py-0.5 text-xs font-medium"
-            >
-              {tag}
-              <button type="button" onClick={() => removeTag(tag)} className="hover:text-destructive" aria-label="제거">
-                <X className="h-3 w-3" />
-              </button>
-            </span>
-          ))}
-        </div>
-        <div className="relative">
-          <Input
-            value={tagInput}
-            onChange={(e) => {
-              setTagInput(e.target.value)
-              setShowTagSuggestions(true)
-            }}
-            onFocus={() => setShowTagSuggestions(true)}
-            onBlur={() => setTimeout(() => setShowTagSuggestions(false), 150)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault()
-                if (filteredTagSuggestions[0]) addTag(filteredTagSuggestions[0])
-                else if (tagInput.trim()) addTag(tagInput.trim())
-              }
-            }}
-            placeholder="제품명 입력 시 DB 목록에서 자동완성"
-            className="h-10 text-sm"
-          />
-          {showTagSuggestions && filteredTagSuggestions.length > 0 && (
-            <ul className="absolute z-10 w-full mt-0.5 rounded-md border border-border bg-popover shadow-md py-1 max-h-48 overflow-auto">
-              {filteredTagSuggestions.map((name) => (
-                <li key={name}>
-                  <button
-                    type="button"
-                    className="w-full text-left px-3 py-2 text-sm hover:bg-muted"
-                    onMouseDown={(e) => { e.preventDefault(); addTag(name) }}
-                  >
-                    {name}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </div>
-
-      {/* 색상 퀵 선택 */}
-      <div>
-        <label className="text-sm font-medium block mb-1">색상 (한 번에 선택)</label>
-        <div className="flex flex-wrap gap-2">
-          {COLOR_QUICK.map((c) => (
-            <button
-              key={c}
-              type="button"
-              onClick={() => { setColor(c); setColorCustom('') }}
-              className={`rounded-md px-3 py-1.5 text-sm border transition-colors ${
-                color === c ? 'border-primary bg-primary text-primary-foreground' : 'border-input bg-background hover:bg-muted'
-              }`}
-            >
-              {c}
-            </button>
-          ))}
-          <Input
-            placeholder="직접 입력"
-            value={colorCustom}
-            onChange={(e) => { setColorCustom(e.target.value); setColor('') }}
-            className="w-24 h-8 text-sm inline-flex"
-          />
-        </div>
-      </div>
-
-      <div>
-        <label className="text-sm font-medium block mb-1">용도</label>
-        <select
-          value={usageType}
-          onChange={(e) => setUsageType(e.target.value as UsageType)}
-          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-          title={getUsageTooltip(usageType)}
-        >
-          {USAGE_TYPES.map((t) => (
-            <option key={t} value={t} title={getUsageTooltip(t)}>
-              {getUsageLabel(t)}
-            </option>
-          ))}
-        </select>
-        <p className="text-[10px] text-muted-foreground mt-0.5" title={getUsageTooltip(usageType)}>
-          {getUsageTooltip(usageType)}
-        </p>
-      </div>
-      <div>
-        <label className="text-sm font-medium block mb-1">업종</label>
-        <Input
-          value={industry}
-          onChange={(e) => setIndustry(e.target.value)}
-          placeholder="학원, 스터디카페, 학교 등"
-          className="h-10 text-sm"
-        />
-      </div>
-
-      {submitting && (
-        <div>
-          <div className="flex justify-between text-xs text-muted-foreground mb-1">
-            <span>Cloudinary 고화질 업로드 중</span>
-            <span>{uploadProgress}%</span>
-          </div>
-          <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
-            <div
-              className="h-full bg-primary transition-all duration-300"
-              style={{ width: `${uploadProgress}%` }}
-            />
-          </div>
-        </div>
-      )}
-
-      <div className="flex gap-2 pt-2">
-        <Button type="submit" disabled={submitting || files.length === 0 || !projectTitle.trim()} className="flex-1 h-9 text-sm">
-          {submitting ? `업로드 중 ${uploadProgress}%…` : `${files.length}장 업로드`}
-        </Button>
-        <Button type="button" variant="outline" onClick={onCancel} className="h-9 text-sm" disabled={submitting}>
-          취소
-        </Button>
-      </div>
-    </form>
   )
 }

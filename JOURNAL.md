@@ -741,3 +741,76 @@ git checkout save-20260210-ai-quick-estimate-modal
 - `supabase/functions/channel-talk-webhook/index.ts` — 이벤트 필터 제거, extractFromPayload·extractPhoneFromFields 보강, 로깅·try-catch·완료 로그
 - `supabase/migrations/20260210180000_add_consultation_status_invalid.sql`
 - `BLUEPRINT.md`, `CONTEXT.md`, `soul.md`
+
+---
+
+# 2026-02-12 기록 (견적서 업로드·products 판매단가·AI 퀵 가이드 — 세이브 포인트)
+
+## 1. 오늘의 활동 요약
+- **상담별 견적서 업로드(EstimateFilesGallery):** [판매 단가표 반영]과 [견적서로 저장] 모두 products + estimates 동시 저장.
+- **products.supply_price = 판매단가:** 원가표는 원가→마진 30% 역산 판매단가로 저장. 견적서는 unitPrice(판매단가) 그대로 저장.
+- **AI 퀵 가이드:** products를 판매단가로 인식, 원가는 역산(수익률 판단용). 판매단가를 원가로 잘못 인식해 부가세·마진 이중 적용되던 오류 수정.
+
+## 2. 상세 결정·구현 사항
+
+### [EstimateFilesGallery — 이중 저장]
+- **판매 단가표 반영:** products 저장 + 견적서 이력(estimates) 저장. 원가표 → 견적 형식 변환 후 estimates insert.
+- **견적서로 저장:** estimates 저장 + products 저장. 견적서 품목을 판매단가로 products에 upsert.
+
+### [products 판매단가 저장]
+- **원가표:** cost → sellingPrice = roundToPriceUnit(cost / (1 - 0.3)) 저장.
+- **견적서:** unitPrice(판매단가) 우선, 없으면 costPrice에서 역산.
+- **MigrationPage:** 동일 원칙 적용.
+
+### [AI 퀵 가이드·EstimateForm]
+- **estimateRecommendationService:** products fallback 시 supply_price를 판매단가로 사용, cost = unitPrice * 0.7 역산.
+- **estimateAiService:** searchPastCaseRecommendations에서 products의 price = supply_price(판매단가), costPrice 역산.
+- **EstimateForm:** `applySellingToRow` 추가 — products 조회 시 판매단가 적용, 원가 역산. `applyCostToRow`는 과거 이력(vendor_price_book 등)용 유지.
+- **productsList 새로고침:** `modalOpen` prop으로 견적 모달 열릴 때 productsList 재조회 → AI 퀵 가이드 검색 최신 반영.
+
+## 3. 변경된 주요 파일
+- `src/components/estimate/EstimateFilesGallery.tsx` — handleSaveVendor/handleSaveEstimate 이중 저장, supply_price = 판매단가
+- `src/components/estimate/EstimateForm.tsx` — applySellingToRow, modalOpen, products 조회 시 applySellingToRow 사용
+- `src/pages/ConsultationManagement.tsx` — EstimateForm modalOpen={estimateModalOpen}
+- `src/lib/estimateRecommendationService.ts` — products fallback 시 판매단가 인식·원가 역산
+- `src/lib/estimateAiService.ts` — searchPastCaseRecommendations products 판매단가·원가 역산
+- `src/pages/admin/MigrationPage.tsx` — supply_price = 판매단가(roundToPriceUnit)
+
+## 4. 세이브 포인트
+```bash
+git add -A
+git commit -m "checkpoint: 견적서 업로드 products+estimates 이중저장, products 판매단가, AI 퀵 가이드 원가 역산"
+git tag save-20260212-estimate-upload-products-selling-price
+```
+
+---
+
+# 세이브 포인트 2026-02-10 (쇼룸·상담 삭제·이미지 자산 상담용)
+
+**이 시점까지 반영된 작업을 롤백할 때 참고용입니다.**
+
+## 포함된 작업 요약
+- **쇼룸(ShowroomPage):** 고교학점제·아파트·무인창업 전문가 코멘트 섹션 추가. 모든 전문가 카드 색상/CTA를 고교학점제 기준(slate)으로 통일. 관리형·스터디카페 카드에 학원 스타일 [상담하기] CTA(Link 버튼) 추가.
+- **상담 관리(ConsultationManagement):** 각 상담 카드 우측에 휴지통(Trash2) 삭제 버튼. 클릭 시 "이 상담 내역을 영구 삭제할까요?" 확인 후 Supabase consultations DELETE, 성공 시 새로고침 없이 해당 카드만 목록에서 제거.
+- **이미지 자산:** DB `image_assets.is_consultation`(boolean, default false) 컬럼 추가(마이그레이션 add_image_assets_is_consultation). ImageAssetViewer: 상단 [상담용 사진만 보기] Switch, 카드 [상담용] 토글(DB 갱신). 스코어링 배지(AI 점수·AI 추천·내부 점수) 제거. 용도 배지는 sourceTable === 'image_assets' && isConsultation일 때만 "상담용" 표시. 공유 URL·PublicGalleryView에서 상담용 카드 우선 정렬·뱃지·테두리 강조. Switch 컴포넌트(src/components/ui/switch.tsx) 추가.
+
+## 롤백 시 (Git 사용 시)
+```bash
+git add -A
+git commit -m "checkpoint: 쇼룸 전문가 통일·상담 영구 삭제·이미지 자산 상담용 필터"
+git tag save-20260210-showroom-consultation-image
+
+# 이후 이 시점으로 복귀
+git checkout save-20260210-showroom-consultation-image
+```
+
+## 변경된 주요 파일
+- `src/pages/ShowroomPage.tsx` — 전문가 카드 slate 통일, CTA 추가
+- `src/pages/ConsultationManagement.tsx` — 휴지통 삭제, handleDeleteLead, onDeleteClick
+- `src/pages/ImageAssetViewer.tsx` — 상담용 스위치·카드 토글·배지 정책·공유 정렬
+- `src/pages/PublicGalleryView.tsx` — is_consultation 조회·상담용 뱃지·테두리
+- `src/lib/imageAssetService.ts` — is_consultation select·updateImageAssetConsultation
+- `src/types/projectImage.ts` — ProjectImageAsset.isConsultation
+- `src/components/ui/switch.tsx` — 신규
+- `supabase/migrations` — add_image_assets_is_consultation
+- `BLUEPRINT.md`, `CONTEXT.md`, `JOURNAL.md`, `soul.md`

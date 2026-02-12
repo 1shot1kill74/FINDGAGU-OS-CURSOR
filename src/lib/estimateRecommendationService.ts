@@ -1,7 +1,8 @@
 /**
  * AI 견적 추천 — 과거 이력·원가표 기반 더블 체크
  * - 과거 이력: estimateAiService.searchPastCaseRecommendations (consultation_id/estimate_id로 원본보기)
- * - 최신 원가: vendor_price_book 또는 products 테이블, 마진율 30% 역산가, roundToPriceUnit 적용
+ * - vendor_price_book: 원가(cost) → 마진 30% 역산 판매단가
+ * - products: 판매단가(supply_price) 저장 → 원가 역산(수익률 판단용)
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -105,8 +106,8 @@ export async function getVendorPriceRecommendation(
     .limit(1)
   const p = products?.[0]
   if (p && Number(p.supply_price) > 0) {
-    const cost = Number(p.supply_price)
-    const unitPrice = roundToPriceUnit(cost / (1 - RECOMMEND_MARGIN_PERCENT / 100))
+    const unitPrice = Number(p.supply_price)
+    const cost = Math.round(unitPrice * (1 - RECOMMEND_MARGIN_PERCENT / 100))
     const pRow = p as { created_at?: string; updated_at?: string }
     const appliedDate = formatDateYYMMDD(pRow.updated_at ?? pRow.created_at)
     return {

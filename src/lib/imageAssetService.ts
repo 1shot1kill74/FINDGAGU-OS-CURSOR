@@ -252,10 +252,13 @@ export function uploadConstructionImageDualWithProgress(
   })
 }
 
+/** 관리자 목록용 표준 썸네일 변환 (w_800, 보정·포맷 최적화). imageAssetUploadService.CLOUDINARY_ADMIN_THUMBNAIL_OPTIONS와 동일 유지 */
+const ADMIN_THUMBNAIL_OPTIONS = 'w_800,c_scale,e_improve,e_sharpen,f_auto,q_auto'
+
 /**
  * Cloudinary URL 생성 (변환 파라미터 포함)
  * - marketing: 고화질/자동 포맷 (블로그용)
- * - mobile: 저용량 최적화
+ * - mobile: 관리자 목록 로딩용 표준 썸네일 (w_800, e_improve, e_sharpen, f_auto, q_auto)
  */
 export function buildCloudinaryUrl(
   publicId: string,
@@ -266,7 +269,7 @@ export function buildCloudinaryUrl(
   if (type === 'marketing') {
     return `${base}/f_auto,q_auto,w_1200/${publicId}`
   }
-  return `${base}/f_auto,q_auto,w_600/${publicId}`
+  return `${base}/${ADMIN_THUMBNAIL_OPTIONS}/${publicId}`
 }
 
 /** 시드 데이터: cloudinary_public_id가 seed_N 형태면 항상 실제 이미지가 나오는 샘플 URL 사용 */
@@ -364,17 +367,226 @@ export function rowToProjectAsset(row: {
     color: row.color?.trim() || undefined,
     status,
     contentHash: row.content_hash?.trim() || undefined,
+    isMain: false,
+    sourceTable: 'project_images',
   }
 }
 
-/** 이미지 자산 관리 전용: 전체 project_images 조회 (상태/용도 무관). 뱅크·견적 매칭과 동일 소스. */
+/** image_assets 행(스마트 업로드) → ProjectImageAsset. site_name → projectTitle로 현장별 그룹화. */
+function rowImageAssetToProjectAsset(row: {
+  id: string
+  created_at: string | null
+  cloudinary_url: string
+  thumbnail_url: string | null
+  site_name: string | null
+  is_main: boolean
+  product_name: string | null
+  color_name: string | null
+  location: string | null
+  business_type: string | null
+  category: string | null
+  ai_score: number | null
+  view_count: number | null
+  internal_score?: number | null
+  share_count?: number | null
+  is_consultation?: boolean | null
+}): ProjectImageAsset {
+  const url = row.cloudinary_url?.trim() || ''
+  const thumbnailUrl = row.thumbnail_url?.trim() || null
+  const match = url.match(/\/upload\/(.+)$/)
+  const cloudinaryPublicId = match ? match[1] : `image_asset_${row.id}`
+  return {
+    id: row.id,
+    cloudinaryPublicId,
+    usageType: 'Marketing',
+    displayName: row.product_name?.trim() || null,
+    url,
+    thumbnailUrl,
+    storagePath: null,
+    consultationId: null,
+    projectTitle: row.site_name?.trim() || row.location?.trim() || null,
+    industry: row.business_type?.trim() || null,
+    viewCount: Number(row.view_count ?? 0),
+    createdAt: row.created_at ?? new Date().toISOString(),
+    syncStatus: 'cloudinary_only',
+    productTags: row.product_name?.trim() ? [row.product_name.trim()] : (row.category?.trim() ? [row.category.trim()] : undefined),
+    category: row.category?.trim() || undefined,
+    color: row.color_name?.trim() || undefined,
+    status: 'approved',
+    isMain: row.is_main ?? false,
+    sourceTable: 'image_assets',
+    aiScore: row.ai_score != null ? row.ai_score : null,
+    internalScore: row.internal_score != null ? row.internal_score : null,
+    shareCount: row.share_count != null ? Number(row.share_count) : 0,
+    isConsultation: row.is_consultation === true,
+  }
+}
+
+/** 이미지 자산 관리 전용: project_images + image_assets(스마트 업로드) 통합 조회. 썸네일은 DB 저장값 사용(즉시 표시). */
 export async function fetchAllProjectAssets(): Promise<ProjectImageAsset[]> {
+  const [projResult, assetResult] = await Promise.all([
+    supabase.from('project_images').select('*').order('created_at', { ascending: false }),
+    supabase.from('image_assets').select('id, created_at, cloudinary_url, thumbnail_url, site_name, is_main, product_name, color_name, location, business_type, category, ai_score, view_count, internal_score, share_count, is_consultation').order('created_at', { ascending: false }),
+  ])
+  const fromProject = (projResult.data ?? []).map((r: Parameters<typeof rowToProjectAsset>[0]) => rowToProjectAsset(r))
+  const fromAssets = (assetResult.data ?? []).map((r: Parameters<typeof rowImageAssetToProjectAsset>[0]) => rowImageAssetToProjectAsset(r))
+  const merged = [...fromProject, ...fromAssets].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+  return merged
+}
+
+/** image_assets 테이블 기반 [연도 > 지역 > 현장명] + 업종 + 제품명 트리 데이터. */
+export type ImageAssetTreeYear = { year: string; regions: ImageAssetTreeRegion[] }
+export type ImageAssetTreeRegion = { region: string; sites: { site: string; count: number }[] }
+export type ImageAssetTreeMeta = {
+  years: ImageAssetTreeYear[]
+  industries: { name: string; count: number }[]
+  products: { name: string; count: number }[]
+}
+
+export async function fetchImageAssetTreeData(): Promise<ImageAssetTreeMeta> {
   const { data, error } = await supabase
-    .from('project_images')
-    .select('*')
+    .from('image_assets')
+    .select('created_at, photo_date, location, site_name, business_type, product_name')
     .order('created_at', { ascending: false })
-  if (error || !data?.length) return []
-  return data.map((r: Parameters<typeof rowToProjectAsset>[0]) => rowToProjectAsset(r))
+  if (error || !data?.length) {
+    return { years: [], industries: [], products: [] }
+  }
+
+  const yearMap = new Map<string, Map<string, Map<string, number>>>()
+  const industryMap = new Map<string, number>()
+  const productMap = new Map<string, number>()
+
+  for (const row of data) {
+    const dateStr = row.created_at ?? row.photo_date ?? ''
+    const year = dateStr ? String(new Date(dateStr).getFullYear()) : '미지정'
+    const region = (row.location ?? '').trim() || '미지정'
+    const site = (row.site_name ?? '').trim() || '미지정'
+    const industry = (row.business_type ?? '').trim() || '미지정'
+    const product = (row.product_name ?? '').trim() || '미지정'
+
+    // [연도 > 지역 > 현장명]
+    let regionMap = yearMap.get(year)
+    if (!regionMap) {
+      regionMap = new Map()
+      yearMap.set(year, regionMap)
+    }
+    let siteMap = regionMap.get(region)
+    if (!siteMap) {
+      siteMap = new Map()
+      regionMap.set(region, siteMap)
+    }
+    siteMap.set(site, (siteMap.get(site) ?? 0) + 1)
+
+    // 업종
+    industryMap.set(industry, (industryMap.get(industry) ?? 0) + 1)
+    // 제품명
+    productMap.set(product, (productMap.get(product) ?? 0) + 1)
+  }
+
+  const years: ImageAssetTreeYear[] = []
+  const sortedYears = Array.from(yearMap.keys()).sort((a, b) => {
+    if (a === '미지정') return 1
+    if (b === '미지정') return -1
+    return b.localeCompare(a)
+  })
+  for (const year of sortedYears) {
+    const regionMap = yearMap.get(year)!
+    const regions: ImageAssetTreeRegion[] = []
+    const sortedRegions = Array.from(regionMap.keys()).sort((a, b) => a.localeCompare(b, 'ko'))
+    for (const region of sortedRegions) {
+      const siteMap = regionMap.get(region)!
+      const sites = Array.from(siteMap.entries())
+        .map(([site, count]) => ({ site, count }))
+        .sort((a, b) => a.site.localeCompare(b.site, 'ko'))
+      regions.push({ region, sites })
+    }
+    years.push({ year, regions })
+  }
+
+  const industries = Array.from(industryMap.entries())
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'ko'))
+  const products = Array.from(productMap.entries())
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'ko'))
+
+  return { years, industries, products }
+}
+
+/** 고객용 시공사례 쇼룸: image_assets 전체 조회 (현장/제품 그룹화용) */
+export interface ShowroomImageAsset {
+  id: string
+  cloudinary_url: string
+  thumbnail_url: string | null
+  site_name: string | null
+  location: string | null
+  business_type: string | null
+  color_name: string | null
+  product_name: string | null
+  is_main: boolean
+  created_at: string | null
+}
+
+export async function fetchShowroomImageAssets(): Promise<ShowroomImageAsset[]> {
+  const { data, error } = await supabase
+    .from('image_assets')
+    .select('id, cloudinary_url, thumbnail_url, site_name, location, business_type, color_name, product_name, is_main, created_at')
+    .order('created_at', { ascending: false })
+  if (error) return []
+  return (data ?? []).map((r: Record<string, unknown>) => ({
+    id: String(r.id),
+    cloudinary_url: String(r.cloudinary_url ?? ''),
+    thumbnail_url: r.thumbnail_url != null ? String(r.thumbnail_url) : null,
+    site_name: r.site_name != null ? String(r.site_name) : null,
+    location: r.location != null ? String(r.location) : null,
+    business_type: r.business_type != null ? String(r.business_type) : null,
+    color_name: r.color_name != null ? String(r.color_name) : null,
+    product_name: r.product_name != null ? String(r.product_name) : null,
+    is_main: Boolean(r.is_main),
+    created_at: r.created_at != null ? String(r.created_at) : null,
+  }))
+}
+
+/** image_assets is_consultation 토글 — 상담용 전용 필터·공유 바구니 정렬용 */
+export async function updateImageAssetConsultation(assetId: string, isConsultation: boolean): Promise<{ error: Error | null }> {
+  const { error } = await supabase.from('image_assets').update({ is_consultation: isConsultation }).eq('id', assetId)
+  return { error: error ?? null }
+}
+
+/** image_assets 상세 보기/공유 링크 조회 시 view_count 1 증가. RPC 호출(원자적). */
+export async function incrementImageAssetViewCount(assetId: string): Promise<void> {
+  await supabase.rpc('increment_image_asset_view_count', { asset_id: assetId })
+}
+
+/** image_assets 공유 링크 복사/공유 시 share_count 1 증가. RPC 호출(원자적). */
+export async function incrementImageAssetShareCount(assetId: string): Promise<void> {
+  await supabase.rpc('increment_image_asset_share_count', { asset_id: assetId })
+}
+
+/**
+ * 앱 내 스코어링: view_count(조회수) 기반으로 ai_score(0~1) 계산 후 image_assets 업데이트.
+ * (레거시·AI 추천 배지용. 내부 스코어는 imageScoringService.updateInternalScoresBatch 사용)
+ */
+export function computeAiScoreFromEngagement(viewCount: number): number {
+  if (viewCount <= 0) return 0
+  return Math.min(1, Math.log10(viewCount + 1) / 2.5)
+}
+
+export async function computeAndUpdateAiScores(limit = 100): Promise<{ updated: number; total: number }> {
+  const { data: rows, error: fetchError } = await supabase
+    .from('image_assets')
+    .select('id, view_count')
+    .limit(limit)
+  if (fetchError) throw new Error(fetchError.message)
+  if (!rows?.length) return { updated: 0, total: 0 }
+  let updated = 0
+  for (const row of rows) {
+    const viewCount = Number(row.view_count ?? 0)
+    const ai_score = computeAiScoreFromEngagement(viewCount)
+    const { error: updateError } = await supabase.from('image_assets').update({ ai_score }).eq('id', row.id)
+    if (!updateError) updated++
+  }
+  return { updated, total: rows.length }
 }
 
 /** 시공 사례 뱅크 전용: approved + 영업용(Marketing) project_images만 조회 */

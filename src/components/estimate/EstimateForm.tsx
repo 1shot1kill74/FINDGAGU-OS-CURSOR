@@ -11,11 +11,13 @@ import { cn } from '@/lib/utils'
 import { X, Send, ImageIcon, Info, FileText } from 'lucide-react'
 import { toast } from 'sonner'
 import { parseQuickCommand as aiParse, searchPastCaseRecommendations, type PastCaseRecommendation, type PastCaseCandidate } from '@/lib/estimateAiService'
+import { getEstimateFileUrlsByProjectName } from '@/lib/estimateFileService'
 import { getVendorPriceRecommendation, getVendorPriceRecommendations, type VendorPriceRecommendation } from '@/lib/estimateRecommendationService'
 import { parseAmountToWon, scaleFactorToTarget, computeTotalCost, adjustUnitPricesToTargetMargin, roundToPriceUnit, getMarginSignalClass, formatDateYYMMDD, GUIDE_PAST_DATE_CLASS, GUIDE_VENDOR_DATE_CLASS } from '@/lib/estimateUtils'
 import { EstimateRowGalleryDialog } from '@/components/estimate/EstimateRowGalleryDialog'
 import { getDataByProductTag } from '@/lib/productDataMatching'
 import { supabase } from '@/lib/supabase'
+import { useColorChips } from '@/hooks/useColorChips'
 
 export type EstimateMode = 'PROPOSAL' | 'FINAL'
 
@@ -233,6 +235,8 @@ export interface EstimateFormProps {
   onRequestEstimatePreview?: (consultationId: string, estimateId: string) => void
   /** 원가표 [원본보기] 클릭 시 — image_url 라이트박스 열기 */
   onRequestPriceBookImage?: (imageUrl: string) => void
+  /** true일 때 productsList 새로고침 (모달 열릴 때 AI 퀵 가이드에 최신 products 반영) */
+  modalOpen?: boolean
   className?: string
 }
 
@@ -242,7 +246,7 @@ export interface EstimateFormHandle {
 }
 
 export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(function EstimateForm(
-  { initialData, initialMode = 'FINAL', pastEstimates = [], onApproved, onConvertToFinal, hideInternalActions, showProfitabilityPanel = false, onRequestEstimatePreview, onRequestPriceBookImage, className },
+  { initialData, initialMode = 'FINAL', pastEstimates = [], onApproved, onConvertToFinal, hideInternalActions, showProfitabilityPanel = false, onRequestEstimatePreview, onRequestPriceBookImage, modalOpen = true, className },
   ref
 ) {
   /** datetime-local용 견적일시 정규화: 빈값·YYYY-MM-DD → 유효 형식 */
@@ -322,6 +326,15 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
   const [hasGalleryDataByProduct, setHasGalleryDataByProduct] = useState<Record<string, boolean>>({})
   /** 퀵 커맨드로 행 추가 시 onBlur가 발생하지 않으므로, 추가 직후 원가 자동 매칭용 */
   const lastQuickCommandProductNameRef = useRef<string | null>(null)
+  const { chips: colorChips } = useColorChips()
+  const colorChipNames = useMemo(() => new Set(colorChips.map((c) => c.color_name)), [colorChips])
+  const colorByGroup = useMemo(() => {
+    const g: Record<string, string[]> = { Standard: [], Special: [], Other: [] }
+    colorChips.forEach((c) => {
+      if (g[c.color_type]) g[c.color_type].push(c.color_name)
+    })
+    return g
+  }, [colorChips])
 
   const productNameKeys = useMemo(
     () => [...new Set(rows.map((r) => r.name?.trim()).filter(Boolean))].sort().join(','),
@@ -505,7 +518,30 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
     })
   }, [mode])
 
-  /** 품목 blur 시 원가 비어 있으면 1) 제품 마스터(products) 조회 → 2) 없으면 과거 견적 이력으로 채우기 */
+  /** products에서 불러올 때: supply_price는 판매단가. 판매단가 적용 후 원가는 역산(수익률 판단용). */
+  const applySellingToRow = useCallback(
+    (index: number, sellingPrice: number) => {
+      if (sellingPrice <= 0) return
+      const cost = Math.round(sellingPrice * (1 - DEFAULT_MARGIN_PERCENT / 100))
+      setRows((prev) => {
+        const next = [...prev]
+        const r = next[index] as EstimateRow
+        next[index] = {
+          ...r,
+          unitPrice: String(sellingPrice),
+          costPrice: String(cost),
+          costEstimated: true,
+          aiUncertain: false,
+          aiReason: undefined,
+        } as EstimateRow
+        if (mode === 'PROPOSAL' && r.unitPriceMax) next[index].unitPriceMax = String(sellingPrice)
+        return next
+      })
+    },
+    [mode]
+  )
+
+  /** 품목 blur 시 원가 비어 있으면 1) 제품 마스터(products, 판매단가) 조회 → 2) 없으면 과거 견적 이력으로 채우기 */
   const handleNameBlurFillCost = useCallback(
     async (index: number) => {
       const row = rows[index] as EstimateRow
@@ -519,7 +555,7 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
         .eq('name', productName)
         .maybeSingle()
       if (product != null && Number(product.supply_price) > 0) {
-        applyCostToRow(index, Number(product.supply_price), false, false)
+        applySellingToRow(index, Number(product.supply_price))
         return
       }
       const fullKey = getRowDisplayName(row).trim()
@@ -529,18 +565,23 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
       const first = history[0]
       applyCostToRow(index, first.cost, first.estimated, true)
     },
-    [rows, pastEstimates, applyCostToRow]
+    [rows, pastEstimates, applySellingToRow]
   )
 
-  /** 제품 마스터 목록 로드 (과거 사례 추천 검색용) */
+  /** 제품 마스터 목록 로드 (과거 사례 추천 검색용). modalOpen true일 때마다 갱신하여 판매 단가표 반영 직후 AI 퀵 가이드에서 검색 가능 */
   useEffect(() => {
+    if (modalOpen === false) return
+    let cancelled = false
     supabase
       .from('products')
       .select('name, supply_price, spec, color')
       .then(({ data }) => {
-        setProductsList((data ?? []).map((r) => ({ name: r?.name ?? '', supply_price: r?.supply_price ?? undefined, spec: r?.spec ?? undefined, color: r?.color ?? undefined })))
+        if (!cancelled) {
+          setProductsList((data ?? []).map((r) => ({ name: r?.name ?? '', supply_price: r?.supply_price ?? undefined, spec: r?.spec ?? undefined, color: r?.color ?? undefined })))
+        }
       })
-  }, [])
+    return () => { cancelled = true }
+  }, [modalOpen])
 
   /** AI 추천 가이드: 선택된 행의 품명으로 과거 이력·원가표 추천 로드 (디바운스 300ms) */
   useEffect(() => {
@@ -614,7 +655,7 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
     }
   }, [guideRowIndex, rows, pastEstimates, productsList])
 
-  /** 퀵 커맨드로 행 추가 시 품목란 onBlur가 없으므로, 추가 직후 제품 마스터에서 원가 조회해 채우기 */
+  /** 퀵 커맨드로 행 추가 시 품목란 onBlur가 없으므로, 추가 직후 제품 마스터(판매단가)에서 조회해 채우기 */
   useEffect(() => {
     const name = lastQuickCommandProductNameRef.current
     if (!name || !showProfitabilityPanel) return
@@ -631,10 +672,10 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
       .maybeSingle()
       .then(({ data }) => {
         if (data != null && Number(data.supply_price) > 0) {
-          applyCostToRow(idx, Number(data.supply_price), false, false)
+          applySellingToRow(idx, Number(data.supply_price))
         }
       })
-  }, [rows, showProfitabilityPanel, applyCostToRow])
+  }, [rows, showProfitabilityPanel, applySellingToRow])
 
   /** 마진율 수정 시 판매단가만 역산. 수동 수정 시 AI 불확실 하이라이트 해제. */
   const updateRowMarginPercent = useCallback((index: number, marginPercentStr: string) => {
@@ -829,11 +870,12 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
               })
             })
           })
+          // 퀵 가이드 비교대상: 과거 이력 + 원가표만. 제품 마스터(products)는 검색 대상에서 제외
           let recs = searchPastCaseRecommendations({
             name: res.name,
             spec: res.spec ?? null,
             color: res.color ?? null,
-            products: productsList,
+            products: [],
             pastCaseRows,
           })
           // 올데이C 검색 시 올데이CA 등 원가표 결과도 함께 보이도록 항상 원가표 조회 후 병합
@@ -881,6 +923,16 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
         case 'target_margin':
           applyTargetMargin(res.marginPercent)
           break
+        case 'reference_past_estimate': {
+          const ref = await getEstimateFileUrlsByProjectName(res.projectName)
+          if (ref && ref.files.length > 0) {
+            toast.success(`${res.projectName} 견적서 ${ref.files.length}건을 참조할 수 있습니다. (AI 분석 연동 예정)`)
+            ref.files.slice(0, 1).forEach((f) => window.open(f.signedUrl, '_blank'))
+          } else {
+            toast.info(`${res.projectName}에 등록된 업로드 견적서가 없습니다. 상담 상세 → 견적 관리에서 PDF/이미지를 업로드해 주세요.`)
+          }
+          break
+        }
         default:
           break
       }
@@ -1155,9 +1207,9 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
                     return (
                     <div
                       key={c.case_id}
-                      className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm shadow-sm"
+                      className="flex items-start gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm shadow-sm h-[116px] box-border"
                     >
-                      <div className="min-w-0 flex-1">
+                      <div className="min-w-0 flex-1 pt-0.5">
                         <p className="font-medium truncate">{c.name}{c.size ? ` · ${c.size}` : ''}{c.color ? ` / ${c.color}` : ''}</p>
                         <p className="text-xs text-muted-foreground">
                           {c.source === 'vendor_price_book'
@@ -1177,7 +1229,7 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
                           </p>
                         )}
                       </div>
-                      <div className="flex items-center gap-1.5 shrink-0">
+                      <div className="w-[140px] flex justify-end items-center gap-1.5 shrink-0 self-center">
                         {c.consultation_id && c.estimate_id && onRequestEstimatePreview ? (
                           <Button
                             type="button"
@@ -1282,6 +1334,7 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
                 <>
                   <th className="border border-border px-2 py-2 text-left font-semibold w-12">번호</th>
                   <th className="border border-border px-2 py-2 text-left font-semibold min-w-[320px]">품목 및 규격</th>
+                  <th className="border border-border px-2 py-2 text-left font-semibold min-w-[100px] print:hidden" data-html2canvas-ignore>색상</th>
                   <th className="border border-border px-2 py-2 text-left font-semibold w-16">수량</th>
                   <th className="border border-border px-2 py-2 text-left font-semibold w-14">단위</th>
                   <th className="border border-border px-2 py-2 text-right font-semibold min-w-[92px]">단가(최소)</th>
@@ -1300,6 +1353,7 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
                 <>
                   <th className="border border-border px-2 py-2 text-left font-semibold w-10">번호</th>
                   <th className="border border-border px-2 py-2 text-left font-semibold min-w-[320px]">품목 및 규격</th>
+                  <th className="border border-border px-2 py-2 text-left font-semibold min-w-[100px] print:hidden" data-html2canvas-ignore>색상</th>
                   <th className="border border-border px-2 py-2 text-left font-semibold w-14">수량</th>
                   <th className="border border-border px-2 py-2 text-left font-semibold w-12">단위</th>
                   <th className="border border-border px-2 py-2 text-right font-semibold min-w-[92px]">단가</th>
@@ -1360,6 +1414,50 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
                           )}
                           <Button type="button" variant="outline" size="sm" className="h-7 text-xs shrink-0" onClick={() => clearRowAiUncertain(idx)} title={row.aiReason}>확인</Button>
                         </>
+                      )}
+                    </div>
+                  </td>
+                  <td className="border border-border px-2 py-2 min-w-[100px] print:hidden" data-html2canvas-ignore>
+                    <div className="flex items-center gap-1 flex-wrap">
+                      <select
+                        className="h-9 w-full max-w-[120px] rounded border border-input bg-background px-2 text-sm"
+                        value={colorChipNames.has(row.color ?? '') ? (row.color ?? '') : '기타'}
+                        onChange={(e) => {
+                          const v = e.target.value
+                          if (v === '기타') updateRow(idx, 'color', '')
+                          else updateRow(idx, 'color', v)
+                        }}
+                      >
+                        <option value="">선택</option>
+                        {colorByGroup.Standard?.length ? (
+                          <optgroup label="기본 컬러 (Standard)">
+                            {colorByGroup.Standard.map((name) => (
+                              <option key={name} value={name}>{name}</option>
+                            ))}
+                          </optgroup>
+                        ) : null}
+                        {colorByGroup.Special?.length ? (
+                          <optgroup label="스페셜 컬러 (Special)">
+                            {colorByGroup.Special.map((name) => (
+                              <option key={name} value={name}>{name}</option>
+                            ))}
+                          </optgroup>
+                        ) : null}
+                        {colorByGroup.Other?.length ? (
+                          <optgroup label="기타">
+                            {colorByGroup.Other.map((name) => (
+                              <option key={name} value={name}>{name}</option>
+                            ))}
+                          </optgroup>
+                        ) : null}
+                      </select>
+                      {(!(row.color ?? '').trim() || !colorChipNames.has(row.color ?? '')) && (
+                        <Input
+                          className="h-9 flex-1 min-w-0 text-sm"
+                          placeholder="기타 직접입력"
+                          value={row.color ?? ''}
+                          onChange={(e) => updateRow(idx, 'color', e.target.value)}
+                        />
                       )}
                     </div>
                   </td>
@@ -1450,6 +1548,50 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
                           )}
                           <Button type="button" variant="outline" size="sm" className="h-7 text-xs shrink-0" onClick={() => clearRowAiUncertain(idx)} title={row.aiReason}>확인</Button>
                         </>
+                      )}
+                    </div>
+                  </td>
+                  <td className="border border-border px-2 py-2 min-w-[100px] print:hidden" data-html2canvas-ignore>
+                    <div className="flex items-center gap-1 flex-wrap">
+                      <select
+                        className="h-9 w-full max-w-[120px] rounded border border-input bg-background px-2 text-sm"
+                        value={colorChipNames.has(row.color ?? '') ? (row.color ?? '') : '기타'}
+                        onChange={(e) => {
+                          const v = e.target.value
+                          if (v === '기타') updateRow(idx, 'color', '')
+                          else updateRow(idx, 'color', v)
+                        }}
+                      >
+                        <option value="">선택</option>
+                        {colorByGroup.Standard?.length ? (
+                          <optgroup label="기본 컬러 (Standard)">
+                            {colorByGroup.Standard.map((name) => (
+                              <option key={name} value={name}>{name}</option>
+                            ))}
+                          </optgroup>
+                        ) : null}
+                        {colorByGroup.Special?.length ? (
+                          <optgroup label="스페셜 컬러 (Special)">
+                            {colorByGroup.Special.map((name) => (
+                              <option key={name} value={name}>{name}</option>
+                            ))}
+                          </optgroup>
+                        ) : null}
+                        {colorByGroup.Other?.length ? (
+                          <optgroup label="기타">
+                            {colorByGroup.Other.map((name) => (
+                              <option key={name} value={name}>{name}</option>
+                            ))}
+                          </optgroup>
+                        ) : null}
+                      </select>
+                      {(!(row.color ?? '').trim() || !colorChipNames.has(row.color ?? '')) && (
+                        <Input
+                          className="h-9 flex-1 min-w-0 text-sm"
+                          placeholder="기타 직접입력"
+                          value={row.color ?? ''}
+                          onChange={(e) => updateRow(idx, 'color', e.target.value)}
+                        />
                       )}
                     </div>
                   </td>

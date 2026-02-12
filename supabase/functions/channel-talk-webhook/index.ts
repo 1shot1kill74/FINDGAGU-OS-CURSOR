@@ -1,9 +1,7 @@
 /**
- * 채널톡 웹훅 — 현재 수신 중인 v4(구형) 명세 대응.
- * - type: "message" (v5는 ch.webhook.chat.user_message). 허용: message, chat.opened, chat.user_message
- * - 메시지: payload.entity.plainText (v4). v5는 entity.lastMessage.plainText
- * - plainText에서 정규식으로 핸드폰 번호 추출 → contact, 없으면 '번호 미등록'
- * - 처리 이벤트 1건당 consultations 1행 + consultation_messages 1행 Insert
+ * 채널톡 웹훅 — 상담카드 유지 방식 (대화 로그 저장 제거)
+ * - chatId 기준 consultations Upsert: 있으면 유지(업데이트), 없으면 신규 생성
+ * - 허용: message, chat.opened, chat.user_message
  *
  * 배포: npx supabase functions deploy channel-talk-webhook --no-verify-jwt
  */
@@ -19,9 +17,12 @@ const CORS = {
 // 현재 수신되는 v4 구조에 맞는 허용 타입 (실제 type: "message" 로 들어옴)
 const ALLOWED_TYPES = ["message", "chat.opened", "chat.user_message"]
 
-/** 메시지 본문(plainText)에서 핸드폰 번호 추출 — 한국 휴대/지역번호 정규식 */
+/** 메시지 본문에서 전화번호 추출 — 010 우선, 그 외 한국 휴대/지역번호 */
 function extractPhoneFromText(text: string): string | null {
-  const m = (text || "").match(/01[0-9]-?\d{3,4}-?\d{4}|02-?\d{3,4}-?\d{4}|0\d{1,2}-?\d{3,4}-?\d{4}/)
+  const t = text || ""
+  const m010 = t.match(/010[- .]?\d{3,4}[- .]?\d{4}/)
+  if (m010) return m010[0].trim()
+  const m = t.match(/01[0-9]-?\d{3,4}-?\d{4}|02-?\d{3,4}-?\d{4}|0\d{1,2}-?\d{3,4}-?\d{4}/)
   if (!m) return null
   const digits = m[0].replace(/\D/g, "")
   if (digits.length >= 9) return m[0].trim()
@@ -76,7 +77,10 @@ Deno.serve(async (req: Request) => {
     const entity = payload.entity as Record<string, unknown> | undefined
     const refers = payload.refers as Record<string, unknown> | undefined
     const user = refers?.user as Record<string, unknown> | undefined
+
     const userName = (user?.name != null ? String(user.name) : "") || "알 수 없음"
+
+    let mobileNumber = (user?.mobileNumber != null ? String(user.mobileNumber) : "") || ""
 
     const messageText =
       (entity?.plainText != null ? String(entity.plainText) : "") ||
@@ -85,11 +89,22 @@ Deno.serve(async (req: Request) => {
         : "") ||
       ""
     const plainText = messageText.trim()
-    console.log(`✅ 처리 완료 - [${userName}]: ${messageText}`)
 
-    const chatId = entity?.id != null ? String(entity.id) : undefined
+    if (!mobileNumber) {
+      const fromMessage = extractPhoneFromText(plainText)
+      if (fromMessage) mobileNumber = fromMessage
+    }
 
-    const contact = extractPhoneFromText(plainText) ?? "번호 미등록"
+    const contact = mobileNumber || "번호 미등록"
+    console.log(`추출 결과 - 이름: ${userName}, 번호: ${contact}`)
+    console.log(`✅ 처리 완료 - [${userName}]: ${plainText || "(없음)"}`)
+
+    // chatId: 채팅방 ID (entity.id는 메시지 ID라 매번 달라짐. entity.chatId 또는 refers.chat.id 사용)
+    const chatId =
+      (entity?.chatId != null ? String(entity.chatId) : undefined) ||
+      (refers?.chat != null && typeof refers.chat === "object" && (refers.chat as Record<string, unknown>)?.id != null
+        ? String((refers.chat as Record<string, unknown>).id)
+        : undefined)
     const now = new Date()
     const displayName = buildInitialDisplayName(contact, now)
 
@@ -108,48 +123,91 @@ Deno.serve(async (req: Request) => {
       source: "채널톡",
       display_name: displayName,
       pain_point: plainText.slice(0, 500),
-      ...(chatId && { channel_chat_id: chatId }),
     }
 
-    const insertPayload = {
-      company_name: "(채널톡)",
-      manager_name: userName,
-      contact,
-      status: "상담중",
-      expected_revenue: null,
-      is_test: false,
-      is_visible: true,
-      metadata,
+    let consultationId: string
+
+    if (chatId) {
+      // Upsert: chatId 기준으로 기존 상담 있으면 유지, 없으면 신규 생성
+      const { data: existing } = await supabase
+        .from("consultations")
+        .select("id, manager_name, contact")
+        .eq("channel_chat_id", chatId)
+        .maybeSingle()
+
+      if (existing?.id) {
+        consultationId = existing.id as string
+        // 최신 고객 정보로 업데이트 (선택적)
+        await supabase
+          .from("consultations")
+          .update({
+            manager_name: userName,
+            contact,
+            metadata: { ...metadata, display_name: displayName, pain_point: plainText.slice(0, 500) },
+          })
+          .eq("id", consultationId)
+        console.log("consultations 기존 유지:", { consultationId, contact })
+      } else {
+        const insertPayload = {
+          company_name: "(채널톡)",
+          manager_name: userName,
+          contact,
+          status: "상담중",
+          expected_revenue: null,
+          is_test: false,
+          is_visible: true,
+          channel_chat_id: chatId,
+          metadata,
+        }
+        const { data: created, error: consultErr } = await supabase
+          .from("consultations")
+          .insert(insertPayload)
+          .select("id")
+          .single()
+        if (consultErr || !created?.id) {
+          console.error("consultations insert 실패:", consultErr)
+          return new Response(
+            JSON.stringify({
+              error: "Consultation insert failed",
+              detail: (consultErr as Error)?.message,
+            }),
+            { status: 500, headers: { ...CORS, "Content-Type": "application/json" } }
+          )
+        }
+        consultationId = created.id as string
+        console.log("consultations 신규 생성:", { consultationId, contact, chatId })
+      }
+    } else {
+      // chatId 없음: 기존 방식으로 신규 생성 (하위 호환)
+      const insertPayload = {
+        company_name: "(채널톡)",
+        manager_name: userName,
+        contact,
+        status: "상담중",
+        expected_revenue: null,
+        is_test: false,
+        is_visible: true,
+        metadata: { ...metadata, display_name: displayName, pain_point: plainText.slice(0, 500) },
+      }
+      const { data: created, error: consultErr } = await supabase
+        .from("consultations")
+        .insert(insertPayload)
+        .select("id")
+        .single()
+      if (consultErr || !created?.id) {
+        console.error("consultations insert 실패:", consultErr)
+        return new Response(
+          JSON.stringify({
+            error: "Consultation insert failed",
+            detail: (consultErr as Error)?.message,
+          }),
+          { status: 500, headers: { ...CORS, "Content-Type": "application/json" } }
+        )
+      }
+      consultationId = created.id as string
+      console.log("consultations 신규 생성(chatId 없음):", { consultationId, contact })
     }
 
-    const { data: consultation, error: consultErr } = await supabase
-      .from("consultations")
-      .insert(insertPayload)
-      .select("id")
-      .single()
-
-    if (consultErr || !consultation?.id) {
-      console.error("consultations insert 실패:", consultErr)
-      return new Response(
-        JSON.stringify({
-          error: "Consultation insert failed",
-          detail: (consultErr as Error)?.message,
-        }),
-        { status: 500, headers: { ...CORS, "Content-Type": "application/json" } }
-      )
-    }
-
-    const consultationId = consultation.id as string
-
-    await supabase.from("consultation_messages").insert({
-      consultation_id: consultationId,
-      sender_id: "channel_user",
-      content: plainText || "(내용 없음)",
-      message_type: "USER",
-      metadata: { type: "channel_talk_incoming" },
-    })
-
-    console.log("consultations insert 성공:", { consultationId, contact })
     return new Response(
       JSON.stringify({ ok: true, consultationId }),
       { status: 200, headers: { ...CORS, "Content-Type": "application/json" } }

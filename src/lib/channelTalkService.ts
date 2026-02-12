@@ -182,12 +182,16 @@ function buildGenericSequentialMent(): string {
   return `${AI_BADGE} 문의하신 내용을 확인했습니다. 담당자가 순차적으로 안내해 드리겠습니다. 잠시만 기다려 주세요.`
 }
 
+/** 연락처 정규화 (숫자만) — 동일 고객 매칭용 */
+function normalizeContactDigits(c: string): string {
+  return (c || '').replace(/\D/g, '')
+}
+
 /**
  * 시뮬레이터에서 쏜 채널톡 형식 데이터 처리:
- * 1) AI 파싱 → metadata(region, pain_point, industry 등) 구성
- * 2) Consultations insert (is_test: true)
- * 3) FAQ 키워드 매칭 시: [AI 자동 응답] 1단계(안심) → 2단계(정보·FAQ 표준 답변) → 3단계(가치·블로그 링크) 순서대로 타임라인 기록
- * 4) 매칭 키워드 없으면: [AI 자동 응답] 순차 안내 멘트 1건만 기록
+ * - 동일 연락처 + is_test + 최근 7일 이내 → 기존 상담 유지
+ * - 없으면 → 신규 상담 생성
+ * - FAQ 자동 응답은 consultation_messages에 기록
  */
 export async function processSimulatedIncoming(
   supabase: SupabaseClient,
@@ -196,6 +200,7 @@ export async function processSimulatedIncoming(
   const { name, contact, inquiry, industry } = payload
   const companyName = (name || '').trim() || '(채널톡 시뮬레이터)'
   const contactNorm = (contact || '').trim() || '000-0000-0000'
+  const contactDigits = normalizeContactDigits(contactNorm)
   const industryNorm = normalizeIndustry(industry)
 
   const parsed = await parseInquiryToStructuredData(inquiry)
@@ -207,31 +212,58 @@ export async function processSimulatedIncoming(
     pain_point: parsed.pain_point ?? inquiry.slice(0, 500),
   }
 
-  const { data: consultation, error: consultErr } = await supabase
+  // 동일 연락처 테스트 상담 (최근 7일) 조회 → 있으면 유지
+  const sevenDaysAgo = new Date()
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
+  const iso7 = sevenDaysAgo.toISOString()
+  const { data: existingList } = await supabase
     .from('consultations')
-    .insert({
-      company_name: companyName,
-      manager_name: companyName,
-      contact: contactNorm,
-      status: '상담중',
-      expected_revenue: null,
-      is_test: true,
-      is_visible: true,
-      metadata: metadata as Json,
-    })
-    .select('id')
-    .single()
+    .select('id, contact')
+    .eq('is_test', true)
+    .eq('is_visible', true)
+    .gte('created_at', iso7)
 
-  if (consultErr || !consultation) {
-    return {
-      consultationId: '',
-      parsed,
-      sentMessages: [],
-      error: consultErr?.message ?? '상담 생성 실패',
+  const existing = (existingList ?? []).find(
+    (r: { contact?: string }) => normalizeContactDigits(r.contact ?? '') === contactDigits
+  )
+
+  let consultationId: string
+  if (existing?.id) {
+    consultationId = existing.id
+    await supabase
+      .from('consultations')
+      .update({
+        manager_name: companyName,
+        metadata: metadata as Json,
+      })
+      .eq('id', consultationId)
+  } else {
+    const { data: consultation, error: consultErr } = await supabase
+      .from('consultations')
+      .insert({
+        company_name: companyName,
+        manager_name: companyName,
+        contact: contactNorm,
+        status: '상담중',
+        expected_revenue: null,
+        is_test: true,
+        is_visible: true,
+        metadata: metadata as Json,
+      })
+      .select('id')
+      .single()
+
+    if (consultErr || !consultation) {
+      return {
+        consultationId: '',
+        parsed,
+        sentMessages: [],
+        error: consultErr?.message ?? '상담 생성 실패',
+      }
     }
+    consultationId = consultation.id
   }
 
-  const consultationId = consultation.id
   const sentMessages: string[] = []
   const keyword = matchFaqKeyword(inquiry)
 

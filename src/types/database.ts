@@ -47,6 +47,7 @@ export type Database = {
       }
       consultations: {
         Row: {
+          channel_chat_id: string | null
           company_name: string
           contact: string
           created_at: string | null
@@ -60,6 +61,7 @@ export type Database = {
           metadata: Json | null
         }
         Insert: {
+          channel_chat_id?: string | null
           company_name: string
           contact: string
           created_at?: string | null
@@ -73,6 +75,7 @@ export type Database = {
           metadata?: Json | null
         }
         Update: {
+          channel_chat_id?: string | null
           company_name?: string
           contact?: string
           created_at?: string | null
@@ -327,6 +330,69 @@ export type Database = {
         }
         Relationships: []
       }
+      image_assets: {
+        Row: {
+          id: string
+          created_at: string | null
+          cloudinary_url: string
+          thumbnail_url: string | null
+          site_name: string | null
+          photo_date: string | null
+          location: string | null
+          business_type: string | null
+          category: string | null
+          product_name: string | null
+          color_name: string | null
+          is_main: boolean
+          memo: string | null
+          metadata: Json | null
+          ai_score: number | null
+          view_count: number
+          internal_score: number | null
+          share_count: number
+        }
+        Insert: {
+          id?: string
+          created_at?: string | null
+          cloudinary_url: string
+          thumbnail_url?: string | null
+          site_name?: string | null
+          photo_date?: string | null
+          location?: string | null
+          business_type?: string | null
+          category?: string | null
+          product_name?: string | null
+          color_name?: string | null
+          is_main?: boolean
+          memo?: string | null
+          metadata?: Json | null
+          ai_score?: number | null
+          view_count?: number
+          internal_score?: number | null
+          share_count?: number
+        }
+        Update: {
+          id?: string
+          created_at?: string | null
+          cloudinary_url?: string
+          thumbnail_url?: string | null
+          site_name?: string | null
+          photo_date?: string | null
+          location?: string | null
+          business_type?: string | null
+          category?: string | null
+          product_name?: string | null
+          color_name?: string | null
+          is_main?: boolean
+          memo?: string | null
+          metadata?: Json | null
+          ai_score?: number | null
+          view_count?: number
+          internal_score?: number | null
+          share_count?: number
+        }
+        Relationships: []
+      }
       tag_mappings: {
         Row: {
           id: string
@@ -351,6 +417,30 @@ export type Database = {
           display_order?: number
           created_at?: string
           updated_at?: string
+        }
+        Relationships: []
+      }
+      color_chips: {
+        Row: {
+          id: string
+          color_type: string
+          color_name: string
+          display_order: number
+          created_at: string | null
+        }
+        Insert: {
+          id?: string
+          color_type: string
+          color_name: string
+          display_order?: number
+          created_at?: string | null
+        }
+        Update: {
+          id?: string
+          color_type?: string
+          color_name?: string
+          display_order?: number
+          created_at?: string | null
         }
         Relationships: []
       }

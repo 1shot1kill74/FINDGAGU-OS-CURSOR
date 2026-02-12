@@ -2,10 +2,14 @@
  * PDF/JPG 파일 AI 데이터 추출 — Gemini 2.0 Flash (메인) + OpenAI GPT-4o (폴백)
  * - 메인: Gemini 2.0 Flash — 표 구조·파인드가구 키워드 인식 등 향상된 비전 활용
  * - 폴백: Gemini 할당량/서버 에러/지연 시 OpenAI GPT-4o로 재시도
+ * - PDF.js worker: 로컬 패키지 사용 (CDN 미사용)
  */
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import { toast } from 'sonner'
 import type { EstimateRow } from '@/components/estimate/EstimateForm'
+
+/** pdfjs-dist worker 로컬 참조 (Vite ?url → 번들 시 올바른 경로) */
+import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 
 const GEMINI_API_KEY = (
   import.meta.env.VITE_GOOGLE_GEMINI_API_KEY ??
@@ -130,6 +134,13 @@ export interface ParsedEstimateFromPDF {
   total_amount?: number
 }
 
+/** 단가 테이블 추출용 간단 구조 — {품목, 단가, 수량} JSON */
+export interface ParsedUnitPriceItem {
+  품목: string
+  단가: number
+  수량: number
+}
+
 /** 원가표 품목 1건 — 현장명/품명/색상/수량/단가/외경사이즈 */
 export interface ParsedVendorPriceItem {
   vendor_name: string
@@ -137,6 +148,8 @@ export interface ParsedVendorPriceItem {
   size: string
   cost_price: number
   description: string
+  /** 수량 — 단가 테이블 연동용 */
+  quantity?: number
   /** 현장명 — "[파인드가구] 루브르"에서 "루브르" 추출 */
   site_name?: string
   /** 색상 (예: 기성칼라) */
@@ -207,24 +220,29 @@ function getFileCategory(file: File): FileCategory {
   return 'Estimates'
 }
 
-/** PDF에서 텍스트 추출 (pdfjs-dist) */
+const PDF_LOAD_ERROR_MSG = 'PDF 해석 라이브러리 로드 실패. 다시 시도해 주세요.'
+
+/** PDF에서 텍스트 추출 (pdfjs-dist, 로컬 worker) */
 async function extractTextFromPDF(file: File): Promise<string> {
-  const pdfjs = await import('pdfjs-dist')
-  const version = (pdfjs as { version?: string }).version || '4.8.69'
-  if (pdfjs.GlobalWorkerOptions && !pdfjs.GlobalWorkerOptions.workerSrc) {
-    pdfjs.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${version}/pdf.worker.min.mjs`
+  try {
+    const pdfjs = await import('pdfjs-dist')
+    if (pdfjs.GlobalWorkerOptions) {
+      pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl
+    }
+    const arrayBuffer = await file.arrayBuffer()
+    const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise
+    const numPages = pdf.numPages
+    const texts: string[] = []
+    for (let i = 1; i <= Math.min(numPages, 10); i++) {
+      const page = await pdf.getPage(i)
+      const content = await page.getTextContent()
+      const pageText = content.items.map((item) => ('str' in item ? (item as { str: string }).str : '')).join(' ')
+      texts.push(pageText)
+    }
+    return texts.join('\n\n')
+  } catch {
+    throw new Error(PDF_LOAD_ERROR_MSG)
   }
-  const arrayBuffer = await file.arrayBuffer()
-  const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise
-  const numPages = pdf.numPages
-  const texts: string[] = []
-  for (let i = 1; i <= Math.min(numPages, 10); i++) {
-    const page = await pdf.getPage(i)
-    const content = await page.getTextContent()
-    const pageText = content.items.map((item) => ('str' in item ? (item as { str: string }).str : '')).join(' ')
-    texts.push(pageText)
-  }
-  return texts.join('\n\n')
 }
 
 function getMimeFromExtension(file: File): string {
@@ -313,6 +331,18 @@ function normalizeRow(raw: Record<string, unknown>, index: number): EstimateRow 
 
 export type ParseMode = 'default' | 'estimates' | 'vendor_price'
 
+/** {품목, 단가, 수량} 형태 JSON 추출용 프롬프트 — Gemini API 연동 */
+const UNIT_PRICE_JSON_PROMPT = `당신은 PDF/이미지 문서에서 품목·단가·수량 표를 분석하는 전문가입니다.
+
+**추출 형식** (유효한 JSON만 출력, 다른 텍스트 없음):
+{"items":[{"품목":"제품명","단가":숫자,"수량":숫자}]}
+
+**규칙**:
+- 품목: 제품/품명 (문자열)
+- 단가: 원가(원), ₩·콤마 제거 후 숫자만 (예: 162000)
+- 수량: EA 개수, 없으면 1
+- 표·도면·수기 메모에서 모든 품목 행 추출`
+
 /** 비전 전용: 원가표 이미지 분석 (Gemini 2.0 향상된 비전 — 표 구조·수기 메모·도면 인식) */
 const VISION_VENDOR_PROMPT = `당신은 원가표/가격표 이미지 분석 전문가입니다. 다음 항목을 반드시 유심히 분석하세요.
 
@@ -328,10 +358,10 @@ const VISION_VENDOR_PROMPT = `당신은 원가표/가격표 이미지 분석 전
 
 **6) 메모 (memo)**: "상판 모번 23T", "그외 18T 라이트그레이" 등 불릿·추가 사양 텍스트. 도면 옆 인쇄/수기 메모를 그대로 추출. 줄바꿈은 공백으로.
 
-**추가**: description에는 색상/특이사항. memo에는 상세 사양(두께·재질·색상 배치 등).
+**추가**: description에는 색상/특이사항. memo에는 상세 사양(두께·재질·색상 배치 등). quantity는 수량(EA), 없으면 1.
 
 **출력** (유효한 JSON만, items 배열 필수):
-{"items":[{"vendor_name":"","product_name":"","size":"","cost_price":숫자,"description":"","site_name":"","color":"","memo":""}]}`
+{"items":[{"vendor_name":"","product_name":"","size":"","cost_price":숫자,"quantity":숫자,"description":"","site_name":"","color":"","memo":""}]}`
 
 /** 비전 전용: 견적서 이미지 분석 (Gemini 2.0 — 파인드가구 키워드·표 구조 최우선) */
 const VISION_ESTIMATE_PROMPT = `당신은 가구 견적서 이미지 분석 전문가입니다. Gemini 2.0의 향상된 비전으로 다음을 최우선 수행합니다.
@@ -358,26 +388,30 @@ export async function parseFileWithAI(
   if (forceVendorPrice) {
     const ext = (file.name.split('.').pop() ?? '').toLowerCase()
     const isPdf = ext === 'pdf'
-    const basePrompt = `매입 원가 등록. 아래 항목 모두 추출: site_name, product_name, color, cost_price, size(외경 가로×세로×높이), memo(상판 모번 23T·그외 18T 라이트그레이 등 상세 사양). items 배열.`
-    const jsonFormat = '{ "items": [ { "site_name", "product_name", "color", "size", "cost_price", "description", "memo" } ] }'
+    const basePrompt = `매입 원가 등록. 아래 항목 모두 추출: site_name, product_name(또는 품목), color, cost_price(또는 단가), quantity(또는 수량, 없으면 1), size(외경 가로×세로×높이), memo(상판 모번 23T·그외 18T 라이트그레이 등 상세 사양). items 배열.`
+    const jsonFormat = '{ "items": [ { "site_name", "product_name", "품목", "color", "size", "cost_price", "단가", "quantity", "수량", "description", "memo" } ] }'
 
     if (isPdf) {
       const text = await extractTextFromPDF(file)
       if (!text.trim()) throw new Error('PDF에서 텍스트를 추출할 수 없습니다.')
-      const sysPrompt = `${basePrompt}\n출력: ${jsonFormat}\n유효한 JSON만 출력.`
+      const sysPrompt = `${UNIT_PRICE_JSON_PROMPT}\n${basePrompt}\n출력: ${jsonFormat}\n유효한 JSON만 출력.`
       const content = await callAIWithFallback(sysPrompt, [text.slice(0, 15000)])
       if (!content) throw new Error('AI 분석 결과가 비어 있습니다.')
       const parsed = parseJsonBlock(content)
     const rawItems = Array.isArray(parsed.items) ? parsed.items : []
     const items: ParsedVendorPriceItem[] = rawItems.map((r: unknown) => {
       const row = typeof r === 'object' && r !== null ? (r as Record<string, unknown>) : {}
-      const costVal = row.cost_price ?? row.cost
+      const costVal = row.cost_price ?? row.cost ?? row.단가
       const cost = typeof costVal === 'number' ? costVal : parseInt(String(costVal ?? 0).replace(/\D/g, ''), 10) || 0
+      const qtyVal = row.quantity ?? row.qty ?? row.수량
+      const qty = typeof qtyVal === 'number' ? qtyVal : parseInt(String(qtyVal ?? 1).replace(/\D/g, ''), 10) || 1
+      const name = String(row.product_name ?? row.productName ?? row.품목 ?? '')
       return {
         vendor_name: '',
-        product_name: String(row.product_name ?? row.productName ?? ''),
+        product_name: name,
         size: String(row.size ?? row.spec ?? ''),
         cost_price: cost,
+        quantity: qty,
         description: String(row.description ?? row.note ?? ''),
         site_name: String(row.site_name ?? '').trim() || undefined,
         color: String(row.color ?? '').trim() || undefined,
@@ -400,13 +434,16 @@ export async function parseFileWithAI(
     const rawItems = Array.isArray(parsed.items) ? parsed.items : []
     const items: ParsedVendorPriceItem[] = rawItems.map((r: unknown) => {
       const row = typeof r === 'object' && r !== null ? (r as Record<string, unknown>) : {}
-      const costVal = row.cost_price ?? row.cost
+      const costVal = row.cost_price ?? row.cost ?? row.단가
       const cost = typeof costVal === 'number' ? costVal : parseInt(String(costVal ?? 0).replace(/\D/g, ''), 10) || 0
+      const qtyVal = row.quantity ?? row.qty ?? row.수량
+      const qty = typeof qtyVal === 'number' ? qtyVal : parseInt(String(qtyVal ?? 1).replace(/\D/g, ''), 10) || 1
       return {
         vendor_name: '',
-        product_name: String(row.product_name ?? row.productName ?? ''),
+        product_name: String(row.product_name ?? row.productName ?? row.품목 ?? ''),
         size: String(row.size ?? row.spec ?? ''),
         cost_price: cost,
+        quantity: qty,
         description: String(row.description ?? row.note ?? ''),
         site_name: String(row.site_name ?? '').trim() || undefined,
         color: String(row.color ?? '').trim() || undefined,
@@ -414,21 +451,22 @@ export async function parseFileWithAI(
         memo: String(row.memo ?? '').trim() || undefined,
       }
     })
-    if (items.length === 0) {
-      items.push({
-        vendor_name: '',
-        product_name: String(parsed.product_name ?? ''),
-        size: String(parsed.size ?? parsed.spec ?? ''),
-        cost_price: parseInt(String(parsed.cost_price ?? parsed.cost ?? 0).replace(/\D/g, ''), 10) || 0,
-        description: String(parsed.description ?? ''),
-        site_name: String(parsed.site_name ?? '').trim() || undefined,
-        color: String(parsed.color ?? '').trim() || undefined,
-        quote_date: undefined,
-        memo: String(parsed.memo ?? '').trim() || undefined,
-      })
-    }
-    return { category: 'VendorPrice', result: { type: 'VendorPrice', data: { items } } }
+  if (items.length === 0) {
+    items.push({
+      vendor_name: '',
+      product_name: String(parsed.product_name ?? parsed.품목 ?? ''),
+      size: String(parsed.size ?? parsed.spec ?? ''),
+      cost_price: parseInt(String(parsed.cost_price ?? parsed.cost ?? parsed.단가 ?? 0).replace(/\D/g, ''), 10) || 0,
+      quantity: 1,
+      description: String(parsed.description ?? ''),
+      site_name: String(parsed.site_name ?? '').trim() || undefined,
+      color: String(parsed.color ?? '').trim() || undefined,
+      quote_date: undefined,
+      memo: String(parsed.memo ?? '').trim() || undefined,
+    })
   }
+  return { category: 'VendorPrice', result: { type: 'VendorPrice', data: { items } } }
+}
 
   if (category === 'Estimates') {
     const ext = (file.name.split('.').pop() ?? '').toLowerCase()
@@ -531,6 +569,56 @@ export async function parseFileWithAI(
 export async function detectIsOurCompanyEstimate(file: File): Promise<boolean> {
   const category = await detectCategoryFromContent(file)
   return category === 'Estimates'
+}
+
+/**
+ * PDF/이미지에서 {품목, 단가, 수량} 형태의 단가 테이블 추출 — Gemini API 연동
+ * 확인용 미리보기 UI에서 사용
+ */
+export async function parseUnitPriceTableFromFile(file: File): Promise<ParsedUnitPriceItem[]> {
+  const ext = (file.name.split('.').pop() ?? '').toLowerCase()
+  const isPdf = ext === 'pdf'
+
+  if (isPdf) {
+    const text = await extractTextFromPDF(file)
+    if (!text.trim()) throw new Error('PDF에서 텍스트를 추출할 수 없습니다.')
+    const sysPrompt = `${UNIT_PRICE_JSON_PROMPT}\n위 형식으로 추출. 유효한 JSON만 출력.`
+    const content = await callAIWithFallback(sysPrompt, [text.slice(0, 15000)])
+    if (!content) throw new Error('AI 분석 결과가 비어 있습니다.')
+    const parsed = parseJsonBlock(content)
+    const raw = Array.isArray(parsed.items) ? parsed.items : []
+    return raw.map((r: unknown) => {
+      const row = typeof r === 'object' && r !== null ? (r as Record<string, unknown>) : {}
+      const 단가 = typeof row.단가 === 'number' ? row.단가 : parseInt(String(row.단가 ?? row.cost_price ?? 0).replace(/\D/g, ''), 10) || 0
+      const 수량 = typeof row.수량 === 'number' ? row.수량 : parseInt(String(row.수량 ?? row.quantity ?? 1).replace(/\D/g, ''), 10) || 1
+      return {
+        품목: String(row.품목 ?? row.product_name ?? ''),
+        단가,
+        수량,
+      }
+    })
+  }
+
+  const base64 = await fileToBase64(file)
+  const mimeType = getMimeFromExtension(file)
+  const sysPrompt = `${UNIT_PRICE_JSON_PROMPT}\n이 이미지에서 표·수기 메모의 모든 품목을 items 배열로 추출. 유효한 JSON만 출력.`
+  const content = await callAIWithFallback(sysPrompt, [
+    '이 문서 이미지에서 품목·단가·수량 표를 추출하세요.',
+    { inlineData: { data: base64, mimeType } },
+  ])
+  if (!content) throw new Error('AI 분석 결과가 비어 있습니다.')
+  const parsed = parseJsonBlock(content)
+  const raw = Array.isArray(parsed.items) ? parsed.items : []
+  return raw.map((r: unknown) => {
+    const row = typeof r === 'object' && r !== null ? (r as Record<string, unknown>) : {}
+    const 단가 = typeof row.단가 === 'number' ? row.단가 : parseInt(String(row.단가 ?? row.cost_price ?? 0).replace(/\D/g, ''), 10) || 0
+    const 수량 = typeof row.수량 === 'number' ? row.수량 : parseInt(String(row.수량 ?? row.quantity ?? 1).replace(/\D/g, ''), 10) || 1
+    return {
+      품목: String(row.품목 ?? row.product_name ?? ''),
+      단가,
+      수량,
+    }
+  })
 }
 
 export { getFileCategory }

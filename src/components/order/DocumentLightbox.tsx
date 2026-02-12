@@ -10,11 +10,13 @@ import { supabase } from '@/lib/supabase'
 
 const ORDER_DOCUMENTS_BUCKET = 'order-documents'
 const MEASUREMENT_DRAWINGS_BUCKET = 'measurement-drawings'
+export const ESTIMATE_FILES_BUCKET = 'estimate-files'
 const SIGNED_URL_EXPIRES = 3600
 
 export type LightboxSource =
   | { type: 'measurement'; path: string; name: string }
   | { type: 'order'; path: string; name: string; fileType: 'pdf' | 'ppt' | 'pptx' }
+  | { type: 'estimate'; path: string; name: string; fileType: 'pdf' | 'png' | 'jpg' | 'jpeg' | 'webp' }
 
 interface DocumentLightboxProps {
   open: boolean
@@ -27,9 +29,22 @@ export function DocumentLightbox({ open, onOpenChange, source }: DocumentLightbo
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const bucket = source?.type === 'measurement' ? MEASUREMENT_DRAWINGS_BUCKET : ORDER_DOCUMENTS_BUCKET
-  const path = source?.type === 'measurement' ? source.path : source?.path
-  const isPdf = source?.type === 'order' ? source.fileType === 'pdf' : true
+  const bucket =
+    source?.type === 'measurement'
+      ? MEASUREMENT_DRAWINGS_BUCKET
+      : source?.type === 'estimate'
+        ? ESTIMATE_FILES_BUCKET
+        : ORDER_DOCUMENTS_BUCKET
+  const path =
+    source?.type === 'measurement' ? source.path : source?.type === 'order' || source?.type === 'estimate' ? source.path : ''
+  const isPdf =
+    source?.type === 'order'
+      ? source.fileType === 'pdf'
+      : source?.type === 'estimate'
+        ? source.fileType === 'pdf'
+        : true
+  const isImage = source?.type === 'estimate' && ['png', 'jpg', 'jpeg', 'webp'].includes(source.fileType)
+  const isPpt = source?.type === 'order' && source.fileType !== 'pdf'
   const name = source?.name ?? '문서'
 
   useEffect(() => {
@@ -94,7 +109,14 @@ export function DocumentLightbox({ open, onOpenChange, source }: DocumentLightbo
               className="w-full flex-1 min-h-[70vh] rounded border border-border bg-background"
             />
           )}
-          {signedUrl && !isPdf && (
+          {signedUrl && isImage && (
+            <img
+              src={signedUrl}
+              alt={name}
+              className="max-w-full max-h-[80vh] object-contain rounded border border-border bg-background"
+            />
+          )}
+          {signedUrl && isPpt && (
             <div className="flex flex-col items-center gap-4 py-8">
               <Presentation className="h-16 w-16 text-muted-foreground" />
               <p className="text-sm text-muted-foreground">PPT 파일은 브라우저에서 바로 보기가 제한됩니다.</p>

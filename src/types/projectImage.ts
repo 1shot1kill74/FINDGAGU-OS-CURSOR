@@ -72,11 +72,25 @@ export interface ProjectImageAsset {
   viewCount: number
   createdAt: string
   syncStatus: SyncStatus
-  /** 지능형 필터: 제품군별 */
+  /** 지능형 필터: 제품군별 (제품명 등). 견적에 담기 값으로 사용 */
   productTags?: string[] | null
+  /** 제품 카테고리 (책상, 의자 등). 태그 뒤에 표시 */
+  category?: string | null
   /** 지능형 필터: 색상별 */
   color?: string | null
   /** 검수 상태: pending(대기), approved(승인) — 시공 사례 뱅크는 approved만 노출 */
   status?: ReviewStatus
   contentHash?: string | null
+  /** image_assets 전용: 현장당 대표 이미지 1개. 뷰어에서 대표로 지정 가능 */
+  isMain?: boolean
+  /** 'image_assets'면 대표 지정 가능, 'project_images'면 불가 */
+  sourceTable?: 'project_images' | 'image_assets'
+  /** image_assets 전용: Cloudinary quality_analysis 품질 점수(0~1). AI 추천순·배지용 */
+  aiScore?: number | null
+  /** image_assets 전용: 앱 내부 스코어(기술+활동) 0~1. 정렬·배지용 */
+  internalScore?: number | null
+  /** image_assets 전용: 공유 횟수. 활동 점수 산출용 */
+  shareCount?: number
+  /** image_assets 전용: 상담용 전용 필터·공유 바구니 상단 노출 */
+  isConsultation?: boolean
 }

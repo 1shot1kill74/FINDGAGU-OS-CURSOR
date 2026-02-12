@@ -1,7 +1,7 @@
 /**
  * 데이터 통합 마이그레이션 — PDF/JPG 통합 업로드 및 AI 데이터 추출
  * - PDF: 견적서 → Estimates (consultations + estimates)
- * - JPG: 원가표 → vendor_price_book
+ * - JPG/원가표: AI 분석 → products (공식 상품 목록, supply_price=판매단가)
  * - 드래그앤드롭, 리뷰 테이블, Storage 업로드, is_test: true
  */
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react'
@@ -23,6 +23,8 @@ import {
   type ParsedVendorPriceItem,
   type FileCategory,
 } from '@/lib/parseFileWithAI'
+import { shouldExcludeFromProducts, splitForProducts } from '@/lib/productFilter'
+import { roundToPriceUnit } from '@/lib/estimateUtils'
 import { insertSystemLog } from '@/lib/activityLog'
 
 const SUPPLIER_FIXED = {
@@ -210,31 +212,6 @@ export default function MigrationPage() {
       const valid = uploadedItems.filter((u) => existingIds.has(u.estimateId))
       if (valid.length < uploadedItems.length) {
         setUploadedItems(valid)
-        toast.info('DB에서 삭제된 항목을 목록에서 제거했습니다.')
-      }
-    }
-    run()
-    return () => { cancelled = true }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps -- 마운트 시 1회
-
-  /** DB에 없는 거래처 원가 항목 정리 — localStorage에는 있지만 DB에서 삭제된 항목만 제거. DB 조회가 빈 결과(RLS/오류)일 때는 목록을 비우지 않음. */
-  useEffect(() => {
-    if (uploadedVendorItems.length === 0) return
-    let cancelled = false
-    const run = async () => {
-      const imageUrls = [...new Set(uploadedVendorItems.map((u) => u.image_url))]
-      const { data } = await supabase
-        .from('vendor_price_book')
-        .select('image_url')
-        .in('image_url', imageUrls)
-      if (cancelled) return
-      const rows = data ?? []
-      // DB가 빈 결과를 반환한 경우(RLS, 네트워크 오류 등) 목록을 비우지 않음 — 새로고침 시 사라지는 현상 방지
-      if (rows.length === 0) return
-      const existingUrls = new Set(rows.map((r) => r.image_url))
-      const valid = uploadedVendorItems.filter((u) => existingUrls.has(u.image_url))
-      if (valid.length < uploadedVendorItems.length) {
-        setUploadedVendorItems(valid)
         toast.info('DB에서 삭제된 항목을 목록에서 제거했습니다.')
       }
     }
@@ -461,7 +438,7 @@ export default function MigrationPage() {
     setFiles((prev) =>
       prev.map((f) => {
         if (f.id !== id || !f.parsedVendor) return f
-        const items = [...(f.parsedVendor.items ?? []), { vendor_name: '', product_name: '', size: '', cost_price: 0, description: '', memo: '' }]
+        const items = [...(f.parsedVendor.items ?? []), { vendor_name: '', product_name: '', size: '', cost_price: 0, description: '', memo: '', quantity: 1 }]
         return { ...f, parsedVendor: { ...f.parsedVendor, items } }
       })
     )
@@ -739,36 +716,30 @@ export default function MigrationPage() {
           toast.success(toastMsg)
         } else if (item.category === 'VendorPrice' && item.parsedVendor?.items?.length) {
           const items = item.parsedVendor.items
-
-          const { error: uploadErr } = await supabase.storage.from(BUCKET_VENDOR).upload(storagePath, item.file, {
-            contentType: getContentTypeForUpload(item.file, 'vendor'),
-            upsert: true,
+          const { toSave } = splitForProducts(items)
+          const productRows = toSave.map((it) => {
+            const cost = Number(it.cost_price) || 0
+            const sellingPrice = cost > 0 ? roundToPriceUnit(cost / (1 - 0.3)) : 0
+            return {
+              name: (it.product_name?.trim() || '(미명)').slice(0, 255),
+              supply_price: sellingPrice,
+              spec: it.size?.trim() || null,
+              color: it.color?.trim() || null,
+            }
           })
-          if (uploadErr) throw uploadErr
-          const { data: urlData } = supabase.storage.from(BUCKET_VENDOR).getPublicUrl(storagePath)
-          const imageUrl = urlData.publicUrl
-
-          const rows = items.map((it) => ({
-            product_name: it.product_name?.trim() || '(미명)',
-            cost: Number(it.cost_price) || 0,
-            image_url: imageUrl,
-            vendor_name: it.vendor_name?.trim() || null,
-            spec: it.size?.trim() || null,
-            description: it.description?.trim() || null,
-            is_test: true,
-          }))
-
-          const { data: inserted, error: vErr } = await supabase
-            .from('vendor_price_book')
-            .insert(rows)
-            .select('id')
-          if (vErr) throw vErr
-
-          const firstId = (Array.isArray(inserted) && inserted.length > 0 ? inserted[0]?.id : (inserted as { id?: string } | null)?.id) ?? null
+          if (productRows.length === 0) {
+            toast.info('저장할 가구 제품이 없습니다. (배송/설치/시공 등 제외 항목만 있습니다)')
+            setSaving(null)
+            return
+          }
+          const { error: pErr } = await supabase
+            .from('products')
+            .upsert(productRows, { onConflict: 'name', ignoreDuplicates: false })
+          if (pErr) throw pErr
           setFiles((prev) =>
-            prev.map((f) => (f.id === id ? { ...f, status: '완료' as FileStatus, savedId: firstId } : f))
+            prev.map((f) => (f.id === id ? { ...f, status: '완료' as FileStatus, savedId: 'products' } : f))
           )
-          toast.success(`원가표 ${rows.length}건이 저장되었습니다.`)
+          toast.success(`공식 상품 목록(Products)에 ${productRows.length}건이 반영되었습니다.`)
         }
       } catch (err) {
         console.error(err)
@@ -788,71 +759,68 @@ export default function MigrationPage() {
     }
     setSavingBulk(true)
     try {
-      const rows: Array<{
-        product_name: string
-        cost: number
-        image_url: string
-        vendor_name: string
-        spec: string | null
-        description: string | null
-        memo: string | null
-        is_test: boolean
-        site_name: string | null
-        color: string | null
-        quote_date: string | null
-      }> = []
+      const productRows: Array<{ name: string; supply_price: number; spec: string | null; color: string | null }> = []
+      for (const vf of withItems) {
+        const { toSave } = splitForProducts(vf.parsedVendor!.items)
+        for (const it of toSave) {
+          const cost = Number(it.cost_price) || 0
+          const sellingPrice = cost > 0 ? roundToPriceUnit(cost / (1 - 0.3)) : 0
+          productRows.push({
+            name: (it.product_name?.trim() || '(미명)').slice(0, 255),
+            supply_price: sellingPrice,
+            spec: it.size?.trim() || null,
+            color: it.color?.trim() || null,
+          })
+        }
+      }
+      if (productRows.length === 0) {
+        toast.info('저장할 가구 제품이 없습니다. (배송/설치/시공 등 제외 항목만 있습니다)')
+        setSavingBulk(false)
+        return
+      }
+
+      const { error: pErr } = await supabase
+        .from('products')
+        .upsert(productRows, { onConflict: 'name', ignoreDuplicates: false })
+
+      if (pErr) throw pErr
+
+      const now = new Date().toISOString()
+      const toAdd: UploadedVendorPriceItem[] = []
       for (const vf of withItems) {
         const storagePath = toSafeStoragePath(vf.file.name, 'vendor')
         const { error: uploadErr } = await supabase.storage.from(BUCKET_VENDOR).upload(storagePath, vf.file, {
           contentType: getContentTypeForUpload(vf.file, 'vendor'),
           upsert: true,
         })
-        if (uploadErr) throw uploadErr
-        const { data: urlData } = supabase.storage.from(BUCKET_VENDOR).getPublicUrl(storagePath)
-        const imageUrl = urlData.publicUrl
-        const vn = vendorName?.trim() || DEFAULT_VENDOR_NAME
-        for (const it of vf.parsedVendor!.items) {
-          rows.push({
-            product_name: it.product_name?.trim() || '(미명)',
-            cost: Number(it.cost_price) || 0,
-            image_url: imageUrl,
-            vendor_name: vn,
-            spec: it.size?.trim() || null,
-            description: it.description?.trim() || null,
-            memo: it.memo?.trim() || null,
-            is_test: true,
-            site_name: it.site_name?.trim() || null,
-            color: it.color?.trim() || null,
-            quote_date: it.quote_date?.trim() && /^\d{4}-\d{2}-\d{2}$/.test(it.quote_date) ? it.quote_date : null,
+        if (!uploadErr) {
+          const { data: urlData } = supabase.storage.from(BUCKET_VENDOR).getPublicUrl(storagePath)
+          const items = vf.parsedVendor!.items
+          const total = items.reduce((sum, it) => sum + (Number(it.cost_price) || 0), 0)
+          toAdd.push({
+            filename: vf.file.name,
+            grand_total: total,
+            quoteDate: '',
+            uploadedAt: now,
+            status: '저장완료',
+            image_url: urlData.publicUrl,
+          })
+        } else {
+          const items = vf.parsedVendor!.items
+          const total = items.reduce((sum, it) => sum + (Number(it.cost_price) || 0), 0)
+          toAdd.push({
+            filename: vf.file.name,
+            grand_total: total,
+            quoteDate: '',
+            uploadedAt: now,
+            status: '저장완료',
+            image_url: '',
           })
         }
       }
-      if (rows.length === 0) {
-        toast.error('저장할 품목이 없습니다.')
-        return
-      }
-      const { error: vErr } = await supabase.from('vendor_price_book').insert(rows)
-      if (vErr) throw vErr
-
-      const now = new Date().toISOString()
-      const toAdd: UploadedVendorPriceItem[] = []
-      for (const vf of withItems) {
-        const storagePath = toSafeStoragePath(vf.file.name, 'vendor')
-        const { data: urlData } = supabase.storage.from(BUCKET_VENDOR).getPublicUrl(storagePath)
-        const items = vf.parsedVendor!.items
-        const total = items.reduce((sum, it) => sum + (Number(it.cost_price) || 0), 0)
-        toAdd.push({
-          filename: vf.file.name,
-          grand_total: total,
-          quoteDate: '',
-          uploadedAt: now,
-          status: '저장완료',
-          image_url: urlData.publicUrl,
-        })
-      }
       setUploadedVendorItems((prev) => [...toAdd, ...prev])
 
-      toast.success(`원가 장부에 ${rows.length}건이 저장되었습니다.`)
+      toast.success(`공식 상품 목록(Products)에 ${productRows.length}건이 반영되었습니다.`)
       setVendorPriceFiles([])
     } catch (err) {
       console.error(err)
@@ -1162,12 +1130,15 @@ export default function MigrationPage() {
                           <th className="border-b border-border px-2 py-2 text-left min-w-[100px]">규격</th>
                           <th className="border-b border-border px-2 py-2 text-right min-w-[90px]">원가(원)</th>
                           <th className="border-b border-border px-2 py-2 text-left min-w-[100px]">색상/특이사항</th>
+                          <th className="border-b border-border px-2 py-2 text-center w-24">상태</th>
                           <th className="border-b border-border px-2 py-2 w-10" />
                         </tr>
                       </thead>
                       <tbody>
-                        {f.parsedVendor.items.map((row, i) => (
-                          <tr key={i} className="border-b border-border last:border-0 hover:bg-muted/20">
+                        {f.parsedVendor.items.map((row, i) => {
+                          const isExcluded = shouldExcludeFromProducts(row.product_name ?? '')
+                          return (
+                          <tr key={i} className={`border-b border-border last:border-0 hover:bg-muted/20 ${isExcluded ? 'bg-muted/30' : ''}`}>
                             <td className="px-2 py-1.5 text-muted-foreground">{i + 1}</td>
                             <td className="px-2 py-1.5">
                               <Input
@@ -1210,6 +1181,15 @@ export default function MigrationPage() {
                                 placeholder="색상/메모"
                               />
                             </td>
+                            <td className="px-2 py-1.5 text-center">
+                              {isExcluded ? (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-400">
+                                  단가 장부 제외 항목
+                                </span>
+                              ) : (
+                                <span className="text-[10px] text-green-600 dark:text-green-400">→ 저장</span>
+                              )}
+                            </td>
                             <td className="px-2 py-1.5">
                               <Button
                                 type="button"
@@ -1223,11 +1203,11 @@ export default function MigrationPage() {
                               </Button>
                             </td>
                           </tr>
-                        ))}
+                        )})}
                       </tbody>
                     </table>
                   </div>
-                  <p className="text-xs text-muted-foreground">수정 후 상단 [데이터 저장]을 눌러 vendor_price_book에 Bulk Insert합니다.</p>
+                  <p className="text-xs text-muted-foreground">가구 제품·부속품만 products에 반영됩니다. [단가 장부 제외 항목]은 저장되지 않습니다.</p>
                 </div>
               )}
 
@@ -1458,6 +1438,10 @@ export default function MigrationPage() {
 
           {accumulatedVendorItems.length > 0 && (
             <div className="border border-border rounded-lg overflow-hidden">
+              <div className="px-4 py-2 bg-amber-500/10 text-amber-800 dark:text-amber-200 border-b border-border flex items-center gap-2">
+                <CheckCircle className="h-4 w-4 shrink-0" />
+                <span className="text-sm font-medium">확인용 미리보기 — 가구 제품·부속품만 Products에 등록됩니다. 배송/설치/시공 등은 [단가 장부 제외 항목]으로 표시되어 저장되지 않습니다.</span>
+              </div>
               <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-muted/40">
                 <span className="text-sm font-medium">검수 테이블 (총 {accumulatedVendorItems.length}건)</span>
                 <Button
@@ -1466,7 +1450,7 @@ export default function MigrationPage() {
                   onClick={handleBulkVendorSave}
                   disabled={savingBulk}
                 >
-                  {savingBulk ? <Loader2 className="h-4 w-4 animate-spin" /> : '원가 장부 저장'}
+                  {savingBulk ? <Loader2 className="h-4 w-4 animate-spin" /> : '판매 단가표 반영'}
                 </Button>
               </div>
               <div className="overflow-x-auto max-h-[50vh] overflow-y-auto">
@@ -1477,18 +1461,22 @@ export default function MigrationPage() {
                       <th className="border-b border-border px-2 py-2 text-left min-w-[90px]">현장명</th>
                       <th className="border-b border-border px-2 py-2 text-left min-w-[100px]">품명</th>
                       <th className="border-b border-border px-2 py-2 text-left min-w-[80px]">색상</th>
+                      <th className="border-b border-border px-2 py-2 text-right min-w-[70px]">수량</th>
                       <th className="border-b border-border px-2 py-2 text-right min-w-[85px]">단가(원)</th>
                       <th className="border-b border-border px-2 py-2 text-left min-w-[100px]">외경(가로×세로×높이)</th>
                       <th className="border-b border-border px-2 py-2 text-left min-w-[140px]">메모</th>
                       <th className="border-b border-border px-2 py-2 text-left min-w-[100px]">견적일</th>
                       <th className="border-b border-border px-2 py-2 text-left min-w-[120px]">업로드시간</th>
+                      <th className="border-b border-border px-2 py-2 text-center w-24">상태</th>
                       <th className="border-b border-border px-2 py-2 text-center w-20">원본보기</th>
                       <th className="border-b border-border px-2 py-2 w-10" />
                     </tr>
                   </thead>
                   <tbody>
-                    {accumulatedVendorItems.map((row, idx) => (
-                      <tr key={`${row._fileId}-${row._itemIndex}`} className="border-b border-border last:border-0 hover:bg-muted/20">
+                    {accumulatedVendorItems.map((row, idx) => {
+                      const isExcluded = shouldExcludeFromProducts(row.product_name ?? '')
+                      return (
+                      <tr key={`${row._fileId}-${row._itemIndex}`} className={`border-b border-border last:border-0 hover:bg-muted/20 ${isExcluded ? 'bg-muted/30' : ''}`}>
                         <td className="px-2 py-1.5 text-muted-foreground">{idx + 1}</td>
                         <td className="px-2 py-1.5">
                           <Input
@@ -1511,6 +1499,15 @@ export default function MigrationPage() {
                             onChange={(e) => updateVendorPriceItem(row._fileId, row._itemIndex, 'color', e.target.value)}
                             className="h-8 text-sm"
                             placeholder="기성칼라"
+                          />
+                        </td>
+                        <td className="px-2 py-1.5 text-right">
+                          <Input
+                            type="number"
+                            min={1}
+                            value={row.quantity ?? 1}
+                            onChange={(e) => updateVendorPriceItem(row._fileId, row._itemIndex, 'quantity', parseInt(e.target.value, 10) || 1)}
+                            className="h-8 text-sm text-right w-14"
                           />
                         </td>
                         <td className="px-2 py-1.5">
@@ -1550,6 +1547,15 @@ export default function MigrationPage() {
                           {new Date(row._uploadedAt).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' })}
                         </td>
                         <td className="px-2 py-1.5 text-center">
+                          {isExcluded ? (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-400">
+                              단가 장부 제외 항목
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-green-600 dark:text-green-400">→ 저장</span>
+                          )}
+                        </td>
+                        <td className="px-2 py-1.5 text-center">
                           <Button
                             type="button"
                             variant="ghost"
@@ -1578,12 +1584,12 @@ export default function MigrationPage() {
                           </Button>
                         </td>
                       </tr>
-                    ))}
+                    )})}
                   </tbody>
                 </table>
               </div>
               <p className="px-4 py-2 text-xs text-muted-foreground border-t border-border">
-                저장 시 vendor_name은 &quot;{vendorName || DEFAULT_VENDOR_NAME}&quot;로 통일됩니다.
+                가구 제품·부속품만 <strong>공식 상품 목록(Products)</strong>에 등록됩니다. [단가 장부 제외 항목]은 저장되지 않습니다. 확인 후 [판매 단가표 반영]을 눌러 주세요.
               </p>
             </div>
           )}
@@ -1647,16 +1653,20 @@ export default function MigrationPage() {
                           </span>
                         </td>
                         <td className="px-2 py-2 text-center">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-8 px-2 text-muted-foreground hover:text-foreground"
-                            onClick={() => window.open(u.image_url, '_blank', 'noopener')}
-                            title="원본 보기"
-                          >
-                            <ExternalLink className="h-4 w-4" />
-                          </Button>
+                          {u.image_url ? (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 px-2 text-muted-foreground hover:text-foreground"
+                              onClick={() => window.open(u.image_url, '_blank', 'noopener')}
+                              title="원본 보기"
+                            >
+                              <ExternalLink className="h-4 w-4" />
+                            </Button>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">-</span>
+                          )}
                         </td>
                         <td className="px-2 py-2">
                           <Button
@@ -1664,22 +1674,12 @@ export default function MigrationPage() {
                             variant="ghost"
                             size="sm"
                             className="h-8 w-8 p-0 text-destructive hover:text-destructive hover:bg-destructive/10"
-                            onClick={async () => {
-                              if (!confirm(`'${u.filename}' 데이터를 삭제하시겠습니까?`)) return
-                              try {
-                                const { error } = await supabase
-                                  .from('vendor_price_book')
-                                  .delete()
-                                  .eq('image_url', u.image_url)
-                                if (error) throw error
-                                setUploadedVendorItems((prev) => prev.filter((x) => x.image_url !== u.image_url || x.uploadedAt !== u.uploadedAt))
-                                toast.success('삭제되었습니다.')
-                              } catch (err) {
-                                toast.error('삭제 실패')
-                                console.error(err)
-                              }
+                            onClick={() => {
+                              if (!confirm(`'${u.filename}' 항목을 목록에서 제거하시겠습니까? (Products에 저장된 데이터는 그대로 유지됩니다)`)) return
+                              setUploadedVendorItems((prev) => prev.filter((x) => x.image_url !== u.image_url || x.uploadedAt !== u.uploadedAt))
+                              toast.success('목록에서 제거되었습니다.')
                             }}
-                            title="삭제"
+                            title="목록에서 제거"
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
