@@ -312,6 +312,8 @@ export interface PastCaseRecommendation {
   price: number
   /** 품명·사이즈·색상 각각 일치/불일치 */
   matchStatus: MatchStatus
+  /** 퀵가이드 검색 순위: 1=품명+규격+색상 전부 일치, 2=품명+규격 일치 색상 다름, 3=품명만 일치 유사도 순 */
+  rank?: 1 | 2 | 3
   /** 종전 원가 — 카드 표시·행 바인딩용 */
   costPrice?: number
   /** 과거 견적 원본보기용 (과거 이력일 때만) */
@@ -372,10 +374,28 @@ function colorSimilarity(a: string | null, b: string | null): 'same' | 'similar'
   return 'diff'
 }
 
+/** 규격 유사도 점수 (0~1). 3순위 정렬용 */
+function specSimilarityScore(q: string, r: string): number {
+  const a = normalizeSpecForCompare(q)
+  const b = normalizeSpecForCompare(r)
+  if (!a && !b) return 1
+  if (!a || !b) return 0
+  if (a === b) return 1
+  if (a.includes(b) || b.includes(a)) return 0.6
+  const aParts = a.split('×')
+  const bParts = b.split('×')
+  let match = 0
+  for (const p of aParts) {
+    if (bParts.includes(p)) match += 1
+  }
+  return match / Math.max(aParts.length, bParts.length, 1) * 0.5
+}
+
 /**
  * [제품명 + 규격 + 색상] 기준으로 과거 사례·제품 마스터 검색.
- * 1) 100% 일치 케이스 우선, 2) 없으면 규격/색상 유사 TOP 3.
- * AI는 결정권자가 아니라 검색 도우미 — 반환된 목록은 사용자 선택용.
+ * 1순위: 제품명+규격+색상 전부 일치
+ * 2순위: 제품명+규격 일치, 색상 다름
+ * 3순위: 제품명만 일치, 규격·색상 유사도 높은 순
  */
 export function searchPastCaseRecommendations(params: {
   name: string
@@ -389,17 +409,33 @@ export function searchPastCaseRecommendations(params: {
   const qSpec = normalizeSpecForCompare(spec)
   const qColor = (color ?? '').trim().toLowerCase()
 
-  const out: PastCaseRecommendation[] = []
-  const exactMatch: PastCaseRecommendation[] = []
+  const tier1: PastCaseRecommendation[] = []
+  const tier2: PastCaseRecommendation[] = []
+  const tier3: { rec: PastCaseRecommendation; score: number }[] = []
+
+  const add = (
+    rec: PastCaseRecommendation,
+    specSame: boolean,
+    colorSim: 'same' | 'similar' | 'diff'
+  ) => {
+    if (specSame && colorSim === 'same') {
+      tier1.push({ ...rec, rank: 1 })
+    } else if (specSame && colorSim !== 'same') {
+      tier2.push({ ...rec, rank: 2 })
+    } else {
+      const specScore = specSimilarityScore(spec ?? '', rec.size ?? '')
+      const colorScore = colorSim === 'same' ? 1 : colorSim === 'similar' ? 0.5 : 0
+      tier3.push({ rec: { ...rec, rank: 3 }, score: specScore + colorScore })
+    }
+  }
 
   for (const row of pastCaseRows) {
     const rName = normalizeNameForCompare(row.name)
     const rSpec = normalizeSpecForCompare(row.spec)
-    const rColor = (row.color ?? '').trim().toLowerCase()
     const nameMatch = rName === qName || (qName && rName.includes(qName)) || (rName && qName.includes(rName))
     if (!nameMatch) continue
     const specSame = !qSpec || !rSpec ? qSpec === rSpec : qSpec === rSpec
-    const colorMatch = colorSimilarity(color, row.color) === 'same' || colorSimilarity(color, row.color) === 'similar'
+    const colorSim = colorSimilarity(color, row.color)
     const price = row.unitPrice > 0 ? row.unitPrice : (row.costPrice ?? 0) > 0 ? roundToPriceUnit((row.costPrice ?? 0) / (1 - 0.3)) : 0
     const rec: PastCaseRecommendation = {
       case_id: row.case_id,
@@ -407,15 +443,14 @@ export function searchPastCaseRecommendations(params: {
       size: row.spec?.trim() || null,
       color: row.color?.trim() || null,
       price,
-      matchStatus: { name: true, size: specSame, color: colorMatch },
+      matchStatus: { name: true, size: specSame, color: colorSim !== 'diff' },
       costPrice: row.costPrice,
       consultation_id: row.consultation_id,
       estimate_id: row.estimate_id,
       appliedDate: row.appliedDate,
       siteName: row.siteName,
     }
-    if (specSame && colorMatch) exactMatch.push(rec)
-    else out.push(rec)
+    add(rec, specSame, colorSim)
   }
 
   for (const p of products) {
@@ -426,20 +461,20 @@ export function searchPastCaseRecommendations(params: {
     const costPrice = Math.round(sellingPrice * (1 - 0.3))
     const pSpec = (p.spec ?? '').trim() || null
     const pColor = (p.color ?? '').trim() || null
-    const specSame = !qSpec || !pSpec ? qSpec === pSpec : normalizeSpecForCompare(pSpec) === qSpec
-    const colorMatch = pColor && qColor ? colorSimilarity(color, pColor) !== 'diff' : !qColor && !pColor
+    const pSpecNorm = normalizeSpecForCompare(pSpec ?? '')
+    const specSame = (!qSpec && !pSpecNorm) || (qSpec !== '' && pSpecNorm === qSpec)
+    const colorSim = colorSimilarity(color, pColor)
     const rec: PastCaseRecommendation = {
-      case_id: `product-${p.name}`,
+      case_id: `product-${p.name}-${pSpec ?? ''}-${pColor ?? ''}`,
       name: p.name.trim(),
       size: pSpec,
       color: pColor,
       price: sellingPrice,
-      matchStatus: { name: true, size: specSame, color: colorMatch },
+      matchStatus: { name: true, size: specSame, color: colorSim !== 'diff' },
       costPrice,
       source: 'products',
     }
-    if (!qSpec && !qColor) exactMatch.push(rec)
-    else out.push(rec)
+    add(rec, specSame, colorSim)
   }
 
   const dedupe = (arr: PastCaseRecommendation[]) => {
@@ -451,9 +486,38 @@ export function searchPastCaseRecommendations(params: {
       return true
     })
   }
-  const exact = dedupe(exactMatch).slice(0, 2)
-  const rest = dedupe(out).filter((r) => !exact.some((e) => e.case_id === r.case_id)).slice(0, 5)
-  return [...exact, ...rest].slice(0, 5)
+  const t1 = dedupe(tier1)
+  const t2 = dedupe(tier2).filter((r) => !t1.some((e) => e.case_id === r.case_id))
+  const t3Scored = tier3
+    .filter(({ rec }) => !t1.some((e) => e.case_id === rec.case_id) && !t2.some((e) => e.case_id === rec.case_id))
+    .sort((a, b) => b.score - a.score)
+  const t3Deduped: PastCaseRecommendation[] = []
+  const t3Seen = new Set<string>()
+  for (const { rec } of t3Scored) {
+    const key = `${rec.name}|${rec.size ?? ''}|${rec.color ?? ''}`
+    if (t3Seen.has(key)) continue
+    t3Seen.add(key)
+    t3Deduped.push(rec)
+  }
+  return [...t1, ...t2, ...t3Deduped].slice(0, 8)
+}
+
+/** 단일 추천 건에 대한 퀵가이드 순위 (병합 정렬용). 1=전부일치, 2=품명+규격, 3=품명+유사 */
+export function getRecommendationRank(
+  query: { name: string; spec: string | null; color: string | null },
+  rec: { name: string; size?: string | null; color?: string | null }
+): 1 | 2 | 3 | undefined {
+  const qName = normalizeNameForCompare(query.name)
+  const rName = normalizeNameForCompare(rec.name)
+  const nameMatch = qName === rName || (qName && rName.includes(qName)) || (rName && qName.includes(rName))
+  if (!nameMatch) return undefined
+  const qSpec = normalizeSpecForCompare(query.spec)
+  const rSpec = normalizeSpecForCompare(rec.size ?? '')
+  const specSame = (!qSpec && !rSpec) || (qSpec !== '' && rSpec === qSpec)
+  const colorSim = colorSimilarity(query.color, rec.color ?? null)
+  if (specSame && colorSim === 'same') return 1
+  if (specSame && colorSim !== 'same') return 2
+  return 3
 }
 
 /**

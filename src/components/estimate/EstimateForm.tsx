@@ -8,14 +8,23 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRe
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { X, Send, ImageIcon, Info, FileText } from 'lucide-react'
+import { X, Send, ImageIcon, Info, FileText, Pin } from 'lucide-react'
 import { toast } from 'sonner'
-import { parseQuickCommand as aiParse, searchPastCaseRecommendations, type PastCaseRecommendation, type PastCaseCandidate } from '@/lib/estimateAiService'
+import { parseQuickCommand as aiParse, searchPastCaseRecommendations, getRecommendationRank, type PastCaseRecommendation, type PastCaseCandidate } from '@/lib/estimateAiService'
 import { getEstimateFileUrlsByProjectName } from '@/lib/estimateFileService'
 import { getVendorPriceRecommendation, getVendorPriceRecommendations, type VendorPriceRecommendation } from '@/lib/estimateRecommendationService'
 import { parseAmountToWon, scaleFactorToTarget, computeTotalCost, adjustUnitPricesToTargetMargin, roundToPriceUnit, getMarginSignalClass, formatDateYYMMDD, GUIDE_PAST_DATE_CLASS, GUIDE_VENDOR_DATE_CLASS } from '@/lib/estimateUtils'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { EstimateRowGalleryDialog } from '@/components/estimate/EstimateRowGalleryDialog'
 import { getDataByProductTag } from '@/lib/productDataMatching'
+import { shouldExcludeFromProducts } from '@/lib/productFilter'
 import { supabase } from '@/lib/supabase'
 import { useColorChips } from '@/hooks/useColorChips'
 
@@ -322,6 +331,9 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
     specQuestion?: string
   } | null>(null)
   const [pastPriceResult, setPastPriceResult] = useState<{ name: string; unitPrice: number; cost?: number; source?: 'past_estimate' | 'vendor_price_book' | 'products' } | null>(null)
+  /** 표준단가 고정 시 기존 products 존재하면 확인용 */
+  const [confirmFixProductRow, setConfirmFixProductRow] = useState<{ name: string; spec: string | null; color: string | null; supplyPrice: number } | null>(null)
+  const [fixingProductRow, setFixingProductRow] = useState(false)
   const [galleryProductTag, setGalleryProductTag] = useState<string | null>(null)
   const [hasGalleryDataByProduct, setHasGalleryDataByProduct] = useState<Record<string, boolean>>({})
   /** 퀵 커맨드로 행 추가 시 onBlur가 발생하지 않으므로, 추가 직후 원가 자동 매칭용 */
@@ -393,6 +405,8 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
       ai_reason?: string
       is_confirmed?: boolean
       costPrice?: number
+      /** 출처가 원가표일 때만 cost → 원가 반영 + 판매가 역산. 과거 견적이면 unitPrice를 판매가로 직접 사용 */
+      source?: 'vendor_price_book' | 'estimates'
     }) => {
       const productNameForLookup = (parseCombinedName(payload.name.trim()).name || payload.name).trim()
       if (productNameForLookup) lastQuickCommandProductNameRef.current = productNameForLookup
@@ -402,8 +416,13 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
       const aiReason = payload.ai_reason?.trim() ?? undefined
       const isConfirmed = payload.is_confirmed === true
       const costPrice = payload.costPrice != null && payload.costPrice > 0 ? payload.costPrice : undefined
-      // DB 검증된 가격만 사용. unitPrice 0 = 비교대상 미선택/직접입력 → 빈 칸으로 추가
-      const displayPrice = costPrice != null ? roundToPriceUnit(costPrice / (1 - DEFAULT_MARGIN_PERCENT / 100)) : (payload.unitPrice > 0 ? payload.unitPrice : 0)
+      // 출처별 매핑: 원가표 = 원가 반영 + 판매가 역산(0.7). 과거 견적 = unitPrice를 공급단가로 직접 사용.
+      const displayPrice =
+        payload.source === 'vendor_price_book' && costPrice != null
+          ? roundToPriceUnit(costPrice / (1 - DEFAULT_MARGIN_PERCENT / 100))
+          : payload.unitPrice > 0
+            ? payload.unitPrice
+            : 0
       const unitPriceStr = displayPrice > 0 ? String(displayPrice) : ''
       setRows((prev) => {
         const emptyIdx = prev.findIndex((r) => !getRowDisplayName(r).trim())
@@ -567,6 +586,94 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
     },
     [rows, pastEstimates, applySellingToRow]
   )
+
+  /** 제품 마스터(표준단가) 존재 여부 — 제품명+규격+색상 기준 */
+  const checkProductExists = useCallback(
+    async (name: string, spec: string | null, color: string | null): Promise<boolean> => {
+      const n = name.trim().slice(0, 255)
+      const s = (spec ?? '').toString().trim()
+      const c = (color ?? '').toString().trim()
+      const { data } = await supabase
+        .from('products')
+        .select('id')
+        .eq('name', n)
+        .eq('spec', s)
+        .eq('color', c)
+        .maybeSingle()
+      return data != null
+    },
+    []
+  )
+
+  /** 표준단가 고정: 현재 행을 products에 등록/수정 (supply_price = 공급단가). 복합 유일키 name,spec,color */
+  const handleFixStandardPriceForRow = useCallback(
+    async (index: number) => {
+      const row = rows[index] as EstimateRow
+      const name = (row.name ?? '').trim()
+      if (!name || shouldExcludeFromProducts(name)) {
+        toast.error('품명이 없거나 단가 장부 제외 항목입니다.')
+        return
+      }
+      const unitNum = parseNum(row.unitPrice ?? '')
+      if (unitNum <= 0) {
+        toast.error('단가가 없어 표준단가로 등록할 수 없습니다.')
+        return
+      }
+      const spec = (row.spec ?? '').trim() || null
+      const color = (row.color ?? '').trim() || null
+      const exists = await checkProductExists(name, spec, color)
+      if (exists) {
+        setConfirmFixProductRow({ name, spec, color, supplyPrice: unitNum })
+        return
+      }
+      setFixingProductRow(true)
+      try {
+        const { error } = await supabase
+          .from('products')
+          .upsert(
+            {
+              name: name.slice(0, 255),
+              supply_price: unitNum,
+              spec: (spec ?? '').toString().trim() || '',
+              color: (color ?? '').toString().trim() || '',
+            },
+            { onConflict: 'name,spec,color', ignoreDuplicates: false }
+          )
+        if (error) throw error
+        toast.success(`'${name}' 표준단가가 등록되었습니다.`)
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : '표준단가 고정 실패')
+      } finally {
+        setFixingProductRow(false)
+      }
+    },
+    [rows, checkProductExists]
+  )
+
+  const handleConfirmFixProductRowSubmit = useCallback(async () => {
+    if (!confirmFixProductRow) return
+    setFixingProductRow(true)
+    try {
+      const { error } = await supabase
+        .from('products')
+        .upsert(
+          {
+            name: confirmFixProductRow.name.trim().slice(0, 255),
+            supply_price: confirmFixProductRow.supplyPrice,
+            spec: (confirmFixProductRow.spec ?? '').toString().trim() || '',
+            color: (confirmFixProductRow.color ?? '').toString().trim() || '',
+          },
+          { onConflict: 'name,spec,color', ignoreDuplicates: false }
+        )
+      if (error) throw error
+      toast.success(`'${confirmFixProductRow.name}' 표준단가가 수정되었습니다.`)
+      setConfirmFixProductRow(null)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '표준단가 고정 실패')
+    } finally {
+      setFixingProductRow(false)
+    }
+  }, [confirmFixProductRow])
 
   /** 제품 마스터 목록 로드 (과거 사례 추천 검색용). modalOpen true일 때마다 갱신하여 판매 단가표 반영 직후 AI 퀵 가이드에서 검색 가능 */
   useEffect(() => {
@@ -880,22 +987,29 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
           })
           // 올데이C 검색 시 올데이CA 등 원가표 결과도 함께 보이도록 항상 원가표 조회 후 병합
           const vendors = await getVendorPriceRecommendations(supabase, res.name)
-          const vendorRecs: PastCaseRecommendation[] = vendors.map((v) => ({
-            case_id: `vendor-${v.id}`,
-            name: v.product_name,
-            size: v.spec ?? null,
-            color: null,
-            price: v.unitPrice,
-            matchStatus: { name: true, size: false, color: false },
-            costPrice: v.cost,
-            consultation_id: undefined,
-            estimate_id: undefined,
-            appliedDate: v.appliedDate,
-            siteName: v.site_name ?? undefined,
-            source: v.source,
-            image_url: v.image_url,
-          }))
-          // 과거 견적·제품과 동일 품명+규격 중복 제거 후 병합, 최대 8건
+          const vendorRecs: PastCaseRecommendation[] = vendors.map((v) => {
+            const rank = getRecommendationRank(
+              { name: res.name, spec: res.spec ?? null, color: res.color ?? null },
+              { name: v.product_name, size: v.spec, color: v.color ?? null }
+            )
+            return {
+              case_id: `vendor-${v.id}`,
+              name: v.product_name,
+              size: v.spec ?? null,
+              color: v.color ?? null,
+              price: v.unitPrice,
+              matchStatus: { name: true, size: false, color: false },
+              costPrice: v.cost,
+              consultation_id: undefined,
+              estimate_id: undefined,
+              appliedDate: v.appliedDate,
+              siteName: v.site_name ?? undefined,
+              source: v.source,
+              image_url: v.image_url,
+              rank,
+            }
+          })
+          // 과거 견적·제품과 동일 품명+규격 중복 제거 후 병합, 순위(1→2→3) 순 정렬, 최대 8건
           const dedupeKey = (c: PastCaseRecommendation) => `${(c.name ?? '').trim()}|${(c.size ?? '').trim()}|${(c.color ?? '').trim()}`
           const seen = new Set<string>()
           const merged = [...recs, ...vendorRecs].filter((c) => {
@@ -904,6 +1018,7 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
             seen.add(key)
             return true
           })
+          merged.sort((a, b) => (a.rank ?? 4) - (b.rank ?? 4))
           recs = merged.slice(0, 8)
           setPendingAddRowFromQuick({
             name: res.name,
@@ -1195,7 +1310,7 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
           <div className="mt-2 space-y-2">
             {quickRecommendations.length > 0 ? (
               <>
-                <p className="text-xs font-medium text-muted-foreground">비교대상 (선택 시 견적 품목에 반영)</p>
+                <p className="text-xs font-medium text-muted-foreground">비교대상 (선택 시 견적 품목에 반영) — 1순위: 품명+규격+색상 일치 → 2순위: 품명+규격 → 3순위: 품명+유사</p>
                 <div className="flex flex-wrap gap-2">
                   {quickRecommendations.map((c) => {
                     const ms = c.matchStatus
@@ -1204,13 +1319,17 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
                       `사이즈 ${ms.size ? '일치' : '불일치'}`,
                       `색상 ${ms.color ? '일치' : '불일치'}`,
                     ].join(' · ')
+                    const rankLabel = c.rank != null ? { 1: '1순위', 2: '2순위', 3: '3순위' }[c.rank] : null
                     return (
                     <div
                       key={c.case_id}
                       className="flex items-start gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm shadow-sm h-[116px] box-border"
                     >
                       <div className="min-w-0 flex-1 pt-0.5">
-                        <p className="font-medium truncate">{c.name}{c.size ? ` · ${c.size}` : ''}{c.color ? ` / ${c.color}` : ''}</p>
+                        <p className="font-medium truncate">
+                          {rankLabel ? <span className="text-primary font-semibold mr-1">{rankLabel}</span> : null}
+                          {c.name}{c.size ? ` · ${c.size}` : ''}{c.color ? ` / ${c.color}` : ''}
+                        </p>
                         <p className="text-xs text-muted-foreground">
                           {c.source === 'vendor_price_book'
                             ? `원가: ${c.costPrice != null && c.costPrice > 0 ? `${formatNumber(c.costPrice)}원` : '—'} · ${matchText}`
@@ -1267,6 +1386,7 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
                               color: pendingAddRowFromQuick.color ?? c.color,
                               is_confirmed: true,
                               costPrice: c.costPrice,
+                              source: c.source === 'vendor_price_book' ? 'vendor_price_book' : undefined,
                             })
                           }}
                         >
@@ -1333,10 +1453,10 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
                 /* 예산 기획안: 품목 및 규격 통합 컬럼 */
                 <>
                   <th className="border border-border px-2 py-2 text-left font-semibold w-12">번호</th>
-                  <th className="border border-border px-2 py-2 text-left font-semibold min-w-[320px]">품목 및 규격</th>
+                  <th className="border border-border px-2 py-2 text-left font-semibold min-w-[240px]">품목 및 규격</th>
                   <th className="border border-border px-2 py-2 text-left font-semibold min-w-[100px] print:hidden" data-html2canvas-ignore>색상</th>
-                  <th className="border border-border px-2 py-2 text-left font-semibold w-16">수량</th>
-                  <th className="border border-border px-2 py-2 text-left font-semibold w-14">단위</th>
+                  <th className="border border-border px-2 py-2 text-left font-semibold w-20">수량</th>
+                  <th className="border border-border px-2 py-2 text-left font-semibold w-16">단위</th>
                   <th className="border border-border px-2 py-2 text-right font-semibold min-w-[92px]">단가(최소)</th>
                   <th className="border border-border px-2 py-2 text-right font-semibold min-w-[92px]">단가(최대)</th>
                   {showProfitabilityPanel && (
@@ -1352,10 +1472,10 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
                 /* 확정 견적서: 품목 및 규격 통합, 비고(Remarks) 포함 */
                 <>
                   <th className="border border-border px-2 py-2 text-left font-semibold w-10">번호</th>
-                  <th className="border border-border px-2 py-2 text-left font-semibold min-w-[320px]">품목 및 규격</th>
+                  <th className="border border-border px-2 py-2 text-left font-semibold min-w-[240px]">품목 및 규격</th>
                   <th className="border border-border px-2 py-2 text-left font-semibold min-w-[100px] print:hidden" data-html2canvas-ignore>색상</th>
-                  <th className="border border-border px-2 py-2 text-left font-semibold w-14">수량</th>
-                  <th className="border border-border px-2 py-2 text-left font-semibold w-12">단위</th>
+                  <th className="border border-border px-2 py-2 text-left font-semibold w-20">수량</th>
+                  <th className="border border-border px-2 py-2 text-left font-semibold w-16">단위</th>
                   <th className="border border-border px-2 py-2 text-right font-semibold min-w-[92px]">단가</th>
                   {showProfitabilityPanel && (
                     <>
@@ -1364,8 +1484,7 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
                     </>
                   )}
                   <th className="border border-border px-2 py-2 text-right font-semibold min-w-[140px]">금액(공급가)</th>
-                  <th className="border border-border px-2 py-2 text-left font-semibold min-w-[100px]">비고(Remarks)</th>
-                  <th className="border border-border px-2 py-2 w-9 print:hidden" aria-label="행 삭제" data-html2canvas-ignore />
+                  <th className="border border-border px-2 py-2 w-[4.5rem] print:hidden" title="표준단가 고정 / 행 삭제" data-html2canvas-ignore />
                 </>
               )}
             </tr>
@@ -1377,7 +1496,7 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
                   <td className="border border-border px-2 py-2 w-12">
                     <Input className="h-9 border-0 rounded-none bg-transparent" value={row.no} onChange={(e) => updateRow(idx, 'no', e.target.value)} readOnly tabIndex={-1} />
                   </td>
-                  <td className="border border-border px-2 py-2 min-w-[320px]">
+                  <td className="border border-border px-2 py-2 min-w-[240px]">
                     <div className="flex items-center gap-1 flex-wrap">
                       <Input className="h-9 flex-1 border-0 rounded-none bg-transparent min-w-0" value={getRowDisplayName(row)} onChange={(e) => updateRowNameCombined(idx, e.target.value)} onBlur={() => { showProfitabilityPanel && handleNameBlurFillCost(idx); setGuideRowIndex(idx) }} onFocus={() => setGuideRowIndex(idx)} placeholder="품목명 (규격)" title={row.aiReason} />
                       {guideRowIndex === idx && (guideLoading || guidePast.length > 0 || guideVendor != null) && (
@@ -1461,11 +1580,11 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
                       )}
                     </div>
                   </td>
-                  <td className="border border-border px-2 py-2 w-16">
-                    <Input className="h-9 border-0 rounded-none bg-transparent text-right" inputMode="numeric" value={addComma(row.qty)} onChange={(e) => updateRow(idx, 'qty', removeComma(e.target.value))} />
+                  <td className="border border-border px-2 py-2 w-20">
+                    <Input className="h-9 w-full border-0 rounded-none bg-transparent text-right" inputMode="numeric" value={addComma(row.qty)} onChange={(e) => updateRow(idx, 'qty', removeComma(e.target.value))} />
                   </td>
-                  <td className="border border-border px-2 py-2 w-14">
-                    <Input className="h-9 border-0 rounded-none bg-transparent" value={row.unit} onChange={(e) => updateRow(idx, 'unit', e.target.value)} placeholder="EA" />
+                  <td className="border border-border px-2 py-2 w-16">
+                    <Input className="h-9 w-full border-0 rounded-none bg-transparent" value={row.unit} onChange={(e) => updateRow(idx, 'unit', e.target.value)} placeholder="EA" />
                   </td>
                   <td className="border border-border px-2 py-2 text-right min-w-[92px] align-middle">
                     <Input className="h-9 border-0 rounded-none bg-transparent text-right" inputMode="numeric" value={addComma(row.unitPrice)} onChange={(e) => updateRow(idx, 'unitPrice', removeComma(e.target.value))} placeholder="최소" />
@@ -1511,44 +1630,53 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
                   <td className="border border-border px-2 py-2 w-10">
                     <Input className="h-9 border-0 rounded-none bg-transparent" value={row.no} onChange={(e) => updateRow(idx, 'no', e.target.value)} readOnly tabIndex={-1} />
                   </td>
-                  <td className="border border-border px-2 py-2 min-w-[320px]">
-                    <div className="flex items-center gap-1 flex-wrap">
-                      <Input className="h-9 flex-1 border-0 rounded-none bg-transparent min-w-0" value={getRowDisplayName(row)} onChange={(e) => updateRowNameCombined(idx, e.target.value)} onBlur={() => { showProfitabilityPanel && handleNameBlurFillCost(idx); setGuideRowIndex(idx) }} onFocus={() => setGuideRowIndex(idx)} placeholder="품목명 (규격)" title={row.aiReason} />
-                      {guideRowIndex === idx && (guideLoading || guidePast.length > 0 || guideVendor != null) && (
-                        <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-primary/15 text-primary font-medium">AI 가이드</span>
-                      )}
-                      {row.name?.trim() && (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground disabled:opacity-40 disabled:pointer-events-none"
-                          title="시공사례 보기"
-                          disabled={hasGalleryDataByProduct[row.name] !== true}
-                          onClick={() => {
-                            const tag = row.name?.trim() ?? null
-                            if (tag) console.log('[EstimateForm] 시공사례 아이콘 클릭 — productTag:', tag)
-                            setGalleryProductTag(tag)
-                          }}
-                          aria-label="시공사례 보기"
-                        >
-                          <ImageIcon className="h-4 w-4" />
-                        </Button>
-                      )}
-                      {row.adjusted && <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200">조정됨</span>}
-                      {row.is_confirmed && <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-green-100 dark:bg-green-900/40 text-green-800 dark:text-green-200">과거사례</span>}
-                      {row.aiUncertain && (
-                        <>
-                          {row.aiReason && (
-                            <span className="shrink-0 inline-flex items-center gap-0.5 text-[10px] text-amber-800 dark:text-amber-200 max-w-[200px]" title={row.aiReason}>
-                              <Info className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden />
-                              <span className="font-medium">검토 사유:</span>
-                              <span className="truncate">{row.aiReason}</span>
-                            </span>
-                          )}
-                          <Button type="button" variant="outline" size="sm" className="h-7 text-xs shrink-0" onClick={() => clearRowAiUncertain(idx)} title={row.aiReason}>확인</Button>
-                        </>
-                      )}
+                  <td className="border border-border px-2 py-2 min-w-[240px] align-top">
+                    <div className="flex flex-col gap-1">
+                      <div className="flex items-center gap-1 flex-wrap">
+                        <Input className="h-9 flex-1 border-0 rounded-none bg-transparent min-w-0" value={getRowDisplayName(row)} onChange={(e) => updateRowNameCombined(idx, e.target.value)} onBlur={() => { showProfitabilityPanel && handleNameBlurFillCost(idx); setGuideRowIndex(idx) }} onFocus={() => setGuideRowIndex(idx)} placeholder="품목명 (규격)" title={row.aiReason} />
+                        {guideRowIndex === idx && (guideLoading || guidePast.length > 0 || guideVendor != null) && (
+                          <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-primary/15 text-primary font-medium">AI 가이드</span>
+                        )}
+                        {row.name?.trim() && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground disabled:opacity-40 disabled:pointer-events-none"
+                            title="시공사례 보기"
+                            disabled={hasGalleryDataByProduct[row.name] !== true}
+                            onClick={() => {
+                              const tag = row.name?.trim() ?? null
+                              if (tag) console.log('[EstimateForm] 시공사례 아이콘 클릭 — productTag:', tag)
+                              setGalleryProductTag(tag)
+                            }}
+                            aria-label="시공사례 보기"
+                          >
+                            <ImageIcon className="h-4 w-4" />
+                          </Button>
+                        )}
+                        {row.adjusted && <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200">조정됨</span>}
+                        {row.is_confirmed && <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-green-100 dark:bg-green-900/40 text-green-800 dark:text-green-200">과거사례</span>}
+                        {row.aiUncertain && (
+                          <>
+                            {row.aiReason && (
+                              <span className="shrink-0 inline-flex items-center gap-0.5 text-[10px] text-amber-800 dark:text-amber-200 max-w-[200px]" title={row.aiReason}>
+                                <Info className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden />
+                                <span className="font-medium">검토 사유:</span>
+                                <span className="truncate">{row.aiReason}</span>
+                              </span>
+                            )}
+                            <Button type="button" variant="outline" size="sm" className="h-7 text-xs shrink-0" onClick={() => clearRowAiUncertain(idx)} title={row.aiReason}>확인</Button>
+                          </>
+                        )}
+                      </div>
+                      <Input
+                        className="h-8 w-full border-0 rounded-none bg-transparent text-sm text-slate-500 dark:text-slate-400 min-w-0 placeholder:text-slate-400 dark:placeholder:text-slate-500"
+                        value={row.note ?? ''}
+                        onChange={(e) => updateRow(idx, 'note', e.target.value)}
+                        placeholder="└ 상세: 예) 모니터 상판+화이트 다리+화이트 갓등"
+                        aria-label="행 상세(비고)"
+                      />
                     </div>
                   </td>
                   <td className="border border-border px-2 py-2 min-w-[100px] print:hidden" data-html2canvas-ignore>
@@ -1595,11 +1723,11 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
                       )}
                     </div>
                   </td>
-                  <td className="border border-border px-2 py-2 w-14">
-                    <Input className="h-9 border-0 rounded-none bg-transparent text-right" inputMode="numeric" value={addComma(row.qty)} onChange={(e) => updateRow(idx, 'qty', removeComma(e.target.value))} />
+                  <td className="border border-border px-2 py-2 w-20">
+                    <Input className="h-9 w-full border-0 rounded-none bg-transparent text-right" inputMode="numeric" value={addComma(row.qty)} onChange={(e) => updateRow(idx, 'qty', removeComma(e.target.value))} />
                   </td>
-                  <td className="border border-border px-2 py-2 w-12">
-                    <Input className="h-9 border-0 rounded-none bg-transparent" value={row.unit} onChange={(e) => updateRow(idx, 'unit', e.target.value)} placeholder="EA" />
+                  <td className="border border-border px-2 py-2 w-16">
+                    <Input className="h-9 w-full border-0 rounded-none bg-transparent" value={row.unit} onChange={(e) => updateRow(idx, 'unit', e.target.value)} placeholder="EA" />
                   </td>
                   <td className="border border-border px-2 py-2 text-right min-w-[92px] align-middle">
                     <Input className="h-9 border-0 rounded-none bg-transparent text-right" inputMode="numeric" value={addComma(row.unitPrice)} onChange={(e) => updateRow(idx, 'unitPrice', removeComma(e.target.value))} />
@@ -1629,13 +1757,17 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
                   <td className="border border-border px-2 py-2 text-right tabular-nums font-medium min-w-[140px]">
                     {formatNumber(rowAmounts[idx])}
                   </td>
-                  <td className="border border-border px-2 py-2 min-w-[100px]">
-                    <Input className="h-9 border-0 rounded-none bg-transparent" value={row.note ?? ''} onChange={(e) => updateRow(idx, 'note', e.target.value)} placeholder="특이사항" />
-                  </td>
-                  <td className="border border-border px-2 py-2 w-9 text-center print:hidden" data-html2canvas-ignore>
-                    <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => deleteRow(idx)} title="행 삭제" disabled={rows.length <= FIXED_ESTIMATE_ROWS}>
-                      <X className="h-4 w-4" />
-                    </Button>
+                  <td className="border border-border px-2 py-2 w-[4.5rem] text-center print:hidden" data-html2canvas-ignore>
+                    <div className="flex items-center justify-center gap-0.5">
+                      {(row.name ?? '').trim() && !shouldExcludeFromProducts((row.name ?? '').trim()) && (
+                        <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" onClick={() => void handleFixStandardPriceForRow(idx)} title="표준단가 고정 (제품 마스터에 등록)" disabled={fixingProductRow}>
+                          <Pin className="h-4 w-4" />
+                        </Button>
+                      )}
+                      <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => deleteRow(idx)} title="행 삭제" disabled={rows.length <= FIXED_ESTIMATE_ROWS}>
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </td>
                 </tr>
               ))
@@ -1643,6 +1775,31 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
           </tbody>
         </table>
       </div>
+
+      {/* 표준단가 고정 확인 — 기존 마스터 존재 시 */}
+      <Dialog open={!!confirmFixProductRow} onOpenChange={(open) => !open && setConfirmFixProductRow(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>표준단가 수정 확인</DialogTitle>
+            <DialogDescription>
+              마스터 데이터(표준단가)가 이미 존재합니다. 새로운 값으로 수정하시겠습니까?
+              {confirmFixProductRow && (
+                <span className="block mt-2 text-foreground font-medium">
+                  {confirmFixProductRow.name} · {confirmFixProductRow.supplyPrice.toLocaleString()}원
+                </span>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setConfirmFixProductRow(null)}>
+              취소
+            </Button>
+            <Button type="button" onClick={() => void handleConfirmFixProductRowSubmit()} disabled={fixingProductRow}>
+              수정
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* AI 추천 가이드: 품명 입력 시 과거 이력·원가표 기반 추천 + 원클릭 적용 + 원본보기 */}
       {(guideRowIndex != null && (guidePast.length > 0 || guideVendor != null || guideLoading)) && (
@@ -1656,16 +1813,18 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
           )}
           {!guideLoading && guidePast.length > 0 && (
             <div className="space-y-1.5">
-              <p className="text-xs font-medium text-muted-foreground">[추천 A: 과거 이력]</p>
+              <p className="text-xs font-medium text-muted-foreground">[추천 A: 과거 이력] (1순위=전부일치 → 2순위=품명+규격 → 3순위=유사)</p>
               <ul className="flex flex-wrap gap-2">
                 {guidePast.map((rec, i) => {
                   const cost = rec.costPrice ?? 0
                   const marginPct = rec.price > 0 && cost > 0 ? ((rec.price - cost) / rec.price) * 100 : 30
                   const marginClass = getMarginSignalClass(marginPct)
                   const dateStr = formatDateYYMMDD(rec.appliedDate)
+                  const rankLabel = rec.rank != null ? { 1: '1순위', 2: '2순위', 3: '3순위' }[rec.rank] : null
                   const label = dateStr ? `${rec.siteName || '과거'} (${dateStr})` : (rec.siteName || '과거')
                   return (
                     <li key={rec.case_id + i} className="flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1.5 text-sm">
+                      {rankLabel ? <span className="text-primary font-semibold text-xs shrink-0">{rankLabel}</span> : null}
                       <span className={cn(dateStr ? GUIDE_PAST_DATE_CLASS : 'text-muted-foreground', 'text-xs shrink-0')}>
                         {label}:
                       </span>
@@ -1933,9 +2092,9 @@ export function ProposalPreviewContent({
           <thead>
             <tr className="bg-muted/50">
               <th className="border border-border px-2 py-1.5 text-left font-semibold w-12">번호</th>
-              <th className="border border-border px-2 py-1.5 text-left font-semibold min-w-[320px]">품목 및 규격</th>
-              <th className="border border-border px-2 py-1.5 text-right font-semibold w-16">수량</th>
-              <th className="border border-border px-2 py-1.5 text-left font-semibold w-14">단위</th>
+              <th className="border border-border px-2 py-1.5 text-left font-semibold min-w-[240px]">품목 및 규격</th>
+              <th className="border border-border px-2 py-1.5 text-right font-semibold w-20">수량</th>
+              <th className="border border-border px-2 py-1.5 text-left font-semibold w-16">단위</th>
               <th className="border border-border px-2 py-1.5 text-right font-semibold min-w-[88px]">단가(최소)</th>
               <th className="border border-border px-2 py-1.5 text-right font-semibold min-w-[88px]">단가(최대)</th>
               <th className="border border-border px-2 py-1.5 text-right font-semibold min-w-[140px]">금액(공급가)</th>
@@ -1945,9 +2104,9 @@ export function ProposalPreviewContent({
             {rows.map((row, idx) => (
               <tr key={idx} className="border-b border-border">
                 <td className="border border-border px-2 py-1.5 w-12">{row.no || '—'}</td>
-                <td className="border border-border px-2 py-1.5 min-w-[320px]">{getRowDisplayName(row) || '—'}</td>
-                <td className="border border-border px-2 py-1.5 text-right w-16 tabular-nums">{formatNumber(parseNum(row.qty))}</td>
-                <td className="border border-border px-2 py-1.5 w-14">{row.unit || '—'}</td>
+                <td className="border border-border px-2 py-1.5 min-w-[240px]">{getRowDisplayName(row) || '—'}</td>
+                <td className="border border-border px-2 py-1.5 text-right w-20 tabular-nums">{formatNumber(parseNum(row.qty))}</td>
+                <td className="border border-border px-2 py-1.5 w-16">{row.unit || '—'}</td>
                 <td className="border border-border px-2 py-1.5 text-right tabular-nums min-w-[88px]">{formatNumber(parseNum(row.unitPrice))}</td>
                 <td className="border border-border px-2 py-1.5 text-right tabular-nums min-w-[88px]">{formatNumber(parseNum(row.unitPriceMax ?? ''))}</td>
                 <td className="border border-border px-2 py-1.5 text-right tabular-nums font-medium min-w-[140px]">
@@ -1992,7 +2151,7 @@ export function ProposalPreviewContent({
   )
 }
 
-/** 확정 견적서 읽기 전용 뷰 (미리보기·공유 링크용) — 비고(Remarks) 칸 포함, 고정 단가 */
+/** 확정 견적서 읽기 전용 뷰 (미리보기·공유 링크용) — 품목 하단에 비고(코멘트) 표시, 고정 단가 */
 export function FinalEstimatePreviewContent({
   data,
   totals,
@@ -2027,26 +2186,36 @@ export function FinalEstimatePreviewContent({
           <thead>
             <tr className="bg-muted/50">
               <th className="border border-border px-2 py-1.5 text-left font-semibold w-10">번호</th>
-              <th className="border border-border px-2 py-1.5 text-left font-semibold min-w-[320px]">품목 및 규격</th>
-              <th className="border border-border px-2 py-1.5 text-right font-semibold w-14">수량</th>
-              <th className="border border-border px-2 py-1.5 text-left font-semibold w-12">단위</th>
+              <th className="border border-border px-2 py-1.5 text-left font-semibold min-w-[360px]">품목 및 규격</th>
+              <th className="border border-border px-2 py-1.5 text-right font-semibold w-20">수량</th>
+              <th className="border border-border px-2 py-1.5 text-left font-semibold w-16">단위</th>
               <th className="border border-border px-2 py-1.5 text-right font-semibold min-w-[120px]">단가</th>
               <th className="border border-border px-2 py-1.5 text-right font-semibold min-w-[140px]">금액(공급가)</th>
-              <th className="border border-border px-2 py-1.5 text-left font-semibold min-w-[100px]">비고(Remarks)</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((row, idx) => (
-              <tr key={idx} className="border-b border-border">
-                <td className="border border-border px-2 py-1.5 w-10">{row.no || '—'}</td>
-                <td className="border border-border px-2 py-1.5 min-w-[320px]">{getRowDisplayName(row) || '—'}</td>
-                <td className="border border-border px-2 py-1.5 text-right w-14 tabular-nums">{formatNumber(parseNum(row.qty))}</td>
-                <td className="border border-border px-2 py-1.5 w-12">{row.unit || '—'}</td>
-                <td className="border border-border px-2 py-1.5 text-right tabular-nums min-w-[120px]">{formatNumber(parseNum(row.unitPrice))}</td>
-                <td className="border border-border px-2 py-1.5 text-right tabular-nums font-medium min-w-[140px]">{formatNumber(rowAmounts[idx] ?? 0)}</td>
-                <td className="border border-border px-2 py-1.5 min-w-[100px]">{row.note || '—'}</td>
-              </tr>
-            ))}
+            {rows.map((row, idx) => {
+              const noteTrimmed = (row.note ?? (row as EstimateRow & { remarks?: string }).remarks ?? '').toString().trim()
+              return (
+                <tr key={idx} className="border-b border-border">
+                  <td className="border border-border px-2 py-1.5 w-10 align-top">{row.no || '—'}</td>
+                  <td className="border border-border px-2 py-1.5 min-w-[360px] align-top">
+                    <div className={noteTrimmed ? 'space-y-0.5' : ''}>
+                      <div>{getRowDisplayName(row) || '—'}</div>
+                      {noteTrimmed ? (
+                        <div className="text-sm text-slate-500 dark:text-slate-400 print:text-slate-600">
+                          └ 상세: {noteTrimmed}
+                        </div>
+                      ) : null}
+                    </div>
+                  </td>
+                  <td className="border border-border px-2 py-1.5 text-right w-20 tabular-nums align-top">{formatNumber(parseNum(row.qty))}</td>
+                  <td className="border border-border px-2 py-1.5 w-16 align-top">{row.unit || '—'}</td>
+                  <td className="border border-border px-2 py-1.5 text-right tabular-nums min-w-[120px] align-top">{formatNumber(parseNum(row.unitPrice))}</td>
+                  <td className="border border-border px-2 py-1.5 text-right tabular-nums font-medium min-w-[140px] align-top">{formatNumber(rowAmounts[idx] ?? 0)}</td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>

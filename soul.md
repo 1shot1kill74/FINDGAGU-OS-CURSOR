@@ -75,3 +75,14 @@ FindGagu OS: Project Soul (ivory-os) 1. Captain & Partner - Captain: 대표님 (
 - **상담별 견적서 업로드(EstimateFilesGallery):** [판매 단가표 반영]·[견적서로 저장] 모두 products + estimates 동시 저장.
 - **products.supply_price = 판매단가:** 원가표는 원가→마진 30% 역산 판매단가. 견적서는 unitPrice 그대로. AI 퀵 가이드에서 판매단가로 인식, 원가는 역산(수익률 판단용).
 - **EstimateForm:** applySellingToRow 추가. modalOpen 시 productsList 새로고침 → AI 퀵 가이드 최신 반영.
+
+19. 2026-02-13 반영 (구글 시트 ↔ 수파베이스 양방향 동기화 — 세이브 포인트)
+- **시트→DB:** `상담리스트` onEdit 시 해당 행만 `update_single_consultation_from_sheet` RPC 전송. project_name, link, start_date, update_date, created_at만 사용. status·estimate_amount는 시트에서 보내지 않음(앱·DB 전용).
+- **DB→시트:** 앱 [최종 확정] 성공 시 syncAppToSheet(doPost)로 해당 행 E·F·D 갱신. VITE_GOOGLE_SHEET_SYNC_URL POST.
+- **Realtime·캐시:** consultations INSERT/UPDATE 시 전체 상담 리스트 재조회. document.visibilitychange → visible 시 fetch로 탭 전환 시 최신 반영.
+- **DB:** consultations.updated_at, UPDATE 트리거, REPLICA IDENTITY FULL. update_date/updated_at 처리, Lead.projectName 매핑.
+
+20. 2026-02-14 반영 (상담 카드 2행 최종 견적가 표시 — 세이브 포인트)
+- **2행 맨 오른쪽:** "견적 미정" 자리에 최종 견적 금액 표시. 우선순위: pending(견적서로 저장 직후) → finalAmount → displayAmount → expectedRevenue. 없으면 "견적 미정".
+- **EstimateFilesGallery:** [견적서로 저장] 성공 시 onUploadComplete({ estimateAmount: finalAmount }). ConsultationManagement에서 pendingEstimateAmountRef·낙관적 setLeads·fetchLeads 병합(pending 보존).
+- **ConsultationListItem:** getPendingEstimateAmount(consultationId) prop, data-final-estimate·title(최종 견적가/견적 미정). 세이브 포인트: git tag save-20260214-card-final-estimate.

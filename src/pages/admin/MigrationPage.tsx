@@ -723,8 +723,8 @@ export default function MigrationPage() {
             return {
               name: (it.product_name?.trim() || '(미명)').slice(0, 255),
               supply_price: sellingPrice,
-              spec: it.size?.trim() || null,
-              color: it.color?.trim() || null,
+              spec: (it.size ?? '').toString().trim() || '',
+              color: (it.color ?? '').toString().trim() || '',
             }
           })
           if (productRows.length === 0) {
@@ -734,7 +734,7 @@ export default function MigrationPage() {
           }
           const { error: pErr } = await supabase
             .from('products')
-            .upsert(productRows, { onConflict: 'name', ignoreDuplicates: false })
+            .upsert(productRows, { onConflict: 'name,spec,color', ignoreDuplicates: false })
           if (pErr) throw pErr
           setFiles((prev) =>
             prev.map((f) => (f.id === id ? { ...f, status: '완료' as FileStatus, savedId: 'products' } : f))
@@ -759,7 +759,7 @@ export default function MigrationPage() {
     }
     setSavingBulk(true)
     try {
-      const productRows: Array<{ name: string; supply_price: number; spec: string | null; color: string | null }> = []
+      const productRows: Array<{ name: string; supply_price: number; spec: string; color: string }> = []
       for (const vf of withItems) {
         const { toSave } = splitForProducts(vf.parsedVendor!.items)
         for (const it of toSave) {
@@ -768,8 +768,8 @@ export default function MigrationPage() {
           productRows.push({
             name: (it.product_name?.trim() || '(미명)').slice(0, 255),
             supply_price: sellingPrice,
-            spec: it.size?.trim() || null,
-            color: it.color?.trim() || null,
+            spec: (it.size ?? '').toString().trim() || '',
+            color: (it.color ?? '').toString().trim() || '',
           })
         }
       }
@@ -781,7 +781,7 @@ export default function MigrationPage() {
 
       const { error: pErr } = await supabase
         .from('products')
-        .upsert(productRows, { onConflict: 'name', ignoreDuplicates: false })
+        .upsert(productRows, { onConflict: 'name,spec,color', ignoreDuplicates: false })
 
       if (pErr) throw pErr
 

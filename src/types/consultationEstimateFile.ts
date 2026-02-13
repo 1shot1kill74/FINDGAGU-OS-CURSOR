@@ -7,4 +7,6 @@ export interface ConsultationEstimateFile {
   file_name: string
   file_type: 'pdf' | 'png' | 'jpg' | 'jpeg' | 'webp'
   created_at: string
+  /** estimates=견적서(공급가), vendor_price=외주업체 단가표(원가). 입구별 구분. */
+  upload_type?: 'estimates' | 'vendor_price'
 }

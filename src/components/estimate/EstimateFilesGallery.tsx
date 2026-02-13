@@ -4,7 +4,7 @@
  * Storage: estimate-files/{consultation_id}/{timestamp}_{filename}
  */
 import { useState } from 'react'
-import { FileText, Image, Plus, Loader2, CheckCircle, AlertCircle, Trash2 } from 'lucide-react'
+import { FileText, Image, Plus, Loader2, CheckCircle, AlertCircle, Trash2, Pin } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -45,13 +45,67 @@ interface EstimateFilesGalleryProps {
   consultationId: string
   projectName: string
   files: ConsultationEstimateFile[]
-  onUploadComplete?: () => void
+  onUploadComplete?: (payload?: { estimateAmount: number }) => void
 }
 
 function getFileType(ext: string): EstimateFileType | null {
   const e = ext?.toLowerCase()
   if (VALID_EXT.includes(e as EstimateFileType)) return e as EstimateFileType
   return null
+}
+
+/** 견적서/단가표 리스트용 카드 — 첨부 참조와 동일 높이, 원본보기·삭제 버튼 */
+function FileListCard({
+  file,
+  isDeleting,
+  onViewOriginal,
+  onDelete,
+}: {
+  file: ConsultationEstimateFile
+  isDeleting: boolean
+  onViewOriginal: () => void
+  onDelete: (e: React.MouseEvent) => void
+}) {
+  const dateStr = new Date(file.created_at).toLocaleString('ko-KR', {
+    year: '2-digit',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+  return (
+    <div className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2.5 h-[52px] shadow-sm">
+      <div className="min-w-0 flex-1 flex flex-col justify-center">
+        <p className="text-xs font-semibold text-foreground leading-tight truncate">{dateStr}</p>
+        <p className="text-xs text-muted-foreground truncate mt-0.5">{file.file_name}</p>
+      </div>
+      <div className="flex items-center gap-1.5 shrink-0">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-8 gap-1.5 text-xs border-border"
+          onClick={onViewOriginal}
+          title="원본 보기"
+        >
+          <FileText className="h-3.5 w-3.5" />
+          원본보기
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-8 gap-1.5 text-xs text-destructive border-destructive/50 hover:bg-destructive/10 hover:text-destructive"
+          onClick={onDelete}
+          disabled={isDeleting}
+          title="삭제"
+        >
+          {isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+          삭제
+        </Button>
+      </div>
+    </div>
+  )
 }
 
 export function EstimateFilesGallery({
@@ -71,6 +125,210 @@ export function EstimateFilesGallery({
   const [previewError, setPreviewError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  /** [표준단가 고정] 시 기존 마스터 존재하면 확인용 */
+  const [confirmFixProduct, setConfirmFixProduct] = useState<{
+    name: string
+    spec: string | null
+    color: string | null
+    supplyPrice: number
+  } | null>(null)
+  const [fixingProduct, setFixingProduct] = useState(false)
+  /** 판매 단가표 반영 시 — 이미 Products에 있는데 금액이 다른 항목 선택용 */
+  const [productConflictModalOpen, setProductConflictModalOpen] = useState(false)
+  const [productConflicts, setProductConflicts] = useState<{ name: string; spec: string | null; color: string | null; currentPrice: number; newPrice: number; key: string }[]>([])
+  const [productRowsPending, setProductRowsPending] = useState<{ name: string; supply_price: number; spec: string | null; color: string | null }[]>([])
+  const [applyConflictKeys, setApplyConflictKeys] = useState<Set<string>>(new Set())
+  /** 현재 미리보기 파일의 업로드 입구 (저장 시 upload_type으로 기록) */
+  const [uploadTypeForCurrentFile, setUploadTypeForCurrentFile] = useState<'estimates' | 'vendor_price'>('estimates')
+
+  /** 제품 키: 동일 제품 = name+spec+color (빈 값은 ''로 통일) */
+  const productKey = (name: string, spec: string | null, color: string | null) =>
+    `${(name ?? '').trim()}|${(spec ?? '').toString().trim()}|${(color ?? '').toString().trim()}`
+
+  /** 제품명+규격+색상으로 products에 기존 행 존재 여부 */
+  const checkProductExists = async (name: string, spec: string | null, color: string | null): Promise<boolean> => {
+    const n = name.trim().slice(0, 255)
+    const s = (spec ?? '').toString().trim()
+    const c = (color ?? '').toString().trim()
+    const { data } = await supabase
+      .from('products')
+      .select('id')
+      .eq('name', n)
+      .eq('spec', s)
+      .eq('color', c)
+      .maybeSingle()
+    return data != null
+  }
+
+  /** products에 단일 행 업서트 (공급단가 = supply_price, 표준단가표). 복합 유일키 name,spec,color */
+  const upsertProductRow = async (payload: { name: string; spec: string | null; color: string | null; supplyPrice: number }) => {
+    const row = {
+      name: payload.name.trim().slice(0, 255),
+      supply_price: payload.supplyPrice,
+      spec: (payload.spec ?? '').toString().trim() || '',
+      color: (payload.color ?? '').toString().trim() || '',
+    }
+    const { error } = await supabase.from('products').upsert(row, { onConflict: 'name,spec,color', ignoreDuplicates: false })
+    if (error) throw error
+  }
+
+  const handleFixStandardPriceVendor = async (row: ParsedVendorPriceItem) => {
+    const name = (row.product_name ?? '').trim()
+    if (!name || shouldExcludeFromProducts(name)) return
+    const cost = Number(row.cost_price) || 0
+    if (cost <= 0) {
+      toast.error('원가가 없어 표준단가를 계산할 수 없습니다.')
+      return
+    }
+    const supplyPrice = roundToPriceUnit(cost / (1 - 0.3))
+    const spec = row.size?.trim() || null
+    const color = row.color?.trim() || null
+    const exists = await checkProductExists(name, spec, color)
+    if (exists) {
+      setConfirmFixProduct({ name, spec, color, supplyPrice })
+      return
+    }
+    setFixingProduct(true)
+    try {
+      await upsertProductRow({ name, spec, color, supplyPrice })
+      toast.success(`'${name}' 표준단가가 등록되었습니다.`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '표준단가 고정 실패')
+    } finally {
+      setFixingProduct(false)
+    }
+  }
+
+  const handleFixStandardPriceEstimate = async (row: EstimateRow) => {
+    const name = (row.name ?? '').trim()
+    if (!name || shouldExcludeFromProducts(name)) return
+    const unitNum = parseFloat(String(row.unitPrice ?? '').replace(/,/g, '')) || 0
+    if (unitNum <= 0) {
+      toast.error('단가가 없어 표준단가로 등록할 수 없습니다.')
+      return
+    }
+    const spec = (row.spec ?? '').trim() || null
+    const color = (row.color ?? '').trim() || null
+    const exists = await checkProductExists(name, spec, color)
+    if (exists) {
+      setConfirmFixProduct({ name, spec, color, supplyPrice: unitNum })
+      return
+    }
+    setFixingProduct(true)
+    try {
+      await upsertProductRow({ name, spec, color, supplyPrice: unitNum })
+      toast.success(`'${name}' 표준단가가 등록되었습니다.`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '표준단가 고정 실패')
+    } finally {
+      setFixingProduct(false)
+    }
+  }
+
+  const handleConfirmFixProductSubmit = async () => {
+    if (!confirmFixProduct) return
+    setFixingProduct(true)
+    try {
+      await upsertProductRow(confirmFixProduct)
+      toast.success(`'${confirmFixProduct.name}' 표준단가가 수정되었습니다.`)
+      setConfirmFixProduct(null)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '표준단가 고정 실패')
+    } finally {
+      setFixingProduct(false)
+    }
+  }
+
+  /** 동일 제품·다른 금액 충돌 모달에서 "선택한 항목만 반영" 클릭 시 */
+  const handleConfirmProductConflicts = async () => {
+    if (!productRowsPending.length || !previewVendor?.length || !previewFile) return
+    setSaving(true)
+    try {
+      const conflictKeys = new Set(productConflicts.map((c) => c.key))
+      const toUpsert = productRowsPending
+        .map((row) => ({ ...row, spec: (row.spec ?? '').toString().trim() || '', color: (row.color ?? '').toString().trim() || '' }))
+        .filter((row) => !conflictKeys.has(productKey(row.name, row.spec, row.color)) || applyConflictKeys.has(productKey(row.name, row.spec, row.color)))
+      if (toUpsert.length > 0) {
+        const { error: pErr } = await supabase
+          .from('products')
+          .upsert(toUpsert.map((r) => ({ name: r.name.slice(0, 255), supply_price: r.supply_price, spec: r.spec, color: r.color })), { onConflict: 'name,spec,color', ignoreDuplicates: false })
+        if (pErr) throw pErr
+      }
+
+      // 견적서 이력에는 전체 반영 (원가표 → 견적 형식)
+      const estimateRows: EstimateRow[] = previewVendor.map((it, i) => {
+        const cost = Number(it.cost_price) || 0
+        const unitPrice = cost > 0 ? roundToPriceUnit(cost / (1 - 0.3)) : 0
+        return {
+          no: String(i + 1),
+          name: (it.product_name?.trim() || '(미명)').slice(0, 255),
+          spec: it.size?.trim() || '',
+          qty: String(it.quantity ?? 1),
+          unit: 'EA',
+          unitPrice: String(unitPrice),
+          note: '',
+          costPrice: cost > 0 ? String(cost) : undefined,
+          color: it.color?.trim() || undefined,
+        }
+      })
+      const quoteDateForPayload = new Date().toISOString().slice(0, 16).replace('T', ' ')
+      const payload: EstimateFormData = {
+        mode: 'FINAL',
+        recipientName: '원가표 반영',
+        recipientContact: '',
+        quoteDate: quoteDateForPayload,
+        bizNumber: SUPPLIER_FIXED.bizNumber,
+        address: SUPPLIER_FIXED.address,
+        supplierContact: SUPPLIER_FIXED.contact,
+        sealImageUrl: '',
+        rows: estimateRows,
+        footerNotes: '원가표 AI 분석 → Products 및 견적 이력 반영',
+      }
+      const { supplyTotal, vat, grandTotal } = computeFinalTotals(payload)
+      const payloadForDb = { ...payload } as unknown as Json
+      const { error: estErr } = await supabase
+        .from('estimates')
+        .insert({
+          consultation_id: consultationId,
+          payload: payloadForDb,
+          supply_total: supplyTotal,
+          vat,
+          grand_total: grandTotal,
+          approved_at: new Date().toISOString(),
+          final_proposal_data: payloadForDb,
+          is_test: false,
+        })
+      if (estErr) throw estErr
+
+      await uploadAndRegister(previewFile, 'vendor_price')
+      const appliedCount = toUpsert.length
+      const skippedCount = productConflicts.length - applyConflictKeys.size
+      toast.success(
+        appliedCount > 0
+          ? `Products에 ${appliedCount}건 반영, 견적 이력 저장 완료.${skippedCount > 0 ? ` (금액 유지한 항목 ${skippedCount}건)` : ''}`
+          : '견적 이력만 저장되었습니다. (표준단가 반영 없음)'
+      )
+      setProductConflictModalOpen(false)
+      setProductConflicts([])
+      setProductRowsPending([])
+      setApplyConflictKeys(new Set())
+      closePreview()
+      onUploadComplete?.()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '저장 실패')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const toggleConflictApply = (key: string) => {
+    setApplyConflictKeys((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
 
   const handleDeleteFile = async (e: React.MouseEvent, f: ConsultationEstimateFile) => {
     e.stopPropagation()
@@ -90,7 +348,8 @@ export function EstimateFilesGallery({
     }
   }
 
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  /** 입구별 모드: 견적서 입구 → 항상 estimates(공급가), 외주업체 단가표 입구 → 항상 vendor_price(원가) */
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>, uploadType: 'estimates' | 'vendor_price') => {
     const file = e.target.files?.[0]
     if (!file) return
     const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
@@ -103,17 +362,20 @@ export function EstimateFilesGallery({
     setAnalyzing(true)
     setPreviewOpen(true)
     setPreviewFile(file)
-    setPreviewCategory(null)
+    setPreviewCategory(uploadType === 'estimates' ? 'Estimates' : 'VendorPrice')
     setPreviewVendor(null)
     setPreviewEstimate(null)
     setPreviewError(null)
+    setUploadTypeForCurrentFile(uploadType)
     try {
-      const { category, result } = await parseFileWithAI(file)
+      const { category, result } = await parseFileWithAI(file, { mode: uploadType })
       setPreviewCategory(category)
       if (result.type === 'VendorPrice') {
         setPreviewVendor(result.data.items)
+        setPreviewEstimate(null)
       } else {
         setPreviewEstimate(result.data)
+        setPreviewVendor(null)
       }
     } catch (err) {
       setPreviewError(err instanceof Error ? err.message : 'AI 분석 실패')
@@ -152,9 +414,54 @@ export function EstimateFilesGallery({
         setSaving(false)
         return
       }
+
+      // 이미 표준단가표에 있는데 금액이 다른 항목 찾기 (제품 = name+spec+color 동일)
+      const normalizedRows = productRows.map((r) => ({
+        ...r,
+        spec: (r.spec ?? '').toString().trim() || '',
+        color: (r.color ?? '').toString().trim() || '',
+      }))
+      const names = [...new Set(normalizedRows.map((r) => r.name))]
+      const { data: existingProducts } = await supabase
+        .from('products')
+        .select('name, supply_price, spec, color')
+        .in('name', names)
+      const existingByKey = new Map(
+        (existingProducts ?? []).map((p) => [
+          productKey(p.name ?? '', p.spec ?? null, p.color ?? null),
+          Number(p.supply_price),
+        ])
+      )
+      const conflicts = normalizedRows.filter((r) => {
+        const key = productKey(r.name, r.spec, r.color)
+        const current = existingByKey.get(key)
+        return current != null && current !== r.supply_price
+      })
+
+      if (conflicts.length > 0) {
+        setProductConflicts(
+          conflicts.map((r) => ({
+            name: r.name,
+            spec: r.spec || null,
+            color: r.color || null,
+            currentPrice: existingByKey.get(productKey(r.name, r.spec, r.color)) ?? 0,
+            newPrice: r.supply_price,
+            key: productKey(r.name, r.spec, r.color),
+          }))
+        )
+        setProductRowsPending(productRows)
+        setApplyConflictKeys(new Set())
+        setProductConflictModalOpen(true)
+        setSaving(false)
+        return
+      }
+
       const { error: pErr } = await supabase
         .from('products')
-        .upsert(productRows, { onConflict: 'name', ignoreDuplicates: false })
+        .upsert(
+          normalizedRows.map((r) => ({ name: r.name.slice(0, 255), supply_price: r.supply_price, spec: r.spec, color: r.color })),
+          { onConflict: 'name,spec,color', ignoreDuplicates: false }
+        )
       if (pErr) throw pErr
 
       // 견적서 이력에도 저장 (원가표 → 견적 형식 변환)
@@ -202,7 +509,7 @@ export function EstimateFilesGallery({
         })
       if (estErr) throw estErr
 
-      await uploadAndRegister(previewFile)
+      await uploadAndRegister(previewFile, 'vendor_price')
       toast.success(`Products에 ${productRows.length}건, 견적 이력에 반영되었습니다.`)
       closePreview()
       onUploadComplete?.()
@@ -257,7 +564,7 @@ export function EstimateFilesGallery({
       const meta = (cur as { metadata?: Record<string, unknown> } | null)?.metadata ?? {}
       const metaObj = typeof meta === 'object' && meta !== null ? meta : {}
       const nextMeta = { ...metaObj, region: region || metaObj.region, industry: industry || metaObj.industry } as Json
-      await supabase.from('consultations').update({ expected_revenue: finalAmount, metadata: nextMeta }).eq('id', consultationId)
+      await supabase.from('consultations').update({ estimate_amount: finalAmount, status: '견적발송', metadata: nextMeta }).eq('id', consultationId)
 
       // 판매 단가표(products)에 판매단가로 반영 (원가는 역산해서 수익률 판단용)
       const productRows: { name: string; supply_price: number; spec: string | null; color: string | null }[] = []
@@ -276,19 +583,23 @@ export function EstimateFilesGallery({
         })
       }
       if (productRows.length > 0) {
-        await supabase
-          .from('products')
-          .upsert(productRows, { onConflict: 'name', ignoreDuplicates: false })
+        const normalized = productRows.map((r) => ({
+          name: r.name.slice(0, 255),
+          supply_price: r.supply_price,
+          spec: (r.spec ?? '').toString().trim() || '',
+          color: (r.color ?? '').toString().trim() || '',
+        }))
+        await supabase.from('products').upsert(normalized, { onConflict: 'name,spec,color', ignoreDuplicates: false })
       }
 
-      await uploadAndRegister(previewFile)
+      await uploadAndRegister(previewFile, 'estimates')
       toast.success(
         productRows.length > 0
           ? '견적서가 등록되었고, Products에도 반영되었습니다.'
           : '견적서가 이 상담에 등록되었습니다.'
       )
       closePreview()
-      onUploadComplete?.()
+      onUploadComplete?.({ estimateAmount: finalAmount })
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '저장 실패')
     } finally {
@@ -296,7 +607,7 @@ export function EstimateFilesGallery({
     }
   }
 
-  const uploadAndRegister = async (file: File) => {
+  const uploadAndRegister = async (file: File, uploadType: 'estimates' | 'vendor_price') => {
     const timestamp = Date.now()
     const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
     const storagePath = `${consultationId}/${timestamp}_${safeName}`
@@ -316,6 +627,7 @@ export function EstimateFilesGallery({
       storage_path: storagePath,
       file_name: file.name,
       file_type: fileType,
+      upload_type: uploadType,
     })
     if (insertError) throw insertError
 
@@ -327,7 +639,7 @@ export function EstimateFilesGallery({
     if (!previewFile) return
     setSaving(true)
     try {
-      await uploadAndRegister(previewFile)
+      await uploadAndRegister(previewFile, uploadTypeForCurrentFile ?? 'estimates')
       toast.success('참조용으로 업로드되었습니다. AI가 참조할 수 있습니다.')
       closePreview()
       onUploadComplete?.()
@@ -347,71 +659,97 @@ export function EstimateFilesGallery({
     })
   }
 
+  const estimateFiles = files.filter((f) => (f.upload_type ?? 'estimates') === 'estimates')
+  const vendorFiles = files.filter((f) => f.upload_type === 'vendor_price')
+
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between gap-2">
-        <h4 className="text-sm font-semibold text-foreground">업로드 견적서 (AI 참조용)</h4>
-        <label className="cursor-pointer">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <h4 className="text-sm font-semibold text-foreground">업로드 (AI 참조용)</h4>
+        <div className="flex gap-2">
           <input
             type="file"
             accept={ACCEPT_TYPES}
             className="sr-only"
-            onChange={handleFileSelect}
+            id="estimate-upload-input"
+            onChange={(e) => handleFileSelect(e, 'estimates')}
             disabled={uploading || analyzing}
           />
-          <Button type="button" variant="outline" size="sm" className="gap-1.5 h-8" asChild>
-            <span>
-              {(uploading || analyzing) ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-              견적서 업로드
-            </span>
+          <input
+            type="file"
+            accept={ACCEPT_TYPES}
+            className="sr-only"
+            id="vendor-upload-input"
+            onChange={(e) => handleFileSelect(e, 'vendor_price')}
+            disabled={uploading || analyzing}
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="gap-1.5 h-8"
+            disabled={uploading || analyzing}
+            onClick={() => document.getElementById('estimate-upload-input')?.click()}
+          >
+            {(uploading || analyzing) ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+            견적서 업로드
           </Button>
-        </label>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="gap-1.5 h-8"
+            disabled={uploading || analyzing}
+            onClick={() => document.getElementById('vendor-upload-input')?.click()}
+          >
+            {(uploading || analyzing) ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
+            외주업체 단가표 업로드
+          </Button>
+        </div>
       </div>
       <p className="text-xs text-muted-foreground">
-        PDF 또는 이미지 견적서/외주업체 단가표를 업로드하면 AI가 분석 후 <strong>확인용 미리보기</strong>를 보여줍니다.
-        검수 후 저장하면 공식 상품 목록(Products) 또는 견적서로 등록됩니다.
+        <strong>견적서 업로드</strong> → 단가는 공급가로 인식. <strong>외주업체 단가표 업로드</strong> → 단가는 원가로 인식. 검수 후 저장하면 Products·견적 이력에 반영됩니다.
       </p>
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-        {files.map((f) => {
-          const isPdf = f.file_type === 'pdf'
-          const Icon = isPdf ? FileText : Image
-          const isDeleting = deletingId === f.id
-          return (
-            <div
-              key={f.id}
-              className="relative group aspect-[4/3] rounded-lg border border-border bg-muted/40 hover:bg-muted/70 flex flex-col items-center justify-center gap-1 p-2 text-left transition-colors"
-            >
-              <button
-                type="button"
-                onClick={() => openPreview(f)}
-                className="absolute inset-0 w-full h-full flex flex-col items-center justify-center gap-1 p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50"
-              >
-                <Icon className="h-8 w-8 text-muted-foreground shrink-0" />
-                <span className="text-xs font-medium text-foreground truncate w-full text-center">{f.file_name}</span>
-                <span className="text-[10px] text-muted-foreground">
-                  {new Date(f.created_at).toLocaleDateString('ko-KR')}
-                </span>
-              </button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="absolute top-1 right-1 h-7 w-7 p-0 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 z-10"
-                onClick={(e) => handleDeleteFile(e, f)}
-                disabled={isDeleting}
-                title="삭제"
-              >
-                {isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-              </Button>
-            </div>
-          )
-        })}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* 왼쪽: 견적서 리스트 */}
+        <div className="space-y-2">
+          <h5 className="text-sm font-medium text-foreground">견적서</h5>
+          <div className="space-y-1.5 rounded-lg border border-border bg-background p-2 min-h-[120px]">
+            {estimateFiles.length === 0 ? (
+              <p className="text-xs text-muted-foreground py-6 text-center">업로드한 견적서가 없습니다.</p>
+            ) : (
+              estimateFiles.map((f) => (
+                <FileListCard
+                  key={f.id}
+                  file={f}
+                  isDeleting={deletingId === f.id}
+                  onViewOriginal={() => openPreview(f)}
+                  onDelete={(e) => handleDeleteFile(e, f)}
+                />
+              ))
+            )}
+          </div>
+        </div>
+        {/* 오른쪽: 외주업체 단가표 리스트 */}
+        <div className="space-y-2">
+          <h5 className="text-sm font-medium text-foreground">외주업체 단가표</h5>
+          <div className="space-y-1.5 rounded-lg border border-border bg-background p-2 min-h-[120px]">
+            {vendorFiles.length === 0 ? (
+              <p className="text-xs text-muted-foreground py-6 text-center">업로드한 외주업체 단가표가 없습니다.</p>
+            ) : (
+              vendorFiles.map((f) => (
+                  <FileListCard
+                    key={f.id}
+                    file={f}
+                    isDeleting={deletingId === f.id}
+                    onViewOriginal={() => openPreview(f)}
+                    onDelete={(e) => handleDeleteFile(e, f)}
+                  />
+                ))
+            )}
+          </div>
+        </div>
       </div>
-      {files.length === 0 && (
-        <p className="text-sm text-muted-foreground py-4 text-center rounded-lg border border-dashed border-border">
-          견적서 또는 외주업체 단가표(PDF/이미지)를 업로드하면 AI가 분석 후 products/견적서로 반영합니다.
-        </p>
-      )}
 
       {/* AI 분석 결과 확인용 미리보기 모달 */}
       <Dialog open={previewOpen} onOpenChange={(open) => !open && closePreview()}>
@@ -450,6 +788,7 @@ export function EstimateFilesGallery({
                       <th className="border-b border-border px-2 py-2 text-right">단가(원)</th>
                       <th className="border-b border-border px-2 py-2 text-left">색상/메모</th>
                       <th className="border-b border-border px-2 py-2 text-center w-24">상태</th>
+                      <th className="border-b border-border px-2 py-2 text-center w-28 print:hidden">표준단가 고정</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -471,6 +810,22 @@ export function EstimateFilesGallery({
                               <span className="text-[10px] text-green-600 dark:text-green-400">→ 저장</span>
                             )}
                           </td>
+                          <td className="px-2 py-1.5 text-center">
+                            {!isExcluded && (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-7 text-xs gap-1"
+                                disabled={fixingProduct}
+                                onClick={() => void handleFixStandardPriceVendor(row)}
+                                title="이 항목을 제품 마스터(표준단가표)에 등록/수정"
+                              >
+                                {fixingProduct ? <Loader2 className="h-3 w-3 animate-spin" /> : <Pin className="h-3 w-3" />}
+                                표준단가 고정
+                              </Button>
+                            )}
+                          </td>
                         </tr>
                       )
                     })}
@@ -483,7 +838,7 @@ export function EstimateFilesGallery({
             <div className="space-y-3">
               <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-500/10 text-blue-800 dark:text-blue-200">
                 <CheckCircle className="h-4 w-4 shrink-0" />
-                <span className="text-sm">견적서 — 견적 이력과 Products(판매 단가표)에 모두 저장됩니다.</span>
+                <span className="text-sm">견적서 — 단가는 공급가로, 견적 이력과 Products(판매 단가표)에 저장됩니다.</span>
               </div>
               <div className="grid grid-cols-2 gap-2 text-sm">
                 <div><span className="text-muted-foreground">고객/현장:</span> {previewEstimate.customer_name ?? previewEstimate.siteName}</div>
@@ -498,18 +853,38 @@ export function EstimateFilesGallery({
                       <th className="border-b border-border px-2 py-2 text-left">규격</th>
                       <th className="border-b border-border px-2 py-2 text-right">수량</th>
                       <th className="border-b border-border px-2 py-2 text-right">단가(원)</th>
+                      <th className="border-b border-border px-2 py-2 text-center w-28 print:hidden">표준단가 고정</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {previewEstimate.rows.map((row, i) => (
-                      <tr key={i} className="border-b border-border last:border-0">
-                        <td className="px-2 py-1.5">{row.no}</td>
-                        <td className="px-2 py-1.5">{row.name}</td>
-                        <td className="px-2 py-1.5">{row.spec}</td>
-                        <td className="px-2 py-1.5 text-right">{row.qty}</td>
-                        <td className="px-2 py-1.5 text-right">{row.unitPrice}</td>
-                      </tr>
-                    ))}
+                    {previewEstimate.rows.map((row, i) => {
+                      const isExcluded = shouldExcludeFromProducts(row.name ?? '')
+                      return (
+                        <tr key={i} className="border-b border-border last:border-0">
+                          <td className="px-2 py-1.5">{row.no}</td>
+                          <td className="px-2 py-1.5">{row.name}</td>
+                          <td className="px-2 py-1.5">{row.spec}</td>
+                          <td className="px-2 py-1.5 text-right">{row.qty}</td>
+                          <td className="px-2 py-1.5 text-right">{row.unitPrice}</td>
+                          <td className="px-2 py-1.5 text-center">
+                            {!isExcluded && (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-7 text-xs gap-1"
+                                disabled={fixingProduct}
+                                onClick={() => void handleFixStandardPriceEstimate(row as EstimateRow)}
+                                title="이 항목을 제품 마스터(표준단가표)에 등록/수정"
+                              >
+                                {fixingProduct ? <Loader2 className="h-3 w-3 animate-spin" /> : <Pin className="h-3 w-3" />}
+                                표준단가 고정
+                              </Button>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -544,6 +919,104 @@ export function EstimateFilesGallery({
                 </Button>
               </>
             )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 표준단가 고정 시 기존 마스터 존재 확인 */}
+      <Dialog open={!!confirmFixProduct} onOpenChange={(open) => !open && setConfirmFixProduct(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>표준단가 수정 확인</DialogTitle>
+            <DialogDescription>
+              마스터 데이터(표준단가)가 이미 존재합니다. 새로운 값으로 수정하시겠습니까?
+              {confirmFixProduct && (
+                <span className="block mt-2 text-foreground font-medium">
+                  {confirmFixProduct.name} · {confirmFixProduct.supplyPrice.toLocaleString()}원
+                </span>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setConfirmFixProduct(null)}>
+              취소
+            </Button>
+            <Button type="button" onClick={() => void handleConfirmFixProductSubmit()} disabled={fixingProduct}>
+              {fixingProduct ? <Loader2 className="h-4 w-4 animate-spin" /> : '수정'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 판매 단가표 반영 — 동일 제품·다른 금액일 때 반영 여부 선택 */}
+      <Dialog
+        open={productConflictModalOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            setProductConflictModalOpen(false)
+            setProductConflicts([])
+            setProductRowsPending([])
+            setApplyConflictNames(new Set())
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>표준단가표에 이미 있는 항목 (금액이 다름)</DialogTitle>
+            <DialogDescription>
+              아래 항목은 이미 표준단가표에 있으며, 이번 파일의 금액이 다릅니다. <strong>새 금액으로 반영할 항목만 체크</strong>하세요. 체크하지 않으면 기존 표준단가가 유지됩니다.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="border border-border rounded-lg overflow-x-auto max-h-[50vh] overflow-y-auto">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-muted/80">
+                <tr>
+                  <th className="border-b border-border px-2 py-2 text-left">품명</th>
+                  <th className="border-b border-border px-2 py-2 text-left">규격</th>
+                  <th className="border-b border-border px-2 py-2 text-left">색상</th>
+                  <th className="border-b border-border px-2 py-2 text-right">현재 표준단가</th>
+                  <th className="border-b border-border px-2 py-2 text-right">새 단가</th>
+                  <th className="border-b border-border px-2 py-2 text-center w-20">반영</th>
+                </tr>
+              </thead>
+              <tbody>
+                {productConflicts.map((c) => (
+                  <tr key={c.key} className="border-b border-border last:border-0">
+                    <td className="px-2 py-1.5 font-medium">{c.name}</td>
+                    <td className="px-2 py-1.5 text-muted-foreground">{c.spec ?? '-'}</td>
+                    <td className="px-2 py-1.5 text-muted-foreground">{c.color ?? '-'}</td>
+                    <td className="px-2 py-1.5 text-right text-muted-foreground">{c.currentPrice.toLocaleString()}원</td>
+                    <td className="px-2 py-1.5 text-right">{c.newPrice.toLocaleString()}원</td>
+                    <td className="px-2 py-1.5 text-center">
+                      <input
+                        type="checkbox"
+                        checked={applyConflictKeys.has(c.key)}
+                        onChange={() => toggleConflictApply(c.key)}
+                        className="h-4 w-4 rounded border-input"
+                        aria-label={`${c.name} 새 금액 반영`}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setProductConflictModalOpen(false)
+                setProductConflicts([])
+                setProductRowsPending([])
+                setApplyConflictKeys(new Set())
+              }}
+            >
+              취소
+            </Button>
+            <Button type="button" onClick={() => void handleConfirmProductConflicts()} disabled={saving}>
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : '선택한 항목만 반영하기'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -501,6 +501,37 @@ export type Database = {
         }
         Relationships: []
       }
+      /** 공식 표준 단가표 — supply_price = 공급단가(판매가). 퀵 가이드 빈 단가 채우기용, 비교 카드에는 미노출 */
+      products: {
+        Row: {
+          id: string
+          name: string
+          supply_price: number
+          spec: string | null
+          color: string | null
+          created_at: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          id?: string
+          name: string
+          supply_price: number
+          spec?: string | null
+          color?: string | null
+          created_at?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          id?: string
+          name?: string
+          supply_price?: number
+          spec?: string | null
+          color?: string | null
+          created_at?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       consultations_with_golden_time: {

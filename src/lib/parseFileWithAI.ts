@@ -183,14 +183,23 @@ function hasCompanyKeywords(text: string): boolean {
   return COMPANY_KEYWORDS.every((kw) => t.includes(kw))
 }
 
+/** 우리 회사명만 있어도 견적서로 봄. (김지윤은 직인/이미지에만 있을 수 있어 텍스트 추출에 없을 수 있음) */
+function looksLikeOurEstimate(text: string): boolean {
+  const t = (text ?? '').trim()
+  if (!t) return false
+  if (t.includes('파인드가구')) return true
+  return hasCompanyKeywords(t)
+}
+
 /**
  * 문서 상단·직인 근처에서 '파인드가구'와 '김지윤'을 찾아라.
+ * PDF: '파인드가구'만 있어도 견적서(Estimates)로 분류 — 견적서 단가는 공급가로 저장되어야 함. 김지윤은 직인에만 있어 추출 텍스트에 없을 수 있음.
  */
 async function detectCategoryFromContent(file: File): Promise<FileCategory> {
   const ext = (file.name.split('.').pop() ?? '').toLowerCase()
   if (ext === 'pdf') {
     const text = await extractTextFromPDF(file)
-    return hasCompanyKeywords(text) ? 'Estimates' : 'VendorPrice'
+    return looksLikeOurEstimate(text) ? 'Estimates' : 'VendorPrice'
   }
   if (['jpg', 'jpeg', 'png'].includes(ext)) {
     const base64 = await fileToBase64(file)
@@ -471,9 +480,9 @@ export async function parseFileWithAI(
   if (category === 'Estimates') {
     const ext = (file.name.split('.').pop() ?? '').toLowerCase()
     const isPdf = ext === 'pdf'
-    const tabHint = forceEstimates ? '판매 견적서 등록. 품목 단가는 판매가(unitPrice) 추출. ' : ''
+    const tabHint = forceEstimates ? '판매 견적서 등록. 품목 단가는 판매가(unitPrice) 추출. ' : '견적서 단가 = 공급단가(판매가). unitPrice에 문서에 적힌 단가 원화 숫자 그대로 추출(원가 아님). '
     const sysPrompt = isPdf
-      ? `가구 견적서 문서 분석. ${tabHint}파인드가구·김지윤 확인. 텍스트에서 JSON 추출: siteName, region, industry, quoteDate(YYYY-MM-DD), recipientContact, customer_name, customer_phone, site_location, total_amount, rows[{no,name,spec,qty,unit,unitPrice,note}]. 유효한 JSON만 출력.`
+      ? `가구 견적서 문서 분석. ${tabHint}파인드가구·김지윤 확인. 텍스트에서 JSON 추출: siteName, region, industry, quoteDate(YYYY-MM-DD), recipientContact, customer_name, customer_phone, site_location, total_amount, rows[{no,name,spec,qty,unit,unitPrice,note}]. unitPrice=공급가(원). 유효한 JSON만 출력.`
       : `${VISION_ESTIMATE_PROMPT}\n${tabHint}`
 
     let content: string

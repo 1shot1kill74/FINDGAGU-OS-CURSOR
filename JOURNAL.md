@@ -814,3 +814,83 @@ git checkout save-20260210-showroom-consultation-image
 - `src/components/ui/switch.tsx` — 신규
 - `supabase/migrations` — add_image_assets_is_consultation
 - `BLUEPRINT.md`, `CONTEXT.md`, `JOURNAL.md`, `soul.md`
+
+---
+
+# 2026-02-13 기록 (구글 시트 ↔ 수파베이스 양방향 동기화 — 세이브 포인트)
+
+## 1. 오늘의 활동 요약
+- 구글 시트 `상담리스트`와 수파베이스 consultations를 양방향으로 연동. 시트 편집 시 RPC로 DB 반영, 앱 [최종 확정] 시 시트 해당 행(E·F·D) 갱신. status·estimate_amount는 시트에서 DB로 보내지 않고 앱·DB 전용으로 유지. Realtime·visibilitychange로 앱 리스트 캐시 무효화.
+
+## 2. 상세 결정·구현
+- **시트→DB:** gas/Code.gs onEdit → update_single_consultation_from_sheet(project_name, link, start_date, update_date, created_at). RPC 인자에 status·estimate_amount 없음.
+- **DB→시트:** syncAppToSheet(projectName, status, estimateAmount), doPost(body: project_name, status, estimate_amount, token). 앱에서 최종 확정 성공 후 VITE_GOOGLE_SHEET_SYNC_URL POST.
+- **앱:** fetchLeadsRef, Realtime INSERT/UPDATE 시 전체 fetch, document.visibilitychange → visible 시 fetch. mapConsultationRowToLead에서 update_date·projectName 처리.
+
+## 3. 문서·세이브 포인트
+- BLUEPRINT에 "6) 구글 시트 ↔ 수파베이스 양방향 동기화" 추가. CONTEXT·JOURNAL·soul.md에 2026-02-13 반영. snapshots/SAVE_20260213_GOOGLE_SHEET_SYNC/README.md 생성.
+
+# 세이브 포인트 2026-02-13 (구글 시트 ↔ 수파베이스 양방향 동기화)
+
+**이 시점까지 반영된 작업을 롤백할 때 참고용입니다.**
+
+## 포함된 작업 요약
+- 구글 시트 `상담리스트` onEdit → RPC(project_name, link, start_date, update_date, created_at). status·estimate_amount 시트 미연동.
+- RPC update_single_consultation_from_sheet, consultations.updated_at·REPLICA IDENTITY FULL.
+- 앱 [최종 확정] → doPost·syncAppToSheet. Realtime·visibilitychange 시 전체 리스트 재조회. Lead.projectName, update_date 파싱.
+
+## 롤백 시 (Git 사용 시)
+```bash
+git add -A
+git commit -m "checkpoint: 구글 시트↔수파베이스 양방향 동기화, status/estimate_amount 시트 미연동, Realtime·캐시 무효화"
+git tag save-20260213-google-sheet-sync
+
+# 이후 이 시점으로 복귀
+git checkout save-20260213-google-sheet-sync
+```
+
+## 변경된 주요 파일
+- `gas/Code.gs` — onEdit, syncAppToSheet, doPost, payload 컬럼명·status/estimate_amount 제외
+- `src/pages/ConsultationManagement.tsx` — fetchLeadsRef, visibilitychange, Realtime 시 fetch, Lead.projectName, 최종 확정 후 시트 sync
+- `supabase/migrations` — update_single_consultation_from_sheet, consultations updated_at·REPLICA IDENTITY FULL
+- `.env.example` — VITE_GOOGLE_SHEET_SYNC_URL, VITE_GOOGLE_SHEET_SYNC_TOKEN
+- `BLUEPRINT.md`, `CONTEXT.md`, `JOURNAL.md`, `soul.md`, `snapshots/SAVE_20260213_GOOGLE_SHEET_SYNC/README.md`
+
+---
+
+# 2026-02-14 기록 (상담 카드 2행 최종 견적가 표시 — 세이브 포인트)
+
+## 1. 오늘의 활동 요약
+- 상담 리스트 카드 **2행 맨 오른쪽** "견적 미정" 자리에 **최종 견적 금액**이 확실히 표시되도록 수정. 견적서로 저장 직후 낙관적 업데이트·pending ref·fetch 병합으로 즉시 반영 및 유지.
+
+## 2. 상세 결정·구현
+- **표시 우선순위:** pendingEstimateAmountRef(견적서로 저장 직후) → item.finalAmount → item.displayAmount → item.expectedRevenue. 없으면 "견적 미정".
+- **EstimateFilesGallery:** [견적서로 저장] 성공 시 onUploadComplete({ estimateAmount: finalAmount }) 호출.
+- **ConsultationManagement:** onUploadComplete(payload) 시 pendingEstimateAmountRef.current[consultationId] 저장, setLeads로 해당 카드 displayAmount·expectedRevenue·status 낙관적 업데이트, fetchLeads() 호출. fetchLeads 결과 병합 시 서버 estimate_amount가 아직 0이면 pending 금액으로 displayAmount·expectedRevenue 유지.
+- **ConsultationListItem:** getPendingEstimateAmount(consultationId) prop 추가. 2행 맨 오른쪽 span에 data-final-estimate, data-consultation-id, title(최종 견적가/견적 미정).
+
+## 3. 문서·세이브 포인트
+- BLUEPRINT에 2행 "최종 견적가" 표시 규격 추가. CONTEXT·JOURNAL·soul.md에 2026-02-14 반영.
+
+# 세이브 포인트 2026-02-14 (상담 카드 2행 최종 견적가)
+
+**이 시점까지 반영된 작업을 롤백할 때 참고용입니다.**
+
+## 포함된 작업 요약
+- 상담 카드 2행 맨 오른쪽: "견적 미정" → 최종 견적 금액 표시. pending ref·낙관적 업데이트·fetch 병합.
+- EstimateFilesGallery onUploadComplete({ estimateAmount }). ConsultationManagement pendingEstimateAmountRef·getPendingEstimateAmount.
+
+## 롤백 시 (Git 사용 시)
+```bash
+git add -A
+git commit -m "checkpoint: 상담 카드 2행 최종 견적가 표시, pending ref·fetch 병합"
+git tag save-20260214-card-final-estimate
+
+# 이후 이 시점으로 복귀
+git checkout save-20260214-card-final-estimate
+```
+
+## 변경된 주요 파일
+- `src/pages/ConsultationManagement.tsx` — pendingEstimateAmountRef, fetchLeads 병합, onUploadComplete 낙관적 업데이트, ConsultationListItem getPendingEstimateAmount
+- `src/components/estimate/EstimateFilesGallery.tsx` — onUploadComplete({ estimateAmount: finalAmount })
+- `BLUEPRINT.md`, `CONTEXT.md`, `JOURNAL.md`, `soul.md`
