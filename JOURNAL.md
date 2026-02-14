@@ -894,3 +894,41 @@ git checkout save-20260214-card-final-estimate
 - `src/pages/ConsultationManagement.tsx` — pendingEstimateAmountRef, fetchLeads 병합, onUploadComplete 낙관적 업데이트, ConsultationListItem getPendingEstimateAmount
 - `src/components/estimate/EstimateFilesGallery.tsx` — onUploadComplete({ estimateAmount: finalAmount })
 - `BLUEPRINT.md`, `CONTEXT.md`, `JOURNAL.md`, `soul.md`
+
+---
+
+# 2026-02-14 기록 (구글 시트 갱신일 기준 '오늘 갱신'·미갱신 D-Day — 세이브 포인트)
+
+## 1. 오늘의 활동 요약
+- 상담 카드의 **'오늘 갱신'·미갱신 D+n** 표시 및 **최근업데이트순** 정렬을 **구글 시트 최신 업데이트일** 기준으로 동작하도록 변경. 기존에는 앱(consultations.update_date)만 반영되었으나, 시트 D열(업데이트일)을 metadata.sheet_update_date로 저장해 앱에서 우선 사용.
+
+## 2. 상세 결정·구현
+- **Lead.sheetUpdateDate:** metadata.sheet_update_date(YYYY-MM-DD) 매핑. mapConsultationRowToLead에서 updateDateNorm, sheetUpdateRaw, sheetUpdateDate 파싱 후 return에 sheetUpdateDate 추가.
+- **갱신 표시·정렬:** getNeglectDDisplay·getNeglectDays 호출 시 **sheetUpdateDate ?? updateDate** 사용. ConsultationListItem neglectD, sortByNeglect 정렬 모두 동일 기준.
+- **Supabase RPC:** update_multiple_consultations_from_sheet에서 input에 sheet_update_date 추가, INSERT/UPDATE 시 metadata에 sheet_update_date 병합. 마이그레이션 `20260214140000_sheet_update_date_in_metadata.sql`. (대시보드 SQL Editor 또는 db push로 적용.)
+- **GAS:** gas/Code.gs syncAllDataBatch에서 각 row에 sheet_update_date(updateDateStr, D열 YYYY-MM-DD) 전송. 사용자 단순 GAS 스크립트에도 동일 필드 추가 안내.
+
+## 3. 문서·세이브 포인트
+- BLUEPRINT에 배치 RPC·갱신일·Lead.sheetUpdateDate·앱 표시/정렬 기준 반영. CONTEXT·soul.md에 2026-02-14 구글 시트 갱신일 항목 추가. JOURNAL 본 블록 및 세이브 포인트 안내.
+
+# 세이브 포인트 2026-02-14 (구글 시트 갱신일 기준 오늘 갱신·미갱신 D-Day)
+
+**이 시점까지 반영된 작업을 롤백할 때 참고용입니다.**
+
+## 포함된 작업 요약
+- **갱신 표시·정렬:** '오늘 갱신'·미갱신 D+n·최근업데이트순 = sheetUpdateDate ?? updateDate.
+- **Lead.sheetUpdateDate:** metadata.sheet_update_date 매핑. mapConsultationRowToLead, getNeglectDDisplay, getNeglectDays, 정렬 로직 반영.
+- **Supabase:** update_multiple_consultations_from_sheet에 sheet_update_date → metadata.sheet_update_date 저장. 마이그레이션 20260214140000_sheet_update_date_in_metadata.
+- **GAS:** syncAllDataBatch 시 row에 sheet_update_date(YYYY-MM-DD) 전송. gas/Code.gs 수정.
+
+## 롤백 시 (Git 사용 시)
+```bash
+git checkout save-20260214-sheet-update-date
+# 또는 특정 파일만 복원 시 해당 커밋에서 파일 체크아웃
+```
+
+## 변경된 주요 파일
+- `src/pages/ConsultationManagement.tsx` — Lead 타입 sheetUpdateDate, mapConsultationRowToLead, neglectD·정렬 sheetUpdateDate ?? updateDate
+- `supabase/migrations/20260214140000_sheet_update_date_in_metadata.sql` — 신규
+- `gas/Code.gs` — rows.push에 sheet_update_date 추가
+- `BLUEPRINT.md`, `CONTEXT.md`, `JOURNAL.md`, `soul.md`

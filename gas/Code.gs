@@ -241,13 +241,16 @@ function syncAllDataBatch() {
     var updateDateStr = toDateOnly(row[COL.UPDATE_DATE]);
     var created_at = row[COL.START_DATE] != null && String(row[COL.START_DATE]).trim() !== ''
       ? toCreatedAtISO(row[COL.START_DATE]) : null;
+    // D열(업데이트일)을 앱 '오늘 갱신' / 미갱신 D-Day 표시용으로 metadata.sheet_update_date에 전달
+    var sheet_update_date = updateDateStr || null;
 
     rows.push({
       project_name: projectName,
       link: link,
       start_date: startDateStr,
       update_date: updateDateStr,
-      created_at: created_at
+      created_at: created_at,
+      sheet_update_date: sheet_update_date
     });
   }
 

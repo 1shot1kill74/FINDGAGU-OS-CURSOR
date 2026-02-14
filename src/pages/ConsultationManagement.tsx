@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { ChevronLeft } from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
-import { Plus, RefreshCw, Zap, Phone, Copy, User, Images, MessageCircle, Pencil, Loader2, Search, FileText, CheckCircle, Ruler, Trash2, EyeOff, Star } from 'lucide-react'
+import { RefreshCw, Zap, Phone, Copy, User, Images, MessageCircle, Pencil, Loader2, Search, FileText, CheckCircle, Ruler, Trash2, EyeOff, Star } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { supabase } from '@/lib/supabase'
@@ -16,7 +16,6 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from '@/components/ui/dialog'
 import { CONSULTATION_INDUSTRY_OPTIONS } from '@/data/referenceCases'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -103,6 +102,12 @@ function getHighestTier(tiers: CustomerTier[]): CustomerTier {
 /** 연락처 비교용 정규화 — 숫자만 추출 (동일인 판별) */
 function normalizeContactForSync(contact: string): string {
   return (contact || '').replace(/\D/g, '')
+}
+
+/** 동일 고객으로 묶을 수 있는 연락처인지 — 연락처없음/빈 값은 서로 다른 고객으로 취급 */
+function isValidContactForSameCustomer(contact: string): boolean {
+  const digits = normalizeContactForSync(contact)
+  return digits.length >= 9
 }
 
 /** DB/입력값을 Enum으로 검증 — 정의되지 않은 값은 '미지정'으로 통일 (검토 필요 분류) */
@@ -224,6 +229,8 @@ interface Lead {
   inboundDate: string
   /** 업데이트일 YYYY-MM-DD (update_date, 방치 기간 계산용) */
   updateDate?: string | null
+  /** 구글 시트 최신 업데이트일 YYYY-MM-DD (metadata.sheet_update_date). 있으면 '갱신' 표시·정렬에 우선 사용 */
+  sheetUpdateDate?: string | null
   /** 인입 채널 (metadata.source). 오픈마켓 시 마켓 배지 표시 */
   source?: string
   /** 오픈마켓 주문번호 (metadata.order_number) */
@@ -309,7 +316,10 @@ function mapConsultationRowToLead(item: Record<string, unknown>): Lead {
   const goldenTime = getGoldenTimeState(created)
   const isGoldenTime = goldenTime.isGoldenTime
   const regionFromMeta = meta && typeof meta.region === 'string' ? meta.region : '현장 확인 중'
-  const industryFromMeta = meta && typeof meta.industry === 'string' ? meta.industry : '기타'
+  const industryFromMeta =
+    (meta && typeof meta.industry === 'string' && meta.industry.trim() ? meta.industry.trim() : null) ||
+    (typeof item.industry === 'string' && item.industry.trim() ? item.industry.trim() : null) ||
+    '기타'
   const painPointFromMeta = meta && typeof meta.pain_point === 'string' ? meta.pain_point : ''
   const requiredDateRaw = meta?.required_date
   const requiredDateDisplay =
@@ -393,6 +403,9 @@ function mapConsultationRowToLead(item: Record<string, unknown>): Lead {
         : typeof (rawUpdate as Date)?.toISOString === 'function'
           ? (rawUpdate as Date).toISOString().slice(0, 10)
           : null
+  const updateDateNorm = updateDate && /^\d{4}-\d{2}-\d{2}$/.test(updateDate) ? updateDate : null
+  const sheetUpdateRaw = meta && typeof meta.sheet_update_date === 'string' ? meta.sheet_update_date.trim().slice(0, 10) : null
+  const sheetUpdateDate = sheetUpdateRaw && /^\d{4}-\d{2}-\d{2}$/.test(sheetUpdateRaw) ? sheetUpdateRaw : null
   return {
     id: String(item.id ?? ''),
     name,
@@ -422,7 +435,8 @@ function mapConsultationRowToLead(item: Record<string, unknown>): Lead {
     google_chat_pending: googleChatPending,
     history_summary: historySummary,
     inboundDate,
-    updateDate: updateDate && /^\d{4}-\d{2}-\d{2}$/.test(updateDate) ? updateDate : null,
+    updateDate: updateDateNorm,
+    sheetUpdateDate: sheetUpdateDate || undefined,
     projectName: projectName || undefined,
     source,
     orderNumber,
@@ -675,7 +689,7 @@ const STAGE_BAR_OPTIONS: Array<{
 }> = [
   { key: '상담접수', label: '접수', activeClass: 'bg-blue-500/20 text-blue-700 dark:bg-blue-500/25 dark:text-blue-300 ring-1 ring-blue-500/40' },
   { key: '견적중', label: '견적', activeClass: 'bg-orange-500/20 text-orange-700 dark:bg-orange-500/25 dark:text-orange-300 ring-1 ring-orange-500/40' },
-  { key: '계약완료', label: '계약', activeClass: 'bg-green-500/20 text-green-700 dark:bg-green-500/25 dark:text-green-300 ring-1 ring-green-500/40', title: '실행/진행중 (프로젝트 공식 시작)' },
+  { key: '계약완료', label: '진행', activeClass: 'bg-green-500/20 text-green-700 dark:bg-green-500/25 dark:text-green-300 ring-1 ring-green-500/40', title: '실행/진행중 (프로젝트 공식 시작)' },
   { key: '시공완료', label: '완료', activeClass: 'bg-purple-500/20 text-purple-700 dark:bg-purple-500/25 dark:text-purple-300 ring-1 ring-purple-500/40' },
   { key: 'AS', label: 'AS', activeClass: 'bg-red-500/20 text-red-700 dark:bg-red-500/25 dark:text-red-300 ring-1 ring-red-500/40' },
   { key: '무효', label: '무효', activeClass: 'bg-gray-500/20 text-gray-700 dark:bg-gray-500/25 dark:text-gray-300 ring-1 ring-gray-500/40' },
@@ -758,7 +772,7 @@ function ConsultationListItem({
   onEditClick,
   onDeleteClick,
   lastMessage,
-  /** 견적서로 저장 직후 카드 2행에 확정 금액 즉시 표시 — ref에 보존된 금액 우선 사용 */
+  /** 견적서로 저장 직후 카드 2행 즉시 반영용 — 그 외에는 DB(consultations.estimate_amount) 단일 소스만 사용 */
   getPendingEstimateAmount,
 }: {
   item: Lead
@@ -797,16 +811,12 @@ function ConsultationListItem({
 
   const elapsedDays = item.goldenTimeElapsedDays ?? (item.inboundDate ? getElapsedDays(new Date(item.inboundDate + 'T12:00:00.000Z')) : -1)
   const isD7OrMore = elapsedDays >= 7
-  /** 방치 방지: update_date 기준 D-Day. 골든타임 배지 옆에 표시, 3일+ 주황 7일+ 빨강 */
-  const neglectD = getNeglectDDisplay(item.updateDate)
-  /** 2행 맨 오른쪽: 최종 견적가만 표시. 없으면 "견적 미정". pending → finalAmount → displayAmount → expectedRevenue(DB estimate_amount) */
+  /** 방치 방지: 구글 시트 최신 업데이트(sheet_update_date) 우선, 없으면 update_date 기준 D-Day */
+  const neglectD = getNeglectDDisplay(item.sheetUpdateDate ?? item.updateDate)
+  /** 2행 맨 오른쪽: 최종 견적가. 실제 소스 1개만 — DB(consultations.estimate_amount → expectedRevenue). pending은 견적서로 저장 직후 낙관적 표시용 */
   const pendingAmount = getPendingEstimateAmount?.(item.id)
   const amountToShow =
-    (pendingAmount != null && pendingAmount > 0 ? pendingAmount : null) ??
-    (item.finalAmount != null && item.finalAmount > 0 ? item.finalAmount : null) ??
-    (item.displayAmount > 0 ? item.displayAmount : null) ??
-    (item.expectedRevenue > 0 ? item.expectedRevenue : null) ??
-    0
+    (pendingAmount != null && pendingAmount > 0 ? pendingAmount : null) ?? (item.expectedRevenue > 0 ? item.expectedRevenue : 0)
   const finalAmountDisplay = amountToShow > 0 ? `${Number(amountToShow).toLocaleString()}원` : '견적 미정'
   const requiredDateDisplay = item.requiredDate && /^\d{4}-\d{2}-\d{2}$/.test(item.requiredDate) ? item.requiredDate : '미정'
 
@@ -816,7 +826,7 @@ function ConsultationListItem({
       onClick={onSelect}
       className={cn(
         'relative w-full text-left rounded-md border transition-colors flex flex-col gap-1.5 px-2 py-1.5 min-h-0',
-        isSelected ? 'bg-primary/10 border-primary' : 'bg-card border-border hover:bg-muted/50',
+        isSelected ? 'bg-amber-50 dark:bg-amber-950/40 border-2 border-amber-500 ring-2 ring-amber-400/30 shadow-sm' : 'bg-card border border-border hover:bg-muted/50',
         isPartner && 'border-amber-400/80 dark:border-amber-500/70 ring-1 ring-amber-400/30',
         isHighlighted && 'ring-2 ring-amber-400 ring-offset-2 ring-offset-background bg-amber-100/90 dark:bg-amber-500/25 dark:ring-amber-400 animate-pulse',
         isLongTermUnresolved && 'opacity-70',
@@ -902,7 +912,7 @@ function ConsultationListItem({
           <span>—</span>
         )}
         <span className="text-border shrink-0 mx-0.5">|</span>
-        <span className={amountToShow > 0 ? 'font-medium text-foreground' : ''} data-final-estimate data-consultation-id={item.id} title={amountToShow > 0 ? '최종 견적가' : '견적 미정'}>{finalAmountDisplay}</span>
+        <span className={amountToShow > 0 ? 'font-semibold text-primary' : ''} data-final-estimate data-consultation-id={item.id} title={amountToShow > 0 ? '최종 견적가' : '견적 미정'}>{finalAmountDisplay}</span>
       </div>
 
       {/* 3행: [골든타임 배지] | [인입일] | [미갱신 D+n] | [요청일자] — 슬림 한 줄, 방치 기간 강조 */}
@@ -1195,14 +1205,17 @@ export default function ConsultationManagement() {
       if (dateRange === '1y') return t >= cut1y
       return true
     }
-    const q = searchQuery.trim().toLowerCase()
+    const q = (searchQuery ?? '').trim().toLowerCase()
     const qDigits = q.replace(/\D/g, '')
-    const matchSearch = (l: Lead) =>
-      !q ||
-      (l.company || '').toLowerCase().includes(q) ||
-      (l.displayName || '').toLowerCase().includes(q) ||
-      (l.contact || '').replace(/\D/g, '').includes(qDigits) ||
-      (qDigits.length === 4 && (l.contact || '').replace(/\D/g, '').endsWith(qDigits))
+    const matchSearch = (l: Lead) => {
+      if (!q) return true
+      const company = (l.company ?? '').toLowerCase()
+      const displayName = (l.displayName ?? '').toLowerCase()
+      const name = (l.name ?? '').toLowerCase()
+      const projectName = (l.projectName ?? '').toLowerCase()
+      const contactDigits = (l.contact ?? '').replace(/\D/g, '')
+      return company.includes(q) || displayName.includes(q) || name.includes(q) || projectName.includes(q) || (qDigits.length > 0 && contactDigits.includes(qDigits)) || (qDigits.length === 4 && contactDigits.endsWith(qDigits))
+    }
     const base = leads.filter((l) => inRange(l) && matchSearch(l))
     const totalValid = base.filter((l) => l.status !== '무효').length
     const successCount = base.filter((l) => l.workflowStage === '시공완료' && l.status !== '거절' && l.status !== '무효').length
@@ -1227,14 +1240,17 @@ export default function ConsultationManagement() {
       if (dateRange === '1y') return t >= cut1y
       return true
     }
-    const q = searchQuery.trim().toLowerCase()
+    const q = (searchQuery ?? '').trim().toLowerCase()
     const qDigits = q.replace(/\D/g, '')
-    const matchSearch = (l: Lead) =>
-      !q ||
-      (l.company || '').toLowerCase().includes(q) ||
-      (l.displayName || '').toLowerCase().includes(q) ||
-      (l.contact || '').replace(/\D/g, '').includes(qDigits) ||
-      (qDigits.length === 4 && (l.contact || '').replace(/\D/g, '').endsWith(qDigits))
+    const matchSearch = (l: Lead) => {
+      if (!q) return true
+      const company = (l.company ?? '').toLowerCase()
+      const displayName = (l.displayName ?? '').toLowerCase()
+      const name = (l.name ?? '').toLowerCase()
+      const projectName = (l.projectName ?? '').toLowerCase()
+      const contactDigits = (l.contact ?? '').replace(/\D/g, '')
+      return company.includes(q) || displayName.includes(q) || name.includes(q) || projectName.includes(q) || (qDigits.length > 0 && contactDigits.includes(qDigits)) || (qDigits.length === 4 && contactDigits.endsWith(qDigits))
+    }
     const base = leads.filter((l) => inRange(l) && matchSearch(l))
     const active = base.filter((l) => !isEnded(l))
     const completedCount = base.filter((l) => l.workflowStage === '시공완료' && l.status !== '거절' && l.status !== '무효').length
@@ -1268,14 +1284,24 @@ export default function ConsultationManagement() {
       if (dateRange === '1y') return t >= cut1y
       return true
     }
-    const q = searchQuery.trim().toLowerCase()
+    const q = (searchQuery ?? '').trim().toLowerCase()
     const qDigits = q.replace(/\D/g, '')
-    const matchSearch = (l: Lead) =>
-      !q ||
-      (l.company || '').toLowerCase().includes(q) ||
-      (l.displayName || '').toLowerCase().includes(q) ||
-      (l.contact || '').replace(/\D/g, '').includes(qDigits) ||
-      (qDigits.length === 4 && (l.contact || '').replace(/\D/g, '').endsWith(qDigits))
+    const matchSearch = (l: Lead) => {
+      if (!q) return true
+      const company = (l.company ?? '').toLowerCase()
+      const displayName = (l.displayName ?? '').toLowerCase()
+      const name = (l.name ?? '').toLowerCase()
+      const projectName = (l.projectName ?? '').toLowerCase()
+      const contactDigits = (l.contact ?? '').replace(/\D/g, '')
+      return (
+        company.includes(q) ||
+        displayName.includes(q) ||
+        name.includes(q) ||
+        projectName.includes(q) ||
+        (qDigits.length > 0 && contactDigits.includes(qDigits)) ||
+        (qDigits.length === 4 && contactDigits.endsWith(qDigits))
+      )
+    }
     let list = leads.filter((l) => inRange(l) && matchSearch(l))
     if (listTab === '종료') list = list.filter((l) => l.workflowStage === '시공완료' && l.status !== '거절' && l.status !== '무효')
     else if (listTab === '거절') list = list.filter((l) => l.status === '거절')
@@ -1288,13 +1314,14 @@ export default function ConsultationManagement() {
       // 전체: 활성 전부(미처리+견적중+진행중+AS대기 등) 그대로
     }
     if (sortByNeglect) {
+      // 미갱신일이 짧은 것(최근 갱신)부터 위로 — 구글 시트 갱신일(sheet_update_date) 우선
       return [...list].sort((a, b) => {
-        const da = getNeglectDays(a.updateDate)
-        const db = getNeglectDays(b.updateDate)
+        const da = getNeglectDays(a.sheetUpdateDate ?? a.updateDate)
+        const db = getNeglectDays(b.sheetUpdateDate ?? b.updateDate)
         if (da < 0 && db < 0) return 0
         if (da < 0) return 1
         if (db < 0) return -1
-        return db - da
+        return da - db
       })
     }
     return [...list].sort((a, b) => {
@@ -1312,6 +1339,16 @@ export default function ConsultationManagement() {
       setSelectedLead(null)
     }
   }, [listTab])
+
+  /** 검색/기간 필터 변경 시: 현재 선택이 필터 결과에 없으면 첫 번째 결과로 선택 (검색 시 우측 패널이 결과와 맞도록) */
+  useEffect(() => {
+    setSelectedLead((current) => {
+      if (!current) return filteredLeads.length > 0 ? filteredLeads[0].id : null
+      const inList = filteredLeads.some((l) => l.id === current)
+      if (inList) return current
+      return filteredLeads.length > 0 ? filteredLeads[0].id : null
+    })
+  }, [filteredLeads])
 
   const totalPages = Math.max(1, Math.ceil(filteredLeads.length / LIST_PAGE_SIZE))
   const paginatedLeads = useMemo(
@@ -1388,9 +1425,9 @@ export default function ConsultationManagement() {
     setIsSubmitting(true)
     try {
       const normalizedContact = normalizeContactForSync(contact)
-      const sameContactLeads = leads.filter(
-        (l) => normalizeContactForSync(l.contact) === normalizedContact
-      )
+      const sameContactLeads = isValidContactForSameCustomer(contact)
+        ? leads.filter((l) => normalizeContactForSync(l.contact) === normalizedContact)
+        : []
       const formTier = getValidCustomerTier(form.customerTier)
       const resolvedTier =
         sameContactLeads.length > 0
@@ -1699,14 +1736,16 @@ export default function ConsultationManagement() {
     }
   }
 
+  const validIndustryValues = CONSULTATION_INDUSTRY_OPTIONS.map((o) => o.value)
   const handleEditClick = (leadId: string) => {
     const lead = leads.find((l) => l.id === leadId)
     if (!lead) return
+    const industryVal = lead.industry && validIndustryValues.includes(lead.industry as (typeof validIndustryValues)[number]) ? lead.industry : '기타'
     setEditForm({
       company: lead.company || '',
       name: lead.name || '',
       region: lead.region || '',
-      industry: lead.industry || '',
+      industry: industryVal,
       contact: lead.contact || '',
       source: lead.source?.trim() || '채널톡',
       google_chat_url: lead.google_chat_url?.trim() ?? '',
@@ -1727,7 +1766,7 @@ export default function ConsultationManagement() {
     const name = editForm.name.trim()
     const contact = editForm.contact.trim()
     const region = editForm.region.trim()
-    const industry = editForm.industry || ''
+    const industry = (editForm.industry && validIndustryValues.includes(editForm.industry as (typeof validIndustryValues)[number]) ? editForm.industry : '기타').trim()
     const inboundDate = editForm.inboundDate.trim().slice(0, 10)
     const requiredDate = editForm.requiredDate.trim().slice(0, 10)
     const painPoint = editForm.painPoint.trim()
@@ -1767,11 +1806,16 @@ export default function ConsultationManagement() {
       google_chat_pending: false,
     }
     const normalizedContact = normalizeContactForSync(contact)
-    const sameContactLeadIds = leads
-      .filter(
-        (l) => l.id !== editModalLeadId && normalizeContactForSync(l.contact) === normalizedContact
-      )
-      .map((l) => l.id)
+    const sameContactLeadIds = isValidContactForSameCustomer(contact)
+      ? leads
+          .filter(
+            (l) =>
+              l.id !== editModalLeadId &&
+              isValidContactForSameCustomer(l.contact) &&
+              normalizeContactForSync(l.contact) === normalizedContact
+          )
+          .map((l) => l.id)
+      : []
     const originalSameContactLeads = sameContactLeadIds.map((id) => leads.find((l) => l.id === id)!)
 
     setLeads((prev) =>
@@ -1801,9 +1845,11 @@ export default function ConsultationManagement() {
       if (googleChatUrlVal) updatePayload.link = googleChatUrlVal
       const { error } = await supabase
         .from('consultations')
-        .update(updatePayload)
+        .update(updatePayload as Record<string, Json | string | null>)
         .eq('id', editModalLeadId)
       if (error) throw error
+
+      await fetchLeads()
 
       for (const otherId of sameContactLeadIds) {
         const other = leads.find((l) => l.id === otherId)
@@ -1858,7 +1904,7 @@ export default function ConsultationManagement() {
     try {
       const { error } = await supabase
         .from('consultations')
-        .update({ metadata: nextMeta as Json, expected_revenue: displayAmount })
+        .update({ metadata: nextMeta as Json, estimate_amount: displayAmount })
         .eq('id', leadId)
       if (error) throw error
       const actor = (lead.name || '직원').trim() || '직원'
@@ -2294,7 +2340,7 @@ export default function ConsultationManagement() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- consultation_estimate_files 신규 테이블
     ;(supabase as any)
       .from('consultation_estimate_files')
-      .select('id, consultation_id, project_name, storage_path, file_name, file_type, created_at, upload_type')
+      .select('id, consultation_id, project_name, storage_path, file_name, file_type, created_at, upload_type, quote_date')
       .eq('consultation_id', selectedLead)
       .order('created_at', { ascending: false })
       .then(({ data, error }: { data: ConsultationEstimateFile[] | null; error: Error | null }) => {
@@ -2377,7 +2423,7 @@ export default function ConsultationManagement() {
       return
     }
     const digits = phone.replace(/\D/g, '')
-    if (digits.length < 4) {
+    if (!isValidContactForSameCustomer(phone)) {
       setSamePhoneConsultations([])
       return
     }
@@ -2469,7 +2515,54 @@ export default function ConsultationManagement() {
     if (idsToDelete.length === 0) {
       setSelectedEstimateIds([])
       setEstimateDeleteConfirmOpen(false)
-      toast.error('선택한 견적이 현재 목록에 없습니다. 상담을 바꾸었거나 이미 삭제되었을 수 있습니다.')
+      toast.warning('선택한 견적이 현재 목록에 없습니다. 이미 삭제되었을 수 있어 목록을 갱신합니다.')
+      // 이미 삭제된 상태일 수 있으므로 남은 견적 기준으로 DB·카드 금액 동기화
+      try {
+        const { data: remaining } = await supabase
+          .from('estimates')
+          .select('id, consultation_id, payload, final_proposal_data, supply_total, vat, grand_total, approved_at, created_at')
+          .eq('consultation_id', consultationId)
+          .eq('is_visible', true)
+          .order('created_at', { ascending: false })
+        const list = (remaining ?? []) as Array<{ id: string; consultation_id: string; payload: Record<string, unknown>; final_proposal_data: Record<string, unknown> | null; supply_total: number; vat: number; grand_total: number; approved_at: string | null; created_at: string }>
+        setEstimatesList(list)
+        const approvedOnly = list.filter((e) => e.approved_at != null).sort((a, b) => new Date(b.approved_at ?? b.created_at).getTime() - new Date(a.approved_at ?? a.created_at).getTime())
+        const newHistory: EstimateHistoryItem[] = approvedOnly.map((e, i) => ({
+          version: i + 1,
+          issued_at: (e.approved_at ?? e.created_at).toString().slice(0, 10),
+          amount: Number(e.grand_total ?? 0),
+          summary: undefined,
+          is_final: i === 0,
+        }))
+        const newDisplayAmount = getDisplayAmount(newHistory, 0)
+        const newMeta = { ...(selectedLeadData.metadata ?? {}), estimate_history: newHistory }
+        if (list.length === 0) {
+          delete (newMeta as Record<string, unknown>).final_amount
+          delete (newMeta as Record<string, unknown>).final_estimate_id
+          ;(newMeta as Record<string, unknown>).workflow_stage = '상담접수'
+        }
+        const updatePayload: { metadata: Json; estimate_amount: number; status?: Lead['status'] } = { metadata: newMeta as unknown as Json, estimate_amount: newDisplayAmount }
+        if (list.length === 0) updatePayload.status = '상담중'
+        await supabase.from('consultations').update(updatePayload).eq('id', consultationId)
+        delete pendingEstimateAmountRef.current[consultationId]
+        setLeads((prev) =>
+          prev.map((l) =>
+            l.id !== consultationId
+              ? l
+              : {
+                  ...l,
+                  metadata: newMeta,
+                  estimateHistory: newHistory,
+                  displayAmount: newDisplayAmount,
+                  expectedRevenue: newDisplayAmount,
+                  finalAmount: approvedOnly.length > 0 ? newDisplayAmount : null,
+                  ...(list.length === 0 ? { status: '상담중' as const, workflowStage: '상담접수' as const } : {}),
+                }
+          )
+        )
+      } catch (_e) {
+        // 동기화 실패해도 무시
+      }
       return
     }
     setEstimateDeleting(true)
@@ -2501,16 +2594,15 @@ export default function ConsultationManagement() {
       const newMeta = { ...(selectedLeadData.metadata ?? {}), estimate_history: newHistory }
       const hadFinalId = selectedLeadData.metadata?.final_estimate_id as string | undefined
       const deletedFinal = hadFinalId && idsToDelete.includes(hadFinalId)
-      if (deletedFinal) {
+      if (deletedFinal || list.length === 0) {
         delete (newMeta as Record<string, unknown>).final_amount
         delete (newMeta as Record<string, unknown>).final_estimate_id
       }
-      const updatePayload: { metadata: Json; expected_revenue?: number; status?: Lead['status'] } = { metadata: newMeta as unknown as Json, expected_revenue: newDisplayAmount }
-      if (list.length === 0) updatePayload.status = '상담중'
+      if (list.length === 0) {
+        (newMeta as Record<string, unknown>).workflow_stage = '상담접수'
+      }
 
-      const { error: updateError } = await supabase.from('consultations').update(updatePayload).eq('id', consultationId)
-      if (updateError) throw updateError
-
+      delete pendingEstimateAmountRef.current[consultationId]
       setLeads((prev) =>
         prev.map((l) =>
           l.id !== consultationId
@@ -2521,21 +2613,94 @@ export default function ConsultationManagement() {
                 estimateHistory: newHistory,
                 displayAmount: newDisplayAmount,
                 expectedRevenue: newDisplayAmount,
-                ...(list.length === 0 ? { status: '상담중' as const } : {}),
-                ...(deletedFinal ? { finalAmount: null } : {}),
+                ...(list.length === 0 ? { status: '상담중' as const, workflowStage: '상담접수' as const } : {}),
+                ...(deletedFinal || list.length === 0 ? { finalAmount: null } : {}),
               }
         )
       )
       setSelectedEstimateIds([])
       setEstimateDeleteConfirmOpen(false)
-      toast.success(`${idsToDelete.length}건의 견적이 삭제되었습니다.`)
+
+      const updatePayload: { metadata: Json; estimate_amount: number; status?: Lead['status'] } = {
+        metadata: newMeta as unknown as Json,
+        estimate_amount: newDisplayAmount,
+      }
+      if (list.length === 0) updatePayload.status = '상담중'
+
+      const { error: updateError } = await supabase.from('consultations').update(updatePayload).eq('id', consultationId)
+      if (updateError) {
+        console.error('견적 삭제 후 consultations 갱신 실패:', updateError)
+        toast.warning('견적은 삭제되었으나 카드 금액 갱신에 실패했습니다. 새로고침해 주세요.')
+      } else {
+        toast.success(`${idsToDelete.length}건의 견적이 삭제되었습니다.`)
+      }
     } catch (err) {
-      console.error(err)
+      console.error('견적 삭제 실패:', err)
       toast.error('견적 삭제에 실패했습니다.')
     } finally {
       setEstimateDeleting(false)
     }
   }, [selectedLeadData, selectedEstimateIds, estimatesList])
+
+  /** 기존 견적 이력에서 선택한 견적을 이 상담의 최종 견적로 연결 — 카드 최종 견적가에 반영 */
+  const handleSetFinalEstimate = useCallback(
+    async (estimateId: string) => {
+      if (!selectedLeadData) return
+      const consultationId = selectedLeadData.id
+      const est = estimatesList.find((e) => e.id === estimateId && e.consultation_id === consultationId)
+      if (!est) {
+        toast.error('해당 견적을 찾을 수 없습니다.')
+        return
+      }
+      const grandTotal = Number(est.grand_total ?? 0)
+      const approvedOnly = estimatesList
+        .filter((e) => e.approved_at != null)
+        .sort((a, b) => new Date(b.approved_at ?? b.created_at).getTime() - new Date(a.approved_at ?? a.created_at).getTime())
+      const newHistory: EstimateHistoryItem[] = approvedOnly.map((e, i) => ({
+        version: i + 1,
+        issued_at: (e.approved_at ?? e.created_at).toString().slice(0, 10),
+        amount: Number(e.grand_total ?? 0),
+        summary: undefined,
+        is_final: e.id === estimateId,
+      }))
+      const newMeta = {
+        ...(selectedLeadData.metadata ?? {}),
+        final_estimate_id: estimateId,
+        final_amount: grandTotal,
+        estimate_history: newHistory,
+      } as Record<string, unknown>
+      try {
+        const { error } = await supabase
+          .from('consultations')
+          .update({
+            metadata: newMeta as unknown as Json,
+            estimate_amount: grandTotal,
+          })
+          .eq('id', consultationId)
+        if (error) throw error
+        setLeads((prev) =>
+          prev.map((l) =>
+            l.id !== consultationId
+              ? l
+              : {
+                  ...l,
+                  metadata: newMeta,
+                  estimateHistory: newHistory,
+                  displayAmount: grandTotal,
+                  expectedRevenue: grandTotal,
+                  finalAmount: grandTotal,
+                }
+          )
+        )
+        delete pendingEstimateAmountRef.current[consultationId]
+        toast.success(`해당 견적을 최종 견적로 지정했습니다. (${grandTotal.toLocaleString()}원)`)
+      } catch (err) {
+        console.error('최종 견적 지정 실패:', err)
+        toast.error('최종 견적 지정에 실패했습니다.')
+      }
+    },
+    [selectedLeadData, estimatesList]
+  )
 
   /** 견적서 승인 시 estimates 테이블 저장 + metadata.estimate_history 동기화 + 시스템 로그. existingEstimateId 있으면 해당 행을 확정(update), 없으면 insert */
   const handleEstimateApproved = async (
@@ -2791,15 +2956,6 @@ export default function ConsultationManagement() {
           <h1 className="text-xl font-bold text-foreground">상담 관리</h1>
           <div className="flex items-center gap-2">
             <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
-              <DialogTrigger asChild>
-                <Button
-                  variant="default"
-                  className="gap-1.5 h-9 px-4 text-sm font-semibold bg-primary"
-                >
-                  <Plus className="h-4 w-4" />
-                  신규 등록
-                </Button>
-              </DialogTrigger>
               <DialogContent className="sm:max-w-[480px] max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
                   <DialogTitle>새로운 상담 등록</DialogTitle>
@@ -3223,7 +3379,7 @@ export default function ConsultationManagement() {
                 </div>
                 <div>
                   <label className="text-sm font-medium text-foreground mb-1.5 block">업종</label>
-                  <select value={editForm.industry} onChange={(e) => setEditForm((f) => ({ ...f, industry: e.target.value }))} className={`w-full rounded-md border border-input bg-background px-3 ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${INPUT_CLASS}`}>
+                  <select value={editForm.industry && validIndustryValues.includes(editForm.industry as (typeof validIndustryValues)[number]) ? editForm.industry : '기타'} onChange={(e) => setEditForm((f) => ({ ...f, industry: e.target.value }))} className={`w-full rounded-md border border-input bg-background px-3 ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${INPUT_CLASS}`}>
                     {CONSULTATION_INDUSTRY_OPTIONS.map((opt) => (
                       <option key={opt.value} value={opt.value}>{opt.label}</option>
                     ))}
@@ -3320,7 +3476,7 @@ export default function ConsultationManagement() {
                 className="h-9 text-xs shrink-0"
                 onClick={() => { setSortByNeglect((v) => !v); setListPage(0) }}
               >
-                오래 방치된 순
+                최근업데이트순
               </Button>
             </div>
 
@@ -3578,7 +3734,7 @@ export default function ConsultationManagement() {
                           // eslint-disable-next-line @typescript-eslint/no-explicit-any -- consultation_estimate_files 신규 테이블
                           ;(supabase as any)
                             .from('consultation_estimate_files')
-                            .select('id, consultation_id, project_name, storage_path, file_name, file_type, created_at, upload_type')
+                            .select('id, consultation_id, project_name, storage_path, file_name, file_type, created_at, upload_type, quote_date')
                             .eq('consultation_id', selectedLeadData.id)
                             .order('created_at', { ascending: false })
                             .then(({ data }: { data: ConsultationEstimateFile[] | null }) => {
@@ -3664,6 +3820,7 @@ export default function ConsultationManagement() {
                                 const isApproved = !!est.approved_at
                                 const isSelected = selectedEstimateIds.includes(est.id)
                                 const isArchive = new Date(est.created_at).getTime() < archiveCutoff
+                                const isFinalEstimate = selectedLeadData?.metadata?.final_estimate_id === est.id
                                 return (
                                   <li
                                     key={est.id}
@@ -3671,12 +3828,18 @@ export default function ConsultationManagement() {
                                       'rounded-lg border px-3 py-2 text-sm flex flex-wrap items-center gap-2 transition-colors',
                                       isArchive
                                         ? 'border-border/60 bg-slate-100/80 dark:bg-slate-800/40 text-muted-foreground'
-                                        : 'border-border bg-muted/30'
+                                        : 'border-border bg-muted/30',
+                                      isFinalEstimate && 'ring-1 ring-primary border-primary/50'
                                     )}
                                   >
                                     {isArchive && (
                                       <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200/80 dark:bg-slate-700/60 text-slate-600 dark:text-slate-400 shrink-0">
                                         아카이브
+                                      </span>
+                                    )}
+                                    {isFinalEstimate && (
+                                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary text-primary-foreground font-semibold shrink-0" title="이 상담의 최종 견적">
+                                        최종
                                       </span>
                                     )}
                                     <label className="flex items-center gap-1.5 shrink-0 cursor-pointer">
@@ -3693,7 +3856,14 @@ export default function ConsultationManagement() {
                                       <span className="sr-only">선택</span>
                                     </label>
                                     <div className="flex-1 min-w-0">
-                                      <p className="font-medium text-foreground">{new Date(est.created_at).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' })}</p>
+                                      <p className="font-medium text-foreground">
+                                        {(() => {
+                                          const raw = (est.payload?.quoteDate ?? est.final_proposal_data?.quoteDate) as string | undefined
+                                          const quoteDateStr = typeof raw === 'string' && raw.trim() ? raw.trim().slice(0, 16).replace(' ', 'T') : ''
+                                          const dateToShow = quoteDateStr && !Number.isNaN(Date.parse(quoteDateStr)) ? new Date(quoteDateStr) : new Date(est.created_at)
+                                          return dateToShow.toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' })
+                                        })()}
+                                      </p>
                                       <button
                                         type="button"
                                         className="text-muted-foreground cursor-pointer hover:text-primary hover:underline text-left"
@@ -3706,6 +3876,18 @@ export default function ConsultationManagement() {
                                     <div className="flex items-center gap-1.5 shrink-0">
                                       {isApproved ? (
                                         <>
+                                          {!isFinalEstimate && (
+                                            <Button
+                                              type="button"
+                                              variant="outline"
+                                              size="sm"
+                                              className="gap-1 text-primary border-primary/50 hover:bg-primary/10"
+                                              onClick={() => void handleSetFinalEstimate(est.id)}
+                                              title="이 견적을 상담 카드의 최종 견적가로 연결"
+                                            >
+                                              최종 견적로 지정
+                                            </Button>
+                                          )}
                                           <Button
                                             type="button"
                                             variant="outline"

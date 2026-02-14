@@ -86,3 +86,9 @@ FindGagu OS: Project Soul (ivory-os) 1. Captain & Partner - Captain: 대표님 (
 - **2행 맨 오른쪽:** "견적 미정" 자리에 최종 견적 금액 표시. 우선순위: pending(견적서로 저장 직후) → finalAmount → displayAmount → expectedRevenue. 없으면 "견적 미정".
 - **EstimateFilesGallery:** [견적서로 저장] 성공 시 onUploadComplete({ estimateAmount: finalAmount }). ConsultationManagement에서 pendingEstimateAmountRef·낙관적 setLeads·fetchLeads 병합(pending 보존).
 - **ConsultationListItem:** getPendingEstimateAmount(consultationId) prop, data-final-estimate·title(최종 견적가/견적 미정). 세이브 포인트: git tag save-20260214-card-final-estimate.
+
+21. 2026-02-14 반영 (구글 시트 갱신일 기준 '오늘 갱신'·미갱신 D-Day — 세이브 포인트)
+- **갱신 표시·정렬:** '오늘 갱신'·미갱신 D+n·최근업데이트순 정렬은 **구글 시트 최신 업데이트일(sheet_update_date)** 우선, 없으면 update_date 사용.
+- **Lead.sheetUpdateDate:** metadata.sheet_update_date(YYYY-MM-DD) 매핑. mapConsultationRowToLead에서 sheet_update_date 파싱·반환.
+- **Supabase RPC:** update_multiple_consultations_from_sheet에서 row별 sheet_update_date 수신 → metadata.sheet_update_date 저장(INSERT/UPDATE 시 metadata 병합). 마이그레이션 20260214140000_sheet_update_date_in_metadata.
+- **GAS:** syncAllDataBatch 시 각 row에 sheet_update_date(D열 YYYY-MM-DD) 전송. gas/Code.gs rows.push에 sheet_update_date 추가. 세이브 포인트: git tag save-20260214-sheet-update-date.

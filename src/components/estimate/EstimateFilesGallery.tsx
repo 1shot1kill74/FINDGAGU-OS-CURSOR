@@ -3,7 +3,7 @@
  * + 데이터 마이그레이션: AI 분석 → 확인용 미리보기 → products/estimates 저장
  * Storage: estimate-files/{consultation_id}/{timestamp}_{filename}
  */
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { FileText, Image, Plus, Loader2, CheckCircle, AlertCircle, Trash2, Pin } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -66,13 +66,22 @@ function FileListCard({
   onViewOriginal: () => void
   onDelete: (e: React.MouseEvent) => void
 }) {
-  const dateStr = new Date(file.created_at).toLocaleString('ko-KR', {
-    year: '2-digit',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
+  const dateStr =
+    file.upload_type === 'estimates' && file.quote_date && /^\d{4}-\d{2}-\d{2}$/.test(file.quote_date)
+      ? new Date(file.quote_date + 'T00:00:00').toLocaleString('ko-KR', {
+          year: '2-digit',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+        })
+      : new Date(file.created_at).toLocaleString('ko-KR', {
+          year: '2-digit',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+        })
   return (
     <div className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2.5 h-[52px] shadow-sm">
       <div className="min-w-0 flex-1 flex flex-col justify-center">
@@ -122,6 +131,8 @@ export function EstimateFilesGallery({
   const [previewCategory, setPreviewCategory] = useState<FileCategory | null>(null)
   const [previewVendor, setPreviewVendor] = useState<ParsedVendorPriceItem[] | null>(null)
   const [previewEstimate, setPreviewEstimate] = useState<ParsedEstimateFromPDF | null>(null)
+  /** AI 분석 결과 저장 전 수정용 — previewEstimate와 동기화 후 테이블에서 편집 */
+  const [editableEstimate, setEditableEstimate] = useState<ParsedEstimateFromPDF | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
@@ -385,12 +396,22 @@ export function EstimateFilesGallery({
     }
   }
 
+  /** AI 분석 결과가 바뀌면 편집용 복사본 동기화 */
+  useEffect(() => {
+    if (previewEstimate) {
+      setEditableEstimate(JSON.parse(JSON.stringify(previewEstimate)))
+    } else {
+      setEditableEstimate(null)
+    }
+  }, [previewEstimate])
+
   const closePreview = () => {
     setPreviewOpen(false)
     setPreviewFile(null)
     setPreviewCategory(null)
     setPreviewVendor(null)
     setPreviewEstimate(null)
+    setEditableEstimate(null)
     setPreviewError(null)
   }
 
@@ -521,10 +542,11 @@ export function EstimateFilesGallery({
   }
 
   const handleSaveEstimate = async () => {
-    if (!previewEstimate || !previewFile) return
+    const toSave = editableEstimate ?? previewEstimate
+    if (!toSave || !previewFile) return
     setSaving(true)
     try {
-      const { siteName, region, industry, quoteDate, recipientContact, rows, customer_name, customer_phone, total_amount } = previewEstimate
+      const { siteName, region, industry, quoteDate, recipientContact, rows, customer_name, customer_phone, total_amount } = toSave
       const quoteDateForPayload =
         quoteDate && /^\d{4}-\d{2}-\d{2}$/.test(quoteDate)
           ? `${quoteDate} 00:00`
@@ -563,8 +585,16 @@ export function EstimateFilesGallery({
       const { data: cur } = await supabase.from('consultations').select('metadata').eq('id', consultationId).single()
       const meta = (cur as { metadata?: Record<string, unknown> } | null)?.metadata ?? {}
       const metaObj = typeof meta === 'object' && meta !== null ? meta : {}
-      const nextMeta = { ...metaObj, region: region || metaObj.region, industry: industry || metaObj.industry } as Json
-      await supabase.from('consultations').update({ estimate_amount: finalAmount, status: '견적발송', metadata: nextMeta }).eq('id', consultationId)
+      const nextMeta = { ...metaObj } as Json
+      const recognizedPhone = (customer_phone ?? recipientContact ?? '').trim().replace(/\s/g, '')
+      const hasValidPhone = recognizedPhone.length >= 9 && /\d/.test(recognizedPhone)
+      const updatePayload: Record<string, unknown> = {
+        estimate_amount: finalAmount,
+        status: '견적발송',
+        metadata: nextMeta,
+        ...(hasValidPhone ? { customer_phone: recognizedPhone } : {}),
+      }
+      await supabase.from('consultations').update(updatePayload as Record<string, unknown>).eq('id', consultationId)
 
       // 판매 단가표(products)에 판매단가로 반영 (원가는 역산해서 수익률 판단용)
       const productRows: { name: string; supply_price: number; spec: string | null; color: string | null }[] = []
@@ -592,7 +622,8 @@ export function EstimateFilesGallery({
         await supabase.from('products').upsert(normalized, { onConflict: 'name,spec,color', ignoreDuplicates: false })
       }
 
-      await uploadAndRegister(previewFile, 'estimates')
+      const quoteDateOnly = quoteDate && /^\d{4}-\d{2}-\d{2}$/.test(quoteDate) ? quoteDate : undefined
+      await uploadAndRegister(previewFile, 'estimates', quoteDateOnly)
       toast.success(
         productRows.length > 0
           ? '견적서가 등록되었고, Products에도 반영되었습니다.'
@@ -607,7 +638,7 @@ export function EstimateFilesGallery({
     }
   }
 
-  const uploadAndRegister = async (file: File, uploadType: 'estimates' | 'vendor_price') => {
+  const uploadAndRegister = async (file: File, uploadType: 'estimates' | 'vendor_price', quoteDate?: string) => {
     const timestamp = Date.now()
     const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
     const storagePath = `${consultationId}/${timestamp}_${safeName}`
@@ -620,6 +651,7 @@ export function EstimateFilesGallery({
       .upload(storagePath, file, { contentType, upsert: false })
     if (uploadError) throw uploadError
 
+    const quoteDateVal = uploadType === 'estimates' && quoteDate && /^\d{4}-\d{2}-\d{2}$/.test(quoteDate) ? quoteDate : null
     // @ts-expect-error consultation_estimate_files 신규 테이블
     const { error: insertError } = await supabase.from('consultation_estimate_files').insert({
       consultation_id: consultationId,
@@ -628,6 +660,7 @@ export function EstimateFilesGallery({
       file_name: file.name,
       file_type: fileType,
       upload_type: uploadType,
+      ...(quoteDateVal != null ? { quote_date: quoteDateVal } : {}),
     })
     if (insertError) throw insertError
 
@@ -834,62 +867,110 @@ export function EstimateFilesGallery({
               </div>
             </div>
           )}
-          {!analyzing && !previewError && previewEstimate && (
-            <div className="space-y-3">
-              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-500/10 text-blue-800 dark:text-blue-200">
-                <CheckCircle className="h-4 w-4 shrink-0" />
-                <span className="text-sm">견적서 — 단가는 공급가로, 견적 이력과 Products(판매 단가표)에 저장됩니다.</span>
+          {!analyzing && !previewError && previewEstimate && (() => {
+            const display = editableEstimate ?? previewEstimate
+            const updateRow = (rowIndex: number, field: keyof EstimateRow, value: string) => {
+              setEditableEstimate((prev) => {
+                if (!prev) return null
+                const next = { ...prev, rows: prev.rows.map((r, i) => (i === rowIndex ? { ...r, [field]: value } : r)) }
+                return next
+              })
+            }
+            return (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-500/10 text-blue-800 dark:text-blue-200">
+                  <CheckCircle className="h-4 w-4 shrink-0" />
+                  <span className="text-sm">견적서 — 저장 전에 품목/규격/수량/단가를 수정할 수 있습니다. (예: E→ㅌ 등 OCR 오류 수정)</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div>
+                    <span className="text-muted-foreground">고객/현장:</span>{' '}
+                    <Input
+                      className="mt-0.5 h-8 max-w-xs inline-flex"
+                      value={display.customer_name ?? display.siteName ?? ''}
+                      onChange={(e) => setEditableEstimate((prev) => (prev ? { ...prev, customer_name: e.target.value } : null))}
+                    />
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">견적일:</span>{' '}
+                    <Input
+                      className="mt-0.5 h-8 max-w-[140px] inline-flex"
+                      value={display.quoteDate ?? ''}
+                      onChange={(e) => setEditableEstimate((prev) => (prev ? { ...prev, quoteDate: e.target.value } : null))}
+                    />
+                  </div>
+                </div>
+                <div className="border border-border rounded-lg overflow-x-auto max-h-[40vh] overflow-y-auto">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 bg-muted/80">
+                      <tr>
+                        <th className="border-b border-border px-2 py-2 text-left w-8">No</th>
+                        <th className="border-b border-border px-2 py-2 text-left">품목</th>
+                        <th className="border-b border-border px-2 py-2 text-left">규격</th>
+                        <th className="border-b border-border px-2 py-2 text-right">수량</th>
+                        <th className="border-b border-border px-2 py-2 text-right">단가(원)</th>
+                        <th className="border-b border-border px-2 py-2 text-center w-28 print:hidden">표준단가 고정</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {display.rows.map((row, i) => {
+                        const isExcluded = shouldExcludeFromProducts(row.name ?? '')
+                        return (
+                          <tr key={i} className="border-b border-border last:border-0">
+                            <td className="px-2 py-1.5">{row.no}</td>
+                            <td className="px-2 py-1.5">
+                              <Input
+                                className="h-8 text-sm"
+                                value={row.name ?? ''}
+                                onChange={(e) => updateRow(i, 'name', e.target.value)}
+                              />
+                            </td>
+                            <td className="px-2 py-1.5">
+                              <Input
+                                className="h-8 text-sm"
+                                value={row.spec ?? ''}
+                                onChange={(e) => updateRow(i, 'spec', e.target.value)}
+                              />
+                            </td>
+                            <td className="px-2 py-1.5 text-right">
+                              <Input
+                                className="h-8 text-sm text-right"
+                                value={row.qty ?? ''}
+                                onChange={(e) => updateRow(i, 'qty', e.target.value)}
+                              />
+                            </td>
+                            <td className="px-2 py-1.5 text-right">
+                              <Input
+                                className="h-8 text-sm text-right"
+                                value={row.unitPrice ?? ''}
+                                onChange={(e) => updateRow(i, 'unitPrice', e.target.value)}
+                              />
+                            </td>
+                            <td className="px-2 py-1.5 text-center">
+                              {!isExcluded && (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-7 text-xs gap-1"
+                                  disabled={fixingProduct}
+                                  onClick={() => void handleFixStandardPriceEstimate(row as EstimateRow)}
+                                  title="이 항목을 제품 마스터(표준단가표)에 등록/수정"
+                                >
+                                  {fixingProduct ? <Loader2 className="h-3 w-3 animate-spin" /> : <Pin className="h-3 w-3" />}
+                                  표준단가 고정
+                                </Button>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
-              <div className="grid grid-cols-2 gap-2 text-sm">
-                <div><span className="text-muted-foreground">고객/현장:</span> {previewEstimate.customer_name ?? previewEstimate.siteName}</div>
-                <div><span className="text-muted-foreground">견적일:</span> {previewEstimate.quoteDate}</div>
-              </div>
-              <div className="border border-border rounded-lg overflow-x-auto max-h-[40vh] overflow-y-auto">
-                <table className="w-full text-sm">
-                  <thead className="sticky top-0 bg-muted/80">
-                    <tr>
-                      <th className="border-b border-border px-2 py-2 text-left w-8">No</th>
-                      <th className="border-b border-border px-2 py-2 text-left">품목</th>
-                      <th className="border-b border-border px-2 py-2 text-left">규격</th>
-                      <th className="border-b border-border px-2 py-2 text-right">수량</th>
-                      <th className="border-b border-border px-2 py-2 text-right">단가(원)</th>
-                      <th className="border-b border-border px-2 py-2 text-center w-28 print:hidden">표준단가 고정</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {previewEstimate.rows.map((row, i) => {
-                      const isExcluded = shouldExcludeFromProducts(row.name ?? '')
-                      return (
-                        <tr key={i} className="border-b border-border last:border-0">
-                          <td className="px-2 py-1.5">{row.no}</td>
-                          <td className="px-2 py-1.5">{row.name}</td>
-                          <td className="px-2 py-1.5">{row.spec}</td>
-                          <td className="px-2 py-1.5 text-right">{row.qty}</td>
-                          <td className="px-2 py-1.5 text-right">{row.unitPrice}</td>
-                          <td className="px-2 py-1.5 text-center">
-                            {!isExcluded && (
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                className="h-7 text-xs gap-1"
-                                disabled={fixingProduct}
-                                onClick={() => void handleFixStandardPriceEstimate(row as EstimateRow)}
-                                title="이 항목을 제품 마스터(표준단가표)에 등록/수정"
-                              >
-                                {fixingProduct ? <Loader2 className="h-3 w-3 animate-spin" /> : <Pin className="h-3 w-3" />}
-                                표준단가 고정
-                              </Button>
-                            )}
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
+            )
+          })()}
           {!analyzing && !previewError && previewCategory && previewVendor?.length === 0 && !previewEstimate && (
             <p className="text-sm text-muted-foreground py-4">추출된 항목이 없습니다.</p>
           )}
