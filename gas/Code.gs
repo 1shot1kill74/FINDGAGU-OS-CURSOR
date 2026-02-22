@@ -1,7 +1,10 @@
 /**
  * 구글 시트 ↔ Supabase consultations 양방향 실시간 동기화
  *
- * 시트 이름: '상담리스트' (SHEET_NAME)
+ * 구글챗 상담카드 이미지 업로드: GoogleChatCardImage.gs 참조 (메뉴 [구글챗 상담카드]).
+ * 스크립트 속성 추가: CLOUDINARY_CLOUD_NAME, CLOUDINARY_UPLOAD_PRESET
+ *
+ * 시트 이름: '시트1' (SHEET_NAME) — 실제 탭 이름 기준
  * 열 매핑:
  *   A(0): 업체명(프로젝트명) → project_name
  *   B(1): 구글챗/스페이스 링크 → link
@@ -17,7 +20,7 @@
  * 설정: 스크립트 속성에 SUPABASE_URL, SUPABASE_SERVICE_KEY 필수. 웹앱 인증용 SYNC_WEBAPP_TOKEN 권장.
  */
 
-const SHEET_NAME = '상담리스트';
+const SHEET_NAME = '시트1';
 const COL = {
   PROJECT_NAME: 0,
   LINK: 1,
@@ -339,12 +342,14 @@ function onEdit(e) {
       ? toCreatedAtISO(row[COL.START_DATE]) : null;
 
     // 빈 셀은 null로 전달 → RPC가 DB도 null로 동기화 (데이터 일원화)
+    // D열(업데이트일)을 sheet_update_date로 함께 전달 → metadata.sheet_update_date 갱신 (앱 '오늘 갱신' / D-Day 표시)
     var payload = {
       project_name: projectName,
       link: link,
       start_date: startDateStr,
       update_date: updateDateStr,
-      created_at: created_at
+      created_at: created_at,
+      sheet_update_date: updateDateStr
     };
 
     var apiUrl = url.replace(/\/$/, '') + '/rest/v1/rpc/update_single_consultation_from_sheet';

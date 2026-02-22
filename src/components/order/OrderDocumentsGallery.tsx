@@ -3,7 +3,7 @@
  * Supabase Storage 기반 비주얼 갤러리 뷰. 썸네일(또는 타입 아이콘) 표시, 클릭 시 라이트박스 퀵뷰.
  */
 import { useState, useEffect } from 'react'
-import { FileText, Presentation, Ruler, Plus, Loader2, Tag } from 'lucide-react'
+import { FileText, Presentation, Ruler, Tag, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -11,7 +11,6 @@ import { DocumentLightbox, type LightboxSource } from './DocumentLightbox'
 import type { OrderDocument } from '@/types/orderDocument'
 import type { DocumentGalleryItem } from '@/types/orderDocument'
 import { supabase } from '@/lib/supabase'
-import { isValidUUID } from '@/lib/uuid'
 import { toast } from 'sonner'
 
 const ORDER_DOCUMENTS_BUCKET = 'order-documents'
@@ -36,8 +35,8 @@ export function OrderDocumentsGallery({
   onUploadComplete,
 }: OrderDocumentsGalleryProps) {
   const [lightboxSource, setLightboxSource] = useState<LightboxSource | null>(null)
-  const [uploading, setUploading] = useState(false)
   const [thumbUrls, setThumbUrls] = useState<Record<string, string>>({})
+  const [deletingId, setDeletingId] = useState<string | null>(null)
   const [tagEditDoc, setTagEditDoc] = useState<OrderDocument | null>(null)
   const [tagEditValue, setTagEditValue] = useState('')
 
@@ -102,65 +101,30 @@ export function OrderDocumentsGallery({
     }
   }
 
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    const ext = file.name.split('.').pop()?.toLowerCase()
-    const fileType = ext === 'pdf' ? 'pdf' : ext === 'ppt' ? 'ppt' : ext === 'pptx' ? 'pptx' : null
-    if (!fileType) {
-      return
+  const handleDelete = async (e: React.MouseEvent, doc: OrderDocument) => {
+    e.stopPropagation()
+    if (!confirm(`"${doc.file_name}"을(를) 삭제할까요? Storage 파일과 DB 기록이 모두 삭제됩니다.`)) return
+    setDeletingId(doc.id)
+    try {
+      const pathsToRemove: string[] = [doc.storage_path]
+      if (doc.thumbnail_path && doc.thumbnail_path !== doc.storage_path) {
+        pathsToRemove.push(doc.thumbnail_path)
+      }
+      const { error: storageErr } = await supabase.storage.from(ORDER_DOCUMENTS_BUCKET).remove(pathsToRemove)
+      if (storageErr) console.warn('Storage 삭제:', storageErr)
+      const { error: dbErr } = await supabase.from('order_documents').delete().eq('id', doc.id)
+      if (dbErr) throw dbErr
+      toast.success('삭제되었습니다.')
+      onUploadComplete?.()
+    } catch (err) {
+      toast.error((err as Error).message ?? '삭제 실패')
+    } finally {
+      setDeletingId(null)
     }
-    setUploading(true)
-    const timestamp = Date.now()
-    const storagePath = `${consultationId}/${timestamp}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`
-    const { error: uploadError } = await supabase.storage
-      .from(ORDER_DOCUMENTS_BUCKET)
-      .upload(storagePath, file, {
-        contentType: file.type,
-        upsert: false,
-      })
-    if (uploadError) {
-      setUploading(false)
-      return
-    }
-    if (!isValidUUID(consultationId)) {
-      toast.error('유효한 상담 ID가 아니어서 등록할 수 없습니다.')
-      setUploading(false)
-      return
-    }
-    const { error: insertError } = await supabase.from('order_documents').insert({
-      consultation_id: consultationId,
-      storage_path: storagePath,
-      file_name: file.name,
-      file_type: fileType,
-      thumbnail_path: null,
-      product_tags: [],
-    })
-    setUploading(false)
-    e.target.value = ''
-    if (!insertError) onUploadComplete?.()
   }
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between gap-2">
-        <h4 className="text-sm font-semibold text-foreground">발주서 · 실측 자료 (갤러리)</h4>
-        <label className="cursor-pointer">
-          <input
-            type="file"
-            accept=".pdf,.ppt,.pptx,application/pdf,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation"
-            className="sr-only"
-            onChange={handleFileSelect}
-            disabled={uploading}
-          />
-          <Button type="button" variant="outline" size="sm" className="gap-1.5 h-8" asChild>
-            <span>
-              {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-              발주서 추가
-            </span>
-          </Button>
-        </label>
-      </div>
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
         {items.map((item, idx) => {
           if (item.type === 'measurement') {
@@ -206,13 +170,22 @@ export function OrderDocumentsGallery({
               >
                 <Tag className="h-3 w-3 text-muted-foreground" />
               </button>
+              <button
+                type="button"
+                onClick={(e) => handleDelete(e, doc)}
+                disabled={deletingId === doc.id}
+                className="absolute top-1 left-1 h-6 w-6 rounded bg-destructive/90 text-destructive-foreground border border-destructive flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-destructive disabled:opacity-50"
+                title="삭제 (Storage + DB)"
+              >
+                <Trash2 className="h-3 w-3" />
+              </button>
             </div>
           )
         })}
       </div>
       {items.length === 0 && (
         <p className="text-sm text-muted-foreground py-4 text-center rounded-lg border border-dashed border-border">
-          실측 PDF나 발주서(PPT/PDF)를 추가하면 여기에 썸네일로 표시됩니다.
+          등록된 PDF/PPT 발주서가 없습니다.
         </p>
       )}
       <DocumentLightbox open={!!lightboxSource} onOpenChange={(open) => !open && setLightboxSource(null)} source={lightboxSource} />

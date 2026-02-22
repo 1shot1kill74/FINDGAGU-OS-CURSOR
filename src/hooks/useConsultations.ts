@@ -98,25 +98,34 @@ export function useConsultations(visibleOnly: boolean) {
 
   // Realtime: 구글 시트 → RPC upsert 시 INSERT/UPDATE 발생 → 목록 자동 갱신 (데이터 일원화)
   useEffect(() => {
+    const channelName = `consultations-realtime-${visibleOnly ? 'visible' : 'archive'}`
     const channel = supabase
-      .channel(`consultations-realtime-${visibleOnly ? 'visible' : 'archive'}`)
+      .channel(channelName)
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'consultations' },
-        () => {
+        (payload) => {
+          console.log('[Realtime] INSERT event received', payload)
           refetchRef.current()
         }
       )
       .on(
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'consultations' },
-        () => {
+        (payload) => {
+          console.log('[Realtime] UPDATE event received', payload)
           refetchRef.current()
         }
       )
-      .subscribe((status) => {
-        if (status === 'CHANNEL_ERROR') {
-          console.warn('[useConsultations] Realtime channel error — 탭 전환 시 재조회됩니다.')
+      .subscribe((status, err) => {
+        if (status === 'SUBSCRIBED') {
+          console.log(`[Realtime] ✅ 구독 성공: ${channelName}`)
+        } else if (status === 'TIMED_OUT') {
+          console.warn(`[Realtime] ⏱ 구독 타임아웃: ${channelName}`, err)
+        } else if (status === 'CLOSED') {
+          console.warn(`[Realtime] 🔌 채널 닫힘: ${channelName}`, err)
+        } else if (status === 'CHANNEL_ERROR') {
+          console.error(`[Realtime] ❌ 채널 오류: ${channelName}`, err)
         }
       })
     return () => {

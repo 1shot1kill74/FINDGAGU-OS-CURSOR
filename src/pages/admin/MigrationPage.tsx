@@ -26,6 +26,8 @@ import {
 import { shouldExcludeFromProducts, splitForProducts } from '@/lib/productFilter'
 import { roundToPriceUnit } from '@/lib/estimateUtils'
 import { insertSystemLog } from '@/lib/activityLog'
+import { resetConsultationImageData } from '@/lib/adminResetConsultationImages'
+import { resetImageAssetSystem } from '@/lib/adminResetImageAssetSystem'
 
 const SUPPLIER_FIXED = {
   bizNumber: '374-81-02631',
@@ -702,7 +704,7 @@ export default function MigrationPage() {
             {
               filename: item.file.name,
               grand_total: finalAmount,
-              quoteDate: item.parsedEstimate.quoteDate ?? '',
+              quoteDate: item.parsedEstimate?.quoteDate ?? '',
               uploadedAt: new Date().toISOString(),
               consultationId,
               estimateId,
@@ -839,12 +841,6 @@ export default function MigrationPage() {
     return out
   }, [vendorPriceFiles])
 
-  const hasGeminiKey = Boolean(
-    (import.meta.env.VITE_GOOGLE_GEMINI_API_KEY ??
-      import.meta.env.GOOGLE_GEMINI_API_KEY ??
-      import.meta.env.VITE_GEMINI_API_KEY)?.trim()
-  )
-
   return (
     <div className="min-h-screen bg-background p-6">
       <div className="max-w-4xl mx-auto space-y-6">
@@ -856,13 +852,6 @@ export default function MigrationPage() {
             <h1 className="text-2xl font-bold text-foreground">데이터 통합 마이그레이션</h1>
           </div>
         </div>
-
-        {!hasGeminiKey && (
-          <div className="flex items-center gap-2 p-4 rounded-lg bg-amber-500/10 text-amber-700 dark:text-amber-400 text-sm">
-            <AlertCircle className="h-5 w-5 shrink-0" />
-            .env에 GOOGLE_GEMINI_API_KEY(또는 VITE_GOOGLE_GEMINI_API_KEY)를 설정하세요. Gemini API 키가 없으면 AI 분석을 사용할 수 없습니다.
-          </div>
-        )}
 
         {/* 섹션 1: 판매 견적서 등록 */}
         <div ref={estimatesSectionRef} className="space-y-4">
@@ -944,7 +933,6 @@ export default function MigrationPage() {
                       size="sm"
                       variant="outline"
                       onClick={() => startAnalysis(f.id)}
-                      disabled={!hasGeminiKey}
                     >
                       AI 분석
                     </Button>
@@ -1380,7 +1368,7 @@ export default function MigrationPage() {
               <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-muted/40">
                 <span className="text-sm font-medium">업로드된 파일 ({vendorPriceFiles.length}개)</span>
                 {vendorPriceFiles.some((f) => f.status === '대기') && (
-                  <Button type="button" size="sm" variant="outline" onClick={startAllVendorAnalysis} disabled={!hasGeminiKey}>
+                  <Button type="button" size="sm" variant="outline" onClick={startAllVendorAnalysis}>
                     전체 AI 분석
                   </Button>
                 )}
@@ -1417,7 +1405,7 @@ export default function MigrationPage() {
                         {f.status}
                       </span>
                       {f.status === '대기' && (
-                        <Button type="button" size="sm" variant="ghost" onClick={() => startVendorAnalysis(f.id)} disabled={!hasGeminiKey}>
+                        <Button type="button" size="sm" variant="ghost" onClick={() => startVendorAnalysis(f.id)}>
                           AI 분석
                         </Button>
                       )}
@@ -1697,6 +1685,56 @@ export default function MigrationPage() {
           <p className="text-xs text-muted-foreground">
             저장된 데이터에는 is_test: true가 적용됩니다. 상담 관리 또는 별도 기능에서 테스트 데이터 일괄 삭제가 가능합니다.
           </p>
+        </div>
+
+        {/* Admin: DB 이미지 초기화 */}
+        <div className="mt-8 pt-8 border-t border-border space-y-4">
+          <h3 className="text-sm font-semibold text-foreground">DB 이미지 초기화 (Admin)</h3>
+
+          <div className="space-y-2">
+            <p className="text-xs text-muted-foreground">
+              consultation_messages 테이블에서 이미지 관련 필드(file_url, file_name, metadata)만 null로 초기화합니다. 텍스트 상담 히스토리는 유지됩니다.
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="text-destructive border-destructive/50 hover:bg-destructive/10"
+              onClick={async () => {
+                const { updated, error } = await resetConsultationImageData()
+                if (error) toast.error(`초기화 실패: ${error}`)
+                else toast.success(updated > 0 ? `${updated}건 이미지 필드가 초기화되었습니다.` : '초기화할 이미지 데이터가 없습니다.')
+              }}
+            >
+              상담 내역 이미지 필드 초기화
+            </Button>
+          </div>
+
+          <div className="space-y-2 pt-4 border-t border-border">
+            <p className="text-xs text-muted-foreground">
+              이미지 자산 시스템 완전 초기화: image_assets·project_images 전체 삭제, consultation_messages 이미지 참조 null 처리. Cloudinary assets/projects 폴더는 콘솔에서 직접 비운 뒤 실행하세요.
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="text-destructive border-destructive/50 hover:bg-destructive/10"
+              onClick={async () => {
+                const result = await resetImageAssetSystem()
+                if (result.error) toast.error(`초기화 실패: ${result.error}`)
+                else {
+                  const msg = [
+                    result.imageAssetsDeleted > 0 && `image_assets ${result.imageAssetsDeleted}건 삭제`,
+                    result.projectImagesDeleted > 0 && `project_images ${result.projectImagesDeleted}건 삭제`,
+                    result.consultationMessagesReset > 0 && `consultation_messages ${result.consultationMessagesReset}건 참조 초기화`,
+                  ].filter(Boolean).join(', ')
+                  toast.success(msg || '초기화할 데이터가 없습니다.')
+                }
+              }}
+            >
+              이미지 자산 시스템 전체 초기화
+            </Button>
+          </div>
         </div>
       </div>
     </div>

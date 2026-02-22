@@ -1037,7 +1037,7 @@ export function EstimateFilesGallery({
             setProductConflictModalOpen(false)
             setProductConflicts([])
             setProductRowsPending([])
-            setApplyConflictNames(new Set())
+            setApplyConflictKeys(new Set())
           }
         }}
       >

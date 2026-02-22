@@ -1,3 +1,114 @@
+# 세이브 포인트 2026-02-22 (analyze-quote Edge Function · Gemini 클라이언트 제거)
+
+**이 시점까지 반영된 작업을 롤백할 때 참고용입니다.**
+
+## 포함된 작업 요약
+- **Edge Function analyze-quote:** supabase/functions/analyze-quote/index.ts — Gemini 2.0 Flash Vision/Text API. Input: { image?, text?, fileName, mode }. Output: ParsedEstimateFromPDF | ParsedVendorPrice (metadata 구조 동일). 모드: estimates, vendor_price, detect, unit_price.
+- **parseFileWithAI 리팩토링:** 클라이언트 Gemini 직접 호출 제거 → supabase.functions.invoke('analyze-quote', ...) 전환. PDF는 extractTextFromPDF 후 text 전송, 이미지는 base64 전송.
+- **detectIsOurCompanyEstimate·parseUnitPriceTableFromFile:** Edge Function mode 'detect'·'unit_price' 호출로 전환.
+- **MigrationPage:** hasGeminiKey 제거 (클라이언트 API 키 불필요). AI 분석 버튼 항상 활성화.
+- **.env.example:** GOOGLE_GEMINI_API_KEY → Supabase Secrets 설정 안내로 변경.
+
+## 롤백 시 (Git 사용 시)
+```bash
+git add -A
+git commit -m "checkpoint: analyze-quote Edge Function, parseFileWithAI invoke 전환, Gemini 클라이언트 제거"
+git tag save-20260222-analyze-quote-edge
+
+# 이후 이 시점으로 복귀
+git checkout save-20260222-analyze-quote-edge
+```
+
+## 변경된 주요 파일
+- `supabase/functions/analyze-quote/index.ts` — 신규
+- `src/lib/parseFileWithAI.ts` — invoke 전환, Gemini/OpenAI 제거
+- `src/pages/admin/MigrationPage.tsx` — hasGeminiKey 제거
+- `.env.example` — Edge Function 시크릿 안내
+
+---
+
+# 세이브 포인트 2026-02-21 (발주 자산·uploadEngine·Dialog 접근성)
+
+**이 시점까지 반영된 작업을 롤백할 때 참고용입니다.**
+
+## 포함된 작업 요약
+- **uploadEngine 확장:** 확장자·카테고리별 저장소 분기. jpg/png/webp→Cloudinary, pdf/ppt/pptx·floor_plan·purchase_order→Supabase `documents`.
+- **image_assets:** storage_type('cloudinary'|'supabase'), storage_path 컬럼. documents 버킷(public) 마이그레이션.
+- **PDF/PPTX 썸네일:** documentThumbnail.ts — pdf.js 첫 페이지, PPTX docProps/thumbnail.jpeg, _thumb.jpg·thumbnail_url.
+- **발주 자산 관리:** OrderAssets.tsx, /order-assets, [발주 자산 관리] 버튼. MeasurementSection 발주서/배치도 분리 업로드.
+- **Radix Dialog 접근성:** DialogContent aria-describedby={undefined} 기본값. DialogTitle 필수 — ShowroomPage h2→DialogTitle, ConsultationManagement 견적 풀스크린 sr-only DialogTitle.
+- **마이그레이션:** 20260221000002(floor_plan 삭제), 20260221000003(document_category), 20260221000004(documents·storage_type), 20260221000005(상담 삭제).
+
+## 롤백 시 (Git 사용 시)
+```bash
+git add -A
+git commit -m "checkpoint: 발주 자산·uploadEngine 확장·Dialog 접근성·PDF/PPTX 썸네일"
+git tag save-20260221-order-assets-dialog-a11y
+
+# 이후 이 시점으로 복귀
+git checkout save-20260221-order-assets-dialog-a11y
+```
+
+## 변경된 주요 파일
+- `src/lib/uploadEngine.ts` — 확장자·카테고리별 분기
+- `src/lib/documentThumbnail.ts` — PDF/PPTX 썸네일
+- `src/lib/imageAssetUploadService.ts` — storage_type, storage_path
+- `src/components/Consultation/MeasurementSection.tsx` — 발주서/배치도 업로드
+- `src/pages/OrderAssets.tsx` — 발주 자산 관리
+- `src/components/ui/dialog.tsx` — aria-describedby 기본값
+- `src/pages/ShowroomPage.tsx`, `src/pages/ConsultationManagement.tsx` — DialogTitle
+- `supabase/migrations/20260221000002~05`
+- `BLUEPRINT.md`, `CONTEXT.md`, `JOURNAL.md`, `soul.md`
+
+---
+
+# 2026-02-22 기록 (긴급 시스템 안정화)
+
+## 1. 오늘의 활동 요약
+- 시스템 안정화를 위한 리얼타임 중단 및 스키마 불일치 기능(last_viewed_at, order_documents) 일시 제거.
+
+## 2. 상세 결정 사항
+- **Realtime 구독 중단:** `ConsultationManagement.tsx` 내 `.channel('consultations-realtime').on('postgres_changes', ...).subscribe()` 전체 useEffect 주석 처리. 채널 오류(CHANNEL_ERROR)로 인한 콘솔 에러 방지.
+- **last_viewed_at 갱신 중단:** `consultations` 테이블에 해당 컬럼 미존재로 PGRST204 에러 발생 → `supabase.from('consultations').update({ last_viewed_at })` 호출 주석 처리. 로컬 state 낙관적 갱신은 유지.
+- **order_documents fetch 중단:** 테이블 미존재 또는 스키마 불일치로 400 에러 발생 → fetch useEffect 주석 처리 후 `setOrderDocumentsList([])` 빈 배열 반환으로 대체.
+- **DOM 구조 수정:** `ConsultationListItem` 바깥 `<button>`을 `<div role="button" tabIndex={0}>`으로 변경 — 내부 StageProgressBar·편집·삭제 button과의 button-in-button 금지 위반 해소. 키보드(Enter/Space) 핸들러 추가로 접근성 유지.
+- **미사용 import 정리:** `OrderDocumentCategory` import 제거 (주석 처리된 코드에서만 사용되어 TS Hint 경고 해소).
+
+---
+
+# 2026-02-21 기록 (실측 탭 버튼 삭제 및 발주서/배치도 분리 업로드)
+
+## 1. 오늘의 활동 요약
+- 실측 자료 탭 내 "실측 정보 입력 페이지로 이동" 버튼 삭제 (연결 끊김으로 제거 결정).
+- 통합 업로드 영역을 **[발주서 업로드]**와 **[배치도 업로드]** 두 개 독립 섹션으로 분리.
+- uploadEngine 사용, 업로드 시 category 'purchase_order'·'floor_plan' 자동 지정 → image_assets 테이블에 저장.
+- 발주서·배치도 통합 관리 페이지 OrderAssets.tsx 신규 생성. 필터: 업종, 카테고리, 고객명. ImageAssetViewer 스타일 그리드 뷰.
+
+## 2. 상세 결정 사항
+- **MeasurementSection:** 실측 탭 전용 컴포넌트. 두 업로드 섹션 + image_assets 갤러리 + 기존 order_documents(PDF/PPT) 갤러리 유지.
+- **카테고리 분리:** DB(image_assets.category)에 purchase_order/floor_plan 명확 저장 → "이번 달 상업 공간 발주서만" 등 필터링 가능.
+- **파일 관리 일관성:** uploadEngine 공통 사용으로 실측 탭·전용 관리 페이지 어디서 올려도 image_assets에 동일하게 저장.
+
+---
+
+# 2026-02-19 기록 (하이브리드 개발 환경 — Claude Code 추가)
+
+## 1. 오늘의 활동 요약
+- 프로젝트 기술 스택에 **Claude Code**가 추가되었습니다.
+- **모든 개발 가이드**는 이제 Cursor(시각적 편집)와 Claude Code(터미널 기반 에이전트)를 병행하는 **하이브리드 환경**을 전제로 합니다.
+
+## 2. 상세 결정 사항 (Decisions)
+- **기술 스택:** Editor/AI에 Cursor(시각적 편집·메인 개발), Claude Code(터미널 기반 에이전트) 명시.
+- **개발 가이드 전제:** soul.md, CONTEXT.md, BLUEPRINT.md, JOURNAL.md에 하이브리드 환경 전제 반영. 신규 가이드 작성 시에도 동일 전제 적용.
+
+## 3. 문서 반영
+- **soul.md:** Technology Stack에 Claude Code 추가, "4. Development Environment (하이브리드)" 섹션 추가, Work Flow에 병행 명시.
+- **CONTEXT.md:** 기술적 환경 및 스택에 하이브리드 환경·에디터/AI(Cursor, Claude Code) 반영.
+- **BLUEPRINT.md:** 시스템 아키텍처에 하이브리드 환경 명시, 문서 상단에 개발 환경 전제 문구 추가.
+- **JOURNAL.md:** 본일(2026-02-19) 기록 추가.
+
+---
+
 Journal: Project Ivory-OS Development 2024-02-05 (Day 1) - 진행 상황: 프로젝트 킥오프 및 프론트엔드 도면 완성. - 주요 결정: - '주문' 대신 '상담'으로 용어 전면 개편. - 마케팅 관리 페이지 문구 스타일(후킹/전문가/스토리텔러) 확정. - 현장 담당 페이지에 시공 직후 실시간 후기(별점/QR) 수집 기능 통합. - 기술 이슈: - Lovable 크레딧 한도 임박에 따른 신속한 GitHub 이관 처리. - M4 맥북 터미널을 통한 로컬 개발 환경 셋업. - 내일의 할 일: - 전체 프론트엔드 화면 전수 조사. - 화면 기반 Supabase DB 스키마(Table) 역설계. - Lovable 배지 등 불필요한 코드 제거. 이부장 코멘트: 대표님의 빠른 결단력 덕분에 오늘 이사까지 무사히 마쳤습니다. 푹 쉬십시오!
 
 # 프로젝트 저널 (JOURNAL) - 2026-02-06 상세 기록
@@ -931,4 +1042,38 @@ git checkout save-20260214-sheet-update-date
 - `src/pages/ConsultationManagement.tsx` — Lead 타입 sheetUpdateDate, mapConsultationRowToLead, neglectD·정렬 sheetUpdateDate ?? updateDate
 - `supabase/migrations/20260214140000_sheet_update_date_in_metadata.sql` — 신규
 - `gas/Code.gs` — rows.push에 sheet_update_date 추가
+- `BLUEPRINT.md`, `CONTEXT.md`, `JOURNAL.md`, `soul.md`
+
+---
+
+# 2026-02-20 기록 (이미지 업로드 단일 엔진·상담 히스토리 통합 — 작업 종료)
+
+## 1. 오늘의 활동 요약
+- **이미지 자산 관리**와 **상담 카드(상담 히스토리)** 업로드 로직을 **단일 엔진(uploadEngine)**으로 통합. 입구는 두 개, Cloudinary 저장 규격·context/tags는 100% 동일.
+- 상담 히스토리에는 이미지 자산관리와 **동일한 점선 업로드 영역** 배치, 잘못 올린 항목 삭제(휴지통) 지원.
+
+## 2. 상세 결정·구현 사항
+
+### [공통 모듈 uploadEngine]
+- **파일:** `src/lib/uploadEngine.ts`. **uploadEngine(file, metadata)** — 동일 폴더(`assets/projects`), 동일 프리셋, Cloudinary context(key=value 파이프 구분), tags(쉼표 구분). public_id: `assets/projects/YYMMDD_고객명_카테고리_고유접미사`.
+- **메타데이터:** customer_name, project_id, category, upload_date, source. **validateMetadataForConsultation(meta)** — 상담 입구에서 메타 비어 있으면 업로드 불가. **CONSULTATION_UPLOAD_ERROR_MESSAGE** = "상담 정보가 부족하여 업로드할 수 없습니다."
+
+### [입구 A — 이미지 자산관리]
+- **ImageAssetUpload.tsx:** 기존 폼 제출 시 **uploadEngine(item.file, meta)** 호출. meta: customer_name=현장명, category·upload_date=폼값, source=image_asset_upload. 이후 insertImageAsset 동일.
+
+### [입구 B — 상담 히스토리]
+- **ConsultationHistoryLog.tsx:** 클립 버튼 제거 → **이미지 자산관리와 동일한 점선 영역**("클릭하거나 이미지를 여기에 놓으세요", "여러 장 동시 선택 가능", 드래그 앤 드롭, multiple). **uploadEngine(file, meta)** 호출. meta: customer_name=projectName, project_id=consultationId, category='상담/실측', upload_date=오늘, source=consultation_card. 검증 실패 시 토스트로 CONSULTATION_UPLOAD_ERROR_MESSAGE.
+- **데이터 흐름:** 업로드 후 image_assets Insert(category='상담/실측', metadata.source=consultation_card) + consultation_messages Insert(file_url=썸네일, metadata.public_id·cloud_name·image_asset_id). 구글 시트 행 추가 없음.
+- **표시:** 목록에는 썸네일만, 클릭 시 MediaViewer(이미지 자산관리와 동일 확장 뷰). **삭제:** 각 히스토리 항목 우측 휴지통 → consultation_messages DELETE, metadata.image_asset_id 있으면 image_assets DELETE, Storage 경로면 chat-media 삭제.
+
+## 3. 문서 반영
+- **BLUEPRINT.md:** 섹션 3-0-1 "이미지 업로드 단일 엔진 (uploadEngine)" 추가. 입구 A/B, 메타데이터 규격, 데이터 흐름, 상담 히스토리 삭제 명시.
+- **CONTEXT.md:** 섹션 9에 2026-02-20 반영 항목 추가.
+- **JOURNAL.md:** 본일(2026-02-20) 기록 추가.
+- **soul.md:** 2026-02-20 반영 항목 추가.
+
+## 4. 변경된 주요 파일
+- `src/lib/uploadEngine.ts` — 신규(공통 엔진·메타·검증)
+- `src/pages/ImageAssetUpload.tsx` — uploadEngine 호출, meta 구성
+- `src/components/chat/ConsultationHistoryLog.tsx` — 점선 업로드 영역, uploadEngine·검증, 삭제(휴지통), insertImageAsset·consultation_messages 연동
 - `BLUEPRINT.md`, `CONTEXT.md`, `JOURNAL.md`, `soul.md`

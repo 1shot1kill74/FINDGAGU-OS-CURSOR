@@ -5,6 +5,7 @@ import ImageAssetViewer from '@/pages/ImageAssetViewer'
 import ImageAssetUpload from '@/pages/ImageAssetUpload'
 import PortfolioBank from '@/pages/PortfolioBank'
 import MeasurementArchive from '@/pages/MeasurementArchive'
+import OrderAssets from '@/pages/OrderAssets'
 import MeasurementUpload from '@/pages/MeasurementUpload'
 import ProductSitesPage from '@/pages/ProductSitesPage'
 import PublicProposalView from '@/pages/PublicProposalView'
@@ -25,7 +26,8 @@ function Home() {
       <p className="text-muted-foreground">Vite + React + TypeScript</p>
       <div className="flex flex-wrap gap-4 justify-center">
         <Link to="/consultation" className="text-primary underline underline-offset-4 font-medium">상담 관리</Link>
-        <Link to="/measurement" className="text-primary underline underline-offset-4 font-medium">실측 관리</Link>
+        <Link to="/order-assets" className="text-primary underline underline-offset-4 font-medium">발주 자산 관리</Link>
+        <Link to="/order-assets" className="text-primary underline underline-offset-4 font-medium">발주서·배치도 관리</Link>
         <Link to="/products-sites" className="text-primary underline underline-offset-4 font-medium">제품별 시공 현장</Link>
         <Link to="/image-assets" className="text-primary underline underline-offset-4 font-medium">이미지 자산 관리</Link>
         <Link to="/portfolio" className="text-primary underline underline-offset-4 font-medium">시공 사례 뱅크</Link>
@@ -46,6 +48,7 @@ function App() {
         <Route path="/" element={<Home />} />
         <Route path="/consultation" element={<ConsultationManagement />} />
         <Route path="/measurement" element={<MeasurementArchive />} />
+        <Route path="/order-assets" element={<OrderAssets />} />
         <Route path="/measurement/upload" element={<MeasurementUpload />} />
         <Route path="/products-sites" element={<ProductSitesPage />} />
         <Route path="/image-assets" element={<ImageAssetViewer />} />

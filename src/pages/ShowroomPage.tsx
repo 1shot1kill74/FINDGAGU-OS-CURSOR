@@ -14,6 +14,7 @@ import type { Json } from '@/types/database'
 import {
   Dialog,
   DialogContent,
+  DialogTitle,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -831,10 +832,10 @@ export default function ShowroomPage() {
       <Dialog open={detailOpen !== null} onOpenChange={(open) => !open && setDetailOpen(null)}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col p-0 bg-neutral-900 border-0">
           <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-700">
-            <h2 className="text-white font-semibold truncate">
+            <DialogTitle className="text-white font-semibold truncate">
               {detailOpen === 'site' && detailKey}
               {detailOpen === 'product' && detailKey}
-            </h2>
+            </DialogTitle>
             <Button
               variant="ghost"
               size="icon"

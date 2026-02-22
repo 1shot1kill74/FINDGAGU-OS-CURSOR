@@ -43,6 +43,9 @@ import { USAGE_TYPES, REVIEW_STATUSES, getUsageLabel, getUsageTooltip, type Usag
 /** 자주 쓰는 색상 퀵 태깅 */
 const COLOR_QUICK = ['화이트', '오크', '블랙', '그레이', '네이비', '월넛'] as const
 
+/** 업종(Sector/Industry) 필터 기본 옵션 */
+const SECTOR_OPTIONS = ['학원', '관리형', '스터디카페', '학교', '아파트', '기타'] as const
+
 const BUCKET = 'construction-assets'
 const PAGE_SIZE = 24
 type SortKey = 'latest' | 'industry' | 'popular' | 'ai' | 'internal'
@@ -131,6 +134,7 @@ export default function ImageAssetViewer() {
   const [searchQuery, setSearchQuery] = useState('')
   const [colorFilter, setColorFilter] = useState<string | null>(null)
   const [productFilter, setProductFilter] = useState<string | null>(null)
+  const [sectorFilter, setSectorFilter] = useState<string | null>(null)
   const [usageFilter, setUsageFilter] = useState<UsageType | 'all'>('all')
   const [lightboxAsset, setLightboxAsset] = useState<ProjectImageAsset | null>(null)
   /** 이미지 자산 관리 전용: 전체 | 검수 대기 사진 */
@@ -381,12 +385,17 @@ export default function ImageAssetViewer() {
     return searchFiltered.filter((a) => a.usageType === usageFilter)
   }, [searchFiltered, usageFilter])
 
+  const sectorFiltered = useMemo(() => {
+    if (!sectorFilter) return usageFiltered
+    return usageFiltered.filter((a) => (a.industry ?? '').trim() === sectorFilter)
+  }, [usageFiltered, sectorFilter])
+
   const productFiltered = useMemo(() => {
-    if (!productFilter) return usageFiltered
-    return usageFiltered.filter((a) =>
+    if (!productFilter) return sectorFiltered
+    return sectorFiltered.filter((a) =>
       (a.productTags ?? []).some((t) => (t ?? '').trim() === productFilter)
     )
-  }, [usageFiltered, productFilter])
+  }, [sectorFiltered, productFilter])
 
   const colorFiltered = useMemo(() => {
     if (!colorFilter) return productFiltered
@@ -903,6 +912,26 @@ export default function ImageAssetViewer() {
             </button>
           </div>
         )}
+        {/* 업종(Sector) 필터 — Select 박스 */}
+        {!isBankView && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-muted-foreground shrink-0">업종:</span>
+            <select
+              value={sectorFilter ?? ''}
+              onChange={(e) => {
+                const v = e.target.value || null
+                setSectorFilter(v)
+                setPage(0)
+              }}
+              className="rounded-md px-3 py-1.5 text-sm border border-input bg-background hover:bg-muted transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <option value="">전체</option>
+              {SECTOR_OPTIONS.map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+          </div>
+        )}
         {/* 제품명 퀵필터 */}
         {!isBankView && distinctProducts.length > 0 && (
           <div className="flex flex-wrap items-center gap-2">
@@ -1166,6 +1195,16 @@ export default function ImageAssetViewer() {
         )}
         {loading ? (
           <div className="py-12 text-center text-sm text-muted-foreground">불러오는 중…</div>
+        ) : assets.length === 0 ? (
+          <div className="py-16 text-center">
+            <p className="text-muted-foreground mb-4">새로운 상담 사진을 업로드해주세요</p>
+            <Link to="/image-assets/upload">
+              <Button variant="default" size="sm" className="gap-2">
+                <Upload className="h-4 w-4" />
+                사진 업로드
+              </Button>
+            </Link>
+          </div>
         ) : (isBankView ? bankDisplayGrouped : grouped) ? (
           <>
             {(isBankView ? bankDisplayGrouped : grouped)!.map(([groupKey, list]) => (

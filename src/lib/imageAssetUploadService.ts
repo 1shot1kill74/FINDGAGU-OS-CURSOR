@@ -69,6 +69,8 @@ export async function uploadImageToCloudinary(
   return { cloudinary_url, thumbnail_url, public_id: pid }
 }
 
+export type StorageType = 'cloudinary' | 'supabase'
+
 export interface ImageAssetInsertPayload {
   cloudinary_url: string
   thumbnail_url?: string | null
@@ -82,6 +84,10 @@ export interface ImageAssetInsertPayload {
   is_main?: boolean
   memo?: string | null
   metadata?: Record<string, unknown> | null
+  /** cloudinary | supabase. default 'cloudinary' */
+  storage_type?: StorageType
+  /** storage_type=supabase일 때 documents 버킷 내 경로 */
+  storage_path?: string | null
   /** 앱 내 스코어링으로 채움. 업로드 시에는 null */
   ai_score?: number | null
 }
@@ -113,6 +119,8 @@ export async function insertImageAsset(payload: ImageAssetInsertPayload): Promis
       is_main: payload.is_main ?? false,
       memo: payload.memo ?? null,
       metadata: (payload.metadata ?? {}) as Json,
+      storage_type: payload.storage_type ?? 'cloudinary',
+      storage_path: payload.storage_path ?? null,
       ai_score: payload.ai_score != null ? payload.ai_score : null,
     })
     .select('id')

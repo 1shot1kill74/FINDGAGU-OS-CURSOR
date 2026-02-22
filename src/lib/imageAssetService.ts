@@ -272,6 +272,24 @@ export function buildCloudinaryUrl(
   return `${base}/${ADMIN_THUMBNAIL_OPTIONS}/${publicId}`
 }
 
+/** 상담 타임라인 등에서 사용할 Cloudinary 변환 URL (이미지 자산 관리와 동일 규격 활용) */
+export const CLOUDINARY_CHAT_THUMB = 'w_200,h_200,c_fill,f_auto,q_auto'
+
+/**
+ * 지정한 변환으로 Cloudinary URL 생성 (상담 히스토리 썸네일/라이트박스용)
+ * @param publicId - Cloudinary public_id
+ * @param transformation - 예: w_200,h_200,c_fill (썸네일), f_auto,q_auto,w_1200 (상세)
+ * @param cloudName - 생략 시 env 기준
+ */
+export function buildCloudinaryUrlWithTransformation(
+  publicId: string,
+  transformation: string,
+  cloudName?: string
+): string {
+  const name = cloudName ?? getCloudinaryCloudName()
+  return `https://res.cloudinary.com/${name}/image/upload/${transformation}/${publicId}`
+}
+
 /** 시드 데이터: cloudinary_public_id가 seed_N 형태면 항상 실제 이미지가 나오는 샘플 URL 사용 */
 function getSeedImageUrl(publicId: string, type: 'marketing' | 'mobile'): string | null {
   const m = /^seed_(\d+)$/.exec(publicId.trim())

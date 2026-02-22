@@ -1,0 +1,34 @@
+{
+  "timeZone": "Asia/Seoul",
+  "dependencies": {
+    "enabledAdvancedServices": [
+      {
+        "userSymbol": "Chat",
+        "serviceId": "chat",
+        "version": "v1"
+      },
+      {
+        "userSymbol": "AdminReports",
+        "serviceId": "admin",
+        "version": "reports_v1"
+      }
+    ]
+  },
+  "oauthScopes": [
+    "https://www.googleapis.com/auth/script.external_request",
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/admin.reports.audit.readonly",
+    "https://www.googleapis.com/auth/chat.spaces.readonly",
+    "https://www.googleapis.com/auth/chat.admin.spaces.readonly",
+    "https://www.googleapis.com/auth/chat.memberships",
+    "https://www.googleapis.com/auth/chat.admin.memberships",
+    "https://www.googleapis.com/auth/script.scriptapp"
+  ],
+  "exceptionLogging": "STACKDRIVER",
+  "runtimeVersion": "V8",
+  "webapp": {
+    "executeAs": "USER_DEPLOYING",
+    "access": "ANYONE_ANONYMOUS"
+  }
+}

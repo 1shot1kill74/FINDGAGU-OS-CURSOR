@@ -990,13 +990,13 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
           const vendorRecs: PastCaseRecommendation[] = vendors.map((v) => {
             const rank = getRecommendationRank(
               { name: res.name, spec: res.spec ?? null, color: res.color ?? null },
-              { name: v.product_name, size: v.spec, color: v.color ?? null }
+              { name: v.product_name, size: v.spec, color: null }
             )
             return {
               case_id: `vendor-${v.id}`,
               name: v.product_name,
               size: v.spec ?? null,
-              color: v.color ?? null,
+              color: null,
               price: v.unitPrice,
               matchStatus: { name: true, size: false, color: false },
               costPrice: v.cost,
@@ -1313,12 +1313,13 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
                 <p className="text-xs font-medium text-muted-foreground">비교대상 (선택 시 견적 품목에 반영) — 1순위: 품명+규격+색상 일치 → 2순위: 품명+규격 → 3순위: 품명+유사</p>
                 <div className="flex flex-wrap gap-2">
                   {quickRecommendations.map((c) => {
-                    const ms = c.matchStatus
-                    const matchText = [
-                      `품명 ${ms.name ? '일치' : '불일치'}`,
-                      `사이즈 ${ms.size ? '일치' : '불일치'}`,
-                      `색상 ${ms.color ? '일치' : '불일치'}`,
-                    ].join(' · ')
+                    // 기존 견적서/원가표의 실제 품명·사이즈·색상 표시 (일치/불일치 대신)
+                    const detailParts = [
+                      `품명: ${(c.name || '').trim() || '—'}`,
+                      `사이즈: ${(c.size || '').trim() || '—'}`,
+                      `색상: ${(c.color || '').trim() || '—'}`,
+                    ]
+                    const detailText = detailParts.join(' · ')
                     const rankLabel = c.rank != null ? { 1: '1순위', 2: '2순위', 3: '3순위' }[c.rank] : null
                     return (
                     <div
@@ -1332,8 +1333,8 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
                         </p>
                         <p className="text-xs text-muted-foreground">
                           {c.source === 'vendor_price_book'
-                            ? `원가: ${c.costPrice != null && c.costPrice > 0 ? `${formatNumber(c.costPrice)}원` : '—'} · ${matchText}`
-                            : `종전 단가: ${formatNumber(c.price)}원 · 원가: ${c.costPrice != null && c.costPrice > 0 ? `${formatNumber(c.costPrice)}원` : '—'} · ${matchText}`}
+                            ? `원가: ${c.costPrice != null && c.costPrice > 0 ? `${formatNumber(c.costPrice)}원` : '—'} · ${detailText}`
+                            : `종전 단가: ${formatNumber(c.price)}원 · 원가: ${c.costPrice != null && c.costPrice > 0 ? `${formatNumber(c.costPrice)}원` : '—'} · ${detailText}`}
                         </p>
                         {(c.siteName || c.appliedDate) && c.source !== 'vendor_price_book' && (
                           <p className="text-xs text-muted-foreground mt-0.5">

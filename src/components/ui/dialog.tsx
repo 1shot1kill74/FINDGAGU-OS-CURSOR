@@ -29,7 +29,7 @@ type DialogContentProps = React.ComponentPropsWithoutRef<typeof DialogPrimitive.
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   DialogContentProps
->(({ className, overlayClassName, children, ...props }, ref) => (
+>(({ className, overlayClassName, children, 'aria-describedby': ariaDescribedBy, ...props }, ref) => (
   <DialogPortal>
     <DialogOverlay className={overlayClassName} />
     <DialogPrimitive.Content
@@ -38,6 +38,7 @@ const DialogContent = React.forwardRef<
         'fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border border-border bg-background p-6 shadow-lg duration-200 sm:rounded-lg',
         className
       )}
+      aria-describedby={ariaDescribedBy ?? undefined}
       {...props}
     >
       {children}

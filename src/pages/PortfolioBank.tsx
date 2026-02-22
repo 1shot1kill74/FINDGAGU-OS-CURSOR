@@ -5,7 +5,7 @@
  */
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { Link } from 'react-router-dom'
-import { Search, Link2, X, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Search, Link2, X, ChevronLeft, ChevronRight, Upload } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -62,7 +62,7 @@ export default function PortfolioBank() {
     const ro = new ResizeObserver(setTop)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [loading, industryFilter, searchQuery, distinctIndustries.length])
+  }, [loading, industryFilter, searchQuery, assets.length])
 
   useEffect(() => {
     let cancelled = false
@@ -124,7 +124,7 @@ export default function PortfolioBank() {
   }, [assets])
   /** 고정 6개 + DB에서만 있는 업종(고정에 없는 것) */
   const industryButtons = useMemo(() => {
-    const fixedSet = new Set(FIXED_INDUSTRIES)
+    const fixedSet = new Set<string>(FIXED_INDUSTRIES)
     const rest = distinctIndustries.filter((ind) => !fixedSet.has(ind))
     return [...FIXED_INDUSTRIES, ...rest]
   }, [distinctIndustries])
@@ -275,6 +275,16 @@ export default function PortfolioBank() {
       <main className="p-4">
         {loading ? (
           <div className="py-12 text-center text-sm text-muted-foreground">불러오는 중…</div>
+        ) : assets.length === 0 ? (
+          <div className="py-16 text-center">
+            <p className="text-muted-foreground mb-4">새로운 상담 사진을 업로드해주세요</p>
+            <Link to="/image-assets/upload">
+              <Button variant="default" size="sm" className="gap-2">
+                <Upload className="h-4 w-4" />
+                사진 업로드
+              </Button>
+            </Link>
+          </div>
         ) : bankGrouped ? (
           <>
             {bankGrouped.map(([groupKey, list]) => (

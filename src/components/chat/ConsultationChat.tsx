@@ -13,6 +13,11 @@ import { Send, Paperclip, FileText, Loader2, MessageCircle, Layers, FileSpreadsh
 import { MediaViewer } from './MediaViewer'
 import { cn } from '@/lib/utils'
 import { isValidUUID } from '@/lib/uuid'
+import {
+  buildCloudinaryUrl,
+  buildCloudinaryUrlWithTransformation,
+  CLOUDINARY_CHAT_THUMB,
+} from '@/lib/imageAssetService'
 
 const CHAT_MEDIA_BUCKET = 'chat-media'
 const PAGE_SIZE = 20
@@ -22,7 +27,9 @@ const SIGNED_URL_EXPIRES = 3600
 const IDENTIFIER_BADGE_CLASS = 'text-[11px] tracking-tighter font-bold px-2 py-0.5 rounded border shadow-none bg-violet-500/20 border-violet-500/40 text-violet-900'
 
 function senderDisplay(senderId: string): { name: string; initial: string } {
-  return senderId === 'staff' ? { name: '직원', initial: '직' } : { name: '고객', initial: '고' }
+  if (senderId === 'staff') return { name: '직원', initial: '직' }
+  if (senderId === 'google_chat') return { name: '구글챗', initial: '구' }
+  return { name: '고객', initial: '고' }
 }
 
 /** 시스템 로그 메타데이터 — 딥링크용 */
@@ -301,7 +308,9 @@ export function ConsultationChat({
     [consultationId, loadMessages]
   )
 
+  /** Storage 경로면 Signed URL 발급, 이미 http(s) 절대 URL(예: 구글챗 카드·Cloudinary)이면 그대로 반환 */
   const getSignedUrl = useCallback(async (path: string): Promise<string> => {
+    if (path.startsWith('http://') || path.startsWith('https://')) return path
     const { data } = await supabase.storage.from(CHAT_MEDIA_BUCKET).createSignedUrl(path, SIGNED_URL_EXPIRES)
     return data?.signedUrl ?? path
   }, [])
@@ -564,13 +573,18 @@ export function ConsultationChat({
             const imageMessages = displayMessages.filter((x) => x.message_type === 'FILE' && x.file_url && isImage(x.file_name ?? x.content))
             const imageIndex = imageMessages.findIndex((x) => x.id === m.id)
             const openAtImage = imageIndex >= 0 ? () => {
-              Promise.all(imageMessages.map((img) => getSignedUrl(img.file_url!)))
-                .then((urls) => {
-                  setLightboxUrls(urls)
-                  setLightboxFileNames(imageMessages.map((img) => img.file_name ?? img.content ?? ''))
-                  setLightboxIndex(imageIndex)
-                  setLightboxOpen(true)
+              Promise.all(
+                imageMessages.map((img) => {
+                  const meta = img.metadata as { public_id?: string; cloud_name?: string } | undefined
+                  if (meta?.public_id) return Promise.resolve(buildCloudinaryUrl(meta.public_id, 'marketing'))
+                  return getSignedUrl(img.file_url!)
                 })
+              ).then((urls) => {
+                setLightboxUrls(urls)
+                setLightboxFileNames(imageMessages.map((img) => img.file_name ?? img.content ?? ''))
+                setLightboxIndex(imageIndex)
+                setLightboxOpen(true)
+              })
             } : undefined
             return (
               <div
@@ -739,7 +753,8 @@ export function ConsultationChat({
                         ) : (
                           <FileMessage
                             fileUrl={m.file_url}
-                            fileName={m.file_name ?? m.content}
+                            fileName={m.file_name ?? m.content ?? ''}
+                            metadata={m.metadata as { public_id?: string; cloud_name?: string } | undefined}
                             getSignedUrl={getSignedUrl}
                             onImageClick={openAtImage}
                           />
@@ -830,34 +845,44 @@ export function ConsultationChat({
 function FileMessage({
   fileUrl,
   fileName,
+  metadata,
   getSignedUrl,
   onImageClick,
 }: {
   fileUrl: string | null
   fileName: string
+  metadata?: { public_id?: string; cloud_name?: string } | null
   getSignedUrl: (path: string) => Promise<string>
   onImageClick?: () => void
 }) {
+  const cloudThumb = metadata?.public_id
+    ? buildCloudinaryUrlWithTransformation(
+        metadata.public_id,
+        CLOUDINARY_CHAT_THUMB,
+        metadata.cloud_name
+      )
+    : null
   const [url, setUrl] = useState<string | null>(null)
-  const [loading, setLoading] = useState(!!fileUrl)
+  const [loading, setLoading] = useState(!!fileUrl && !cloudThumb)
   useEffect(() => {
-    if (!fileUrl) return
+    if (cloudThumb || !fileUrl) return
     getSignedUrl(fileUrl).then((signed) => {
       setUrl(signed)
       setLoading(false)
     })
-  }, [fileUrl, getSignedUrl])
-  if (!fileUrl) return <span className="text-slate-900">{fileName}</span>
+  }, [fileUrl, getSignedUrl, cloudThumb])
+  const displayUrl = cloudThumb || url
+  if (!fileUrl && !cloudThumb) return <span className="text-slate-900">{fileName}</span>
   if (loading) return <span className="text-xs text-slate-500">로딩 중…</span>
 
   const kind = getFileKind(fileName)
   const isImg = kind === 'image'
 
-  // 이미지: 기존 미리보기 + 라이트박스
-  if (isImg && url) {
+  // 이미지: Cloudinary 변환(w_200,h_200,c_fill) 썸네일 또는 Signed URL, 클릭 시 MediaViewer(이미지 자산 상세와 동일 포맷)
+  if (isImg && displayUrl) {
     return (
       <button type="button" className="block text-left" onClick={() => onImageClick?.()}>
-        <img src={url} alt={fileName} className="max-w-[320px] max-h-[240px] rounded-lg object-cover shadow-sm" />
+        <img src={displayUrl} alt={fileName} className="max-w-[320px] max-h-[240px] rounded-lg object-cover shadow-sm" />
       </button>
     )
   }

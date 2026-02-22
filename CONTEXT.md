@@ -1,4 +1,4 @@
-Context: FindGagu OS Project 1. 페르소나 및 관계 - 대표님: 8년 경력의 가구 전문가. 실무 효율과 데이터 자산화 중시. - 이부장(AI): 대표님의 전담 비서이자 실무 팀장. 핵심 위주 보고와 위트 있는 소통 담당. 2. 프로젝트 배경 - 기존 '주문 관리' 방식의 파편화된 데이터를 '상담 관리' 중심의 체계적 OS로 전환 중. - M4 맥북을 도입하여 고성능 로컬 개발 환경(Cursor) 구축 완료. 3. 주요 규칙 (Constraints) - 용어 통일: 반드시 '상담 관리' 사용. - 디자인 원칙: 현장 기사님이 장갑 끼고도 조작 가능한 Mobile-First UI. - 확장성: 한샘 등 대기업이나 다수 대리점이 사용 가능한 SaaS 구조 고려. 4. 현재 상황 - Lovable 크레딧 소진 전 GitHub(1shot1kill74/ivory-os) 이관 성공. - 로컬 맥북 환경에 코드 복제(Clone) 완료.
+Context: FindGagu OS Project 1. 페르소나 및 관계 - 대표님: 8년 경력의 가구 전문가. 실무 효율과 데이터 자산화 중시. - 이부장(AI): 대표님의 전담 비서이자 실무 팀장. 핵심 위주 보고와 위트 있는 소통 담당. 2. 프로젝트 배경 - 기존 '주문 관리' 방식의 파편화된 데이터를 '상담 관리' 중심의 체계적 OS로 전환 중. - M4 맥북을 도입하여 고성능 로컬 개발 환경을 구축했으며, **하이브리드 환경**(Cursor 시각적 편집 + Claude Code 터미널 기반 에이전트)을 전제로 개발을 진행합니다. 3. 주요 규칙 (Constraints) - 용어 통일: 반드시 '상담 관리' 사용. - 디자인 원칙: 현장 기사님이 장갑 끼고도 조작 가능한 Mobile-First UI. - 확장성: 한샘 등 대기업이나 다수 대리점이 사용 가능한 SaaS 구조 고려. 4. 현재 상황 - Lovable 크레딧 소진 전 GitHub(1shot1kill74/ivory-os) 이관 성공. - 로컬 맥북 환경에 코드 복제(Clone) 완료.
 
 # 프로젝트 컨텍스트 (CONTEXT) - 가구 비즈니스 통합 솔루션
 
@@ -20,11 +20,17 @@ Context: FindGagu OS Project 1. 페르소나 및 관계 - 대표님: 8년 경력
 - **콘텐츠 마케팅:** 실제 시공 사례(Before/After)가 가장 강력한 영업 도구이며, 이를 다양한 채널에 자동 배포하는 것이 필수.
 
 ## 4. 기술적 환경 및 스택
+- **개발 환경 (하이브리드):** 모든 개발 가이드는 **Cursor**(시각적 편집)와 **Claude Code**(터미널 기반 에이전트)를 병행하는 하이브리드 환경을 전제로 합니다. Cursor에서 UI·코드 시각 편집, Claude Code에서 터미널 기반 에이전트 작업을 수행합니다.
 - **사용자 기기:** MacBook Air M4 (16GB RAM) - 로컬 개발 및 AG 멀티 에이전트 구동 환경.
+- **에디터/AI:** Cursor (메인 시각적 편집), Claude Code (터미널 기반 에이전트).
 - **메인 플랫폼:** Google Anti-Gravity (AG)를 통한 노코드/로우코드 기반의 고속 개발.
 - **백엔드/DB:** Supabase (Auth, Database, Storage).
-- **자동화 엔진:** n8n 및 Make (워크플로우 자동화).
-- **AI 연동:** OpenCLO (시공 사진 기반 멀티 콘텐츠 자동 생성 및 배포).
+- **AI 엔진 (운영 중):**
+  · Gemini 2.0 Flash (메인) — PDF/이미지 파싱, 원가표/견적서 AI 추출
+  · OpenAI GPT-4o (폴백) — Gemini 장애 시 자동 전환
+  · Claude Code (개발 도구) — 터미널 에이전트. AI 퀵 커맨드(estimateAiService) Mock → 추후 연동 예정
+- **자동화 엔진:** n8n / Make — [로드맵] 현재 미구현. Wake-up 알림, 블로그 자동 배포 설계 완료
+- **AI 콘텐츠 배포:** OpenClaw — [로드맵] 시공 사진 멀티채널 배포. 현재 미구현
 
 ## 5. 사용자 페르소나 및 접근 권한 (이원화 전략)
 - **Master (대표/관리자):** 전체 매출 실적, 마케팅 ROI 분석, 시스템 설정 권한.
@@ -84,8 +90,11 @@ Context: FindGagu OS Project 1. 페르소나 및 관계 - 대표님: 8년 경력
 - **2026-02-13 반영 (구글 시트 ↔ 수파베이스 양방향 동기화):** (1) **시트→DB:** `상담리스트` onEdit 시 해당 행만 `update_single_consultation_from_sheet` RPC 전송. 인자: project_name, link, start_date, update_date, created_at만. **status·estimate_amount는 시트에서 보내지 않음**(앱·DB 전용). (2) **RPC·DB:** consultations.updated_at 컬럼·UPDATE 트리거·REPLICA IDENTITY FULL. (3) **DB→시트:** 앱 [최종 확정] 성공 시 doPost로 웹앱 URL POST → syncAppToSheet(해당 행 E·F·D 갱신). (4) **앱:** Lead.projectName, Realtime INSERT/UPDATE 시 전체 상담 리스트 재조회. visibilitychange → visible 시 fetch로 탭 전환 시 최신 반영. update_date 문자열·Date 모두 YYYY-MM-DD 처리. env: VITE_GOOGLE_SHEET_SYNC_URL, VITE_GOOGLE_SHEET_SYNC_TOKEN.
 - **2026-02-14 반영 (상담 카드 2행 최종 견적가 표시 — 세이브 포인트):** (1) **2행 맨 오른쪽:** "견적 미정" 자리에 최종 견적 금액 표시. 표시 우선순위: pendingEstimateAmountRef(견적서로 저장 직후) → finalAmount → displayAmount → expectedRevenue. (2) **EstimateFilesGallery:** [견적서로 저장] 성공 시 onUploadComplete({ estimateAmount: finalAmount }) 호출. (3) **ConsultationManagement:** onUploadComplete 시 pendingEstimateAmountRef 저장·setLeads 낙관적 업데이트·fetchLeads 호출. fetchLeads 결과 병합 시 서버 estimate_amount 미반영 시 pending 금액 유지. (4) **ConsultationListItem:** getPendingEstimateAmount(consultationId) prop으로 해당 카드만 pending 금액 우선 표시. data-final-estimate·data-consultation-id·title(최종 견적가/견적 미정).
 - **2026-02-14 반영 (구글 시트 갱신일 기준 '오늘 갱신'·미갱신 D-Day — 세이브 포인트):** (1) **Lead.sheetUpdateDate:** metadata.sheet_update_date(YYYY-MM-DD) 매핑. (2) **갱신 표시·정렬:** '오늘 갱신'·미갱신 D+n·최근업데이트순 정렬은 **sheetUpdateDate ?? updateDate** 우선 사용. (3) **Supabase RPC:** update_multiple_consultations_from_sheet에서 row별 sheet_update_date 수신 → metadata.sheet_update_date 저장(INSERT/UPDATE 시 metadata 병합). 마이그레이션 20260214140000_sheet_update_date_in_metadata. (4) **GAS:** syncAllDataBatch 시 각 row에 sheet_update_date(D열 YYYY-MM-DD) 전송. gas/Code.gs rows.push에 sheet_update_date 추가.
+- **2026-02-20 스냅샷:** 구글 시트 ↔ Supabase 양방향 동기화 설계 완료. 단, Code.gs SHEET_NAME('상담리스트')과 실제 탭 이름('시트1') 불일치로 배치 동기화 미작동 상태. onEdit 단건 동기화 시 sheet_update_date 미반영. Gemini 2.0 Flash + GPT-4o 폴백 AI 파싱 운영 중. n8n/Make/OpenClaw는 로드맵 단계.
+- **2026-02-20 반영 (이미지 업로드 단일 엔진·상담 히스토리 통합):** (1) **uploadEngine** (`src/lib/uploadEngine.ts`): 공통 함수 **uploadEngine(file, metadata)**. 폴더 `assets/projects`, context(custom_name|project_id|category|upload_date|source), tags. 상담 입구용 **validateMetadataForConsultation**, **CONSULTATION_UPLOAD_ERROR_MESSAGE**. (2) **입구 A:** ImageAssetUpload 폼에서 uploadEngine 호출(meta: 현장명·category·upload_date·source=image_asset_upload). (3) **입구 B:** ConsultationHistoryLog에서 이미지 자산관리와 **동일한 점선 업로드 영역**(클릭/드래그, 여러 장), uploadEngine(meta: projectName·consultationId·category='상담/실측'·source=consultation_card), 메타 검증 실패 시 "상담 정보가 부족하여 업로드할 수 없습니다". (4) 업로드 후 image_assets + consultation_messages만 반영(구글 시트 행 추가 없음). (5) 상담 히스토리 항목별 휴지통 삭제(consultation_messages·image_assets·Storage 정리). (6) 뷰어: 썸네일 클릭 시 MediaViewer(이미지 자산관리와 동일 확장 뷰) 재사용.
+- **2026-02-21 반영 (세이브 포인트):** (1) **uploadEngine 확장:** 확장자·카테고리별 저장소 분기 — jpg/png/webp→Cloudinary, pdf/ppt/pptx 또는 floor_plan/purchase_order→Supabase `documents` 버킷. image_assets.storage_type('cloudinary'|'supabase'), storage_path. (2) **documents 버킷:** Supabase Storage public, 마이그레이션 20260221000004. (3) **PDF/PPTX 썸네일:** documentThumbnail.ts — pdf.js 첫 페이지, PPTX 내장 썸네일 추출, _thumb.jpg 저장. (4) **발주 자산 관리:** OrderAssets.tsx, /order-assets, [발주 자산 관리] 버튼. (5) **Radix Dialog 접근성:** DialogContent aria-describedby 기본값, DialogTitle 필수(ShowroomPage·ConsultationManagement sr-only 적용). (6) **마이그레이션:** 20260221000002~05 (floor_plan 삭제, document_category, documents 버킷·storage_type, 상담 삭제).
 
 ---
 
 **비고 (Note)**  
-이 컨텍스트 문서는 FINDGAGU-OS의 **최상위 헌법**으로 간주한다. AI가 새로운 기능을 제안하거나 UI를 설계할 때는 반드시 여기에 명시된 운영 원칙(정보 계층화, 데이터 무결성), 사용자 페르소나별 진입점, 그리고 BLUEPRINT·JOURNAL의 확정 원칙을 지켜야 한다.
+이 컨텍스트 문서는 FINDGAGU-OS의 **최상위 헌법**으로 간주한다. AI가 새로운 기능을 제안하거나 UI를 설계할 때는 반드시 여기에 명시된 운영 원칙(정보 계층화, 데이터 무결성), **하이브리드 개발 환경 전제**(Cursor 시각적 편집 + Claude Code 터미널 에이전트 병행), 사용자 페르소나별 진입점, 그리고 BLUEPRINT·JOURNAL의 확정 원칙을 지켜야 한다.

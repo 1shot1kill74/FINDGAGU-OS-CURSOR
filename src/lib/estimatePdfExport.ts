@@ -137,9 +137,9 @@ export async function exportEstimateToPdf(element: HTMLElement, filename: string
       windowHeight: CAPTURE_VIEWPORT_HEIGHT,
       scrollX: 0,
       scrollY: 0,
-      onclone: (_doc, cloned) => {
-        const root = cloned.querySelector('[data-estimate-print-area]') ?? cloned.body
-        applyPrintAreaCloneStyles(cloned, root)
+      onclone: (doc) => {
+        const root = doc.querySelector('[data-estimate-print-area]') ?? doc.body
+        applyPrintAreaCloneStyles(doc, root)
       },
     })
 
@@ -214,9 +214,9 @@ export async function exportEstimateToImage(element: HTMLElement, filename: stri
       windowHeight: CAPTURE_VIEWPORT_HEIGHT,
       scrollX: 0,
       scrollY: 0,
-      onclone: (_doc, cloned) => {
-        const root = cloned.querySelector('[data-estimate-print-area]') ?? cloned.body
-        applyPrintAreaCloneStyles(cloned, root)
+      onclone: (doc) => {
+        const root = doc.querySelector('[data-estimate-print-area]') ?? doc.body
+        applyPrintAreaCloneStyles(doc, root)
       },
     })
     const blob = await new Promise<Blob | null>((resolve) => {

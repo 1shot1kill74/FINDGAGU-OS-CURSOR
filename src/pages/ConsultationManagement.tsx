@@ -22,7 +22,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { subMonths, startOfMonth, startOfDay } from 'date-fns'
 import { EstimateForm, type EstimateFormData, type EstimateFormHandle, ProposalPreviewContent, FinalEstimatePreviewContent, computeProposalTotals, computeFinalTotals, createEmptyRow } from '@/components/estimate/EstimateForm'
 import { ConsultationHistoryLog } from '@/components/chat/ConsultationHistoryLog'
-import { OrderDocumentsGallery } from '@/components/order/OrderDocumentsGallery'
+import { MeasurementSection } from '@/components/Consultation/MeasurementSection'
 import { EstimateFilesGallery } from '@/components/estimate/EstimateFilesGallery'
 import { insertSystemLog } from '@/lib/activityLog'
 import { getVendorPriceRecommendation } from '@/lib/estimateRecommendationService'
@@ -774,6 +774,7 @@ function ConsultationListItem({
   lastMessage,
   /** 견적서로 저장 직후 카드 2행 즉시 반영용 — 그 외에는 DB(consultations.estimate_amount) 단일 소스만 사용 */
   getPendingEstimateAmount,
+  imageCount = 0,
 }: {
   item: Lead
   isSelected: boolean
@@ -788,6 +789,8 @@ function ConsultationListItem({
   onDeleteClick: (leadId: string) => void
   lastMessage?: LastActivityMessage | null
   getPendingEstimateAmount?: (consultationId: string) => number | undefined
+  /** consultation_messages 내 이미지(FILE+Cloudinary) 개수. 구글챗 버튼 왼쪽 인디케이터용 */
+  imageCount?: number
 }) {
   const painText = item.painPoint?.trim() || '(요청사항 없음)'
   const contactDisplay = item.contact ? formatContact(item.contact) : ''
@@ -821,12 +824,17 @@ function ConsultationListItem({
   const requiredDateDisplay = item.requiredDate && /^\d{4}-\d{2}-\d{2}$/.test(item.requiredDate) ? item.requiredDate : '미정'
 
   return (
-    <button
-      type="button"
+    // [DOM 수정] button→div: 내부에 StageProgressBar·편집·삭제 button이 있어 button-in-button 금지 위반 방지
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onSelect}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect() } }}
       className={cn(
-        'relative w-full text-left rounded-md border transition-colors flex flex-col gap-1.5 px-2 py-1.5 min-h-0',
-        isSelected ? 'bg-amber-50 dark:bg-amber-950/40 border-2 border-amber-500 ring-2 ring-amber-400/30 shadow-sm' : 'bg-card border border-border hover:bg-muted/50',
+        'relative w-full text-left rounded-md border flex flex-col gap-1.5 px-2 py-1.5 min-h-0 transition-all duration-200 ease-in-out cursor-pointer',
+        isSelected
+          ? 'relative z-10 bg-amber-50 dark:bg-amber-950/40 border-2 border-amber-600 ring-2 ring-amber-400/30 scale-[1.02] -translate-y-1 shadow-[0_10px_40px_-8px_rgba(0,0,0,0.2)]'
+          : 'bg-card border border-border hover:bg-muted/50 shadow-sm',
         isPartner && 'border-amber-400/80 dark:border-amber-500/70 ring-1 ring-amber-400/30',
         isHighlighted && 'ring-2 ring-amber-400 ring-offset-2 ring-offset-background bg-amber-100/90 dark:bg-amber-500/25 dark:ring-amber-400 animate-pulse',
         isLongTermUnresolved && 'opacity-70',
@@ -975,7 +983,18 @@ function ConsultationListItem({
           )}
           <span className="shrink-0">{requiredDateDisplay ? `요청 ${requiredDateDisplay}` : '요청 미정'}</span>
         </div>
-        <div className="shrink-0 flex items-center" onClick={(e) => e.stopPropagation()}>
+        <div className="shrink-0 flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+          {imageCount > 0 ? (
+            <span
+              className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[10px] font-medium bg-sky-500/15 text-sky-700 dark:text-sky-400 border border-sky-500/30"
+              title="시공 사진 포함"
+            >
+              <Images className="h-2.5 w-2.5 shrink-0" />
+              {imageCount}
+            </span>
+          ) : (
+            <span className="text-[10px] text-muted-foreground/60 shrink-0" title="사진 없음">(사진 없음)</span>
+          )}
           {item.google_chat_url ? (
             <button
               type="button"
@@ -1017,7 +1036,7 @@ function ConsultationListItem({
           </span>
         </div>
       )}
-    </button>
+    </div>
   )
 }
 
@@ -1060,6 +1079,8 @@ export default function ConsultationManagement() {
   const [highlightedLeadId, setHighlightedLeadId] = useState<string | null>(null)
   /** 카드별 마지막 활동 1건 (consultation_id → LastActivityMessage) */
   const [lastMessagesByConsultationId, setLastMessagesByConsultationId] = useState<Record<string, LastActivityMessage>>({})
+  /** 카드별 이미지 첨부 개수 (consultation_id → count). consultation_messages 중 FILE 타입 + 이미지(Cloudinary URL 또는 metadata.public_id) */
+  const [imageCountByConsultationId, setImageCountByConsultationId] = useState<Record<string, number>>({})
   /** 견적서 풀스크린 모달: 열림 여부, 수정 시 estimate id, 편집 시 초기 데이터 */
   const [estimateModalOpen, setEstimateModalOpen] = useState(false)
   const [estimateModalEditId, setEstimateModalEditId] = useState<string | null>(null)
@@ -1415,6 +1436,50 @@ export default function ConsultationManagement() {
     return () => { cancelled = true }
   }, [paginatedLeads])
 
+  /** 카드별 이미지 첨부 개수 조회 — consultation_messages 중 FILE + 이미지(Cloudinary URL 또는 metadata.public_id) */
+  useEffect(() => {
+    const ids = paginatedLeads.map((l) => l.id)
+    if (ids.length === 0) {
+      setImageCountByConsultationId({})
+      return
+    }
+    let cancelled = false
+    ;(async () => {
+      const { data: rows } = await supabase
+        .from('consultation_messages')
+        .select('consultation_id, file_url, metadata')
+        .in('consultation_id', ids)
+        .eq('message_type', 'FILE')
+      if (cancelled) return
+      const byId: Record<string, number> = {}
+      for (const row of rows ?? []) {
+        const r = row as { consultation_id: string; file_url?: string | null; metadata?: { public_id?: string } | null }
+        const isImage = (r.file_url?.startsWith('http') ?? false) || !!(r.metadata as { public_id?: string } | null)?.public_id
+        if (isImage) {
+          byId[r.consultation_id] = (byId[r.consultation_id] ?? 0) + 1
+        }
+      }
+      setImageCountByConsultationId(byId)
+    })()
+    return () => { cancelled = true }
+  }, [paginatedLeads])
+
+  /** 특정 상담의 이미지 개수만 재조회 후 state 반영 (히스토리에서 이미지 추가 시 호출) */
+  const refetchImageCountForConsultation = useCallback(async (consultationId: string) => {
+    const { data: rows } = await supabase
+      .from('consultation_messages')
+      .select('consultation_id, file_url, metadata')
+      .eq('consultation_id', consultationId)
+      .eq('message_type', 'FILE')
+    let count = 0
+    for (const row of rows ?? []) {
+      const r = row as { consultation_id: string; file_url?: string | null; metadata?: { public_id?: string } | null }
+      const isImage = (r.file_url?.startsWith('http') ?? false) || !!(r.metadata as { public_id?: string } | null)?.public_id
+      if (isImage) count++
+    }
+    setImageCountByConsultationId((prev) => ({ ...prev, [consultationId]: count }))
+  }, [])
+
   const handleSubmitConsultation = async (e: React.FormEvent) => {
     e.preventDefault()
     const contact = form.contact.trim()
@@ -1545,20 +1610,22 @@ export default function ConsultationManagement() {
     void navigator.clipboard.writeText(normalized).then(() => toast.success('전화번호가 복사되었습니다.'))
   }
 
-  /** 상담 카드 선택 시 선택 상태 반영 + last_viewed_at 갱신(읽음 처리) — 왼쪽 카드 활성화·우측 상세 로딩과 동기화 */
+  /** 상담 카드 선택 시 선택 상태 반영 — 왼쪽 카드 활성화·우측 상세 로딩과 동기화
+   * [DISABLED: PGRST204] last_viewed_at 컬럼 미존재로 DB 갱신 일시 중단. 로컬 state만 갱신. */
   const handleSelectLead = useCallback((leadId: string) => {
     setSelectedLead(leadId)
     const now = new Date().toISOString()
     setLeads((prev) =>
       prev.map((l) => (l.id === leadId ? { ...l, lastViewedAt: now } : l))
     )
-    supabase
-      .from('consultations')
-      .update({ last_viewed_at: now })
-      .eq('id', leadId)
-      .then(({ error }) => {
-        if (error) console.warn('last_viewed_at 갱신 실패:', error)
-      })
+    // [DISABLED: PGRST204 — consultations 테이블에 last_viewed_at 컬럼 없음]
+    // supabase
+    //   .from('consultations')
+    //   .update({ last_viewed_at: now })
+    //   .eq('id', leadId)
+    //   .then(({ error }) => {
+    //     if (error) console.warn('last_viewed_at 갱신 실패:', error)
+    //   })
   }, [])
 
   /** 파트너 수동 지정 — customer_grade를 '파트너'로 고정. 자동 단골 판정보다 우선. 관리자 전용 */
@@ -1829,9 +1896,7 @@ export default function ConsultationManagement() {
     )
     setEditModalLeadId(null)
     try {
-      // consultations 테이블 실제 컬럼에 맞춤: project_name, customer_phone, customer_grade, region, industry, start_date, update_date, metadata
-      // (company_name, manager_name, contact는 없음 — metadata에 저장)
-      const todayStr = new Date().toISOString().slice(0, 10)
+      // consultations 테이블 실제 컬럼에 맞춤. update_date는 시트/구글챗 기준이라 앱에서 갱신하지 않음.
       const updatePayload: Record<string, unknown> = {
         project_name: (company || lead.company || '(업체명 없음)').trim() || '(업체명 없음)',
         customer_phone: contact || null,
@@ -1839,7 +1904,6 @@ export default function ConsultationManagement() {
         region: region || null,
         industry: industry || null,
         start_date: inboundDate && /^\d{4}-\d{2}-\d{2}$/.test(inboundDate) ? inboundDate : null,
-        update_date: todayStr,
         metadata: nextMeta as Json,
       }
       if (googleChatUrlVal) updatePayload.link = googleChatUrlVal
@@ -2028,23 +2092,17 @@ export default function ConsultationManagement() {
     }
     const nextStatus = stageToStatus[stage]
 
-    const todayStr = stage === '계약완료' ? new Date().toISOString().slice(0, 10) : null
     setLeads((prev) =>
       prev.map((l) =>
-        l.id === leadId
-          ? { ...l, workflowStage: stage, status: nextStatus, ...(todayStr ? { updateDate: todayStr } : {}) }
-          : l
+        l.id === leadId ? { ...l, workflowStage: stage, status: nextStatus } : l
       )
     )
 
     try {
+      // update_date는 시트/구글챗 기준이라 앱에서 변경하지 않음
       const updatePayload: Record<string, unknown> = {
         metadata: nextMeta as Json,
         status: nextStatus,
-      }
-      if (stage === '계약완료') {
-        const today = new Date().toISOString().slice(0, 10)
-        updatePayload.update_date = today
       }
       const { error } = await supabase
         .from('consultations')
@@ -2162,35 +2220,42 @@ export default function ConsultationManagement() {
     }
   }, [location.state, location.search])
 
-  // Real-time: 구글 시트 onEdit → Supabase 반영 시, INSERT/UPDATE 이벤트로 카드 목록 즉시 갱신.
-  // UPDATE 수신 시 전체 리스트 재조회(fetch)로 캐시 무효화 — update_date 등 DB 기준으로 표시.
-  // Supabase 대시보드: Database → Realtime → consultations 테이블 활성화 필요.
-  useEffect(() => {
-    const channel = supabase
-      .channel('consultations-realtime')
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'consultations' },
-        () => {
-          fetchLeadsRef.current()
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'consultations' },
-        () => {
-          fetchLeadsRef.current()
-        }
-      )
-      .subscribe((status) => {
-        if (status === 'CHANNEL_ERROR') {
-          console.warn('[Realtime] consultations channel error — 리스트는 탭 전환 시 재조회됩니다.')
-        }
-      })
-    return () => {
-      void supabase.removeChannel(channel)
-    }
-  }, [])
+  // [DISABLED: 시스템 안정화] Real-time 구독 일시 중단 — 채널 오류로 인한 콘솔 에러 방지.
+  // 재활성화 시 아래 주석 해제.
+  // useEffect(() => {
+  //   const channel = supabase
+  //     .channel('consultations-realtime')
+  //     .on(
+  //       'postgres_changes',
+  //       { event: 'INSERT', schema: 'public', table: 'consultations' },
+  //       (payload) => {
+  //         console.log('[Realtime] INSERT event received', payload)
+  //         fetchLeadsRef.current()
+  //       }
+  //     )
+  //     .on(
+  //       'postgres_changes',
+  //       { event: 'UPDATE', schema: 'public', table: 'consultations' },
+  //       (payload) => {
+  //         console.log('[Realtime] UPDATE event received', payload)
+  //         fetchLeadsRef.current()
+  //       }
+  //     )
+  //     .subscribe((status, err) => {
+  //       if (status === 'SUBSCRIBED') {
+  //         console.log('[Realtime] ✅ 구독 성공: consultations-realtime')
+  //       } else if (status === 'TIMED_OUT') {
+  //         console.warn('[Realtime] ⏱ 구독 타임아웃: consultations-realtime', err)
+  //       } else if (status === 'CLOSED') {
+  //         console.warn('[Realtime] 🔌 채널 닫힘: consultations-realtime', err)
+  //       } else if (status === 'CHANNEL_ERROR') {
+  //         console.error('[Realtime] ❌ 채널 오류: consultations-realtime', err)
+  //       }
+  //     })
+  //   return () => {
+  //     void supabase.removeChannel(channel)
+  //   }
+  // }, [])
 
   const selectedLeadData = selectedLead ? leads.find((l) => l.id === selectedLead) : null
 
@@ -2294,41 +2359,46 @@ export default function ConsultationManagement() {
     return () => { cancelled = true }
   }, [selectedLeadData])
 
-  /** 현재 상담 건의 발주서 목록 조회 (order_documents) — 실측·갤러리 탭용 */
+  /** [DISABLED: 400 에러] order_documents 테이블 조회 일시 중단 — 테이블 미존재 또는 스키마 불일치.
+   * 재활성화 시 아래 주석 해제. */
   useEffect(() => {
-    if (!selectedLead) {
-      setOrderDocumentsList([])
-      return
-    }
-    let cancelled = false
-    supabase
-      .from('order_documents')
-      .select('id, consultation_id, storage_path, file_name, file_type, thumbnail_path, product_tags, created_at')
-      .eq('consultation_id', selectedLead)
-      .order('created_at', { ascending: false })
-      .then(({ data, error }) => {
-        if (cancelled) return
-        if (error) {
-          setOrderDocumentsList([])
-          return
-        }
-        setOrderDocumentsList(
-          (data ?? []).map((r) => ({
-            id: r.id,
-            consultation_id: r.consultation_id,
-            storage_path: r.storage_path,
-            file_name: r.file_name,
-            file_type: r.file_type as OrderDocument['file_type'],
-            thumbnail_path: r.thumbnail_path,
-            product_tags: Array.isArray(r.product_tags) ? (r.product_tags as string[]) : [],
-            created_at: r.created_at,
-          }))
-        )
-      })
-    return () => {
-      cancelled = true
-    }
+    setOrderDocumentsList([])
   }, [selectedLead])
+  // useEffect(() => {
+  //   if (!selectedLead) {
+  //     setOrderDocumentsList([])
+  //     return
+  //   }
+  //   let cancelled = false
+  //   supabase
+  //     .from('order_documents')
+  //     .select('id, consultation_id, storage_path, file_name, file_type, thumbnail_path, product_tags, document_category, created_at')
+  //     .eq('consultation_id', selectedLead)
+  //     .order('created_at', { ascending: false })
+  //     .then(({ data, error }) => {
+  //       if (cancelled) return
+  //       if (error) {
+  //         setOrderDocumentsList([])
+  //         return
+  //       }
+  //       setOrderDocumentsList(
+  //         (data ?? []).map((r) => ({
+  //           id: r.id,
+  //           consultation_id: r.consultation_id,
+  //           storage_path: r.storage_path,
+  //           file_name: r.file_name,
+  //           file_type: r.file_type as OrderDocument['file_type'],
+  //           thumbnail_path: r.thumbnail_path,
+  //           product_tags: Array.isArray(r.product_tags) ? (r.product_tags as string[]) : [],
+  //           document_category: ((r as { document_category?: string }).document_category ?? 'purchase_order') as OrderDocumentCategory,
+  //           created_at: r.created_at,
+  //         }))
+  //       )
+  //     })
+  //   return () => {
+  //     cancelled = true
+  //   }
+  // }, [selectedLead])
 
   /** 업로드 견적서(consultation_estimate_files) — AI 참조용 */
   useEffect(() => {
@@ -3137,10 +3207,10 @@ export default function ConsultationManagement() {
               </DialogContent>
             </Dialog>
 
-            <Link to="/measurement">
+            <Link to="/order-assets">
               <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
                 <Ruler className="h-4 w-4" />
-                실측 관리
+                발주 자산 관리
               </Button>
             </Link>
             <Link to="/showroom">
@@ -3240,7 +3310,7 @@ export default function ConsultationManagement() {
         </Dialog>
 
         {/* 상담 정보 수정 모달 — 업체명·지역·업종·전화·인입일·필요일·요청사항 */}
-        {/* 실측 자료(PDF) — 전용 모듈/업로드 페이지로 이동용 모달 */}
+        {/* 실측 자료(PDF) — legacy 실측 도면 미리보기용 모달 */}
         <Dialog open={measurementModalOpen && !!selectedLeadData} onOpenChange={(open) => !open && setMeasurementModalOpen(false)}>
           <DialogContent className="sm:max-w-[380px]">
             <DialogHeader>
@@ -3252,20 +3322,16 @@ export default function ConsultationManagement() {
             {selectedLeadData && (
               <div className="space-y-4 pt-1">
                 <p className="text-sm text-muted-foreground">
-                  <span className="font-medium text-foreground">{selectedLeadData.company || '(업체명 없음)'}</span> — 실측 정보 입력 페이지에서 PDF·메모를 관리합니다.
+                  <span className="font-medium text-foreground">{selectedLeadData.company || '(업체명 없음)'}</span> — 발주서·배치도는 실측 탭에서 업로드합니다.
                 </p>
                 {selectedLeadData.measurementDrawingPath ? (
                   <Button type="button" variant="outline" size="sm" className="w-full gap-2" onClick={() => openMeasurementDrawingPreview(selectedLeadData.measurementDrawingPath!)}>
                     <FileText className="h-4 w-4" />
                     PDF 미리보기 (일시적 링크)
                   </Button>
-                ) : null}
-                <Link to={`/measurement/upload?consultationId=${selectedLeadData.id}`} className="block">
-                  <Button type="button" className="w-full gap-2" size="sm">
-                    <Ruler className="h-4 w-4" />
-                    실측 정보 입력 페이지로 이동
-                  </Button>
-                </Link>
+                ) : (
+                  <p className="text-xs text-muted-foreground">실측 도면 PDF가 없습니다.</p>
+                )}
               </div>
             )}
           </DialogContent>
@@ -3532,6 +3598,7 @@ export default function ConsultationManagement() {
                               onDeleteClick={handleDeleteLead}
                               lastMessage={lastMessagesByConsultationId[lead.id] ?? null}
                               getPendingEstimateAmount={(id) => pendingEstimateAmountRef.current[id]}
+                              imageCount={imageCountByConsultationId[lead.id] ?? 0}
                             />
                           </li>
                         ))
@@ -3578,12 +3645,12 @@ export default function ConsultationManagement() {
                 )}
                 <TabsList className="w-full grid grid-cols-3 rounded-none border-b border-border bg-muted/50 h-10">
                   <TabsTrigger value="history" className="text-xs rounded-none">상담 히스토리</TabsTrigger>
-                  <TabsTrigger value="measurement" className="text-xs rounded-none">실측 자료</TabsTrigger>
+                  <TabsTrigger value="measurement" className="text-xs rounded-none">배치도&발주서</TabsTrigger>
                   <TabsTrigger value="estimate" className="text-xs rounded-none">견적 관리</TabsTrigger>
                 </TabsList>
                 <div className="flex-1 overflow-y-auto min-h-0">
-                  {/* 탭 1: 상담 히스토리 — 기록형 장부 (고객 정보 + 직원 입력 히스토리 로그) */}
-                  <div className={detailPanelTab === 'history' ? 'p-4 flex flex-col min-h-0 h-full' : 'hidden'}>
+                  {/* 탭 1: 상담 히스토리 — 입력창 고정(동일연락처↔히스토리 중간), 히스토리 영역만 스크롤 */}
+                  <div className={detailPanelTab === 'history' ? 'p-4 flex flex-col min-h-0 h-full overflow-hidden' : 'hidden'}>
                     {/* 상단: 고객 기본 정보 */}
                     <div className="shrink-0 space-y-2 mb-3 pb-3 border-b border-border">
                       <p className="font-semibold text-foreground">{selectedLeadData.displayName || selectedLeadData.company || '(업체명 없음)'}</p>
@@ -3673,7 +3740,11 @@ export default function ConsultationManagement() {
                     {/* 중앙: 상담 히스토리 로그 — 직원이 직접 입력하는 기록형 메모장 */}
                     <div className="flex-1 min-h-0 border border-border rounded-lg p-3 bg-muted/20">
                       {selectedLeadData?.id ? (
-                        <ConsultationHistoryLog consultationId={selectedLeadData.id} />
+                        <ConsultationHistoryLog
+                          consultationId={selectedLeadData.id}
+                          projectName={selectedLeadData.company || selectedLeadData.displayName || ''}
+                          onSaved={() => refetchImageCountForConsultation(selectedLeadData.id)}
+                        />
                       ) : (
                         <div className="flex items-center justify-center p-6 text-sm text-muted-foreground">상담을 선택해 주세요.</div>
                       )}
@@ -3681,32 +3752,13 @@ export default function ConsultationManagement() {
                   </div>
                   {/* 탭 2: 실측·발주서 — BLUEPRINT Supabase Storage 기반 비주얼 갤러리(파일 리스트 아님), 퀵뷰 라이트박스 */}
                   <div className={detailPanelTab === 'measurement' ? 'p-4 space-y-4' : 'hidden'}>
-                    <div className="flex items-center gap-2">
-                      <Ruler className="h-4 w-4 text-muted-foreground" />
-                      <h3 className="text-sm font-semibold text-foreground">실측 · 발주서 (갤러리)</h3>
-                    </div>
-                    <OrderDocumentsGallery
+                    <MeasurementSection
                       consultationId={selectedLeadData.id}
-                      consultationDisplayName={selectedLeadData.displayName || selectedLeadData.company || ''}
-                      measurementDrawingPath={selectedLeadData.measurementDrawingPath}
+                      projectName={selectedLeadData.company || selectedLeadData.displayName || ''}
                       orderDocuments={orderDocumentsList}
-                      onUploadComplete={() => {
-                        supabase
-                          .from('order_documents')
-                          .select('id, consultation_id, storage_path, file_name, file_type, thumbnail_path, product_tags, created_at')
-                          .eq('consultation_id', selectedLeadData.id)
-                          .order('created_at', { ascending: false })
-                          .then(({ data }) => {
-                            if (data) setOrderDocumentsList(data as OrderDocument[])
-                          })
-                      }}
+                      measurementDrawingPath={selectedLeadData.measurementDrawingPath}
+                      onOrderDocumentsChange={(data) => setOrderDocumentsList(data ?? [])}
                     />
-                    <Link to={`/measurement/upload?consultationId=${selectedLeadData.id}`} className="block pt-2 border-t border-border">
-                      <Button type="button" variant="outline" size="sm" className="w-full gap-2">
-                        <Ruler className="h-3.5 w-3.5" />
-                        실측 정보 입력 페이지로 이동
-                      </Button>
-                    </Link>
                   </div>
                   {/* 탭 3: 견적 관리 — 업로드 견적서(AI 참조) · 리스트 · 필터 · 선택 삭제 */}
                   <div className={detailPanelTab === 'estimate' ? 'p-4 flex flex-col min-h-0' : 'hidden'}>
@@ -4301,6 +4353,7 @@ export default function ConsultationManagement() {
             overlayClassName="bg-black/40 backdrop-blur-md"
             className="fixed inset-0 z-50 w-screen h-screen max-w-none translate-x-0 translate-y-0 rounded-none border-0 p-0 flex flex-col gap-0"
           >
+            <DialogTitle className="sr-only">견적 작성</DialogTitle>
             <div className="shrink-0 flex items-center justify-between gap-2 px-4 py-3 border-b border-border bg-card flex-wrap">
               <Button
                 type="button"

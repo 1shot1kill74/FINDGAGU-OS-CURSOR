@@ -252,6 +252,7 @@ export type Database = {
           file_type: string
           thumbnail_path: string | null
           product_tags: Json | null
+          document_category: string | null
           created_at: string | null
         }
         Insert: {
@@ -262,6 +263,7 @@ export type Database = {
           file_type: string
           thumbnail_path?: string | null
           product_tags?: Json | null
+          document_category?: string | null
           created_at?: string | null
         }
         Update: {
@@ -272,6 +274,7 @@ export type Database = {
           file_type?: string
           thumbnail_path?: string | null
           product_tags?: Json | null
+          document_category?: string | null
           created_at?: string | null
         }
         Relationships: []
@@ -346,10 +349,13 @@ export type Database = {
           is_main: boolean
           memo: string | null
           metadata: Json | null
+          storage_type: string | null
+          storage_path: string | null
           ai_score: number | null
           view_count: number
           internal_score: number | null
           share_count: number
+          is_consultation: boolean | null
         }
         Insert: {
           id?: string
@@ -366,10 +372,13 @@ export type Database = {
           is_main?: boolean
           memo?: string | null
           metadata?: Json | null
+          storage_type?: string | null
+          storage_path?: string | null
           ai_score?: number | null
           view_count?: number
           internal_score?: number | null
           share_count?: number
+          is_consultation?: boolean | null
         }
         Update: {
           id?: string
@@ -386,10 +395,13 @@ export type Database = {
           is_main?: boolean
           memo?: string | null
           metadata?: Json | null
+          storage_type?: string | null
+          storage_path?: string | null
           ai_score?: number | null
           view_count?: number
           internal_score?: number | null
           share_count?: number
+          is_consultation?: boolean | null
         }
         Relationships: []
       }
@@ -569,7 +581,14 @@ export type Database = {
       }
     }
     Functions: {
-      [_ in never]: never
+      increment_image_asset_view_count: {
+        Args: { asset_id: string }
+        Returns: undefined
+      }
+      increment_image_asset_share_count: {
+        Args: { asset_id: string }
+        Returns: undefined
+      }
     }
     Enums: {
       consultation_status:
