@@ -8,7 +8,7 @@ import { supabase } from '@/lib/supabase'
 import { toast } from 'sonner'
 import { formatDistanceToNow } from 'date-fns'
 import { ko } from 'date-fns/locale'
-import { getGoldenTimeState, getElapsedDays, type GoldenTimeTier } from '@/utils/dateUtils'
+import { getGoldenTimeState, getElapsedDays, type GoldenTimeTier } from '@/lib/utils/dateUtils'
 
 // 팝업(Dialog) — JOURNAL: 팝업 버그 해결용 open/onOpenChange 단일 연동
 import {
@@ -23,6 +23,9 @@ import { subMonths, startOfMonth, startOfDay } from 'date-fns'
 import { EstimateForm, type EstimateFormData, type EstimateFormHandle, ProposalPreviewContent, FinalEstimatePreviewContent, computeProposalTotals, computeFinalTotals, createEmptyRow } from '@/components/estimate/EstimateForm'
 import { ConsultationHistoryLog } from '@/components/chat/ConsultationHistoryLog'
 import { MeasurementSection } from '@/components/Consultation/MeasurementSection'
+import { ConsultationHistoryTab } from '@/components/Consultation/ConsultationHistoryTab'
+import { ConsultationMeasurementTab } from '@/components/Consultation/ConsultationMeasurementTab'
+import { ConsultationEstimateTab } from '@/components/Consultation/ConsultationEstimateTab'
 import { EstimateFilesGallery } from '@/components/estimate/EstimateFilesGallery'
 import { insertSystemLog } from '@/lib/activityLog'
 import { getVendorPriceRecommendation } from '@/lib/estimateRecommendationService'
@@ -173,6 +176,7 @@ const STATUS_TO_STAGE: Record<string, ConsultationStage> = {
   견적발송: '견적중',
   계약완료: '계약완료',
   휴식기: '시공완료',
+  시공완료: '시공완료',
   거절: '시공완료',
   무효: '시공완료',
   AS_WAITING: '시공완료',
@@ -225,8 +229,8 @@ interface Lead {
   google_chat_pending?: boolean
   /** AI 히스토리 요약 (metadata.history_summary). 구글챗 분석 결과, Read-only·AI 전용 업데이트 */
   history_summary?: string
-  /** 인입일 YYYY-MM-DD (start_date 기반, 표시용) */
-  inboundDate: string
+  /** 인입일 YYYY-MM-DD (start_date 기반, 표시용). 마이그레이션 레코드 등 인입일 미설정 시 null */
+  inboundDate: string | null
   /** 업데이트일 YYYY-MM-DD (update_date, 방치 기간 계산용) */
   updateDate?: string | null
   /** 구글 시트 최신 업데이트일 YYYY-MM-DD (metadata.sheet_update_date). 있으면 '갱신' 표시·정렬에 우선 사용 */
@@ -315,7 +319,10 @@ function mapConsultationRowToLead(item: Record<string, unknown>): Lead {
     computeDisplayName(company, contactStr, new Date(created))
   const goldenTime = getGoldenTimeState(created)
   const isGoldenTime = goldenTime.isGoldenTime
-  const regionFromMeta = meta && typeof meta.region === 'string' ? meta.region : '현장 확인 중'
+  const regionFromMeta =
+    (typeof item.region === 'string' && item.region.trim() ? item.region.trim() : null) ||
+    (meta && typeof meta.region === 'string' && meta.region.trim() ? meta.region.trim() : null) ||
+    '현장 확인 중'
   const industryFromMeta =
     (meta && typeof meta.industry === 'string' && meta.industry.trim() ? meta.industry.trim() : null) ||
     (typeof item.industry === 'string' && item.industry.trim() ? item.industry.trim() : null) ||
@@ -353,12 +360,16 @@ function mapConsultationRowToLead(item: Record<string, unknown>): Lead {
     rawStart != null && typeof rawStart === 'string' && rawStart.trim()
       ? rawStart.trim().slice(0, 10)
       : null
+  const isMigrationRecord =
+    meta != null && typeof meta.source === 'string' && meta.source.startsWith('google_chat')
   const inboundDate =
     startDateStr && /^\d{4}-\d{2}-\d{2}$/.test(startDateStr)
       ? startDateStr
       : (meta && typeof meta.inbound_date === 'string' && meta.inbound_date.trim())
         ? meta.inbound_date.trim().slice(0, 10)
-        : created.slice(0, 10)
+        : isMigrationRecord
+          ? null
+          : created.slice(0, 10)
   const estimateHistory = parseEstimateHistory(meta)
   const expectedRevenueNum = Number(item.estimate_amount ?? item.expected_revenue ?? 0)
   const displayAmount = getDisplayAmount(estimateHistory, expectedRevenueNum)
@@ -385,10 +396,10 @@ function mapConsultationRowToLead(item: Record<string, unknown>): Lead {
   const aiSuggestions =
     rawAi && typeof rawAi === 'object' && !Array.isArray(rawAi)
       ? {
-          company_name: typeof (rawAi as Record<string, unknown>).company_name === 'string' ? (rawAi as Record<string, unknown>).company_name as string : undefined,
-          space_size: typeof (rawAi as Record<string, unknown>).space_size === 'number' ? (rawAi as Record<string, unknown>).space_size as number : undefined,
-          industry: typeof (rawAi as Record<string, unknown>).industry === 'string' ? (rawAi as Record<string, unknown>).industry as string : undefined,
-        }
+        company_name: typeof (rawAi as Record<string, unknown>).company_name === 'string' ? (rawAi as Record<string, unknown>).company_name as string : undefined,
+        space_size: typeof (rawAi as Record<string, unknown>).space_size === 'number' ? (rawAi as Record<string, unknown>).space_size as number : undefined,
+        industry: typeof (rawAi as Record<string, unknown>).industry === 'string' ? (rawAi as Record<string, unknown>).industry as string : undefined,
+      }
       : undefined
   const hasAiSuggestions = aiSuggestions && (aiSuggestions.company_name ?? aiSuggestions.space_size ?? aiSuggestions.industry)
   const showroomImageUrl = meta && typeof meta.showroom_image_url === 'string' && meta.showroom_image_url.trim() ? meta.showroom_image_url.trim() : undefined
@@ -605,9 +616,8 @@ function _MeasurementStatusBadge({ status }: { status: MeasurementStatus }) {
   const isDone = status === '실측완료'
   return (
     <span
-      className={`shrink-0 inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[11px] font-semibold ${
-        isDone ? 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 ring-1 ring-emerald-500/40' : 'bg-amber-500/20 text-amber-700 dark:text-amber-400 ring-1 ring-amber-500/40'
-      }`}
+      className={`shrink-0 inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[11px] font-semibold ${isDone ? 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 ring-1 ring-emerald-500/40' : 'bg-amber-500/20 text-amber-700 dark:text-amber-400 ring-1 ring-amber-500/40'
+        }`}
       title={isDone ? '실측 완료' : '실측 필요'}
     >
       <Ruler className="h-2.5 w-2.5" />
@@ -622,17 +632,16 @@ function CustomerTierBadge({ tier }: { tier: CustomerTier }) {
   const needsReview = tier === '미지정'
   return (
     <span
-      className={`inline-flex rounded-full px-1.5 py-0.5 text-[11px] font-semibold shrink-0 ${
-        isCaution
-          ? 'bg-red-500/25 text-red-700 dark:text-red-400 ring-1 ring-red-500/40'
-          : needsReview
-            ? 'bg-amber-500/20 text-amber-700 dark:text-amber-400 ring-1 ring-amber-500/30'
-            : tier === '파트너'
-              ? 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-400'
-              : tier === '단골'
-                ? 'bg-blue-500/20 text-blue-700 dark:text-blue-400'
-                : 'bg-muted text-muted-foreground'
-      }`}
+      className={`inline-flex rounded-full px-1.5 py-0.5 text-[11px] font-semibold shrink-0 ${isCaution
+        ? 'bg-red-500/25 text-red-700 dark:text-red-400 ring-1 ring-red-500/40'
+        : needsReview
+          ? 'bg-amber-500/20 text-amber-700 dark:text-amber-400 ring-1 ring-amber-500/30'
+          : tier === '파트너'
+            ? 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-400'
+            : tier === '단골'
+              ? 'bg-blue-500/20 text-blue-700 dark:text-blue-400'
+              : 'bg-muted text-muted-foreground'
+        }`}
     >
       {tier}
     </span>
@@ -687,14 +696,14 @@ const STAGE_BAR_OPTIONS: Array<{
   activeClass: string
   title?: string
 }> = [
-  { key: '상담접수', label: '접수', activeClass: 'bg-blue-500/20 text-blue-700 dark:bg-blue-500/25 dark:text-blue-300 ring-1 ring-blue-500/40' },
-  { key: '견적중', label: '견적', activeClass: 'bg-orange-500/20 text-orange-700 dark:bg-orange-500/25 dark:text-orange-300 ring-1 ring-orange-500/40' },
-  { key: '계약완료', label: '진행', activeClass: 'bg-green-500/20 text-green-700 dark:bg-green-500/25 dark:text-green-300 ring-1 ring-green-500/40', title: '실행/진행중 (프로젝트 공식 시작)' },
-  { key: '시공완료', label: '완료', activeClass: 'bg-purple-500/20 text-purple-700 dark:bg-purple-500/25 dark:text-purple-300 ring-1 ring-purple-500/40' },
-  { key: 'AS', label: 'AS', activeClass: 'bg-red-500/20 text-red-700 dark:bg-red-500/25 dark:text-red-300 ring-1 ring-red-500/40' },
-  { key: '무효', label: '무효', activeClass: 'bg-gray-500/20 text-gray-700 dark:bg-gray-500/25 dark:text-gray-300 ring-1 ring-gray-500/40' },
-  { key: '거절', label: '거절', activeClass: 'bg-slate-500/20 text-slate-700 dark:bg-slate-500/25 dark:text-slate-300 ring-1 ring-slate-500/40' },
-]
+    { key: '상담접수', label: '접수', activeClass: 'bg-blue-500/20 text-blue-700 dark:bg-blue-500/25 dark:text-blue-300 ring-1 ring-blue-500/40' },
+    { key: '견적중', label: '견적', activeClass: 'bg-orange-500/20 text-orange-700 dark:bg-orange-500/25 dark:text-orange-300 ring-1 ring-orange-500/40' },
+    { key: '계약완료', label: '진행', activeClass: 'bg-green-500/20 text-green-700 dark:bg-green-500/25 dark:text-green-300 ring-1 ring-green-500/40', title: '실행/진행중 (프로젝트 공식 시작)' },
+    { key: '시공완료', label: '완료', activeClass: 'bg-purple-500/20 text-purple-700 dark:bg-purple-500/25 dark:text-purple-300 ring-1 ring-purple-500/40' },
+    { key: 'AS', label: 'AS', activeClass: 'bg-red-500/20 text-red-700 dark:bg-red-500/25 dark:text-red-300 ring-1 ring-red-500/40' },
+    { key: '무효', label: '무효', activeClass: 'bg-gray-500/20 text-gray-700 dark:bg-gray-500/25 dark:text-gray-300 ring-1 ring-gray-500/40' },
+    { key: '거절', label: '거절', activeClass: 'bg-slate-500/20 text-slate-700 dark:bg-slate-500/25 dark:text-slate-300 ring-1 ring-slate-500/40' },
+  ]
 
 /** 현재 활성 상태 바 값 — AS_WAITING→AS, 거절/무효 그대로, 그 외 workflowStage */
 function getStageBarValue(item: Lead): StageBarValue {
@@ -814,8 +823,8 @@ function ConsultationListItem({
 
   const elapsedDays = item.goldenTimeElapsedDays ?? (item.inboundDate ? getElapsedDays(new Date(item.inboundDate + 'T12:00:00.000Z')) : -1)
   const isD7OrMore = elapsedDays >= 7
-  /** 방치 방지: 구글 시트 최신 업데이트(sheet_update_date) 우선, 없으면 update_date 기준 D-Day */
-  const neglectD = getNeglectDDisplay(item.sheetUpdateDate ?? item.updateDate)
+  /** 방치 방지: update_date 기준 D-Day */
+  const neglectD = getNeglectDDisplay(item.updateDate)
   /** 2행 맨 오른쪽: 최종 견적가. 실제 소스 1개만 — DB(consultations.estimate_amount → expectedRevenue). pending은 견적서로 저장 직후 낙관적 표시용 */
   const pendingAmount = getPendingEstimateAmount?.(item.id)
   const amountToShow =
@@ -838,8 +847,7 @@ function ConsultationListItem({
         isPartner && 'border-amber-400/80 dark:border-amber-500/70 ring-1 ring-amber-400/30',
         isHighlighted && 'ring-2 ring-amber-400 ring-offset-2 ring-offset-background bg-amber-100/90 dark:bg-amber-500/25 dark:ring-amber-400 animate-pulse',
         isLongTermUnresolved && 'opacity-70',
-        isInvalid && 'opacity-60 text-muted-foreground',
-        isD7OrMore && showStateBadge && 'border-red-500/60 ring-1 ring-red-500/40'
+        isInvalid && 'opacity-60 text-muted-foreground'
       )}
     >
       {hasUnread && (
@@ -963,15 +971,15 @@ function ConsultationListItem({
           {neglectD ? (
             <>
               <span
-                title={neglectD.days === 0 ? '오늘 갱신됨' : `마지막 업데이트(update_date)로부터 ${neglectD.days}일 경과 — 방치 주의`}
-                className={cn(
-                  'font-medium shrink-0 text-[11px] rounded px-1',
-                  neglectD.days === 0 && 'text-muted-foreground',
-                  neglectD.days >= 3 && neglectD.days < 7 && 'text-orange-600 dark:text-orange-400 font-semibold bg-orange-500/10 dark:bg-orange-500/20',
-                  neglectD.days >= 7 && 'text-red-600 dark:text-red-400 font-semibold bg-red-500/10 dark:bg-red-500/20 ring-1 ring-red-500/30 dark:ring-red-400/40'
-                )}
+                title={neglectD.days === 0 ? '오늘 갱신됨' : `마지막 업데이트 ${(item.updateDate)?.toString().slice(0, 10) ?? '—'}로부터 ${neglectD.days}일 경과 — 방치 주의`}
+                className="font-medium shrink-0 text-[11px] inline-flex items-center gap-0.5"
               >
-                {neglectD.days === 0 ? '오늘 갱신' : `미갱신 D+${neglectD.days}`}
+                <span className="text-muted-foreground">마지막 업데이트 {(item.updateDate)?.toString().slice(0, 10) ?? '—'}</span>
+                <span className={cn(
+                  neglectD.days === 0 && 'text-muted-foreground',
+                  neglectD.days >= 3 && neglectD.days < 7 && 'text-orange-600 dark:text-orange-400 font-semibold',
+                  neglectD.days >= 7 && 'text-red-600 dark:text-red-400 font-semibold'
+                )}>+{neglectD.days}일</span>
               </span>
               <span className="text-border shrink-0 mx-0.5">|</span>
             </>
@@ -981,7 +989,6 @@ function ConsultationListItem({
               <span className="text-border shrink-0 mx-0.5">|</span>
             </>
           )}
-          <span className="shrink-0">{requiredDateDisplay ? `요청 ${requiredDateDisplay}` : '요청 미정'}</span>
         </div>
         <div className="shrink-0 flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
           {imageCount > 0 ? (
@@ -1154,7 +1161,7 @@ export default function ConsultationManagement() {
     contact: string
     source: string
     google_chat_url: string
-    inboundDate: string
+    inboundDate: string | null
     requiredDate: string
     painPoint: string
     customerTier: CustomerTier
@@ -1200,7 +1207,7 @@ export default function ConsultationManagement() {
   const [searchQuery, setSearchQuery] = useState('')
   const [dateRange, setDateRange] = useState<DateRangeKey>('all')
   const [listPage, setListPage] = useState(0)
-  const [sortByNeglect, setSortByNeglect] = useState(false)
+  const [sortByNeglect, setSortByNeglect] = useState(true)
   /** admin 권한 — 시스템 메시지 영구 삭제 버튼 노출. localStorage 'findgagu-role' === 'admin' 또는 URL ?admin=1 */
   const isAdmin = useMemo(() => {
     if (typeof window === 'undefined') return false
@@ -1209,16 +1216,22 @@ export default function ConsultationManagement() {
     return false
   }, [])
 
-  /** KPI: 무효 제외 유효 상담 수, 성공률 = 계약완료(시공완료) / 유효 상담. 무효는 분모에서 제외 */
+  /** KPI: 무효 제외 유효 상담 수, 성공률 = 계약완료(시공완료) / 유효 상담. 무효는 분모에서 제외. 필터와 동일한 inRange 사용 */
   const kpi = useMemo(() => {
     const now = Date.now()
     const cutThisMonth = startOfMonth(new Date()).getTime()
-    const cut1m = subMonths(new Date(now), 1).getTime()
-    const cut3m = subMonths(new Date(now), 3).getTime()
-    const cut6m = subMonths(new Date(now), 6).getTime()
-    const cut1y = subMonths(new Date(now), 12).getTime()
+    const cut1m = startOfDay(subMonths(new Date(now), 1)).getTime()
+    const cut3m = startOfDay(subMonths(new Date(now), 3)).getTime()
+    const cut6m = startOfDay(subMonths(new Date(now), 6)).getTime()
+    const cut1y = startOfDay(subMonths(new Date(now), 12)).getTime()
     const inRange = (lead: Lead) => {
-      const t = new Date(lead.createdAt).getTime()
+      let t: number
+      if (lead.inboundDate && /^\d{4}-\d{2}-\d{2}$/.test(lead.inboundDate)) {
+        t = new Date(lead.inboundDate + 'T12:00:00.000Z').getTime()
+      } else {
+        t = new Date(lead.createdAt).getTime()
+      }
+      if (Number.isNaN(t)) return false
       if (dateRange === 'thisMonth') return t >= cutThisMonth && t <= now
       if (dateRange === '1m') return t >= cut1m
       if (dateRange === '3m') return t >= cut3m
@@ -1244,16 +1257,22 @@ export default function ConsultationManagement() {
     return { totalValid, successCount, successRate }
   }, [leads, searchQuery, dateRange])
 
-  /** 탭별 개수 (숫자 표시용) */
+  /** 탭별 개수 (숫자 표시용). 필터와 동일한 inRange 사용 */
   const tabCounts = useMemo(() => {
     const now = Date.now()
     const cutThisMonth = startOfMonth(new Date()).getTime()
-    const cut1m = subMonths(new Date(now), 1).getTime()
-    const cut3m = subMonths(new Date(now), 3).getTime()
-    const cut6m = subMonths(new Date(now), 6).getTime()
-    const cut1y = subMonths(new Date(now), 12).getTime()
+    const cut1m = startOfDay(subMonths(new Date(now), 1)).getTime()
+    const cut3m = startOfDay(subMonths(new Date(now), 3)).getTime()
+    const cut6m = startOfDay(subMonths(new Date(now), 6)).getTime()
+    const cut1y = startOfDay(subMonths(new Date(now), 12)).getTime()
     const inRange = (lead: Lead) => {
-      const t = new Date(lead.createdAt).getTime()
+      let t: number
+      if (lead.inboundDate && /^\d{4}-\d{2}-\d{2}$/.test(lead.inboundDate)) {
+        t = new Date(lead.inboundDate + 'T12:00:00.000Z').getTime()
+      } else {
+        t = new Date(lead.createdAt).getTime()
+      }
+      if (Number.isNaN(t)) return false
       if (dateRange === 'thisMonth') return t >= cutThisMonth && t <= now
       if (dateRange === '1m') return t >= cut1m
       if (dateRange === '3m') return t >= cut3m
@@ -1292,12 +1311,18 @@ export default function ConsultationManagement() {
   const filteredLeads = useMemo(() => {
     const now = Date.now()
     const cutThisMonth = startOfMonth(new Date()).getTime()
-    const cut1m = subMonths(new Date(now), 1).getTime()
-    const cut3m = subMonths(new Date(now), 3).getTime()
-    const cut6m = subMonths(new Date(now), 6).getTime()
-    const cut1y = subMonths(new Date(now), 12).getTime()
+    const cut1m = startOfDay(subMonths(new Date(now), 1)).getTime()
+    const cut3m = startOfDay(subMonths(new Date(now), 3)).getTime()
+    const cut6m = startOfDay(subMonths(new Date(now), 6)).getTime()
+    const cut1y = startOfDay(subMonths(new Date(now), 12)).getTime()
     const inRange = (lead: Lead) => {
-      const t = lead.inboundDate ? new Date(lead.inboundDate).getTime() : new Date(lead.createdAt).getTime()
+      let t: number
+      if (lead.inboundDate && /^\d{4}-\d{2}-\d{2}$/.test(lead.inboundDate)) {
+        t = new Date(lead.inboundDate + 'T12:00:00.000Z').getTime()
+      } else {
+        t = new Date(lead.createdAt).getTime()
+      }
+      if (Number.isNaN(t)) return false
       if (dateRange === 'thisMonth') return t >= cutThisMonth && t <= now
       if (dateRange === '1m') return t >= cut1m
       if (dateRange === '3m') return t >= cut3m
@@ -1335,14 +1360,11 @@ export default function ConsultationManagement() {
       // 전체: 활성 전부(미처리+견적중+진행중+AS대기 등) 그대로
     }
     if (sortByNeglect) {
-      // 미갱신일이 짧은 것(최근 갱신)부터 위로 — 구글 시트 갱신일(sheet_update_date) 우선
+      // 수파베이스 최신 업데이트일(update_date) 기준 내림차순 정렬. null이면 인입일(inboundDate) 대체
       return [...list].sort((a, b) => {
-        const da = getNeglectDays(a.sheetUpdateDate ?? a.updateDate)
-        const db = getNeglectDays(b.sheetUpdateDate ?? b.updateDate)
-        if (da < 0 && db < 0) return 0
-        if (da < 0) return 1
-        if (db < 0) return -1
-        return da - db
+        const da = new Date(a.updateDate ?? a.inboundDate ?? a.createdAt).getTime()
+        const db = new Date(b.updateDate ?? b.inboundDate ?? b.createdAt).getTime()
+        return db - da
       })
     }
     return [...list].sort((a, b) => {
@@ -1410,29 +1432,29 @@ export default function ConsultationManagement() {
       return
     }
     let cancelled = false
-    ;(async () => {
-      const { data: rows } = await supabase
-        .from('consultation_messages')
-        .select('consultation_id, sender_id, content, created_at, message_type')
-        .in('consultation_id', ids)
-        .order('created_at', { ascending: false })
-        .limit(Math.min(300, ids.length * 15))
-      if (cancelled) return
-      const byId: Record<string, LastActivityMessage> = {}
-      for (const row of rows ?? []) {
-        const r = row as { consultation_id: string; sender_id: string; content: string; created_at: string; message_type?: string }
-        const cid = r.consultation_id
-        if (!byId[cid]) {
-          byId[cid] = {
-            sender_id: r.sender_id,
-            content: r.content ?? '',
-            created_at: r.created_at,
-            message_type: (r.message_type === 'FILE' || r.message_type === 'SYSTEM' || r.message_type === 'TEXT') ? r.message_type : undefined,
+      ; (async () => {
+        const { data: rows } = await supabase
+          .from('consultation_messages')
+          .select('consultation_id, sender_id, content, created_at, message_type')
+          .in('consultation_id', ids)
+          .order('created_at', { ascending: false })
+          .limit(Math.min(300, ids.length * 15))
+        if (cancelled) return
+        const byId: Record<string, LastActivityMessage> = {}
+        for (const row of rows ?? []) {
+          const r = row as { consultation_id: string; sender_id: string; content: string; created_at: string; message_type?: string }
+          const cid = r.consultation_id
+          if (!byId[cid]) {
+            byId[cid] = {
+              sender_id: r.sender_id,
+              content: r.content ?? '',
+              created_at: r.created_at,
+              message_type: (r.message_type === 'FILE' || r.message_type === 'SYSTEM' || r.message_type === 'TEXT') ? r.message_type : undefined,
+            }
           }
         }
-      }
-      setLastMessagesByConsultationId(byId)
-    })()
+        setLastMessagesByConsultationId(byId)
+      })()
     return () => { cancelled = true }
   }, [paginatedLeads])
 
@@ -1444,23 +1466,23 @@ export default function ConsultationManagement() {
       return
     }
     let cancelled = false
-    ;(async () => {
-      const { data: rows } = await supabase
-        .from('consultation_messages')
-        .select('consultation_id, file_url, metadata')
-        .in('consultation_id', ids)
-        .eq('message_type', 'FILE')
-      if (cancelled) return
-      const byId: Record<string, number> = {}
-      for (const row of rows ?? []) {
-        const r = row as { consultation_id: string; file_url?: string | null; metadata?: { public_id?: string } | null }
-        const isImage = (r.file_url?.startsWith('http') ?? false) || !!(r.metadata as { public_id?: string } | null)?.public_id
-        if (isImage) {
-          byId[r.consultation_id] = (byId[r.consultation_id] ?? 0) + 1
+      ; (async () => {
+        const { data: rows } = await supabase
+          .from('consultation_messages')
+          .select('consultation_id, file_url, metadata')
+          .in('consultation_id', ids)
+          .eq('message_type', 'FILE')
+        if (cancelled) return
+        const byId: Record<string, number> = {}
+        for (const row of rows ?? []) {
+          const r = row as { consultation_id: string; file_url?: string | null; metadata?: { public_id?: string } | null }
+          const isImage = (r.file_url?.startsWith('http') ?? false) || !!(r.metadata as { public_id?: string } | null)?.public_id
+          if (isImage) {
+            byId[r.consultation_id] = (byId[r.consultation_id] ?? 0) + 1
+          }
         }
-      }
-      setImageCountByConsultationId(byId)
-    })()
+        setImageCountByConsultationId(byId)
+      })()
     return () => { cancelled = true }
   }, [paginatedLeads])
 
@@ -1561,15 +1583,33 @@ export default function ConsultationManagement() {
   const fetchLeads = async () => {
     setIsLoading(true)
     try {
-      const { data, error } = await supabase
-        .from('consultations')
-        .select('*')
-        .or('is_visible.eq.true,is_visible.is.null')
-        .order('start_date', { ascending: false, nullsFirst: false })
+      const allData: any[] = []
+      let from = 0
+      const PAGE_SIZE = 1000
+      let hasMore = true
 
-      if (error) throw error
+      while (hasMore) {
+        const { data, error } = await supabase
+          .from('consultations')
+          .select('*')
+          .or('is_visible.eq.true,is_visible.is.null')
+          .order('start_date', { ascending: false, nullsFirst: false })
+          .range(from, from + PAGE_SIZE - 1)
 
-      const raw = (data || []) as Array<Record<string, unknown>>
+        if (error) throw error
+        if (!data || data.length === 0) {
+          hasMore = false
+        } else {
+          allData.push(...data)
+          if (data.length < PAGE_SIZE) {
+            hasMore = false
+          } else {
+            from += PAGE_SIZE
+          }
+        }
+      }
+
+      const raw = allData as Array<Record<string, unknown>>
       const mappedLeads: Lead[] = []
       for (const item of raw) {
         if (!item || typeof item !== 'object') continue
@@ -1834,7 +1874,7 @@ export default function ConsultationManagement() {
     const contact = editForm.contact.trim()
     const region = editForm.region.trim()
     const industry = (editForm.industry && validIndustryValues.includes(editForm.industry as (typeof validIndustryValues)[number]) ? editForm.industry : '기타').trim()
-    const inboundDate = editForm.inboundDate.trim().slice(0, 10)
+    const inboundDate = (editForm.inboundDate ?? '').trim().slice(0, 10)
     const requiredDate = editForm.requiredDate.trim().slice(0, 10)
     const painPoint = editForm.painPoint.trim()
     const customerTier = getValidCustomerTier(editForm.customerTier)
@@ -1875,13 +1915,13 @@ export default function ConsultationManagement() {
     const normalizedContact = normalizeContactForSync(contact)
     const sameContactLeadIds = isValidContactForSameCustomer(contact)
       ? leads
-          .filter(
-            (l) =>
-              l.id !== editModalLeadId &&
-              isValidContactForSameCustomer(l.contact) &&
-              normalizeContactForSync(l.contact) === normalizedContact
-          )
-          .map((l) => l.id)
+        .filter(
+          (l) =>
+            l.id !== editModalLeadId &&
+            isValidContactForSameCustomer(l.contact) &&
+            normalizeContactForSync(l.contact) === normalizedContact
+        )
+        .map((l) => l.id)
       : []
     const originalSameContactLeads = sameContactLeadIds.map((id) => leads.find((l) => l.id === id)!)
 
@@ -2346,11 +2386,11 @@ export default function ConsultationManagement() {
             l.id !== consultationId
               ? l
               : {
-                  ...l,
-                  metadata: nextMeta as Record<string, unknown>,
-                  estimateHistory: nextHistory,
-                  displayAmount: getDisplayAmount(nextHistory, l.expectedRevenue),
-                }
+                ...l,
+                metadata: nextMeta as Record<string, unknown>,
+                estimateHistory: nextHistory,
+                displayAmount: getDisplayAmount(nextHistory, l.expectedRevenue),
+              }
           )
         )
         toast.success('마이그레이션 견적 이력이 동기화되었습니다.')
@@ -2407,20 +2447,20 @@ export default function ConsultationManagement() {
       return
     }
     let cancelled = false
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- consultation_estimate_files 신규 테이블
-    ;(supabase as any)
-      .from('consultation_estimate_files')
-      .select('id, consultation_id, project_name, storage_path, file_name, file_type, created_at, upload_type, quote_date')
-      .eq('consultation_id', selectedLead)
-      .order('created_at', { ascending: false })
-      .then(({ data, error }: { data: ConsultationEstimateFile[] | null; error: Error | null }) => {
-        if (cancelled) return
-        if (error) {
-          setEstimateFilesList([])
-          return
-        }
-        setEstimateFilesList((data ?? []) as ConsultationEstimateFile[])
-      })
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- consultation_estimate_files 신규 테이블
+      ; (supabase as any)
+        .from('consultation_estimate_files')
+        .select('id, consultation_id, project_name, storage_path, file_name, file_type, created_at, upload_type, quote_date')
+        .eq('consultation_id', selectedLead)
+        .order('created_at', { ascending: false })
+        .then(({ data, error }: { data: ConsultationEstimateFile[] | null; error: Error | null }) => {
+          if (cancelled) return
+          if (error) {
+            setEstimateFilesList([])
+            return
+          }
+          setEstimateFilesList((data ?? []) as ConsultationEstimateFile[])
+        })
     return () => { cancelled = true }
   }, [selectedLead])
 
@@ -2498,17 +2538,17 @@ export default function ConsultationManagement() {
       return
     }
     let cancelled = false
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- RPC get_consultations_by_phone 미생성 타입
-    ;(supabase as any)
-      .rpc('get_consultations_by_phone', { phone_digits: digits })
-      .then(({ data, error }: { data: Array<{ id: string; project_name: string | null; created_at: string; status: string | null; estimate_amount: number | null }> | null; error: Error | null }) => {
-        if (cancelled) return
-        if (error) {
-          setSamePhoneConsultations([])
-          return
-        }
-        setSamePhoneConsultations(data ?? [])
-      })
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- RPC get_consultations_by_phone 미생성 타입
+      ; (supabase as any)
+        .rpc('get_consultations_by_phone', { phone_digits: digits })
+        .then(({ data, error }: { data: Array<{ id: string; project_name: string | null; created_at: string; status: string | null; estimate_amount: number | null }> | null; error: Error | null }) => {
+          if (cancelled) return
+          if (error) {
+            setSamePhoneConsultations([])
+            return
+          }
+          setSamePhoneConsultations(data ?? [])
+        })
     return () => { cancelled = true }
   }, [selectedLeadData?.id, selectedLeadData?.contact])
 
@@ -2576,6 +2616,40 @@ export default function ConsultationManagement() {
     return Number(sorted[0].grand_total ?? 0)
   }, [selectedLeadData, selectedLead, estimatesList])
 
+  /** 견적 파일 업로드 완료 핸들러 — ConsultationEstimateTab으로 전달 */
+  const handleEstimateFileUploadComplete = useCallback((payload?: { estimateAmount: number }) => {
+    if (!selectedLeadData) return
+    if (payload?.estimateAmount != null) {
+      pendingEstimateAmountRef.current[selectedLeadData.id] = payload.estimateAmount
+      setLeads((prev) =>
+        prev.map((l) =>
+          l.id !== selectedLeadData.id
+            ? l
+            : {
+              ...l,
+              displayAmount: payload.estimateAmount,
+              expectedRevenue: payload.estimateAmount,
+              status: '견적발송',
+            }
+        )
+      )
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- consultation_estimate_files 신규 테이블
+    ; (supabase as any)
+      .from('consultation_estimate_files')
+      .select('id, consultation_id, project_name, storage_path, file_name, file_type, created_at, upload_type, quote_date')
+      .eq('consultation_id', selectedLeadData.id)
+      .order('created_at', { ascending: false })
+      .then(({ data }: { data: ConsultationEstimateFile[] | null }) => {
+        if (data) setEstimateFilesList(data)
+      })
+    setEstimateListRefreshKey((k) => k + 1)
+    if (selectedLeadData.workflowStage !== '견적중') {
+      handleStageChange(selectedLeadData.id, '견적중')
+    }
+    void fetchLeads()
+  }, [selectedLeadData, pendingEstimateAmountRef, setLeads, setEstimateFilesList, setEstimateListRefreshKey, handleStageChange, fetchLeads])
+
   /** 선택한 견적 물리 삭제 후 상담 카드 금액/상태 동기화 */
   const handleDeleteSelectedEstimates = useCallback(async () => {
     if (!selectedLeadData || selectedEstimateIds.length === 0) return
@@ -2609,7 +2683,7 @@ export default function ConsultationManagement() {
         if (list.length === 0) {
           delete (newMeta as Record<string, unknown>).final_amount
           delete (newMeta as Record<string, unknown>).final_estimate_id
-          ;(newMeta as Record<string, unknown>).workflow_stage = '상담접수'
+            ; (newMeta as Record<string, unknown>).workflow_stage = '상담접수'
         }
         const updatePayload: { metadata: Json; estimate_amount: number; status?: Lead['status'] } = { metadata: newMeta as unknown as Json, estimate_amount: newDisplayAmount }
         if (list.length === 0) updatePayload.status = '상담중'
@@ -2620,14 +2694,14 @@ export default function ConsultationManagement() {
             l.id !== consultationId
               ? l
               : {
-                  ...l,
-                  metadata: newMeta,
-                  estimateHistory: newHistory,
-                  displayAmount: newDisplayAmount,
-                  expectedRevenue: newDisplayAmount,
-                  finalAmount: approvedOnly.length > 0 ? newDisplayAmount : null,
-                  ...(list.length === 0 ? { status: '상담중' as const, workflowStage: '상담접수' as const } : {}),
-                }
+                ...l,
+                metadata: newMeta,
+                estimateHistory: newHistory,
+                displayAmount: newDisplayAmount,
+                expectedRevenue: newDisplayAmount,
+                finalAmount: approvedOnly.length > 0 ? newDisplayAmount : null,
+                ...(list.length === 0 ? { status: '상담중' as const, workflowStage: '상담접수' as const } : {}),
+              }
           )
         )
       } catch (_e) {
@@ -2678,14 +2752,14 @@ export default function ConsultationManagement() {
           l.id !== consultationId
             ? l
             : {
-                ...l,
-                metadata: newMeta,
-                estimateHistory: newHistory,
-                displayAmount: newDisplayAmount,
-                expectedRevenue: newDisplayAmount,
-                ...(list.length === 0 ? { status: '상담중' as const, workflowStage: '상담접수' as const } : {}),
-                ...(deletedFinal || list.length === 0 ? { finalAmount: null } : {}),
-              }
+              ...l,
+              metadata: newMeta,
+              estimateHistory: newHistory,
+              displayAmount: newDisplayAmount,
+              expectedRevenue: newDisplayAmount,
+              ...(list.length === 0 ? { status: '상담중' as const, workflowStage: '상담접수' as const } : {}),
+              ...(deletedFinal || list.length === 0 ? { finalAmount: null } : {}),
+            }
         )
       )
       setSelectedEstimateIds([])
@@ -2753,13 +2827,13 @@ export default function ConsultationManagement() {
             l.id !== consultationId
               ? l
               : {
-                  ...l,
-                  metadata: newMeta,
-                  estimateHistory: newHistory,
-                  displayAmount: grandTotal,
-                  expectedRevenue: grandTotal,
-                  finalAmount: grandTotal,
-                }
+                ...l,
+                metadata: newMeta,
+                estimateHistory: newHistory,
+                displayAmount: grandTotal,
+                expectedRevenue: grandTotal,
+                finalAmount: grandTotal,
+              }
           )
         )
         delete pendingEstimateAmountRef.current[consultationId]
@@ -2842,12 +2916,12 @@ export default function ConsultationManagement() {
           l.id !== consultationId
             ? l
             : {
-                ...l,
-                metadata: nextMeta,
-                estimateHistory: nextHistory,
-                displayAmount: getDisplayAmount(nextHistory, l.expectedRevenue),
-                ...(data.mode === 'FINAL' ? { status: '견적발송' as const } : {}),
-              }
+              ...l,
+              metadata: nextMeta,
+              estimateHistory: nextHistory,
+              displayAmount: getDisplayAmount(nextHistory, l.expectedRevenue),
+              ...(data.mode === 'FINAL' ? { status: '견적발송' as const } : {}),
+            }
         )
       )
       const { data: list } = await supabase.from('estimates').select('id, consultation_id, payload, final_proposal_data, supply_total, vat, grand_total, approved_at, created_at').eq('consultation_id', consultationId).eq('is_visible', true).order('created_at', { ascending: false })
@@ -3349,13 +3423,13 @@ export default function ConsultationManagement() {
               const fromEstimates =
                 lead.id === selectedLead
                   ? estimatesList.map((e, i) => ({
-                      estimateId: e.id,
-                      version: i + 1,
-                      issued_at: e.created_at.slice(0, 10),
-                      amount: e.grand_total,
-                      summary: (e.payload?.summary as string) || undefined,
-                      is_final: !!e.approved_at,
-                    }))
+                    estimateId: e.id,
+                    version: i + 1,
+                    issued_at: e.created_at.slice(0, 10),
+                    amount: e.grand_total,
+                    summary: (e.payload?.summary as string) || undefined,
+                    is_final: !!e.approved_at,
+                  }))
                   : []
               const fromMeta = [...lead.estimateHistory].sort((a, b) => new Date(b.issued_at).getTime() - new Date(a.issued_at).getTime())
               const list =
@@ -3483,7 +3557,7 @@ export default function ConsultationManagement() {
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="text-sm font-medium text-foreground mb-1.5 block">인입일</label>
-                  <Input type="date" value={editForm.inboundDate} onChange={(e) => setEditForm((f) => ({ ...f, inboundDate: e.target.value }))} className={INPUT_CLASS} />
+                  <Input type="date" value={editForm.inboundDate ?? ''} onChange={(e) => setEditForm((f) => ({ ...f, inboundDate: e.target.value }))} className={INPUT_CLASS} />
                 </div>
                 <div>
                   <label className="text-sm font-medium text-foreground mb-1.5 block">필요일</label>
@@ -3542,7 +3616,7 @@ export default function ConsultationManagement() {
                 className="h-9 text-xs shrink-0"
                 onClick={() => { setSortByNeglect((v) => !v); setListPage(0) }}
               >
-                최근업데이트순
+                {sortByNeglect ? '최근업데이트순' : '인입일순'}
               </Button>
             </div>
 
@@ -3627,11 +3701,10 @@ export default function ConsultationManagement() {
 
           {/* 우측: 상담 상세 패널(채팅 메인) — [상담 히스토리 | 실측 자료 | 견적 관리] 탭 / 모바일: 풀폭 + 목록으로 버튼 */}
           <aside
-            className={`flex flex-col border border-border rounded-xl bg-card overflow-hidden transition-[opacity] duration-200 min-w-0 ${
-              selectedLeadData
-                ? (isMobile ? 'w-full opacity-100' : 'flex-1 opacity-100')
-                : 'w-0 min-w-0 opacity-0 pointer-events-none overflow-hidden border-0'
-            }`}
+            className={`flex flex-col border border-border rounded-xl bg-card overflow-hidden transition-[opacity] duration-200 min-w-0 ${selectedLeadData
+              ? (isMobile ? 'w-full opacity-100' : 'flex-1 opacity-100')
+              : 'w-0 min-w-0 opacity-0 pointer-events-none overflow-hidden border-0'
+              }`}
           >
             {selectedLeadData && (
               <Tabs value={detailPanelTab} onValueChange={(v) => setDetailPanelTab(v as 'history' | 'measurement' | 'estimate')} className="flex flex-col h-full">
@@ -3649,110 +3722,24 @@ export default function ConsultationManagement() {
                   <TabsTrigger value="estimate" className="text-xs rounded-none">견적 관리</TabsTrigger>
                 </TabsList>
                 <div className="flex-1 overflow-y-auto min-h-0">
-                  {/* 탭 1: 상담 히스토리 — 입력창 고정(동일연락처↔히스토리 중간), 히스토리 영역만 스크롤 */}
+                  {/* 탭 1: 상담 히스토리 */}
                   <div className={detailPanelTab === 'history' ? 'p-4 flex flex-col min-h-0 h-full overflow-hidden' : 'hidden'}>
-                    {/* 상단: 고객 기본 정보 */}
-                    <div className="shrink-0 space-y-2 mb-3 pb-3 border-b border-border">
-                      <p className="font-semibold text-foreground">{selectedLeadData.displayName || selectedLeadData.company || '(업체명 없음)'}</p>
-                      <p className="text-muted-foreground flex items-center gap-1.5 text-sm">
-                        <User className="h-3.5 w-3.5 shrink-0" />
-                        {selectedLeadData.name || '(고객명 없음)'}
-                      </p>
-                      {selectedLeadData.contact && (
-                        <p className="flex items-center gap-1.5 text-sm">
-                          <Phone className="h-3.5 w-3.5 shrink-0" />
-                          <a href={`tel:${selectedLeadData.contact.replace(/\D/g, '')}`} className="text-primary hover:underline">
-                            {formatContact(selectedLeadData.contact)}
-                          </a>
-                        </p>
-                      )}
-                      <CustomerTierBadge tier={selectedLeadData.customerTier} />
-                      <button
-                        type="button"
-                        onClick={() => { setEstimateModalLeadId(selectedLeadData.id); setNewEstimateForm({ amount: '', summary: '' }) }}
-                        className="flex items-center gap-1.5 text-left w-full rounded-lg border border-border bg-muted/40 hover:bg-muted/70 px-3 py-2 text-sm transition-colors"
-                      >
-                        <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-                        <span className="font-medium text-foreground">견적 이력</span>
-                        <span className="text-muted-foreground">({estimateCountByConsultationId[selectedLeadData?.id ?? ''] ?? 0}건)</span>
-                        {(validatedDisplayAmount !== null ? validatedDisplayAmount : selectedLeadData.displayAmount) > 0 && (
-                          <span className="ml-auto flex items-center gap-1.5">
-                            <span className="text-[10px] text-muted-foreground font-normal">견적 확정</span>
-                            <span className="font-semibold text-primary">{(validatedDisplayAmount !== null ? validatedDisplayAmount : selectedLeadData.displayAmount).toLocaleString()}원</span>
-                          </span>
-                        )}
-                      </button>
-                      {isAdmin && (
-                        <>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className={cn(
-                              'w-full gap-2',
-                              selectedLeadData.customerTier === '파트너'
-                                ? 'border-amber-400/60 text-amber-700 dark:text-amber-400 bg-amber-50/50 dark:bg-amber-950/30'
-                                : 'hover:border-amber-400/60 hover:text-amber-700 dark:hover:text-amber-400'
-                            )}
-                            onClick={() => void handleSetPartnerGrade(selectedLeadData.id)}
-                            disabled={selectedLeadData.customerTier === '파트너'}
-                          >
-                            <Star className="h-4 w-4 shrink-0" />
-                            {selectedLeadData.customerTier === '파트너' ? '파트너 지정됨' : '파트너 지정'}
-                          </Button>
-                          <Button type="button" variant="outline" size="sm" className="w-full gap-2 text-muted-foreground hover:text-destructive hover:border-destructive" onClick={() => setHideConfirmLeadId(selectedLeadData.id)}>
-                            <EyeOff className="h-4 w-4 shrink-0" />
-                            이 상담 숨기기
-                          </Button>
-                        </>
-                      )}
-                    </div>
-                    {/* 동일 연락처 과거 상담 — 전화번호 기준 통합 조회, 시간순(최신순) */}
-                    {samePhoneConsultations.length > 0 && (
-                      <div className="shrink-0 mb-3">
-                        <h3 className="text-xs font-semibold text-muted-foreground mb-2">동일 연락처 과거 상담 ({samePhoneConsultations.length}건)</h3>
-                        <ul className="space-y-1.5 max-h-[200px] overflow-y-auto rounded-lg border border-border p-2 bg-muted/20">
-                          {samePhoneConsultations.map((c) => {
-                            const isCurrent = c.id === selectedLeadData?.id
-                            return (
-                              <li key={c.id}>
-                                <button
-                                  type="button"
-                                  onClick={() => (isCurrent ? undefined : handleSelectLead(c.id))}
-                                  className={cn(
-                                    'w-full text-left rounded-md px-3 py-2 text-sm transition-colors',
-                                    isCurrent ? 'bg-primary/15 text-primary font-medium' : 'hover:bg-muted/70 text-foreground'
-                                  )}
-                                >
-                                  <span className="block truncate font-medium">{c.project_name || '(프로젝트명 없음)'}</span>
-                                  <span className="text-xs text-muted-foreground">
-                                    {c.created_at ? new Date(c.created_at).toLocaleDateString('ko-KR', { year: 'numeric', month: 'short', day: 'numeric' }) : '—'} · {c.status ?? '—'}
-                                    {c.estimate_amount != null && c.estimate_amount > 0 && ` · ${Number(c.estimate_amount).toLocaleString()}원`}
-                                  </span>
-                                  {isCurrent && <span className="ml-1 text-[10px] text-primary">(현재)</span>}
-                                </button>
-                              </li>
-                            )
-                          })}
-                        </ul>
-                      </div>
-                    )}
-                    {/* 중앙: 상담 히스토리 로그 — 직원이 직접 입력하는 기록형 메모장 */}
-                    <div className="flex-1 min-h-0 border border-border rounded-lg p-3 bg-muted/20">
-                      {selectedLeadData?.id ? (
-                        <ConsultationHistoryLog
-                          consultationId={selectedLeadData.id}
-                          projectName={selectedLeadData.company || selectedLeadData.displayName || ''}
-                          onSaved={() => refetchImageCountForConsultation(selectedLeadData.id)}
-                        />
-                      ) : (
-                        <div className="flex items-center justify-center p-6 text-sm text-muted-foreground">상담을 선택해 주세요.</div>
-                      )}
-                    </div>
+                    <ConsultationHistoryTab
+                      selectedLeadData={selectedLeadData}
+                      samePhoneConsultations={samePhoneConsultations}
+                      estimateCountByConsultationId={estimateCountByConsultationId}
+                      validatedDisplayAmount={validatedDisplayAmount}
+                      isAdmin={isAdmin}
+                      onOpenEstimateModal={() => { setEstimateModalLeadId(selectedLeadData.id); setNewEstimateForm({ amount: '', summary: '' }) }}
+                      handleSetPartnerGrade={handleSetPartnerGrade}
+                      handleSelectLead={handleSelectLead}
+                      setHideConfirmLeadId={setHideConfirmLeadId}
+                      refetchImageCountForConsultation={refetchImageCountForConsultation}
+                    />
                   </div>
                   {/* 탭 2: 실측·발주서 — BLUEPRINT Supabase Storage 기반 비주얼 갤러리(파일 리스트 아님), 퀵뷰 라이트박스 */}
                   <div className={detailPanelTab === 'measurement' ? 'p-4 space-y-4' : 'hidden'}>
-                    <MeasurementSection
+                    <ConsultationMeasurementTab
                       consultationId={selectedLeadData.id}
                       projectName={selectedLeadData.company || selectedLeadData.displayName || ''}
                       orderDocuments={orderDocumentsList}
@@ -3760,252 +3747,27 @@ export default function ConsultationManagement() {
                       onOrderDocumentsChange={(data) => setOrderDocumentsList(data ?? [])}
                     />
                   </div>
-                  {/* 탭 3: 견적 관리 — 업로드 견적서(AI 참조) · 리스트 · 필터 · 선택 삭제 */}
+                  {/* 탭 3: 견적 관리 */}
                   <div className={detailPanelTab === 'estimate' ? 'p-4 flex flex-col min-h-0' : 'hidden'}>
-                    <div className="mb-4 pb-4 border-b border-border">
-                      <EstimateFilesGallery
-                        consultationId={selectedLeadData.id}
-                        projectName={selectedLeadData.company || selectedLeadData.displayName || ''}
-                        files={estimateFilesList}
-                        onUploadComplete={(payload) => {
-                          if (payload?.estimateAmount != null) {
-                            pendingEstimateAmountRef.current[selectedLeadData.id] = payload.estimateAmount
-                            setLeads((prev) =>
-                              prev.map((l) =>
-                                l.id !== selectedLeadData.id
-                                  ? l
-                                  : {
-                                      ...l,
-                                      displayAmount: payload.estimateAmount,
-                                      expectedRevenue: payload.estimateAmount,
-                                      status: '견적발송',
-                                    }
-                              )
-                            )
-                          }
-                          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- consultation_estimate_files 신규 테이블
-                          ;(supabase as any)
-                            .from('consultation_estimate_files')
-                            .select('id, consultation_id, project_name, storage_path, file_name, file_type, created_at, upload_type, quote_date')
-                            .eq('consultation_id', selectedLeadData.id)
-                            .order('created_at', { ascending: false })
-                            .then(({ data }: { data: ConsultationEstimateFile[] | null }) => {
-                              if (data) setEstimateFilesList(data)
-                            })
-                          setEstimateListRefreshKey((k) => k + 1)
-                          if (selectedLeadData.workflowStage !== '견적중') {
-                            handleStageChange(selectedLeadData.id, '견적중')
-                          }
-                          void fetchLeads()
-                        }}
-                      />
-                    </div>
-                    <Button
-                      type="button"
-                      className="w-full gap-2 mb-3"
-                      onClick={() => {
-                        setEstimateModalEditId(null)
-                        setEstimateModalInitialData({
-                          recipientName: selectedLeadData.company?.trim() || '(업체명 없음)',
-                          recipientContact: selectedLeadData.contact ?? '',
-                        })
-                        setEstimateModalOpen(true)
-                      }}
-                    >
-                      <FileText className="h-4 w-4" />
-                      신규 견적 작성
-                    </Button>
-                    {/* 필터: 전체 / 임시 저장만 */}
-                    <div className="flex gap-1 mb-2">
-                      <button
-                        type="button"
-                        onClick={() => { setEstimateListFilter('all'); setSelectedEstimateIds([]) }}
-                        className={cn('px-2.5 py-1 text-xs font-medium rounded-md', estimateListFilter === 'all' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80')}
-                      >
-                        전체
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => { setEstimateListFilter('draft'); setSelectedEstimateIds([]) }}
-                        className={cn('px-2.5 py-1 text-xs font-medium rounded-md', estimateListFilter === 'draft' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80')}
-                      >
-                        임시 저장만
-                      </button>
-                    </div>
-                    {(() => {
-                      const validSelectionIds = selectedEstimateIds.filter((id) => filteredEstimateList.some((e) => e.id === id))
-                      if (validSelectionIds.length === 0) return null
-                      return (
-                      <div className="flex items-center justify-between gap-2 mb-2 py-1.5 px-2 rounded-md bg-muted/50 text-sm">
-                        <span className="text-muted-foreground">{validSelectionIds.length}건 선택</span>
-                        <Button
-                          type="button"
-                          variant="destructive"
-                          size="sm"
-                          className="gap-1"
-                          onClick={() => setEstimateDeleteConfirmOpen(true)}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                          선택 삭제
-                        </Button>
-                      </div>
-                      )
-                    })()}
-                    <h3 className="text-xs font-semibold text-muted-foreground mb-2">기존 견적 이력</h3>
-                    {estimatesLoading ? (
-                      <p className="text-sm text-muted-foreground">불러오는 중…</p>
-                    ) : filteredEstimateList.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">
-                        {estimateListFilter === 'draft' ? '임시 저장된 견적이 없습니다.' : '저장된 견적서가 없습니다. 위에서 신규 견적을 작성해 보세요.'}
-                      </p>
-                    ) : (
-                      <div className="space-y-4 overflow-y-auto flex-1 min-h-0">
-                        {estimateListByYear.map(({ year, items }) => (
-                          <div key={year}>
-                            <div className="text-xs font-semibold text-muted-foreground py-1.5 border-b border-border/80 mb-2 sticky top-0 bg-background/95 backdrop-blur-sm z-10">
-                              {year}년
-                            </div>
-                            <ul className="space-y-2">
-                              {items.map((est) => {
-                                const payload = est.payload as { draft?: boolean } & Record<string, unknown>
-                                const status = payload?.draft ? '임시저장' : (est.approved_at ? '발행됨' : '발행')
-                                const isApproved = !!est.approved_at
-                                const isSelected = selectedEstimateIds.includes(est.id)
-                                const isArchive = new Date(est.created_at).getTime() < archiveCutoff
-                                const isFinalEstimate = selectedLeadData?.metadata?.final_estimate_id === est.id
-                                return (
-                                  <li
-                                    key={est.id}
-                                    className={cn(
-                                      'rounded-lg border px-3 py-2 text-sm flex flex-wrap items-center gap-2 transition-colors',
-                                      isArchive
-                                        ? 'border-border/60 bg-slate-100/80 dark:bg-slate-800/40 text-muted-foreground'
-                                        : 'border-border bg-muted/30',
-                                      isFinalEstimate && 'ring-1 ring-primary border-primary/50'
-                                    )}
-                                  >
-                                    {isArchive && (
-                                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200/80 dark:bg-slate-700/60 text-slate-600 dark:text-slate-400 shrink-0">
-                                        아카이브
-                                      </span>
-                                    )}
-                                    {isFinalEstimate && (
-                                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary text-primary-foreground font-semibold shrink-0" title="이 상담의 최종 견적">
-                                        최종
-                                      </span>
-                                    )}
-                                    <label className="flex items-center gap-1.5 shrink-0 cursor-pointer">
-                                      <input
-                                        type="checkbox"
-                                        checked={isSelected}
-                                        onChange={() => {
-                                          setSelectedEstimateIds((prev) =>
-                                            prev.includes(est.id) ? prev.filter((id) => id !== est.id) : [...prev, est.id]
-                                          )
-                                        }}
-                                        className="rounded border-border"
-                                      />
-                                      <span className="sr-only">선택</span>
-                                    </label>
-                                    <div className="flex-1 min-w-0">
-                                      <p className="font-medium text-foreground">
-                                        {(() => {
-                                          const raw = (est.payload?.quoteDate ?? est.final_proposal_data?.quoteDate) as string | undefined
-                                          const quoteDateStr = typeof raw === 'string' && raw.trim() ? raw.trim().slice(0, 16).replace(' ', 'T') : ''
-                                          const dateToShow = quoteDateStr && !Number.isNaN(Date.parse(quoteDateStr)) ? new Date(quoteDateStr) : new Date(est.created_at)
-                                          return dateToShow.toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' })
-                                        })()}
-                                      </p>
-                                      <button
-                                        type="button"
-                                        className="text-muted-foreground cursor-pointer hover:text-primary hover:underline text-left"
-                                        title="해당 견적서 보기"
-                                        onClick={() => setPrintEstimateId(est.id)}
-                                      >
-                                        총액 {Number(est.grand_total).toLocaleString()}원 · {status}
-                                      </button>
-                                    </div>
-                                    <div className="flex items-center gap-1.5 shrink-0">
-                                      {isApproved ? (
-                                        <>
-                                          {!isFinalEstimate && (
-                                            <Button
-                                              type="button"
-                                              variant="outline"
-                                              size="sm"
-                                              className="gap-1 text-primary border-primary/50 hover:bg-primary/10"
-                                              onClick={() => void handleSetFinalEstimate(est.id)}
-                                              title="이 견적을 상담 카드의 최종 견적가로 연결"
-                                            >
-                                              최종 견적로 지정
-                                            </Button>
-                                          )}
-                                          <Button
-                                            type="button"
-                                            variant="outline"
-                                            size="sm"
-                                            className="gap-1"
-                                            onClick={async () => {
-                                              const url = `${window.location.origin}/p/estimate/${est.id}`
-                                              await navigator.clipboard.writeText(url)
-                                              toast.success('공유 링크가 복사되었습니다.')
-                                            }}
-                                          >
-                                            <Copy className="h-3.5 w-3.5" />
-                                            링크 복사
-                                          </Button>
-                                          <Button
-                                            type="button"
-                                            variant="outline"
-                                            size="sm"
-                                            className="gap-1"
-                                            onClick={() => setPrintEstimateId(est.id)}
-                                          >
-                                            <FileText className="h-3.5 w-3.5" />
-                                            PDF
-                                          </Button>
-                                        </>
-                                      ) : (
-                                        <Button
-                                          type="button"
-                                          variant="outline"
-                                          size="sm"
-                                          onClick={() => {
-                                            setEstimateModalEditId(est.id)
-                                            const p = (est.payload ?? {}) as Partial<EstimateFormData> & Record<string, unknown>
-                                            const fallbackDate = (est.created_at ?? est.approved_at ?? '').toString().slice(0, 16).replace('T', ' ')
-                                            setEstimateModalInitialData({
-                                              ...p,
-                                              quoteDate: p.quoteDate || fallbackDate,
-                                            } as Partial<EstimateFormData>)
-                                            setEstimateModalOpen(true)
-                                          }}
-                                        >
-                                          수정
-                                        </Button>
-                                      )}
-                                      <Button
-                                        type="button"
-                                        variant="outline"
-                                        size="sm"
-                                        className="gap-1 text-destructive hover:text-destructive hover:bg-destructive/10"
-                                        onClick={() => {
-                                          setSelectedEstimateIds((prev) => (prev.includes(est.id) ? prev : [...prev, est.id]))
-                                          setEstimateDeleteConfirmOpen(true)
-                                        }}
-                                      >
-                                        <Trash2 className="h-3.5 w-3.5" />
-                                        삭제
-                                      </Button>
-                                    </div>
-                                  </li>
-                                )
-                              })}
-                            </ul>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                    <ConsultationEstimateTab
+                      selectedLeadData={selectedLeadData}
+                      estimateFilesList={estimateFilesList}
+                      onFileUploadComplete={handleEstimateFileUploadComplete}
+                      estimateListFilter={estimateListFilter}
+                      setEstimateListFilter={setEstimateListFilter}
+                      selectedEstimateIds={selectedEstimateIds}
+                      setSelectedEstimateIds={setSelectedEstimateIds}
+                      filteredEstimateList={filteredEstimateList}
+                      setEstimateDeleteConfirmOpen={setEstimateDeleteConfirmOpen}
+                      estimatesLoading={estimatesLoading}
+                      estimateListByYear={estimateListByYear}
+                      archiveCutoff={archiveCutoff}
+                      handleSetFinalEstimate={handleSetFinalEstimate}
+                      setPrintEstimateId={setPrintEstimateId}
+                      setEstimateModalEditId={setEstimateModalEditId}
+                      setEstimateModalInitialData={setEstimateModalInitialData}
+                      setEstimateModalOpen={setEstimateModalOpen}
+                    />
                   </div>
                 </div>
               </Tabs>
@@ -4039,198 +3801,198 @@ export default function ConsultationManagement() {
             </Dialog>
           </aside>
 
-        {/* 발행승인 전 관리자 미리보기 (예산 기획안 / 확정 견적서 공통) */}
-        <Dialog open={adminPreviewOpen} onOpenChange={(open) => { if (!open) { setAdminPreviewOpen(false); setAdminPreviewData(null); setAdminPreviewEstimateId(null) } }}>
-          <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col gap-0 p-0">
-            <DialogHeader className="shrink-0 px-4 py-3 border-b border-border">
-              <DialogTitle>
-                {adminPreviewData?.mode === 'PROPOSAL' ? '예산 기획안' : '확정 견적서'} 미리보기 (고객에게 보여질 화면)
-              </DialogTitle>
-            </DialogHeader>
-            <div className="flex-1 overflow-auto p-4 min-h-0">
-              {adminPreviewData && (() => {
-                const rawRows = adminPreviewData.rows ?? []
-                const paddedRows = rawRows.length >= 20 ? rawRows.slice(0, 20) : [...rawRows, ...Array.from({ length: 20 - rawRows.length }, (_, i) => createEmptyRow(rawRows.length + i))]
-                const data = { ...adminPreviewData, rows: paddedRows }
-                return data.mode === 'PROPOSAL'
-                  ? <ProposalPreviewContent data={data} totals={computeProposalTotals(data)} />
-                  : <FinalEstimatePreviewContent data={data} totals={computeFinalTotals(data)} />
-              })()}
-            </div>
-            <div className="shrink-0 flex items-center justify-end gap-2 px-4 py-3 border-t border-border bg-muted/30">
-              <Button type="button" variant="outline" onClick={() => { setAdminPreviewOpen(false); setAdminPreviewData(null) }}>
-                취소
-              </Button>
-              <Button
-                type="button"
-                onClick={() => {
-                  if (selectedLeadData && adminPreviewData) {
-                    if (adminPreviewData.mode === 'PROPOSAL') {
-                      void handleProposalFinalPublish(selectedLeadData.id, adminPreviewData, adminPreviewEstimateId ?? undefined)
-                    } else {
-                      void handleEstimateApproved(selectedLeadData.id, adminPreviewData, adminPreviewEstimateId ?? undefined)
+          {/* 발행승인 전 관리자 미리보기 (예산 기획안 / 확정 견적서 공통) */}
+          <Dialog open={adminPreviewOpen} onOpenChange={(open) => { if (!open) { setAdminPreviewOpen(false); setAdminPreviewData(null); setAdminPreviewEstimateId(null) } }}>
+            <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col gap-0 p-0">
+              <DialogHeader className="shrink-0 px-4 py-3 border-b border-border">
+                <DialogTitle>
+                  {adminPreviewData?.mode === 'PROPOSAL' ? '예산 기획안' : '확정 견적서'} 미리보기 (고객에게 보여질 화면)
+                </DialogTitle>
+              </DialogHeader>
+              <div className="flex-1 overflow-auto p-4 min-h-0">
+                {adminPreviewData && (() => {
+                  const rawRows = adminPreviewData.rows ?? []
+                  const paddedRows = rawRows.length >= 20 ? rawRows.slice(0, 20) : [...rawRows, ...Array.from({ length: 20 - rawRows.length }, (_, i) => createEmptyRow(rawRows.length + i))]
+                  const data = { ...adminPreviewData, rows: paddedRows }
+                  return data.mode === 'PROPOSAL'
+                    ? <ProposalPreviewContent data={data} totals={computeProposalTotals(data)} />
+                    : <FinalEstimatePreviewContent data={data} totals={computeFinalTotals(data)} />
+                })()}
+              </div>
+              <div className="shrink-0 flex items-center justify-end gap-2 px-4 py-3 border-t border-border bg-muted/30">
+                <Button type="button" variant="outline" onClick={() => { setAdminPreviewOpen(false); setAdminPreviewData(null) }}>
+                  취소
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => {
+                    if (selectedLeadData && adminPreviewData) {
+                      if (adminPreviewData.mode === 'PROPOSAL') {
+                        void handleProposalFinalPublish(selectedLeadData.id, adminPreviewData, adminPreviewEstimateId ?? undefined)
+                      } else {
+                        void handleEstimateApproved(selectedLeadData.id, adminPreviewData, adminPreviewEstimateId ?? undefined)
+                      }
                     }
-                  }
-                }}
-              >
-                최종 발행
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
+                  }}
+                >
+                  최종 발행
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
 
-        {/* PDF 인쇄 (참고 견적서) — 견적 작성 모달 위에 확실히 표시(z-[200]), 클릭이 아래 모달로 전달되지 않도록 캡처 */}
-        <Dialog
-          open={!!printEstimateId}
-          onOpenChange={(open) => {
-            if (!open) {
-              justClosedPreviewRef.current = true
-              setPrintEstimateId(null)
-              setTimeout(() => { justClosedPreviewRef.current = false }, 300)
-            }
-          }}
-        >
-          <DialogContent
-            overlayClassName="z-[200]"
-            className="z-[200] max-w-4xl max-h-[90vh] flex flex-col gap-0 p-0 print:max-h-none"
-            onPointerDownCapture={(e) => e.stopPropagation()}
-            onClickCapture={(e) => e.stopPropagation()}
+          {/* PDF 인쇄 (참고 견적서) — 견적 작성 모달 위에 확실히 표시(z-[200]), 클릭이 아래 모달로 전달되지 않도록 캡처 */}
+          <Dialog
+            open={!!printEstimateId}
+            onOpenChange={(open) => {
+              if (!open) {
+                justClosedPreviewRef.current = true
+                setPrintEstimateId(null)
+                setTimeout(() => { justClosedPreviewRef.current = false }, 300)
+              }
+            }}
           >
-            <DialogHeader className="sticky top-0 z-10 shrink-0 px-4 py-3 border-b border-border bg-card flex flex-row items-center justify-between gap-2 print:hidden flex-wrap">
-              <DialogTitle>PDF / 이미지 저장</DialogTitle>
-              <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-end">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={async () => {
-                    const el = document.querySelector('[data-estimate-print-area]')
-                    if (!(el instanceof HTMLElement)) {
-                      toast.error('저장할 영역을 찾을 수 없습니다. 잠시 후 다시 시도해 주세요.')
-                      return
-                    }
-                    if (!printEstimateId) return
-                    const est = estimatesList.find((e) => e.id === printEstimateId)
-                    if (!est) {
-                      toast.error('견적 데이터를 찾을 수 없습니다. 견적 목록을 새로고침해 주세요.')
-                      return
-                    }
-                    const rawData = (est.approved_at && est.final_proposal_data ? est.final_proposal_data : est.payload) as unknown as EstimateFormData | undefined
-                    const filename = buildEstimateImageFilename(rawData?.quoteDate, rawData?.recipientName)
-                    try {
-                      await exportEstimateToImage(el, filename)
-                      toast.success('이미지가 저장되었습니다.')
-                    } catch (err) {
-                      console.error(err)
-                      toast.error('이미지 저장에 실패했습니다.')
-                    }
-                  }}
-                >
-                  PNG 저장
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={async () => {
-                    const el = document.querySelector('[data-estimate-print-area]')
-                    if (!(el instanceof HTMLElement)) {
-                      toast.error('저장할 영역을 찾을 수 없습니다. 잠시 후 다시 시도해 주세요.')
-                      return
-                    }
-                    if (!printEstimateId) return
-                    const est = estimatesList.find((e) => e.id === printEstimateId)
-                    if (!est) {
-                      toast.error('견적 데이터를 찾을 수 없습니다. 견적 목록을 새로고침해 주세요.')
-                      return
-                    }
-                    const rawData = (est.approved_at && est.final_proposal_data ? est.final_proposal_data : est.payload) as unknown as EstimateFormData | undefined
-                    const filename = buildEstimatePdfFilename(rawData?.recipientName)
-                    try {
-                      await exportEstimateToPdf(el, filename)
-                      toast.success('PDF가 저장되었습니다.')
-                      setPrintEstimateId(null)
-                    } catch (err) {
-                      console.error(err)
-                      toast.error('PDF 저장에 실패했습니다.')
-                    }
-                  }}
-                >
-                  PDF 저장
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white border-0 font-semibold"
-                  onClick={async () => {
-                    if (!printEstimateId) return
-                    const est = estimatesList.find((e) => e.id === printEstimateId)
-                    if (!est) {
-                      toast.error('견적 데이터를 찾을 수 없습니다. 견적 목록을 새로고침한 뒤 다시 시도해 주세요.')
-                      return
-                    }
-                    const consultationId = est.consultation_id
-                    const grandTotal = Number(est.grand_total ?? 0)
-                    const nowIso = new Date().toISOString()
-                    const lead = leads.find((l) => l.id === consultationId)
-                    try {
-                      // 1. 해당 상담의 나머지 견적은 모두 임시저장(approved_at = null)으로 되돌림
-                      const others = estimatesList.filter((e) => e.consultation_id === consultationId && e.id !== est.id && e.approved_at != null)
-                      if (others.length > 0) {
-                        const { error: clearErr } = await supabase
-                          .from('estimates')
-                          .update({ approved_at: null })
-                          .eq('consultation_id', consultationId)
-                          .neq('id', est.id)
-                        if (clearErr) throw clearErr
+            <DialogContent
+              overlayClassName="z-[200]"
+              className="z-[200] max-w-4xl max-h-[90vh] flex flex-col gap-0 p-0 print:max-h-none"
+              onPointerDownCapture={(e) => e.stopPropagation()}
+              onClickCapture={(e) => e.stopPropagation()}
+            >
+              <DialogHeader className="sticky top-0 z-10 shrink-0 px-4 py-3 border-b border-border bg-card flex flex-row items-center justify-between gap-2 print:hidden flex-wrap">
+                <DialogTitle>PDF / 이미지 저장</DialogTitle>
+                <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-end">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={async () => {
+                      const el = document.querySelector('[data-estimate-print-area]')
+                      if (!(el instanceof HTMLElement)) {
+                        toast.error('저장할 영역을 찾을 수 없습니다. 잠시 후 다시 시도해 주세요.')
+                        return
                       }
-                      // 2. 선택한 견적만 확정: approved_at + final_proposal_data 스냅샷
-                      if (!est.approved_at) {
-                        const rawData = (est.final_proposal_data ?? est.payload) as unknown as EstimateFormData
-                        const snapshot = { ...rawData, mode: 'FINAL' as const } as EstimateFormData
-                        const { error: estErr } = await supabase
-                          .from('estimates')
+                      if (!printEstimateId) return
+                      const est = estimatesList.find((e) => e.id === printEstimateId)
+                      if (!est) {
+                        toast.error('견적 데이터를 찾을 수 없습니다. 견적 목록을 새로고침해 주세요.')
+                        return
+                      }
+                      const rawData = (est.approved_at && est.final_proposal_data ? est.final_proposal_data : est.payload) as unknown as EstimateFormData | undefined
+                      const filename = buildEstimateImageFilename(rawData?.quoteDate, rawData?.recipientName)
+                      try {
+                        await exportEstimateToImage(el, filename)
+                        toast.success('이미지가 저장되었습니다.')
+                      } catch (err) {
+                        console.error(err)
+                        toast.error('이미지 저장에 실패했습니다.')
+                      }
+                    }}
+                  >
+                    PNG 저장
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={async () => {
+                      const el = document.querySelector('[data-estimate-print-area]')
+                      if (!(el instanceof HTMLElement)) {
+                        toast.error('저장할 영역을 찾을 수 없습니다. 잠시 후 다시 시도해 주세요.')
+                        return
+                      }
+                      if (!printEstimateId) return
+                      const est = estimatesList.find((e) => e.id === printEstimateId)
+                      if (!est) {
+                        toast.error('견적 데이터를 찾을 수 없습니다. 견적 목록을 새로고침해 주세요.')
+                        return
+                      }
+                      const rawData = (est.approved_at && est.final_proposal_data ? est.final_proposal_data : est.payload) as unknown as EstimateFormData | undefined
+                      const filename = buildEstimatePdfFilename(rawData?.recipientName)
+                      try {
+                        await exportEstimateToPdf(el, filename)
+                        toast.success('PDF가 저장되었습니다.')
+                        setPrintEstimateId(null)
+                      } catch (err) {
+                        console.error(err)
+                        toast.error('PDF 저장에 실패했습니다.')
+                      }
+                    }}
+                  >
+                    PDF 저장
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white border-0 font-semibold"
+                    onClick={async () => {
+                      if (!printEstimateId) return
+                      const est = estimatesList.find((e) => e.id === printEstimateId)
+                      if (!est) {
+                        toast.error('견적 데이터를 찾을 수 없습니다. 견적 목록을 새로고침한 뒤 다시 시도해 주세요.')
+                        return
+                      }
+                      const consultationId = est.consultation_id
+                      const grandTotal = Number(est.grand_total ?? 0)
+                      const nowIso = new Date().toISOString()
+                      const lead = leads.find((l) => l.id === consultationId)
+                      try {
+                        // 1. 해당 상담의 나머지 견적은 모두 임시저장(approved_at = null)으로 되돌림
+                        const others = estimatesList.filter((e) => e.consultation_id === consultationId && e.id !== est.id && e.approved_at != null)
+                        if (others.length > 0) {
+                          const { error: clearErr } = await supabase
+                            .from('estimates')
+                            .update({ approved_at: null })
+                            .eq('consultation_id', consultationId)
+                            .neq('id', est.id)
+                          if (clearErr) throw clearErr
+                        }
+                        // 2. 선택한 견적만 확정: approved_at + final_proposal_data 스냅샷
+                        if (!est.approved_at) {
+                          const rawData = (est.final_proposal_data ?? est.payload) as unknown as EstimateFormData
+                          const snapshot = { ...rawData, mode: 'FINAL' as const } as EstimateFormData
+                          const { error: estErr } = await supabase
+                            .from('estimates')
+                            .update({
+                              final_proposal_data: snapshot as unknown as Json,
+                              approved_at: nowIso,
+                              supply_total: est.supply_total,
+                              vat: est.vat,
+                              grand_total: est.grand_total,
+                            })
+                            .eq('id', est.id)
+                          if (estErr) throw estErr
+                        }
+                        // 3. 상담 카드·DB 반영: 견적 확정 = 견적 단계(status 견적발송). 계약 단계는 입금 확인 후 직원이 계약 버튼으로 별도 전환.
+                        const newHistory: EstimateHistoryItem[] = [
+                          {
+                            version: 1,
+                            issued_at: nowIso.slice(0, 10),
+                            amount: grandTotal,
+                            summary: undefined,
+                            is_final: true,
+                          },
+                        ]
+                        const nextMeta = {
+                          ...(lead?.metadata ?? {}),
+                          final_amount: grandTotal,
+                          final_estimate_id: printEstimateId,
+                          estimate_history: newHistory,
+                        } as Record<string, unknown>
+                        const { error: updateErr } = await supabase
+                          .from('consultations')
                           .update({
-                            final_proposal_data: snapshot as unknown as Json,
-                            approved_at: nowIso,
-                            supply_total: est.supply_total,
-                            vat: est.vat,
-                            grand_total: est.grand_total,
+                            status: '견적발송',
+                            estimate_amount: grandTotal,
+                            metadata: nextMeta as unknown as Json,
                           })
-                          .eq('id', est.id)
-                        if (estErr) throw estErr
-                      }
-                      // 3. 상담 카드·DB 반영: 견적 확정 = 견적 단계(status 견적발송). 계약 단계는 입금 확인 후 직원이 계약 버튼으로 별도 전환.
-                      const newHistory: EstimateHistoryItem[] = [
-                        {
-                          version: 1,
-                          issued_at: nowIso.slice(0, 10),
-                          amount: grandTotal,
-                          summary: undefined,
-                          is_final: true,
-                        },
-                      ]
-                      const nextMeta = {
-                        ...(lead?.metadata ?? {}),
-                        final_amount: grandTotal,
-                        final_estimate_id: printEstimateId,
-                        estimate_history: newHistory,
-                      } as Record<string, unknown>
-                      const { error: updateErr } = await supabase
-                        .from('consultations')
-                        .update({
-                          status: '견적발송',
-                          estimate_amount: grandTotal,
-                          metadata: nextMeta as unknown as Json,
-                        })
-                        .eq('id', consultationId)
-                      if (updateErr) throw updateErr
-                      const parsedHistory = parseEstimateHistory(nextMeta as Record<string, unknown>)
-                      setLeads((prev) =>
-                        prev.map((l) =>
-                          l.id !== consultationId
-                            ? l
-                            : {
+                          .eq('id', consultationId)
+                        if (updateErr) throw updateErr
+                        const parsedHistory = parseEstimateHistory(nextMeta as Record<string, unknown>)
+                        setLeads((prev) =>
+                          prev.map((l) =>
+                            l.id !== consultationId
+                              ? l
+                              : {
                                 ...l,
                                 status: '견적발송',
                                 metadata: nextMeta,
@@ -4239,262 +4001,262 @@ export default function ConsultationManagement() {
                                 expectedRevenue: grandTotal,
                                 finalAmount: grandTotal,
                               }
+                          )
                         )
-                      )
-                      // 4. 견적 목록 갱신: 나머지는 임시저장, 선택한 건만 확정
-                      const { data: list } = await supabase
-                        .from('estimates')
-                        .select('id, consultation_id, payload, final_proposal_data, supply_total, vat, grand_total, approved_at, created_at')
-                        .eq('consultation_id', consultationId)
-                        .eq('is_visible', true)
-                        .order('created_at', { ascending: false })
-                      setEstimatesList((list ?? []) as Array<{ id: string; consultation_id: string; payload: Record<string, unknown>; final_proposal_data: Record<string, unknown> | null; supply_total: number; vat: number; grand_total: number; approved_at: string | null; created_at: string }>)
-                      setEstimateListRefreshKey((k) => k + 1)
-                      // 5. 상담 히스토리(타임라인)에 최종 확정 시스템 메시지 반영
-                      await supabase.from('consultation_messages').insert({
-                        consultation_id: consultationId,
-                        sender_id: 'system',
-                        content: `최종 확정되었습니다. 견적가 ${grandTotal.toLocaleString()}원.`,
-                        message_type: 'SYSTEM',
-                        metadata: { type: 'estimate_approved', estimate_id: est.id },
-                      })
-                      const actor = (lead?.name || '직원').trim() || '직원'
-                      await insertSystemLog(supabase, {
-                        consultation_id: consultationId,
-                        event_type: 'estimate_approved',
-                        actor_name: actor,
-                        detail: '최종 확정',
-                        metadata: { type: 'estimate_approved', estimate_id: est.id },
-                      })
-                      toast.success('견적이 확정되었습니다. 상담이 견적 단계로 변경되었습니다.')
-                      setPrintEstimateId(null)
-                      const sheetSyncUrl = import.meta.env.VITE_GOOGLE_SHEET_SYNC_URL
-                      if (sheetSyncUrl && typeof sheetSyncUrl === 'string' && lead?.projectName) {
-                        const token = import.meta.env.VITE_GOOGLE_SHEET_SYNC_TOKEN
-                        fetch(sheetSyncUrl.trim(), {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({
-                            project_name: lead.projectName,
-                            status: '견적발송',
-                            estimate_amount: grandTotal,
-                            ...(token ? { token } : {}),
-                          }),
-                        }).catch(() => {})
+                        // 4. 견적 목록 갱신: 나머지는 임시저장, 선택한 건만 확정
+                        const { data: list } = await supabase
+                          .from('estimates')
+                          .select('id, consultation_id, payload, final_proposal_data, supply_total, vat, grand_total, approved_at, created_at')
+                          .eq('consultation_id', consultationId)
+                          .eq('is_visible', true)
+                          .order('created_at', { ascending: false })
+                        setEstimatesList((list ?? []) as Array<{ id: string; consultation_id: string; payload: Record<string, unknown>; final_proposal_data: Record<string, unknown> | null; supply_total: number; vat: number; grand_total: number; approved_at: string | null; created_at: string }>)
+                        setEstimateListRefreshKey((k) => k + 1)
+                        // 5. 상담 히스토리(타임라인)에 최종 확정 시스템 메시지 반영
+                        await supabase.from('consultation_messages').insert({
+                          consultation_id: consultationId,
+                          sender_id: 'system',
+                          content: `최종 확정되었습니다. 견적가 ${grandTotal.toLocaleString()}원.`,
+                          message_type: 'SYSTEM',
+                          metadata: { type: 'estimate_approved', estimate_id: est.id },
+                        })
+                        const actor = (lead?.name || '직원').trim() || '직원'
+                        await insertSystemLog(supabase, {
+                          consultation_id: consultationId,
+                          event_type: 'estimate_approved',
+                          actor_name: actor,
+                          detail: '최종 확정',
+                          metadata: { type: 'estimate_approved', estimate_id: est.id },
+                        })
+                        toast.success('견적이 확정되었습니다. 상담이 견적 단계로 변경되었습니다.')
+                        setPrintEstimateId(null)
+                        const sheetSyncUrl = import.meta.env.VITE_GOOGLE_SHEET_SYNC_URL
+                        if (sheetSyncUrl && typeof sheetSyncUrl === 'string' && lead?.projectName) {
+                          const token = import.meta.env.VITE_GOOGLE_SHEET_SYNC_TOKEN
+                          fetch(sheetSyncUrl.trim(), {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              project_name: lead.projectName,
+                              status: '견적발송',
+                              estimate_amount: grandTotal,
+                              ...(token ? { token } : {}),
+                            }),
+                          }).catch(() => { })
+                        }
+                      } catch (err) {
+                        console.error(err)
+                        toast.error('확정 처리에 실패했습니다.')
                       }
-                    } catch (err) {
-                      console.error(err)
-                      toast.error('확정 처리에 실패했습니다.')
-                    }
-                  }}
-                >
-                  최종 확정
-                </Button>
-              </div>
-            </DialogHeader>
-            <div className="print-container flex-1 min-h-0 overflow-y-auto p-4 pb-10 print:max-h-none print:p-6 print:pb-6" data-estimate-print-area style={{ maxHeight: 'calc(90vh - 56px)' }}>
-              {printEstimateId && (() => {
-                const est = estimatesList.find((e) => e.id === printEstimateId)
-                if (!est) {
-                  return estimatesLoading ? (
-                    <div className="flex items-center justify-center py-12 text-muted-foreground">
-                      <Loader2 className="h-6 w-6 animate-spin mr-2" />
-                      불러오는 중…
-                    </div>
-                  ) : null
-                }
-                const rawData = (est.approved_at && est.final_proposal_data ? est.final_proposal_data : est.payload) as unknown as EstimateFormData
-                const rawRows = rawData.rows ?? []
-                const paddedRows = rawRows.length >= 20 ? rawRows.slice(0, 20) : [...rawRows, ...Array.from({ length: 20 - rawRows.length }, (_, i) => createEmptyRow(rawRows.length + i))]
-                const fallbackQuoteDate = (est.created_at ?? est.approved_at ?? '').toString().slice(0, 16).replace('T', ' ')
-                const data = { ...rawData, rows: paddedRows, quoteDate: rawData?.quoteDate || fallbackQuoteDate }
-                return data.mode === 'PROPOSAL'
-                  ? <ProposalPreviewContent data={data} totals={computeProposalTotals(data)} />
-                  : <FinalEstimatePreviewContent data={data} totals={computeFinalTotals(data)} />
-              })()}
-            </div>
-          </DialogContent>
-        </Dialog>
-
-        {/* 원가표 원본 이미지 라이트박스 (AI 추천 가이드 [원본보기]) — Signed URL로 표시해 비공개 버킷에서도 로드 */}
-        <Dialog open={!!priceBookImageUrl} onOpenChange={(open) => { if (!open) setPriceBookImageUrl(null) }}>
-          <DialogContent
-            overlayClassName="z-[100]"
-            className="z-[100] max-w-4xl max-h-[90vh] flex flex-col"
-          >
-            <DialogHeader>
-              <DialogTitle>원가표 원본</DialogTitle>
-            </DialogHeader>
-            <div className="flex-1 overflow-auto min-h-0 flex items-center justify-center bg-muted/30 rounded-md min-h-[200px]">
-              {priceBookImageUrl && !priceBookImageDisplayUrl && (
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <Loader2 className="h-5 w-5 animate-spin" />
-                  <span className="text-sm">이미지 불러오는 중…</span>
+                    }}
+                  >
+                    최종 확정
+                  </Button>
                 </div>
-              )}
-              {priceBookImageDisplayUrl && (
-                <img src={priceBookImageDisplayUrl} alt="원가표 원본" className="max-w-full max-h-[70vh] object-contain" />
-              )}
-            </div>
-            <Button type="button" variant="outline" onClick={() => setPriceBookImageUrl(null)}>닫기</Button>
-          </DialogContent>
-        </Dialog>
+              </DialogHeader>
+              <div className="print-container flex-1 min-h-0 overflow-y-auto p-4 pb-10 print:max-h-none print:p-6 print:pb-6" data-estimate-print-area style={{ maxHeight: 'calc(90vh - 56px)' }}>
+                {printEstimateId && (() => {
+                  const est = estimatesList.find((e) => e.id === printEstimateId)
+                  if (!est) {
+                    return estimatesLoading ? (
+                      <div className="flex items-center justify-center py-12 text-muted-foreground">
+                        <Loader2 className="h-6 w-6 animate-spin mr-2" />
+                        불러오는 중…
+                      </div>
+                    ) : null
+                  }
+                  const rawData = (est.approved_at && est.final_proposal_data ? est.final_proposal_data : est.payload) as unknown as EstimateFormData
+                  const rawRows = rawData.rows ?? []
+                  const paddedRows = rawRows.length >= 20 ? rawRows.slice(0, 20) : [...rawRows, ...Array.from({ length: 20 - rawRows.length }, (_, i) => createEmptyRow(rawRows.length + i))]
+                  const fallbackQuoteDate = (est.created_at ?? est.approved_at ?? '').toString().slice(0, 16).replace('T', ' ')
+                  const data = { ...rawData, rows: paddedRows, quoteDate: rawData?.quoteDate || fallbackQuoteDate }
+                  return data.mode === 'PROPOSAL'
+                    ? <ProposalPreviewContent data={data} totals={computeProposalTotals(data)} />
+                    : <FinalEstimatePreviewContent data={data} totals={computeFinalTotals(data)} />
+                })()}
+              </div>
+            </DialogContent>
+          </Dialog>
 
-        {/* 견적서 전용 풀스크린 모달 — 블러 배경, [임시저장][발행승인][닫기] 고정 */}
-        <Dialog
-          open={estimateModalOpen}
-          onOpenChange={(open) => {
-            if (!open && (printEstimateId || justClosedPreviewRef.current)) return
-            setEstimateModalOpen(open)
-            if (!open) setEstimateModalInitialData(null)
-          }}
-        >
-          <DialogContent
-            overlayClassName="bg-black/40 backdrop-blur-md"
-            className="fixed inset-0 z-50 w-screen h-screen max-w-none translate-x-0 translate-y-0 rounded-none border-0 p-0 flex flex-col gap-0"
+          {/* 원가표 원본 이미지 라이트박스 (AI 추천 가이드 [원본보기]) — Signed URL로 표시해 비공개 버킷에서도 로드 */}
+          <Dialog open={!!priceBookImageUrl} onOpenChange={(open) => { if (!open) setPriceBookImageUrl(null) }}>
+            <DialogContent
+              overlayClassName="z-[100]"
+              className="z-[100] max-w-4xl max-h-[90vh] flex flex-col"
+            >
+              <DialogHeader>
+                <DialogTitle>원가표 원본</DialogTitle>
+              </DialogHeader>
+              <div className="flex-1 overflow-auto min-h-0 flex items-center justify-center bg-muted/30 rounded-md min-h-[200px]">
+                {priceBookImageUrl && !priceBookImageDisplayUrl && (
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                    <span className="text-sm">이미지 불러오는 중…</span>
+                  </div>
+                )}
+                {priceBookImageDisplayUrl && (
+                  <img src={priceBookImageDisplayUrl} alt="원가표 원본" className="max-w-full max-h-[70vh] object-contain" />
+                )}
+              </div>
+              <Button type="button" variant="outline" onClick={() => setPriceBookImageUrl(null)}>닫기</Button>
+            </DialogContent>
+          </Dialog>
+
+          {/* 견적서 전용 풀스크린 모달 — 블러 배경, [임시저장][발행승인][닫기] 고정 */}
+          <Dialog
+            open={estimateModalOpen}
+            onOpenChange={(open) => {
+              if (!open && (printEstimateId || justClosedPreviewRef.current)) return
+              setEstimateModalOpen(open)
+              if (!open) setEstimateModalInitialData(null)
+            }}
           >
-            <DialogTitle className="sr-only">견적 작성</DialogTitle>
-            <div className="shrink-0 flex items-center justify-between gap-2 px-4 py-3 border-b border-border bg-card flex-wrap">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="gap-1.5"
-                onClick={async () => {
-                  const data = estimateFormRef.current?.getCurrentData()
-                  const rows = data?.rows ?? []
-                  const names = [...new Set(rows.map((r) => String(r?.name ?? '').trim()).filter(Boolean))]
-                  if (names.length === 0) {
-                    toast.error('품명이 있는 품목을 먼저 추가하세요.')
-                    return
-                  }
-                  try {
-                    const map = await getDataByProductTags(names)
-                    const ids = new Set<string>()
-                    map.forEach((res) => res.images.forEach((img) => ids.add(img.id)))
-                    if (ids.size === 0) {
-                      toast.warning('해당 품목과 매칭되는 시공 사진이 없습니다.')
-                      return
-                    }
-                    const url = `${window.location.origin}/public/share?ids=${[...ids].join(',')}`
-                    await navigator.clipboard.writeText(url)
-                    toast.success(`품목 시공 사진 갤러리 링크를 복사했습니다. (${ids.size}장)`)
-                  } catch {
-                    toast.error('시공 사진 조회에 실패했습니다.')
-                  }
-                }}
-              >
-                <Images className="h-3.5 w-3.5" />
-                이 품목 사진들 공유하기
-              </Button>
-              <div className="flex items-center gap-2">
+            <DialogContent
+              overlayClassName="bg-black/40 backdrop-blur-md"
+              className="fixed inset-0 z-50 w-screen h-screen max-w-none translate-x-0 translate-y-0 rounded-none border-0 p-0 flex flex-col gap-0"
+            >
+              <DialogTitle className="sr-only">견적 작성</DialogTitle>
+              <div className="shrink-0 flex items-center justify-between gap-2 px-4 py-3 border-b border-border bg-card flex-wrap">
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
-                  onClick={() => selectedLeadData && handleEstimateSaveDraft(selectedLeadData.id)}
-                >
-                  임시저장
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
+                  className="gap-1.5"
                   onClick={async () => {
                     const data = estimateFormRef.current?.getCurrentData()
-                    if (!data || !selectedLeadData) return
-                    const consultationId = selectedLeadData.id
-                    const payload = { ...data, draft: true } as unknown as Record<string, unknown>
+                    const rows = data?.rows ?? []
+                    const names = [...new Set(rows.map((r) => String(r?.name ?? '').trim()).filter(Boolean))]
+                    if (names.length === 0) {
+                      toast.error('품명이 있는 품목을 먼저 추가하세요.')
+                      return
+                    }
                     try {
-                      let estimateId: string
-                      if (estimateModalEditId) {
-                        const { error } = await supabase
-                          .from('estimates')
-                          .update({
-                            payload: payload as Json,
-                            supply_total: data.supplyTotal,
-                            vat: data.vat,
-                            grand_total: data.grandTotal,
-                            approved_at: null,
-                          })
-                          .eq('id', estimateModalEditId)
-                          .select('id')
-                          .single()
-                        if (error) throw error
-                        estimateId = estimateModalEditId
-                      } else {
-                        const { data: inserted, error } = await supabase
-                          .from('estimates')
-                          .insert({
-                            consultation_id: consultationId,
-                            payload: payload as Json,
-                            supply_total: data.supplyTotal,
-                            vat: data.vat,
-                            grand_total: data.grandTotal,
-                            approved_at: null,
-                          })
-                          .select('id')
-                          .single()
-                        if (error) throw error
-                        estimateId = (inserted as { id: string }).id
+                      const map = await getDataByProductTags(names)
+                      const ids = new Set<string>()
+                      map.forEach((res) => res.images.forEach((img) => ids.add(img.id)))
+                      if (ids.size === 0) {
+                        toast.warning('해당 품목과 매칭되는 시공 사진이 없습니다.')
+                        return
                       }
-                      const { data: list } = await supabase.from('estimates').select('id, consultation_id, payload, final_proposal_data, supply_total, vat, grand_total, approved_at, created_at').eq('consultation_id', consultationId).eq('is_visible', true).order('created_at', { ascending: false })
-                      setEstimatesList((list ?? []) as Array<{ id: string; consultation_id: string; payload: Record<string, unknown>; final_proposal_data: Record<string, unknown> | null; supply_total: number; vat: number; grand_total: number; approved_at: string | null; created_at: string }>)
-                      setEstimateListRefreshKey((k) => k + 1)
-                      setAdminPreviewEstimateId(estimateId)
-                      setAdminPreviewData(data)
-                      setAdminPreviewOpen(true)
-                      toast.success('임시저장되었습니다. 미리보기에서 최종 발행 시 확정됩니다.')
-                    } catch (err) {
-                      console.error(err)
-                      toast.error('임시저장에 실패했습니다.')
+                      const url = `${window.location.origin}/public/share?ids=${[...ids].join(',')}`
+                      await navigator.clipboard.writeText(url)
+                      toast.success(`품목 시공 사진 갤러리 링크를 복사했습니다. (${ids.size}장)`)
+                    } catch {
+                      toast.error('시공 사진 조회에 실패했습니다.')
                     }
                   }}
                 >
-                  발행승인
+                  <Images className="h-3.5 w-3.5" />
+                  이 품목 사진들 공유하기
                 </Button>
-                <Button type="button" variant="ghost" size="sm" onClick={() => setEstimateModalOpen(false)}>
-                  닫기
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => selectedLeadData && handleEstimateSaveDraft(selectedLeadData.id)}
+                  >
+                    임시저장
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={async () => {
+                      const data = estimateFormRef.current?.getCurrentData()
+                      if (!data || !selectedLeadData) return
+                      const consultationId = selectedLeadData.id
+                      const payload = { ...data, draft: true } as unknown as Record<string, unknown>
+                      try {
+                        let estimateId: string
+                        if (estimateModalEditId) {
+                          const { error } = await supabase
+                            .from('estimates')
+                            .update({
+                              payload: payload as Json,
+                              supply_total: data.supplyTotal,
+                              vat: data.vat,
+                              grand_total: data.grandTotal,
+                              approved_at: null,
+                            })
+                            .eq('id', estimateModalEditId)
+                            .select('id')
+                            .single()
+                          if (error) throw error
+                          estimateId = estimateModalEditId
+                        } else {
+                          const { data: inserted, error } = await supabase
+                            .from('estimates')
+                            .insert({
+                              consultation_id: consultationId,
+                              payload: payload as Json,
+                              supply_total: data.supplyTotal,
+                              vat: data.vat,
+                              grand_total: data.grandTotal,
+                              approved_at: null,
+                            })
+                            .select('id')
+                            .single()
+                          if (error) throw error
+                          estimateId = (inserted as { id: string }).id
+                        }
+                        const { data: list } = await supabase.from('estimates').select('id, consultation_id, payload, final_proposal_data, supply_total, vat, grand_total, approved_at, created_at').eq('consultation_id', consultationId).eq('is_visible', true).order('created_at', { ascending: false })
+                        setEstimatesList((list ?? []) as Array<{ id: string; consultation_id: string; payload: Record<string, unknown>; final_proposal_data: Record<string, unknown> | null; supply_total: number; vat: number; grand_total: number; approved_at: string | null; created_at: string }>)
+                        setEstimateListRefreshKey((k) => k + 1)
+                        setAdminPreviewEstimateId(estimateId)
+                        setAdminPreviewData(data)
+                        setAdminPreviewOpen(true)
+                        toast.success('임시저장되었습니다. 미리보기에서 최종 발행 시 확정됩니다.')
+                      } catch (err) {
+                        console.error(err)
+                        toast.error('임시저장에 실패했습니다.')
+                      }
+                    }}
+                  >
+                    발행승인
+                  </Button>
+                  <Button type="button" variant="ghost" size="sm" onClick={() => setEstimateModalOpen(false)}>
+                    닫기
+                  </Button>
+                </div>
               </div>
-            </div>
-            <div className="flex-1 overflow-auto min-h-0 p-4">
-              {(selectedLeadData || (estimateModalInitialData?.rows?.length ?? 0) > 0) && (
-                <EstimateForm
-                  key={estimateModalEditId ?? 'new'}
-                  ref={estimateFormRef}
-                  initialData={
-                    estimateModalInitialData
-                      ? {
+              <div className="flex-1 overflow-auto min-h-0 p-4">
+                {(selectedLeadData || (estimateModalInitialData?.rows?.length ?? 0) > 0) && (
+                  <EstimateForm
+                    key={estimateModalEditId ?? 'new'}
+                    ref={estimateFormRef}
+                    initialData={
+                      estimateModalInitialData
+                        ? {
                           ...(selectedLeadData && {
                             recipientName: selectedLeadData.company?.trim() || '(업체명 없음)',
                             recipientContact: selectedLeadData.contact ?? '',
                           }),
                           ...estimateModalInitialData,
                         }
-                      : {
+                        : {
                           recipientName: selectedLeadData?.company?.trim() || '(업체명 없음)',
                           recipientContact: selectedLeadData?.contact ?? '',
                         }
-                  }
-                  pastEstimates={selectedLeadData ? mergedPastEstimatesForGuide : []}
-                  onApproved={selectedLeadData ? (data) => void handleEstimateApproved(selectedLeadData.id, data) : undefined}
-                  onRequestEstimatePreview={(consultationId, estimateId) => {
-                    if (selectedLead !== consultationId) {
-                      setSelectedLead(consultationId)
-                      setDetailPanelTab('estimate')
                     }
-                    setPrintEstimateId(estimateId)
-                  }}
-                  onRequestPriceBookImage={(url) => setPriceBookImageUrl(url)}
-                  modalOpen={estimateModalOpen}
-                  hideInternalActions
-                  showProfitabilityPanel
-                  className="max-w-5xl mx-auto"
-                />
-              )}
-            </div>
-          </DialogContent>
-        </Dialog>
+                    pastEstimates={selectedLeadData ? mergedPastEstimatesForGuide : []}
+                    onApproved={selectedLeadData ? (data) => void handleEstimateApproved(selectedLeadData.id, data) : undefined}
+                    onRequestEstimatePreview={(consultationId, estimateId) => {
+                      if (selectedLead !== consultationId) {
+                        setSelectedLead(consultationId)
+                        setDetailPanelTab('estimate')
+                      }
+                      setPrintEstimateId(estimateId)
+                    }}
+                    onRequestPriceBookImage={(url) => setPriceBookImageUrl(url)}
+                    modalOpen={estimateModalOpen}
+                    hideInternalActions
+                    showProfitabilityPanel
+                    className="max-w-5xl mx-auto"
+                  />
+                )}
+              </div>
+            </DialogContent>
+          </Dialog>
         </div>
       </main>
     </div>
