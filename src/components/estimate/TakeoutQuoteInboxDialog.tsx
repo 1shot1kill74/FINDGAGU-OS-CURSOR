@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Loader2, Search, ImagePlus } from 'lucide-react'
+import { Loader2, Search, ImagePlus, ExternalLink } from 'lucide-react'
 
 type TakeoutQuoteCandidate = {
   id: string
@@ -50,6 +50,7 @@ export function TakeoutQuoteInboxDialog({
   const [searchQuery, setSearchQuery] = useState('')
   const [importingId, setImportingId] = useState<string | null>(null)
   const [showAllSpaces, setShowAllSpaces] = useState(false)
+  const [previewCandidate, setPreviewCandidate] = useState<TakeoutQuoteCandidate | null>(null)
 
   const normalizedCurrentSpaceId = normalizeSpaceId(currentSpaceId)
 
@@ -82,6 +83,10 @@ export function TakeoutQuoteInboxDialog({
     }
   }, [open])
 
+  useEffect(() => {
+    if (!open) setPreviewCandidate(null)
+  }, [open])
+
   const filteredCandidates = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
     const candidates = manifest?.candidates ?? []
@@ -90,8 +95,7 @@ export function TakeoutQuoteInboxDialog({
       : candidates.filter((candidate) =>
         candidate.spaceId.toLowerCase().includes(q) ||
         candidate.spaceIdNormalized.toLowerCase().includes(q) ||
-        candidate.fileName.toLowerCase().includes(q) ||
-        candidate.matchReason.toLowerCase().includes(q)
+        candidate.fileName.toLowerCase().includes(q)
       )
 
     const filtered =
@@ -127,6 +131,7 @@ export function TakeoutQuoteInboxDialog({
   const handleImport = async (candidate: TakeoutQuoteCandidate) => {
     setImportingId(candidate.id)
     try {
+      setPreviewCandidate(null)
       await onImportCandidate(candidate)
       onOpenChange(false)
     } finally {
@@ -135,8 +140,9 @@ export function TakeoutQuoteInboxDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-6xl h-[85vh] flex flex-col">
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="max-w-6xl h-[85vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>Takeout 견적 이미지 불러오기</DialogTitle>
           <DialogDescription>
@@ -203,8 +209,8 @@ export function TakeoutQuoteInboxDialog({
                           <button
                             type="button"
                             className="block w-full overflow-hidden rounded-md border border-border bg-muted/20"
-                            onClick={() => window.open(candidate.assetUrl, '_blank', 'noopener,noreferrer')}
-                            title="새 탭에서 크게 보기"
+                            onClick={() => setPreviewCandidate(candidate)}
+                            title="크게 보기"
                           >
                             <img
                               src={candidate.assetUrl}
@@ -216,9 +222,6 @@ export function TakeoutQuoteInboxDialog({
                           <div className="mt-2 space-y-1">
                             <p className="truncate text-xs font-medium text-foreground" title={candidate.fileName}>
                               {candidate.fileName}
-                            </p>
-                            <p className="line-clamp-2 text-[10px] text-muted-foreground" title={candidate.matchReason}>
-                              {candidate.matchReason}
                             </p>
                           </div>
                           <Button
@@ -244,7 +247,61 @@ export function TakeoutQuoteInboxDialog({
             </div>
           )}
         </div>
-      </DialogContent>
-    </Dialog>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!previewCandidate} onOpenChange={(next) => !next && setPreviewCandidate(null)}>
+        <DialogContent className="max-w-7xl h-[92vh] flex flex-col gap-3">
+          <DialogHeader>
+            <DialogTitle>{previewCandidate?.fileName ?? '이미지 크게 보기'}</DialogTitle>
+            <DialogDescription>
+              이미지를 크게 확인한 뒤 바로 현재 상담카드의 견적 검토 흐름으로 가져올 수 있습니다.
+            </DialogDescription>
+          </DialogHeader>
+
+          {previewCandidate && (
+            <>
+              <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-black/5">
+                <img
+                  src={previewCandidate.assetUrl}
+                  alt={previewCandidate.fileName}
+                  className="h-full w-full object-contain"
+                />
+              </div>
+
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-foreground">{previewCandidate.spaceIdNormalized}</p>
+                  <p className="truncate text-xs text-muted-foreground">{previewCandidate.fileName}</p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => window.open(previewCandidate.assetUrl, '_blank', 'noopener,noreferrer')}
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                    새 탭
+                  </Button>
+                  <Button
+                    type="button"
+                    className="gap-1.5"
+                    onClick={() => void handleImport(previewCandidate)}
+                    disabled={importingId === previewCandidate.id}
+                  >
+                    {importingId === previewCandidate.id ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <ImagePlus className="h-4 w-4" />
+                    )}
+                    견적 검토로 가져오기
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }
