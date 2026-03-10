@@ -230,6 +230,8 @@ interface Lead {
   asRequested?: boolean
   /** 구글챗 스페이스 대화방 URL (metadata.google_chat_url). 예: https://chat.google.com/room/AAAA... */
   google_chat_url?: string
+  /** consultations.channel_chat_id 또는 구글챗 URL에서 파싱한 스페이스 ID */
+  channelChatId?: string
   /** 상담 메모 (metadata.consultation_notes) — 핵심 내용·AI 요약 보관 */
   consultation_notes?: string
   /** 구글챗 스페이스 생성 대기 중 (metadata.google_chat_pending). URL 없을 때만 상태 C 표시 */
@@ -296,6 +298,15 @@ function computeDisplayName(companyOrName: string, contact: string, refDate: Dat
   return `${yymm} ${namePart} ${last4}`
 }
 
+function parseGoogleChatSpaceId(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !value.trim()) return undefined
+  const raw = value.trim()
+  const direct = raw.replace(/^spaces\//i, '').trim()
+  const urlMatch = direct.match(/\/room\/([^/?#]+)/i)
+  const extracted = urlMatch?.[1] ?? direct
+  return extracted || undefined
+}
+
 /** null·형식 깨짐 방지 — Provider Error 회피 (Supabase 응답 보강) */
 function sanitizeConsultationRow(item: Record<string, unknown>): Record<string, unknown> {
   const safe = { ...item }
@@ -356,6 +367,10 @@ function mapConsultationRowToLead(item: Record<string, unknown>): Lead {
     (meta && typeof meta.google_chat_url === 'string' && meta.google_chat_url.trim()
       ? meta.google_chat_url.trim()
       : undefined) || (typeof item.link === 'string' && item.link.trim() ? item.link.trim() : undefined)
+  const channelChatId =
+    (typeof item.channel_chat_id === 'string' && item.channel_chat_id.trim() ? item.channel_chat_id.trim() : undefined) ||
+    (meta && typeof meta.space_id === 'string' && meta.space_id.trim() ? meta.space_id.trim() : undefined) ||
+    parseGoogleChatSpaceId(googleChatUrl)
   const googleChatPending = meta && typeof meta.google_chat_pending === 'boolean' ? meta.google_chat_pending : false
   const historySummary =
     meta && typeof meta.history_summary === 'string' && meta.history_summary.trim()
@@ -447,6 +462,7 @@ function mapConsultationRowToLead(item: Record<string, unknown>): Lead {
     workflowStage: workflowStageFromMeta,
     asRequested,
     google_chat_url: googleChatUrl,
+    channelChatId,
     consultation_notes: consultationNotes,
     google_chat_pending: googleChatPending,
     history_summary: historySummary,
