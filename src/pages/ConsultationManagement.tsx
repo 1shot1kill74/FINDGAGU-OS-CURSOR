@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { ChevronLeft } from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
-import { RefreshCw, Zap, Phone, Copy, User, Images, MessageCircle, Pencil, Loader2, Search, FileText, CheckCircle, Ruler, Trash2, EyeOff, Star } from 'lucide-react'
+import { RefreshCw, Zap, Phone, Copy, User, Images, MessageCircle, Pencil, Loader2, Search, FileText, CheckCircle, Ruler, Trash2, EyeOff, Star, Pin } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { supabase } from '@/lib/supabase'
@@ -172,14 +172,21 @@ function getDisplayAmount(history: EstimateHistoryItem[], fallbackRevenue: numbe
 
 /** status → workflow_stage 매핑 (metadata.workflow_stage 없을 때) */
 const STATUS_TO_STAGE: Record<string, ConsultationStage> = {
+  접수: '상담접수',
+  견적: '견적중',
+  진행: '계약완료',
+  완료: '시공완료',
+  AS: '시공완료',
+  거절: '시공완료',
+  무효: '시공완료',
+  // 레거시 값 호환 (DB 마이그레이션 전 데이터)
   상담중: '상담접수',
   견적발송: '견적중',
   계약완료: '계약완료',
   휴식기: '시공완료',
   시공완료: '시공완료',
-  거절: '시공완료',
-  무효: '시공완료',
   AS_WAITING: '시공완료',
+  신규: '상담접수',
 }
 
 const LIST_PAGE_SIZE = 20
@@ -189,7 +196,7 @@ type DateRangeKey = 'all' | 'thisMonth' | '1m' | '3m' | '6m' | '1y'
 
 /** 시공완료·거절·무효 — 활성 리스트에서 제외. 무효=통계 제외, 거절=사유 보존 */
 function isEnded(lead: Lead): boolean {
-  if (lead.status === 'AS_WAITING') return false
+  if (lead.status === 'AS') return false
   return lead.workflowStage === '시공완료' || lead.status === '거절' || lead.status === '무효'
 }
 
@@ -216,7 +223,7 @@ interface Lead {
   goldenTimeDeadlineSoon?: boolean
   /** created_at 기준 경과 일수 */
   goldenTimeElapsedDays?: number
-  status: '상담중' | '견적발송' | '계약완료' | '휴식기' | '거절' | '무효' | 'AS_WAITING'
+  status: '접수' | '견적' | '진행' | '완료' | 'AS' | '거절' | '무효'
   /** 4단계 상담 흐름 (카드 프로그레스 바용) */
   workflowStage: ConsultationStage
   /** AS 요청 여부 (metadata.as_requested 또는 로컬 표시용) */
@@ -233,8 +240,6 @@ interface Lead {
   inboundDate: string | null
   /** 업데이트일 YYYY-MM-DD (update_date, 방치 기간 계산용) */
   updateDate?: string | null
-  /** 구글 시트 최신 업데이트일 YYYY-MM-DD (metadata.sheet_update_date). 있으면 '갱신' 표시·정렬에 우선 사용 */
-  sheetUpdateDate?: string | null
   /** 인입 채널 (metadata.source). 오픈마켓 시 마켓 배지 표시 */
   source?: string
   /** 오픈마켓 주문번호 (metadata.order_number) */
@@ -255,6 +260,8 @@ interface Lead {
   measurementConstructionNotes?: string
   /** 실측 PDF 도면 Storage 경로 (metadata.measurement_drawing_path) — 내부용, Signed URL로만 노출 */
   measurementDrawingPath?: string
+  /** 상단 고정 여부 (metadata.pinned) */
+  pinned?: boolean
   /** Supabase metadata 병합용 (단계 변경 시 업데이트) */
   metadata?: Record<string, unknown>
   expectedRevenue: number
@@ -333,7 +340,7 @@ function mapConsultationRowToLead(item: Record<string, unknown>): Lead {
     typeof requiredDateRaw === 'string' && requiredDateRaw ? requiredDateRaw.slice(0, 10) : ''
   const customerTierFromMeta = getValidCustomerTier(item.customer_grade ?? meta?.customer_tier)
   const rawStatus = typeof item.status === 'string' ? item.status.trim() : ''
-  const statusVal = (rawStatus ? (item.status as Lead['status']) : '상담중') ?? '상담중'
+  const statusVal = (rawStatus ? (item.status as Lead['status']) : '접수') ?? '접수'
   const rawStage = meta && typeof meta.workflow_stage === 'string' ? meta.workflow_stage : null
   const workflowStageFromMeta =
     rawStage && CONSULTATION_STAGES.includes(rawStage as ConsultationStage)
@@ -344,7 +351,7 @@ function mapConsultationRowToLead(item: Record<string, unknown>): Lead {
   const consultationNotes = meta && typeof meta.consultation_notes === 'string' ? meta.consultation_notes.trim() : undefined
   const asRequested =
     (meta && typeof meta.as_requested === 'boolean' ? meta.as_requested : false) ||
-    statusVal === 'AS_WAITING'
+    statusVal === 'AS'
   const googleChatUrl =
     (meta && typeof meta.google_chat_url === 'string' && meta.google_chat_url.trim()
       ? meta.google_chat_url.trim()
@@ -415,8 +422,6 @@ function mapConsultationRowToLead(item: Record<string, unknown>): Lead {
           ? (rawUpdate as Date).toISOString().slice(0, 10)
           : null
   const updateDateNorm = updateDate && /^\d{4}-\d{2}-\d{2}$/.test(updateDate) ? updateDate : null
-  const sheetUpdateRaw = meta && typeof meta.sheet_update_date === 'string' ? meta.sheet_update_date.trim().slice(0, 10) : null
-  const sheetUpdateDate = sheetUpdateRaw && /^\d{4}-\d{2}-\d{2}$/.test(sheetUpdateRaw) ? sheetUpdateRaw : null
   return {
     id: String(item.id ?? ''),
     name,
@@ -447,7 +452,6 @@ function mapConsultationRowToLead(item: Record<string, unknown>): Lead {
     history_summary: historySummary,
     inboundDate,
     updateDate: updateDateNorm,
-    sheetUpdateDate: sheetUpdateDate || undefined,
     projectName: projectName || undefined,
     source,
     orderNumber,
@@ -459,6 +463,7 @@ function mapConsultationRowToLead(item: Record<string, unknown>): Lead {
     measurementPhotos,
     measurementConstructionNotes,
     measurementDrawingPath,
+    pinned: meta && meta.pinned === true ? true : undefined,
     metadata: meta ?? undefined,
     aiSuggestions: hasAiSuggestions ? aiSuggestions : undefined,
     showroomImageUrl,
@@ -509,6 +514,26 @@ function getNeglectDDisplay(updateDate: string | null | undefined): { text: stri
   return {
     text: days === 0 ? '오늘 업데이트' : `D+${days}`,
     days,
+  }
+}
+
+const COMPLETED_REACTIVATION_WINDOW_DAYS = 7
+
+function getCompletedReactivationSignal(
+  status: Lead['status'],
+  workflowStage: ConsultationStage,
+  updateDate: string | null | undefined,
+): { days: number; label: string; title: string } | null {
+  if (status !== '완료' || workflowStage !== '시공완료') return null
+  const days = getNeglectDays(updateDate)
+  if (days < 0 || days > COMPLETED_REACTIVATION_WINDOW_DAYS) return null
+  return {
+    days,
+    label: days === 0 ? '오늘 재활동' : '종료 후 활동',
+    title:
+      days === 0
+        ? '완료 카드에서 오늘 새 활동이 감지되었습니다. 상태 변경 필요 여부를 확인하세요.'
+        : `완료 카드에서 최근 ${days}일 내 활동이 감지되었습니다. 상태 변경 필요 여부를 확인하세요.`,
   }
 }
 
@@ -705,9 +730,9 @@ const STAGE_BAR_OPTIONS: Array<{
     { key: '거절', label: '거절', activeClass: 'bg-slate-500/20 text-slate-700 dark:bg-slate-500/25 dark:text-slate-300 ring-1 ring-slate-500/40' },
   ]
 
-/** 현재 활성 상태 바 값 — AS_WAITING→AS, 거절/무효 그대로, 그 외 workflowStage */
+/** 현재 활성 상태 바 값 — AS, 거절/무효 그대로, 그 외 workflowStage */
 function getStageBarValue(item: Lead): StageBarValue {
-  if (item.status === 'AS_WAITING') return 'AS'
+  if (item.status === 'AS') return 'AS'
   if (item.status === '거절') return '거절'
   if (item.status === '무효') return '무효'
   return item.workflowStage
@@ -720,12 +745,14 @@ function StageProgressBar({
   onAsClick,
   onInvalidClick,
   onCancelClick,
+  showCompletedReactivation = false,
 }: {
   item: Lead
   onStageChange: (stage: ConsultationStage) => void
   onAsClick: () => void
   onInvalidClick: () => void
   onCancelClick: () => void
+  showCompletedReactivation?: boolean
 }) {
   const current = getStageBarValue(item)
 
@@ -737,7 +764,7 @@ function StageProgressBar({
           <button
             key={key}
             type="button"
-            title={title ?? key}
+            title={showCompletedReactivation && key === '시공완료' && isActive ? '완료 상태에서 최근 활동이 다시 감지되었습니다.' : (title ?? key)}
             onClick={(e) => {
               e.stopPropagation()
               if (key === '무효') onInvalidClick()
@@ -751,7 +778,12 @@ function StageProgressBar({
               isActive && 'font-semibold'
             )}
           >
-            {label}
+            <span className="inline-flex items-center gap-1">
+              {label}
+              {showCompletedReactivation && key === '시공완료' && isActive && (
+                <span className="inline-flex h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" aria-hidden />
+              )}
+            </span>
           </button>
         )
       })}
@@ -780,6 +812,7 @@ function ConsultationListItem({
   onCancelClick,
   onEditClick,
   onDeleteClick,
+  onPinClick,
   lastMessage,
   /** 견적서로 저장 직후 카드 2행 즉시 반영용 — 그 외에는 DB(consultations.estimate_amount) 단일 소스만 사용 */
   getPendingEstimateAmount,
@@ -796,6 +829,7 @@ function ConsultationListItem({
   onCancelClick: (leadId: string) => void
   onEditClick: (leadId: string) => void
   onDeleteClick: (leadId: string) => void
+  onPinClick: (leadId: string) => void
   lastMessage?: LastActivityMessage | null
   getPendingEstimateAmount?: (consultationId: string) => number | undefined
   /** consultation_messages 내 이미지(FILE+Cloudinary) 개수. 구글챗 버튼 왼쪽 인디케이터용 */
@@ -812,7 +846,7 @@ function ConsultationListItem({
   const isLongTermUnresolved =
     (item.goldenTimeElapsedDays ?? 0) > 30 && item.status !== '거절' && item.status !== '무효' && item.workflowStage !== '시공완료'
   /** 골든타임/상태 배지 표시 여부 — 완료·거절·무효·AS요청이면 숨김 */
-  const showStateBadge = item.status !== '거절' && item.status !== '무효' && item.status !== 'AS_WAITING' && item.workflowStage !== '시공완료'
+  const showStateBadge = item.status !== '거절' && item.status !== '무효' && item.status !== 'AS' && item.workflowStage !== '시공완료'
 
   const cancelReason = item.status === '거절' && item.metadata && typeof (item.metadata as Record<string, unknown>).cancel_reason === 'string'
     ? (item.metadata as Record<string, unknown>).cancel_reason as string
@@ -825,6 +859,7 @@ function ConsultationListItem({
   const isD7OrMore = elapsedDays >= 7
   /** 방치 방지: update_date 기준 D-Day */
   const neglectD = getNeglectDDisplay(item.updateDate)
+  const completedReactivation = getCompletedReactivationSignal(item.status, item.workflowStage, item.updateDate)
   /** 2행 맨 오른쪽: 최종 견적가. 실제 소스 1개만 — DB(consultations.estimate_amount → expectedRevenue). pending은 견적서로 저장 직후 낙관적 표시용 */
   const pendingAmount = getPendingEstimateAmount?.(item.id)
   const amountToShow =
@@ -861,7 +896,7 @@ function ConsultationListItem({
             {item.displayName}
             {isPartner && <Star className="h-3.5 w-3.5 shrink-0 fill-amber-400 text-amber-500" aria-label="파트너" />}
           </span>
-          {(item.asRequested || item.status === 'AS_WAITING') && (
+          {(item.asRequested || item.status === 'AS') && (
             <span className="shrink-0 rounded px-1 py-0.5 text-[10px] font-semibold bg-red-500/20 text-red-700 dark:text-red-400 ring-1 ring-red-500/30">
               AS 요청
             </span>
@@ -874,7 +909,16 @@ function ConsultationListItem({
             onAsClick={() => onAsClick(item.id)}
             onInvalidClick={() => onInvalidClick(item.id)}
             onCancelClick={() => onCancelClick(item.id)}
+            showCompletedReactivation={!!completedReactivation}
           />
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onPinClick(item.id) }}
+            className={cn('p-0.5 rounded shrink-0', item.pinned ? 'text-amber-500 hover:text-amber-600' : 'text-muted-foreground hover:text-foreground hover:bg-muted')}
+            title={item.pinned ? '상단 고정 해제' : '상단 고정'}
+          >
+            <Pin className="h-3 w-3" />
+          </button>
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onEditClick(item.id) }}
@@ -966,17 +1010,38 @@ function ConsultationListItem({
               <span className="text-border shrink-0 mx-0.5">|</span>
             </>
           )}
+          {completedReactivation && (
+            <>
+              <span
+                className={cn(
+                  'inline-flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[10px] font-semibold shrink-0 ring-1',
+                  completedReactivation.days === 0
+                    ? 'bg-amber-500 text-white ring-amber-500/50'
+                    : 'bg-amber-500/15 text-amber-700 dark:text-amber-300 ring-amber-500/30'
+                )}
+                title={completedReactivation.title}
+              >
+                {completedReactivation.label}
+              </span>
+              <span className="text-border shrink-0 mx-0.5">|</span>
+            </>
+          )}
           <span className="shrink-0">{item.inboundDate ? `인입 ${item.inboundDate}` : '인입 —'}</span>
           <span className="text-border shrink-0 mx-0.5">|</span>
           {neglectD ? (
             <>
               <span
                 title={neglectD.days === 0 ? '오늘 갱신됨' : `마지막 업데이트 ${(item.updateDate)?.toString().slice(0, 10) ?? '—'}로부터 ${neglectD.days}일 경과 — 방치 주의`}
-                className="font-medium shrink-0 text-[11px] inline-flex items-center gap-0.5"
+                className={cn(
+                  'font-medium shrink-0 text-[11px] inline-flex items-center gap-0.5',
+                  completedReactivation && 'rounded-md px-1.5 py-0.5 bg-amber-500/10 text-amber-800 dark:text-amber-200 ring-1 ring-amber-500/20'
+                )}
               >
-                <span className="text-muted-foreground">마지막 업데이트 {(item.updateDate)?.toString().slice(0, 10) ?? '—'}</span>
+                <span className={cn(completedReactivation ? 'text-current' : 'text-muted-foreground')}>
+                  마지막 업데이트 {(item.updateDate)?.toString().slice(0, 10) ?? '—'}
+                </span>
                 <span className={cn(
-                  neglectD.days === 0 && 'text-muted-foreground',
+                  neglectD.days === 0 && (completedReactivation ? 'text-current' : 'text-muted-foreground'),
                   neglectD.days >= 3 && neglectD.days < 7 && 'text-orange-600 dark:text-orange-400 font-semibold',
                   neglectD.days >= 7 && 'text-red-600 dark:text-red-400 font-semibold'
                 )}>+{neglectD.days}일</span>
@@ -1294,6 +1359,7 @@ export default function ConsultationManagement() {
     const base = leads.filter((l) => inRange(l) && matchSearch(l))
     const active = base.filter((l) => !isEnded(l))
     const completedCount = base.filter((l) => l.workflowStage === '시공완료' && l.status !== '거절' && l.status !== '무효').length
+    const completedReactivatedCount = base.filter((l) => getCompletedReactivationSignal(l.status, l.workflowStage, l.updateDate)).length
     const rejectCount = base.filter((l) => l.status === '거절').length
     const invalidCount = base.filter((l) => l.status === '무효').length
     return {
@@ -1302,6 +1368,7 @@ export default function ConsultationManagement() {
       견적중: active.filter((l) => l.workflowStage === '견적중').length,
       진행중: active.filter((l) => l.workflowStage === '계약완료').length,
       종료: completedCount,
+      종료재활동: completedReactivatedCount,
       거절: rejectCount,
       무효: invalidCount,
     }
@@ -1362,12 +1429,16 @@ export default function ConsultationManagement() {
     if (sortByNeglect) {
       // 수파베이스 최신 업데이트일(update_date) 기준 내림차순 정렬. null이면 인입일(inboundDate) 대체
       return [...list].sort((a, b) => {
+        if (a.pinned && !b.pinned) return -1
+        if (!a.pinned && b.pinned) return 1
         const da = new Date(a.updateDate ?? a.inboundDate ?? a.createdAt).getTime()
         const db = new Date(b.updateDate ?? b.inboundDate ?? b.createdAt).getTime()
         return db - da
       })
     }
     return [...list].sort((a, b) => {
+      if (a.pinned && !b.pinned) return -1
+      if (!a.pinned && b.pinned) return 1
       const da = a.inboundDate ? new Date(a.inboundDate).getTime() : new Date(a.createdAt).getTime()
       const db = b.inboundDate ? new Date(b.inboundDate).getTime() : new Date(b.createdAt).getTime()
       return db - da
@@ -1543,7 +1614,7 @@ export default function ConsultationManagement() {
         company_name: form.companyName.trim(),
         manager_name: form.managerName.trim(),
         contact,
-        status: '상담중',
+        status: '접수',
         metadata: metadata as Json,
         is_visible: true,
       })
@@ -1722,7 +1793,7 @@ export default function ConsultationManagement() {
     if (!lead) return
     const nextMeta = { ...(lead.metadata ?? {}), as_requested: requested, as_reason: reason ?? (lead.metadata?.as_reason as string) ?? '' }
     if (!requested) delete (nextMeta as Record<string, unknown>).as_reason
-    const nextStatus: Lead['status'] = requested ? 'AS_WAITING' : '휴식기'
+    const nextStatus: Lead['status'] = requested ? 'AS' : '완료'
 
     setLeads((prev) =>
       prev.map((l) =>
@@ -1807,6 +1878,17 @@ export default function ConsultationManagement() {
     }
   }
 
+  /** 상단 고정 토글 — metadata.pinned 반전 후 Supabase 저장 */
+  const handlePin = async (leadId: string) => {
+    const lead = leads.find((l) => l.id === leadId)
+    if (!lead) return
+    const nextPinned = !lead.pinned
+    const nextMeta = { ...(lead.metadata ?? {}), pinned: nextPinned }
+    if (!nextPinned) delete (nextMeta as Record<string, unknown>).pinned
+    setLeads((prev) => prev.map((l) => (l.id === leadId ? { ...l, pinned: nextPinned || undefined, metadata: nextMeta } : l)))
+    await supabase.from('consultations').update({ metadata: nextMeta as Json }).eq('id', leadId)
+  }
+
   /** 무효 처리 — 팝업 없이 즉시 status '무효' 저장 후 종료/캔슬 탭(무효건)으로 이동. 통계에서 제외 */
   const handleInvalidLead = async (leadId: string) => {
     const lead = leads.find((l) => l.id === leadId)
@@ -1835,7 +1917,7 @@ export default function ConsultationManagement() {
   const handleAsClick = (leadId: string) => {
     const lead = leads.find((l) => l.id === leadId)
     if (!lead) return
-    if (lead.asRequested || lead.status === 'AS_WAITING') {
+    if (lead.asRequested || lead.status === 'AS') {
       handleToggleAs(leadId, false)
     } else {
       setAsModalLeadId(leadId)
@@ -2029,7 +2111,7 @@ export default function ConsultationManagement() {
     }
   }
 
-  /** 견적 확정 (estimates 테이블 행 기준) — approved_at 갱신, consultations.estimate_amount·status 견적발송·카드 금액 즉시 반영 */
+  /** 견적 확정 (estimates 테이블 행 기준) — approved_at 갱신, consultations.estimate_amount·status 견적·카드 금액 즉시 반영 */
   const handleSetEstimateFinalByEstimateId = async (leadId: string, estimateId: string) => {
     const lead = leads.find((l) => l.id === leadId)
     const est = estimatesList.find((e) => e.id === estimateId && e.consultation_id === leadId)
@@ -2038,7 +2120,7 @@ export default function ConsultationManagement() {
     const grandTotal = Number(est.grand_total)
     setEstimatesList((prev) => prev.map((e) => (e.id === estimateId ? { ...e, approved_at: approvedAt } : e)))
     setLeads((prev) =>
-      prev.map((l) => (l.id !== leadId ? l : { ...l, expectedRevenue: grandTotal, displayAmount: grandTotal, status: '견적발송' }))
+      prev.map((l) => (l.id !== leadId ? l : { ...l, expectedRevenue: grandTotal, displayAmount: grandTotal, status: '견적' }))
     )
     try {
       const { error: estErr } = await supabase.from('estimates').update({ approved_at: approvedAt }).eq('id', estimateId)
@@ -2047,7 +2129,7 @@ export default function ConsultationManagement() {
         .from('consultations')
         .update({
           estimate_amount: grandTotal,
-          status: '견적발송',
+          status: '견적',
         })
         .eq('id', leadId)
       if (conErr) throw conErr
@@ -2123,12 +2205,12 @@ export default function ConsultationManagement() {
     if (!lead) return
     const prevStage = lead.workflowStage
     const nextMeta = { ...(lead.metadata ?? {}), workflow_stage: stage }
-    /** DB status 컬럼(consultation_status) 매핑: 상담접수→상담중, 견적중→견적발송, 계약완료→계약완료, 시공완료→휴식기 */
+    /** DB status 컬럼 매핑: 상담접수→접수, 견적중→견적, 계약완료→진행, 시공완료→완료 */
     const stageToStatus: Record<ConsultationStage, Lead['status']> = {
-      상담접수: '상담중',
-      견적중: '견적발송',
-      계약완료: '계약완료',
-      시공완료: '휴식기',
+      상담접수: '접수',
+      견적중: '견적',
+      계약완료: '진행',
+      시공완료: '완료',
     }
     const nextStatus = stageToStatus[stage]
 
@@ -2629,7 +2711,7 @@ export default function ConsultationManagement() {
               ...l,
               displayAmount: payload.estimateAmount,
               expectedRevenue: payload.estimateAmount,
-              status: '견적발송',
+              status: '견적',
             }
         )
       )
@@ -2686,7 +2768,7 @@ export default function ConsultationManagement() {
             ; (newMeta as Record<string, unknown>).workflow_stage = '상담접수'
         }
         const updatePayload: { metadata: Json; estimate_amount: number; status?: Lead['status'] } = { metadata: newMeta as unknown as Json, estimate_amount: newDisplayAmount }
-        if (list.length === 0) updatePayload.status = '상담중'
+        if (list.length === 0) updatePayload.status = '접수'
         await supabase.from('consultations').update(updatePayload).eq('id', consultationId)
         delete pendingEstimateAmountRef.current[consultationId]
         setLeads((prev) =>
@@ -2700,7 +2782,7 @@ export default function ConsultationManagement() {
                 displayAmount: newDisplayAmount,
                 expectedRevenue: newDisplayAmount,
                 finalAmount: approvedOnly.length > 0 ? newDisplayAmount : null,
-                ...(list.length === 0 ? { status: '상담중' as const, workflowStage: '상담접수' as const } : {}),
+                ...(list.length === 0 ? { status: '접수' as const, workflowStage: '상담접수' as const } : {}),
               }
           )
         )
@@ -2757,7 +2839,7 @@ export default function ConsultationManagement() {
               estimateHistory: newHistory,
               displayAmount: newDisplayAmount,
               expectedRevenue: newDisplayAmount,
-              ...(list.length === 0 ? { status: '상담중' as const, workflowStage: '상담접수' as const } : {}),
+              ...(list.length === 0 ? { status: '접수' as const, workflowStage: '상담접수' as const } : {}),
               ...(deletedFinal || list.length === 0 ? { finalAmount: null } : {}),
             }
         )
@@ -2769,7 +2851,7 @@ export default function ConsultationManagement() {
         metadata: newMeta as unknown as Json,
         estimate_amount: newDisplayAmount,
       }
-      if (list.length === 0) updatePayload.status = '상담중'
+      if (list.length === 0) updatePayload.status = '접수'
 
       const { error: updateError } = await supabase.from('consultations').update(updatePayload).eq('id', consultationId)
       if (updateError) {
@@ -2906,7 +2988,7 @@ export default function ConsultationManagement() {
       const nextMeta = { ...(lead.metadata ?? {}), estimate_history: nextHistory }
 
       const updatePayload: { metadata: Json; status?: Lead['status'] } = { metadata: nextMeta as unknown as Json }
-      if (data.mode !== 'PROPOSAL') updatePayload.status = '견적발송'
+      if (data.mode !== 'PROPOSAL') updatePayload.status = '견적'
 
       const { error: updateError } = await supabase.from('consultations').update(updatePayload).eq('id', consultationId)
       if (updateError) throw updateError
@@ -2920,7 +3002,7 @@ export default function ConsultationManagement() {
               metadata: nextMeta,
               estimateHistory: nextHistory,
               displayAmount: getDisplayAmount(nextHistory, l.expectedRevenue),
-              ...(data.mode === 'FINAL' ? { status: '견적발송' as const } : {}),
+              ...(data.mode === 'FINAL' ? { status: '견적' as const } : {}),
             }
         )
       )
@@ -3646,7 +3728,17 @@ export default function ConsultationManagement() {
                     <TabsList className="w-full justify-start rounded-none border-b border-border bg-transparent p-0 h-auto shrink-0 flex-wrap">
                       {(['전체', '미처리', '견적중', '진행중', '종료', '거절', '무효'] as const).map((tab) => (
                         <TabsTrigger key={tab} value={tab} className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-2.5 py-1.5 text-xs sm:px-3 sm:py-2 sm:text-sm">
-                          {tab} {tabCounts[tab]}
+                          <span className="inline-flex items-center gap-1.5">
+                            <span>{tab} {tabCounts[tab]}</span>
+                            {tab === '종료' && tabCounts.종료재활동 > 0 && (
+                              <span
+                                className="inline-flex items-center rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300 ring-1 ring-amber-500/30"
+                                title={`종료 카드 중 최근 ${COMPLETED_REACTIVATION_WINDOW_DAYS}일 내 다시 활동한 상담 ${tabCounts.종료재활동}건`}
+                              >
+                                활동 {tabCounts.종료재활동}
+                              </span>
+                            )}
+                          </span>
                         </TabsTrigger>
                       ))}
                     </TabsList>
@@ -3670,6 +3762,7 @@ export default function ConsultationManagement() {
                               onCancelClick={(leadId) => { setCancelModalLeadId(leadId); setCancelReasonDraft('') }}
                               onEditClick={handleEditClick}
                               onDeleteClick={handleDeleteLead}
+                              onPinClick={handlePin}
                               lastMessage={lastMessagesByConsultationId[lead.id] ?? null}
                               getPendingEstimateAmount={(id) => pendingEstimateAmountRef.current[id]}
                               imageCount={imageCountByConsultationId[lead.id] ?? 0}
@@ -3962,7 +4055,7 @@ export default function ConsultationManagement() {
                             .eq('id', est.id)
                           if (estErr) throw estErr
                         }
-                        // 3. 상담 카드·DB 반영: 견적 확정 = 견적 단계(status 견적발송). 계약 단계는 입금 확인 후 직원이 계약 버튼으로 별도 전환.
+                        // 3. 상담 카드·DB 반영: 견적 확정 = 견적 단계(status 견적). 계약 단계는 입금 확인 후 직원이 계약 버튼으로 별도 전환.
                         const newHistory: EstimateHistoryItem[] = [
                           {
                             version: 1,
@@ -3981,7 +4074,7 @@ export default function ConsultationManagement() {
                         const { error: updateErr } = await supabase
                           .from('consultations')
                           .update({
-                            status: '견적발송',
+                            status: '견적',
                             estimate_amount: grandTotal,
                             metadata: nextMeta as unknown as Json,
                           })
@@ -3994,7 +4087,7 @@ export default function ConsultationManagement() {
                               ? l
                               : {
                                 ...l,
-                                status: '견적발송',
+                                status: '견적',
                                 metadata: nextMeta,
                                 estimateHistory: parsedHistory,
                                 displayAmount: grandTotal,
@@ -4038,7 +4131,7 @@ export default function ConsultationManagement() {
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
                               project_name: lead.projectName,
-                              status: '견적발송',
+                              status: '견적',
                               estimate_amount: grandTotal,
                               ...(token ? { token } : {}),
                             }),
