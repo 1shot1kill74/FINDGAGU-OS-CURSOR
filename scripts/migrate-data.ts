@@ -562,7 +562,7 @@ async function runUpload(folderArg: string | null): Promise<void> {
       contact: contact || '번호 미등록',
       manager_name: '',
       expected_revenue: data?.total_amount ?? 0,
-      status: '상담중',
+      status: '접수',
       is_visible: true,
       is_test: true,
       metadata: {

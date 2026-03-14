@@ -68,7 +68,7 @@ export function ConsultationHistoryLog({ consultationId, projectName = '', onSav
       .select('id, content, created_at, sender_id, message_type, file_url, file_name, metadata')
       .eq('consultation_id', consultationId)
       .in('message_type', ['TEXT', 'SYSTEM', 'FILE'])
-      .order('created_at', { ascending: true })
+      .order('created_at', { ascending: false })
     setLoading(false)
     if (error) {
       console.error(error)
@@ -248,7 +248,7 @@ export function ConsultationHistoryLog({ consultationId, projectName = '', onSav
             variant="embedded"
             prefill={{
               site_name: projectName || '',
-              project_id: consultationId,
+              consultation_id: consultationId,
             }}
             onSuccess={handleImageUploadSuccess}
             onClose={() => setUploadFormOpen(false)}
@@ -256,7 +256,7 @@ export function ConsultationHistoryLog({ consultationId, projectName = '', onSav
         </DialogContent>
       </Dialog>
 
-      {/* 상담 히스토리 — 이 영역만 스크롤, 과거→현재 순(위에서 아래) */}
+      {/* 상담 히스토리 — 이 영역만 스크롤, 최신→과거 순(위에서 아래) */}
       <div className="flex-1 min-h-0 overflow-y-auto space-y-3 py-1">
         {loading ? (
           <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">

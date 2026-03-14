@@ -32,6 +32,13 @@ interface SelectedLeadData {
   workflowStage: string
 }
 
+interface TakeoutSpaceLink {
+  spaceId: string
+  displayName: string
+  consultationId: string
+  inboundDate?: string | null
+}
+
 function parseGoogleChatSpaceId(value: unknown): string | null {
   if (typeof value !== 'string' || !value.trim()) return null
   const raw = value.trim()
@@ -42,7 +49,18 @@ function parseGoogleChatSpaceId(value: unknown): string | null {
 
 interface ConsultationEstimateTabProps {
   selectedLeadData: SelectedLeadData
+  takeoutSpaceLinks: TakeoutSpaceLink[]
+  onApplyTakeoutSearch: (payload: { query: string; consultationId?: string }) => void
+  onImportTakeoutCandidate: (payload: {
+    candidate: { assetUrl: string; fileName: string; spaceId: string; spaceIdNormalized: string }
+    consultationId: string
+  }) => Promise<void> | void
   estimateFilesList: ConsultationEstimateFile[]
+  takeoutImportRequest: {
+    file: File
+    requestId: string
+  } | null
+  onTakeoutImportHandled: () => void
   onFileUploadComplete: (payload?: { estimateAmount: number }) => void
   estimateListFilter: 'all' | 'draft'
   setEstimateListFilter: (filter: 'all' | 'draft') => void
@@ -62,7 +80,12 @@ interface ConsultationEstimateTabProps {
 
 export function ConsultationEstimateTab({
   selectedLeadData,
+  takeoutSpaceLinks,
+  onApplyTakeoutSearch,
+  onImportTakeoutCandidate,
   estimateFilesList,
+  takeoutImportRequest,
+  onTakeoutImportHandled,
   onFileUploadComplete,
   estimateListFilter,
   setEstimateListFilter,
@@ -81,10 +104,6 @@ export function ConsultationEstimateTab({
 }: ConsultationEstimateTabProps) {
   const [autoEstimateOpen, setAutoEstimateOpen] = useState(false)
   const [takeoutDialogOpen, setTakeoutDialogOpen] = useState(false)
-  const [takeoutImportRequest, setTakeoutImportRequest] = useState<{
-    file: File
-    requestId: string
-  } | null>(null)
 
   const currentSpaceId =
     (typeof selectedLeadData.channelChatId === 'string' && selectedLeadData.channelChatId.trim()) ||
@@ -93,20 +112,33 @@ export function ConsultationEstimateTab({
     parseGoogleChatSpaceId(selectedLeadData.metadata?.google_chat_url) ||
     null
 
-  const handleImportTakeoutCandidate = async (candidate: { assetUrl: string; fileName: string }) => {
-    const response = await fetch(candidate.assetUrl)
-    if (!response.ok) throw new Error('선택한 이미지를 불러오지 못했습니다.')
-    const blob = await response.blob()
-    const file = new File([blob], candidate.fileName, {
-      type: blob.type || 'image/png',
-      lastModified: Date.now(),
-    })
+  const handleImportTakeoutCandidate = async (candidate: {
+    assetUrl: string
+    fileName: string
+    spaceId: string
+    spaceIdNormalized: string
+  }) => {
+    const candidateSpaceId = parseGoogleChatSpaceId(candidate.spaceIdNormalized || candidate.spaceId)
+    const matchedLink = takeoutSpaceLinks.find((link) => parseGoogleChatSpaceId(link.spaceId) === candidateSpaceId)
+    const isCurrentCardSpace =
+      !!candidateSpaceId &&
+      !!currentSpaceId &&
+      candidateSpaceId === parseGoogleChatSpaceId(currentSpaceId)
+
+    const targetConsultationId = isCurrentCardSpace
+      ? selectedLeadData.id
+      : matchedLink?.consultationId
+
+    if (!targetConsultationId) {
+      toast.error('연결된 상담카드를 찾지 못했습니다. 스페이스 제목으로 카드를 먼저 찾은 뒤 다시 시도해 주세요.')
+      return
+    }
+
     setTakeoutDialogOpen(false)
-    setTakeoutImportRequest({
-      file,
-      requestId: `${candidate.fileName}-${Date.now()}`,
+    await onImportTakeoutCandidate({
+      candidate,
+      consultationId: targetConsultationId,
     })
-    toast.success('테이크아웃 이미지를 견적 검토로 불러왔습니다.')
   }
 
   return (
@@ -118,7 +150,7 @@ export function ConsultationEstimateTab({
           files={estimateFilesList}
           onUploadComplete={onFileUploadComplete}
           externalImportRequest={takeoutImportRequest}
-          onExternalImportHandled={() => setTakeoutImportRequest(null)}
+          onExternalImportHandled={onTakeoutImportHandled}
         />
       </div>
       {/* 견적 작성 버튼 2종 */}
@@ -129,7 +161,7 @@ export function ConsultationEstimateTab({
           onClick={() => {
             setEstimateModalEditId(null)
             setEstimateModalInitialData({
-              recipientName: selectedLeadData.company?.trim() || '(업체명 없음)',
+              recipientName: selectedLeadData.contact?.trim() || '',
               recipientContact: selectedLeadData.contact ?? '',
             })
             setEstimateModalOpen(true)
@@ -142,18 +174,18 @@ export function ConsultationEstimateTab({
           type="button"
           variant="outline"
           className="gap-2 shrink-0"
-          onClick={() => setTakeoutDialogOpen(true)}
+          onClick={() => setAutoEstimateOpen(true)}
         >
-          테이크아웃 이미지 가져오기
+          <Calculator className="h-4 w-4" />
+          자동 견적 작성
         </Button>
         <Button
           type="button"
           variant="outline"
           className="gap-2 shrink-0"
-          onClick={() => setAutoEstimateOpen(true)}
+          onClick={() => setTakeoutDialogOpen(true)}
         >
-          <Calculator className="h-4 w-4" />
-          자동 견적 작성
+          테이크아웃 이미지 가져오기
         </Button>
       </div>
       {/* 필터: 전체 / 임시 저장만 */}
@@ -359,6 +391,8 @@ export function ConsultationEstimateTab({
         onOpenChange={setTakeoutDialogOpen}
         currentSpaceId={currentSpaceId}
         currentDisplayName={selectedLeadData.displayName}
+        spaceLinks={takeoutSpaceLinks}
+        onApplySearch={onApplyTakeoutSearch}
         onImportCandidate={handleImportTakeoutCandidate}
       />
     </>

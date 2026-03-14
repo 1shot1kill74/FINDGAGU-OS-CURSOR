@@ -15,7 +15,7 @@ const CORS = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 }
 
-const GEMINI_MODEL = "gemini-2.0-flash"
+const GEMINI_MODEL = "gemini-3.1-flash-lite-preview"
 
 /** 견적서 이미지 분석 프롬프트 */
 const VISION_ESTIMATE_PROMPT = `당신은 가구 견적서 이미지 분석 전문가입니다. **반드시 아래 순서대로 검증 후** 추출을 진행하세요.
@@ -242,8 +242,8 @@ Deno.serve(async (req: Request) => {
     }
 
     const response = result.response
-    const text = response.text?.()?.trim() ?? ""
-    if (!text) {
+    const responseText = response.text?.()?.trim() ?? ""
+    if (!responseText) {
       console.error("[analyze-quote] Gemini API 응답이 비어 있습니다.")
       return new Response(
         JSON.stringify({ error: "AI 분석 결과가 비어 있습니다." }),
@@ -252,7 +252,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (mode === "exists") {
-      const upper = text.toUpperCase()
+      const upper = responseText.toUpperCase()
       const exists = upper.includes("YES") ? "YES" : "NO"
       return new Response(
         JSON.stringify({ exists }),
@@ -260,7 +260,7 @@ Deno.serve(async (req: Request) => {
       )
     }
 
-    const parsed = parseJsonBlock(text)
+    const parsed = parseJsonBlock(responseText)
 
     if (mode === "estimates" && parsed?.skipped === true) {
       const reason = String(parsed.reason ?? "Not a quotation")

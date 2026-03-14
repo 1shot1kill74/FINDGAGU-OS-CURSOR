@@ -1,6 +1,6 @@
 /**
  * 이미지 자산 업로드 폼 — ImageAssetUpload 페이지와 상담카드에서 공통 사용
- * - prefill: 상담카드에서 호출 시 업체명·프로젝트 ID 자동 입력
+ * - prefill: 상담카드에서 호출 시 업체명·상담 ID 자동 입력
  * - onSuccess: 업로드 성공 시 콜백 (상담 히스토리 참조 링크용)
  */
 import { useState, useCallback, useRef, useEffect } from 'react'
@@ -10,12 +10,18 @@ import { Input } from '@/components/ui/input'
 import { useColorChips } from '@/hooks/useColorChips'
 import { readExifFromFile } from '@/lib/exifUtil'
 import { uploadEngine } from '@/lib/uploadEngine'
-import { insertImageAsset, getExistingImageFingerprints, getExistingSiteNames } from '@/lib/imageAssetUploadService'
+import {
+  getExistingImageFingerprints,
+  insertImageAsset,
+  getExistingSiteNames,
+} from '@/lib/imageAssetUploadService'
+import type { SpaceDisplayNameOption } from '@/lib/imageAssetUploadService'
 import { isCloudinaryConfigured } from '@/lib/imageAssetService'
+import { getCloudinaryCloudName } from '@/lib/config'
 import { toast } from 'sonner'
 import { X, Check } from 'lucide-react'
 
-const CATEGORY_OPTIONS = ['책상', '의자', '책장', '사물함', '상담/실측', '기타']
+const CATEGORY_OPTIONS = ['책상', '의자', '책장', '사물함', '기타']
 const BUSINESS_TYPE_OPTIONS = ['학원', '관리형', '스터디카페', '학교', '아파트', '기타']
 
 type UploadStatus = 'pending' | 'uploading' | 'done'
@@ -28,17 +34,71 @@ interface PendingItem {
   status: UploadStatus
 }
 
+function normalizeSearchValue(value: string): string {
+  return value.trim().toLowerCase()
+}
+
+function compactSearchValue(value: string): string {
+  return normalizeSearchValue(value).replace(/\s+/g, '')
+}
+
+function extractTrailingFourDigitCode(value: string): string | null {
+  const matches = value.match(/\d{4,}/g)
+  if (!matches?.length) return null
+  const last = matches[matches.length - 1]
+  return last ? last.slice(-4) : null
+}
+
+function getSiteOptionSearchScore(option: SpaceDisplayNameOption, query: string): number {
+  const trimmed = query.trim()
+  if (!trimmed) return 0
+  const lowered = normalizeSearchValue(trimmed)
+  const compact = compactSearchValue(trimmed)
+  const display = option.display_name ?? ''
+  const spaceId = option.space_id ?? ''
+  const normalizedDisplay = normalizeSearchValue(display)
+  const compactDisplay = compactSearchValue(display)
+  const normalizedSpaceId = normalizeSearchValue(spaceId)
+  const compactSpaceId = compactSearchValue(spaceId)
+  const trailingCode = extractTrailingFourDigitCode(display) ?? ''
+
+  if (normalizedSpaceId === lowered || compactSpaceId === compact) return 100
+  if (trailingCode && trailingCode === trimmed) return 95
+  if (normalizedDisplay === lowered || compactDisplay === compact) return 90
+  if (normalizedDisplay.startsWith(lowered) || compactDisplay.startsWith(compact)) return 80
+  if (normalizedDisplay.includes(lowered) || compactDisplay.includes(compact)) return 70
+  if (normalizedSpaceId.includes(lowered) || compactSpaceId.includes(compact)) return 65
+  if (trailingCode && trailingCode.includes(trimmed)) return 60
+  return 0
+}
+
+function matchesSiteOption(option: SpaceDisplayNameOption, query: string): boolean {
+  const trimmed = query.trim()
+  if (!trimmed) return true
+  const lowered = normalizeSearchValue(trimmed)
+  const compact = compactSearchValue(trimmed)
+  const terms = lowered.split(/\s+/).filter(Boolean)
+  const display = option.display_name ?? ''
+  const spaceId = option.space_id ?? ''
+  const trailingCode = extractTrailingFourDigitCode(display) ?? ''
+  const haystacks = [
+    normalizeSearchValue(display),
+    compactSearchValue(display),
+    normalizeSearchValue(spaceId),
+    compactSearchValue(spaceId),
+    trailingCode,
+  ].filter(Boolean)
+  return terms.every((term) => haystacks.some((value) => value.includes(term))) ||
+    haystacks.some((value) => value.includes(lowered) || value.includes(compact))
+}
+
 function generateId(): string {
   return `pending_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
 }
 
-function getCloudinaryCloudName(): string {
-  return import.meta.env.VITE_CLOUDINARY_CLOUD_NAME?.trim() || 'demo'
-}
-
 export interface ImageAssetUploadFormPrefill {
   site_name: string
-  project_id: string
+  consultation_id: string
 }
 
 export interface ImageAssetUploadFormSuccessResult {
@@ -50,7 +110,7 @@ export interface ImageAssetUploadFormSuccessResult {
 }
 
 export interface ImageAssetUploadFormProps {
-  /** 상담카드에서 호출 시 업체명·프로젝트 ID 자동 입력 */
+  /** 상담카드에서 호출 시 업체명·상담 ID 자동 입력 */
   prefill?: ImageAssetUploadFormPrefill
   /** 업로드 성공 시 호출 (상담 히스토리 참조 링크용) */
   onSuccess?: (result: ImageAssetUploadFormSuccessResult) => void
@@ -83,10 +143,11 @@ export function ImageAssetUploadForm({
   const [recentUploads, setRecentUploads] = useState<{ id: string; thumbnail_url: string }[]>([])
 
   const [site_name, setSite_name] = useState(prefill?.site_name ?? '')
-  const [siteNameSuggestions, setSiteNameSuggestions] = useState<string[]>([])
-  const [siteNameOptions, setSiteNameOptions] = useState<string[]>([])
+  const [siteNameSuggestions, setSiteNameSuggestions] = useState<SpaceDisplayNameOption[]>([])
+  const [siteNameOptions, setSiteNameOptions] = useState<SpaceDisplayNameOption[]>([])
   const [siteNameOpen, setSiteNameOpen] = useState(false)
   const siteNameInputRef = useRef<HTMLInputElement>(null)
+  const [selectedSpaceOption, setSelectedSpaceOption] = useState<SpaceDisplayNameOption | null>(null)
 
   useEffect(() => {
     getExistingSiteNames().then(setSiteNameOptions)
@@ -96,13 +157,45 @@ export function ImageAssetUploadForm({
     if (prefill?.site_name) setSite_name(prefill.site_name)
   }, [prefill?.site_name])
 
+  useEffect(() => {
+    if (!prefill?.consultation_id) return
+    setSelectedSpaceOption((prev) => {
+      if (prev?.consultation_id === prefill.consultation_id) return prev
+      const matched = siteNameOptions.find((option) => option.consultation_id === prefill.consultation_id)
+      return matched ?? prev
+    })
+  }, [prefill?.consultation_id, siteNameOptions])
+
   const [photo_date, setPhoto_date] = useState('')
   const [location, setLocation] = useState('')
   const [business_type, setBusiness_type] = useState('')
-  const [category, setCategory] = useState(prefill ? '상담/실측' : '')
+  const [category, setCategory] = useState('책상')
   const [product_name, setProduct_name] = useState('')
   const [color_name, setColor_name] = useState('')
   const [memo, setMemo] = useState('')
+  const [beforeAfterRole, setBeforeAfterRole] = useState<'before' | 'after'>('after')
+
+  const buildSiteSuggestions = useCallback(
+    (query: string) => {
+      const filtered = query.trim()
+        ? siteNameOptions
+            .filter((option) => matchesSiteOption(option, query))
+            .sort((a, b) => {
+              const scoreDiff = getSiteOptionSearchScore(b, query) - getSiteOptionSearchScore(a, query)
+              if (scoreDiff !== 0) return scoreDiff
+              return a.display_name.localeCompare(b.display_name, 'ko')
+            })
+        : siteNameOptions
+      return filtered.slice(0, 20)
+    },
+    [siteNameOptions]
+  )
+
+  useEffect(() => {
+    if (prefill?.site_name) return
+    if (!site_name.trim()) return
+    setSiteNameSuggestions(buildSiteSuggestions(site_name))
+  }, [siteNameOptions, site_name, buildSiteSuggestions, prefill?.site_name])
 
   const addFiles = useCallback(async (files: FileList | File[]) => {
     const list = Array.from(files).filter((f) => f.type.startsWith('image/'))
@@ -123,34 +216,42 @@ export function ImageAssetUploadForm({
       toast.warning(`${duplicateCount}장은 이미 등록된 파일(이름·크기 동일)이라 제외했습니다.`)
     }
     if (toAdd.length === 0) return
-    const next: PendingItem[] = toAdd.map((file, i) => ({
+    const next: PendingItem[] = toAdd.map((file) => ({
       id: generateId(),
       file,
       preview: URL.createObjectURL(file),
-      is_main: i === 0,
+      is_main: false,
       status: 'pending' as UploadStatus,
     }))
-    setPending((prev) => {
-      const combined = [...prev, ...next]
-      if (combined.length > 0 && !combined.some((x) => x.is_main)) combined[0].is_main = true
-      return combined
-    })
+    setPending((prev) => [...prev, ...next])
+    if (toAdd.length > 0 && (!photo_date.trim() || !location.trim())) {
+      try {
+        const exif = await readExifFromFile(toAdd[0])
+        if (!photo_date.trim() && exif.photo_date) setPhoto_date(exif.photo_date)
+        if (!location.trim() && exif.location) setLocation(exif.location)
+      } catch {
+        // EXIF 자동 입력 실패 시 수동 입력 유지
+      }
+    }
     if (toAdd.length > 0) toast.success(`${toAdd.length}장 추가됨`)
-  }, [])
+  }, [photo_date, location])
 
   const removePending = useCallback((id: string) => {
-    setPending((prev) => {
-      const next = prev.filter((p) => p.id !== id)
-      if (next.length > 0 && !next.some((x) => x.is_main)) next[0].is_main = true
-      return next
-    })
+    setPending((prev) => prev.filter((p) => p.id !== id))
   }, [])
 
   const setMain = useCallback((id: string) => {
     setPending((prev) =>
-      prev.map((p) => ({ ...p, is_main: p.id === id }))
+      prev.map((p) => ({
+        ...p,
+        is_main: p.id === id ? !p.is_main : false,
+      }))
     )
   }, [])
+
+  const selectedMainCount = pending.filter((p) => p.is_main).length
+  const selectedPendingCount = pending.filter((p) => p.status === 'pending').length
+  const doneCount = pending.filter((p) => p.status === 'done').length
 
   const onInputChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -192,6 +293,27 @@ export function ImageAssetUploadForm({
     }
   }, [pending])
 
+  const resetUploadFields = useCallback((mode: 'keep-site' | 'new-site') => {
+    setPending((prev) => {
+      for (const item of prev) URL.revokeObjectURL(item.preview)
+      return []
+    })
+    if (mode === 'new-site' && !prefill?.site_name) {
+      setSite_name('')
+      setSelectedSpaceOption(null)
+      setSiteNameSuggestions([])
+      setSiteNameOpen(false)
+    }
+    setPhoto_date('')
+    setLocation('')
+    setBusiness_type('')
+    setCategory('책상')
+    setProduct_name('')
+    setColor_name('')
+    setMemo('')
+    setBeforeAfterRole('after')
+  }, [prefill])
+
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {
       e.preventDefault()
@@ -212,14 +334,15 @@ export function ImageAssetUploadForm({
       setUploading(true)
       let success = 0
       let fail = 0
-      const projectId = prefill?.project_id ?? ''
+      const consultationId = prefill?.consultation_id ?? selectedSpaceOption?.consultation_id ?? ''
+      const selectedSpaceId = selectedSpaceOption?.space_id ?? null
       const uploadSource = prefill ? 'consultation_card' : 'image_asset_upload'
       const common = {
         site_name: siteTrim || null,
         photo_date: photo_date.trim() || null,
         location: location.trim() || null,
         business_type: business_type.trim() || null,
-        category: category.trim() || '상담/실측',
+        category: category.trim() || '책상',
         product_name: product_name.trim() || null,
         color_name: color_name.trim() || null,
         memo: memo.trim() || null,
@@ -231,10 +354,12 @@ export function ImageAssetUploadForm({
         try {
           const meta = {
             customer_name: siteTrim,
-            project_id: projectId,
-            category: category.trim() || '상담/실측',
+            project_id: consultationId,
+            space_id: selectedSpaceId,
+            category: category.trim() || '책상',
             upload_date: photo_date.trim() || new Date().toISOString().slice(0, 10),
             source: uploadSource,
+            before_after_role: beforeAfterRole,
           }
           const uploadResult = await uploadEngine(item.file, meta)
           const { cloudinary_url, thumbnail_url, public_id, storage_type, storage_path } = uploadResult
@@ -245,12 +370,16 @@ export function ImageAssetUploadForm({
             storage_path: storage_path ?? null,
             ...common,
             is_main: item.is_main,
+            is_consultation: true,
             metadata: {
               original_name: item.file.name,
               file_size: item.file.size,
               source: uploadSource,
-              consultation_id: projectId || undefined,
+              consultation_id: consultationId || undefined,
+              space_id: selectedSpaceId || undefined,
+              space_display_name: siteTrim,
               public_id: public_id ?? undefined,
+              before_after_role: beforeAfterRole,
             },
           })
           if ('error' in result) {
@@ -286,18 +415,6 @@ export function ImageAssetUploadForm({
       setUploading(false)
       if (success > 0) {
         toast.success(`${success}건 저장되었습니다.${fail > 0 ? ` (실패 ${fail}건)` : ''}`)
-        const stillPending = pending.filter((p) => p.status === 'pending' || p.status === 'uploading')
-        if (stillPending.length === 0) {
-          setPending([])
-          setPhoto_date('')
-          setLocation('')
-          setBusiness_type('')
-          setCategory(prefill ? '상담/실측' : '')
-          setProduct_name('')
-          setColor_name('')
-          setMemo('')
-          if (variant === 'embedded' && success > 0) onClose?.()
-        }
       }
     },
     [
@@ -310,10 +427,10 @@ export function ImageAssetUploadForm({
       product_name,
       color_name,
       memo,
+      beforeAfterRole,
       prefill,
       onSuccess,
-      variant,
-      onClose,
+      selectedSpaceOption,
     ]
   )
 
@@ -324,7 +441,7 @@ export function ImageAssetUploadForm({
           <Link to="/image-assets">
             <Button variant="ghost" size="sm">← 이미지 자산 목록</Button>
           </Link>
-          <h1 className="text-xl font-semibold">시공사례 일괄 업로드</h1>
+          <h1 className="text-xl font-semibold">현장 상담컷 일괄 업로드</h1>
         </div>
       )}
 
@@ -334,9 +451,17 @@ export function ImageAssetUploadForm({
         </div>
       )}
 
+      <div className="rounded-lg border border-primary/20 bg-primary/5 p-4">
+        <p className="text-sm font-medium text-foreground">업로드 규칙</p>
+        <p className="text-xs text-muted-foreground mt-1">
+          이 폼으로 올리는 사진은 모두 상담컷으로 저장됩니다. 대표 이미지는 업로드 묶음 안에서 1장만 선택할 수 있으며,
+          대표를 선택한 경우에만 같은 현장의 기존 대표 이미지가 자동 해제됩니다.
+        </p>
+      </div>
+
       <div className="rounded-lg border border-border p-4 bg-muted/20">
-        <label className="block text-sm font-medium mb-2">현장명 (프로젝트명) *</label>
-        <p className="text-xs text-muted-foreground mb-2">같은 현장명으로 올린 사진은 하나의 시공 사례로 묶입니다. 기존 현장명을 선택하면 오타로 갈라지지 않습니다.</p>
+        <label className="block text-sm font-medium mb-2">현장명 / 스페이스 표시명 *</label>
+        <p className="text-xs text-muted-foreground mb-2">상담 데이터에 연결된 스페이스 표시명을 검색합니다. 선택하면 해당 상담 ID와 스페이스 ID도 함께 연결됩니다.</p>
         <div className="relative">
           <Input
             ref={siteNameInputRef}
@@ -345,21 +470,12 @@ export function ImageAssetUploadForm({
             onChange={(e) => {
               const v = e.target.value
               setSite_name(v)
-              const q = v.trim().toLowerCase()
-              setSiteNameSuggestions(
-                q
-                  ? siteNameOptions.filter((n) => n.toLowerCase().includes(q))
-                  : siteNameOptions.slice(0, 20)
-              )
+              setSelectedSpaceOption(null)
+              setSiteNameSuggestions(buildSiteSuggestions(v))
               setSiteNameOpen(true)
             }}
             onFocus={() => {
-              const q = site_name.trim().toLowerCase()
-              setSiteNameSuggestions(
-                q
-                  ? siteNameOptions.filter((n) => n.toLowerCase().includes(q))
-                  : siteNameOptions.slice(0, 20)
-              )
+              setSiteNameSuggestions(buildSiteSuggestions(site_name))
               setSiteNameOpen(true)
             }}
             onBlur={() => {
@@ -372,27 +488,34 @@ export function ImageAssetUploadForm({
           />
           {siteNameOpen && !prefill?.site_name && siteNameSuggestions.length > 0 && (
             <ul
-              className="absolute z-10 mt-1 w-full rounded-md border border-border bg-popover text-popover-foreground shadow-md max-h-48 overflow-auto"
+              className="absolute z-50 mt-1 w-full rounded-md border border-border bg-background text-popover-foreground shadow-lg max-h-48 overflow-auto"
               role="listbox"
             >
-              {siteNameSuggestions.map((name) => (
+              {siteNameSuggestions.map((option) => (
                 <li
-                  key={name}
+                  key={`${option.consultation_id}:${option.space_id ?? option.display_name}`}
                   role="option"
-                  className="px-3 py-2 text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground"
+                  className="px-3 py-2 cursor-pointer hover:bg-accent hover:text-accent-foreground"
                   onMouseDown={(e) => {
                     e.preventDefault()
-                    setSite_name(name)
+                    setSite_name(option.display_name)
+                    setSelectedSpaceOption(option)
                     setSiteNameSuggestions([])
                     setSiteNameOpen(false)
                   }}
                 >
-                  {name}
+                  <div className="text-sm">{option.display_name}</div>
+                  {option.space_id && (
+                    <div className="text-[11px] text-muted-foreground">{option.space_id}</div>
+                  )}
                 </li>
               ))}
             </ul>
           )}
         </div>
+        {selectedSpaceOption?.space_id && (
+          <p className="text-[11px] text-muted-foreground mt-2">연결된 스페이스 ID: {selectedSpaceOption?.space_id}</p>
+        )}
       </div>
 
       <div>
@@ -442,13 +565,14 @@ export function ImageAssetUploadForm({
         <>
           <div className="flex items-center justify-between">
             <span className="text-sm font-medium">
-              업로드 대기 ({pending.filter((p) => p.status === 'pending').length}장)
-              {pending.some((p) => p.status === 'done') && ` · 완료 ${pending.filter((p) => p.status === 'done').length}장`}
+              업로드 대기 ({selectedPendingCount}장)
+              {doneCount > 0 && ` · 완료 ${doneCount}장`}
             </span>
             <Button type="button" variant="ghost" size="sm" onClick={loadExifFromFirst}>
               첫 번째 사진에서 촬영일·위치 불러오기
             </Button>
           </div>
+          <p className="text-xs text-muted-foreground -mt-2">대표 이미지는 선택 사항입니다. 현재 {selectedMainCount}장 선택됨, 선택한 경우에만 기존 대표가 교체됩니다.</p>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
             {pending.map((item) => (
               <div
@@ -475,7 +599,7 @@ export function ImageAssetUploadForm({
                           onChange={() => setMain(item.id)}
                           className="rounded border-input"
                         />
-                        대표 이미지
+                        대표 이미지 (1장)
                       </label>
                       <Button
                         type="button"
@@ -565,7 +689,6 @@ export function ImageAssetUploadForm({
             value={category}
             onChange={(e) => setCategory(e.target.value)}
           >
-            <option value="">선택</option>
             {CATEGORY_OPTIONS.map((opt) => (
               <option key={opt} value={opt}>{opt}</option>
             ))}
@@ -612,6 +735,18 @@ export function ImageAssetUploadForm({
           </select>
         </div>
         <div>
+          <label className="block text-sm font-medium mb-1">배치 성격</label>
+          <select
+            className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
+            value={beforeAfterRole}
+            onChange={(e) => setBeforeAfterRole(e.target.value === 'before' ? 'before' : 'after')}
+          >
+            <option value="after">애프터 (기본)</option>
+            <option value="before">비포어</option>
+          </select>
+          <p className="mt-1 text-xs text-muted-foreground">이번에 올리는 사진 묶음 전체에 동일하게 적용됩니다. 대부분은 애프터로 두고, 비포어 사진일 때만 변경하세요.</p>
+        </div>
+        <div>
           <label className="block text-sm font-medium mb-1">메모</label>
           <Input
             value={memo}
@@ -629,6 +764,24 @@ export function ImageAssetUploadForm({
           {uploading
             ? '업로드 중…'
             : `${pending.filter((p) => p.status === 'pending').length}장 업로드 및 DB 저장`}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => resetUploadFields('keep-site')}
+          disabled={uploading && pending.length === 0}
+          title="현장명은 유지하고 파일과 공통 속성을 초기화합니다."
+        >
+          추가 업로드
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => resetUploadFields('new-site')}
+          disabled={uploading && pending.length === 0}
+          title="현장명 선택까지 포함해 전체 입력값을 초기화합니다."
+        >
+          새 업로드
         </Button>
         {variant === 'standalone' && (
           <Link to="/image-assets">

@@ -5,10 +5,13 @@
  * - base_alt_text: display_name에서 도출한 {date}_{company}_{space} — 싱글 소스, 외부 AI는 이를 접두어로 사용
  */
 import { supabase } from '@/lib/supabase'
+import { getCloudinaryCloudName, getCloudinaryUploadPreset } from '@/lib/config'
+import { CLOUDINARY_ADMIN_THUMBNAIL_OPTIONS } from '@/lib/constants'
 import type { ProjectImageAsset, SyncStatus } from '@/types/projectImage'
 import { USAGE_TYPES, REVIEW_STATUSES, type UsageType, type ReviewStatus } from '@/types/projectImage'
 import type { ImageAssetExportItem } from '@/types/imageExport'
 import { ALT_TEXT_PROMPT_GUIDE } from '@/types/imageExport'
+import type { Json } from '@/types/database'
 
 /** 이미지 추출 도구에서 텍스트(업체명, 날짜 등) 합성 파라미터를 받을 때 사용. (추후 구현) */
 export type { ImageExportOptions, ImageAssetExportItem } from '@/types/imageExport'
@@ -57,15 +60,6 @@ export function getCloudinaryUploadOptions(publicId: string): {
   }
 }
 
-function getCloudinaryCloudName(): string {
-  const name = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME
-  return typeof name === 'string' && name.trim() ? name.trim() : 'demo'
-}
-
-function getCloudinaryUploadPreset(): string | null {
-  const preset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET
-  return typeof preset === 'string' && preset.trim() ? preset.trim() : null
-}
 
 /** API 키가 설정되어 있으면 true. 업로드 창에서 테스트 모드 안내 표시용 */
 export function isCloudinaryConfigured(): boolean {
@@ -82,6 +76,24 @@ export function isMockPublicId(publicId: string | null | undefined): boolean {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function parseBeforeAfterMeta(metadata: unknown): {
+  role: 'before' | 'after' | null
+  groupId: string | null
+  raw: Record<string, unknown> | null
+} {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return { role: null, groupId: null, raw: null }
+  }
+  const raw = metadata as Record<string, unknown>
+  const role = raw.before_after_role === 'before' || raw.before_after_role === 'after'
+    ? raw.before_after_role
+    : null
+  const groupId = typeof raw.before_after_group_id === 'string' && raw.before_after_group_id.trim()
+    ? raw.before_after_group_id.trim()
+    : null
+  return { role, groupId, raw }
 }
 
 /**
@@ -252,8 +264,7 @@ export function uploadConstructionImageDualWithProgress(
   })
 }
 
-/** 관리자 목록용 표준 썸네일 변환 (w_800, 보정·포맷 최적화). imageAssetUploadService.CLOUDINARY_ADMIN_THUMBNAIL_OPTIONS와 동일 유지 */
-const ADMIN_THUMBNAIL_OPTIONS = 'w_800,c_scale,e_improve,e_sharpen,f_auto,q_auto'
+/** 관리자 목록용 표준 썸네일 변환 파라미터 — src/lib/constants.ts 의 CLOUDINARY_ADMIN_THUMBNAIL_OPTIONS 사용 */
 
 /**
  * Cloudinary URL 생성 (변환 파라미터 포함)
@@ -269,7 +280,7 @@ export function buildCloudinaryUrl(
   if (type === 'marketing') {
     return `${base}/f_auto,q_auto,w_1200/${publicId}`
   }
-  return `${base}/${ADMIN_THUMBNAIL_OPTIONS}/${publicId}`
+  return `${base}/${CLOUDINARY_ADMIN_THUMBNAIL_OPTIONS}/${publicId}`
 }
 
 /** 상담 타임라인 등에서 사용할 Cloudinary 변환 URL (이미지 자산 관리와 동일 규격 활용) */
@@ -408,11 +419,13 @@ function rowImageAssetToProjectAsset(row: {
   internal_score?: number | null
   share_count?: number | null
   is_consultation?: boolean | null
+  metadata?: unknown
 }): ProjectImageAsset {
   const url = row.cloudinary_url?.trim() || ''
   const thumbnailUrl = row.thumbnail_url?.trim() || null
   const match = url.match(/\/upload\/(.+)$/)
   const cloudinaryPublicId = match ? match[1] : `image_asset_${row.id}`
+  const beforeAfter = parseBeforeAfterMeta(row.metadata)
   return {
     id: row.id,
     cloudinaryPublicId,
@@ -423,6 +436,8 @@ function rowImageAssetToProjectAsset(row: {
     storagePath: null,
     consultationId: null,
     projectTitle: row.site_name?.trim() || row.location?.trim() || null,
+    siteName: row.site_name?.trim() || null,
+    location: row.location?.trim() || null,
     industry: row.business_type?.trim() || null,
     viewCount: Number(row.view_count ?? 0),
     createdAt: row.created_at ?? new Date().toISOString(),
@@ -437,6 +452,9 @@ function rowImageAssetToProjectAsset(row: {
     internalScore: row.internal_score != null ? row.internal_score : null,
     shareCount: row.share_count != null ? Number(row.share_count) : 0,
     isConsultation: row.is_consultation === true,
+    beforeAfterRole: beforeAfter.role,
+    beforeAfterGroupId: beforeAfter.groupId,
+    metadata: beforeAfter.raw,
   }
 }
 
@@ -444,7 +462,7 @@ function rowImageAssetToProjectAsset(row: {
 export async function fetchAllProjectAssets(): Promise<ProjectImageAsset[]> {
   const [projResult, assetResult] = await Promise.all([
     supabase.from('project_images').select('*').order('created_at', { ascending: false }),
-    supabase.from('image_assets').select('id, created_at, cloudinary_url, thumbnail_url, site_name, is_main, product_name, color_name, location, business_type, category, ai_score, view_count, internal_score, share_count, is_consultation').order('created_at', { ascending: false }),
+    supabase.from('image_assets').select('id, created_at, cloudinary_url, thumbnail_url, site_name, is_main, product_name, color_name, location, business_type, category, ai_score, view_count, internal_score, share_count, is_consultation, metadata').in('category', ['책상', '의자', '책장', '사물함', '상담/실측', '기타']).order('created_at', { ascending: false }),
   ])
   const fromProject = (projResult.data ?? []).map((r: Parameters<typeof rowToProjectAsset>[0]) => rowToProjectAsset(r))
   const fromAssets = (assetResult.data ?? []).map((r: Parameters<typeof rowImageAssetToProjectAsset>[0]) => rowImageAssetToProjectAsset(r))
@@ -543,15 +561,25 @@ export interface ShowroomImageAsset {
   product_name: string | null
   is_main: boolean
   created_at: string | null
+  before_after_role?: 'before' | 'after' | null
+  before_after_group_id?: string | null
 }
 
 export async function fetchShowroomImageAssets(): Promise<ShowroomImageAsset[]> {
   const { data, error } = await supabase
     .from('image_assets')
-    .select('id, cloudinary_url, thumbnail_url, site_name, location, business_type, color_name, product_name, is_main, created_at')
+    .select('id, cloudinary_url, thumbnail_url, site_name, location, business_type, color_name, product_name, is_main, created_at, category, metadata')
+    .not('category', 'in', '("purchase_order","floor_plan")')
     .order('created_at', { ascending: false })
   if (error) return []
   return (data ?? []).map((r: Record<string, unknown>) => ({
+    ...(() => {
+      const beforeAfter = parseBeforeAfterMeta(r.metadata)
+      return {
+        before_after_role: beforeAfter.role,
+        before_after_group_id: beforeAfter.groupId,
+      }
+    })(),
     id: String(r.id),
     cloudinary_url: String(r.cloudinary_url ?? ''),
     thumbnail_url: r.thumbnail_url != null ? String(r.thumbnail_url) : null,
@@ -568,6 +596,44 @@ export async function fetchShowroomImageAssets(): Promise<ShowroomImageAsset[]> 
 /** image_assets is_consultation 토글 — 상담용 전용 필터·공유 바구니 정렬용 */
 export async function updateImageAssetConsultation(assetId: string, isConsultation: boolean): Promise<{ error: Error | null }> {
   const { error } = await supabase.from('image_assets').update({ is_consultation: isConsultation }).eq('id', assetId)
+  return { error: error ?? null }
+}
+
+export async function updateImageAssetBeforeAfter(
+  assetId: string,
+  currentMetadata: Record<string, unknown> | null | undefined,
+  patch: { role: 'before' | 'after' | null; groupId: string | null }
+): Promise<{ error: Error | null }> {
+  const nextMetadata: Record<string, unknown> = { ...(currentMetadata ?? {}) }
+  if (patch.role) nextMetadata.before_after_role = patch.role
+  else delete nextMetadata.before_after_role
+  if (patch.groupId) nextMetadata.before_after_group_id = patch.groupId
+  else delete nextMetadata.before_after_group_id
+  const { error } = await supabase.from('image_assets').update({ metadata: nextMetadata as Json }).eq('id', assetId)
+  return { error: error ?? null }
+}
+
+/** image_assets 업종 수정 — 잘못 분류된 업종만 최소 수정 */
+export async function updateImageAssetIndustry(
+  assetId: string,
+  industry: string | null
+): Promise<{ error: Error | null }> {
+  const { error } = await supabase
+    .from('image_assets')
+    .update({ business_type: industry?.trim() || null })
+    .eq('id', assetId)
+  return { error: error ?? null }
+}
+
+/** image_assets 지역 수정 — 업로드 시 누락된 location만 최소 수정 */
+export async function updateImageAssetLocation(
+  assetId: string,
+  location: string | null
+): Promise<{ error: Error | null }> {
+  const { error } = await supabase
+    .from('image_assets')
+    .update({ location: location?.trim() || null })
+    .eq('id', assetId)
   return { error: error ?? null }
 }
 

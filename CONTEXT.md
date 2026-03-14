@@ -7,9 +7,10 @@ Context: FindGagu OS Project
 ### 0. 운영 현황 (AI Strategic Mode)
 
 - **Workflow:** [Data Analysis (Anti-gravity)] -> [Prompt Generation (Anti-gravity)] -> [Execution (Claude Code)]
-- **Current Goal:** 폴더 내 JSON 및 전략 자료를 분석하여 클로드 코드용 최적화 프롬프트 생성.
+- **Current Goal:** 현재 운영 기준은 상담카드/견적 관리 중심 흐름을 안정화하는 것이다. Google Chat 견적서 자동 응답 실험은 안전 롤백 후 보류 상태로 유지한다.
 - **1차 임무:** 구글 시트-수파베이스 데이터 동기화 복구 (메이크AI 연동 포함)
 - **2차 임무:** 채널톡 웹훅을 통한 상담카드 자동 생성 시스템 구축
+- **3차 임무:** Google Chat 멘션/이미지 기반 견적서 자동 분석·저장 플로우는 실험 후 안전 롤백되었으며, 재개 여부는 추후 별도 판단
 
 ## 1. 프로젝트 개요
 - 기존 '주문 관리' 방식의 파편화된 데이터를 '상담 관리' 중심의 체계적 OS로 전환 중.
@@ -27,7 +28,7 @@ Context: FindGagu OS Project
 ### 5. 기술 스택 (Technology Stack)
 - **Frontend:** React, Vite, TypeScript, Tailwind CSS
 - **Backend/DB:** Supabase (Auth, Database, Storage, Edge Functions)
-- **AI Engine:** Gemini 2.0 Flash (메인 파싱), GPT-4o (폴백)
+- **AI Engine:** Gemini 3.1 Flash Lite (메인 파싱), GPT-4o (폴백)
 - **Editor/AI:** Cursor, **Antigravity**, Claude Code (동일 프로젝트 폴더 공유 및 협업 환경)
 - **Hardware:** MacBook Air M4 (16GB RAM) - 최적화된 로컬 개발 환경
 
@@ -61,6 +62,7 @@ Context: FindGagu OS Project
   · OpenAI GPT-4o (폴백) — Gemini 장애 시 자동 전환
   · Claude Code (개발 도구) — 터미널 에이전트. AI 퀵 커맨드(estimateAiService) Mock → 추후 연동 예정
 - **자동화 엔진:** n8n (운영 중) — GAS AutoAddBot → n8n 웹훅 → 구글 시트 + 수파베이스 동기화. Make.com 대체 완료(2026-03-05). Wake-up 알림, 블로그 자동 배포는 추후 n8n 확장 예정
+- **Google Chat 견적 자동화 (실험 후 보류):** Google Chat 앱 멘션 이벤트 → n8n 웹훅 → GAS 첨부파일 다운로드 → Supabase Edge Function `process-chat-estimate` → Gemini 분석 → 상담/견적 DB 반영 구조까지 구현했으나, Google Chat 응답 포맷/운영 사용성 이슈로 현재 라이브에서는 안전 롤백했다. 관련 코드 자산은 남아 있으나 운영 기본 흐름은 아니다.
 - **AI 콘텐츠 배포:** OpenClaw — [로드맵] 시공 사진 멀티채널 배포. 현재 미구현
 
 ## 5. 사용자 페르소나 및 접근 권한 (이원화 전략)
@@ -99,6 +101,36 @@ Context: FindGagu OS Project
 - **완료 카드 재활동 해석:** 완료 상태에서 채팅방 활동만 다시 생기면 상태는 유지하고 `종료 후 활동` 신호로만 보여준다. 반면 견적서 저장/확정처럼 실제 업무 재개를 강하게 증명하는 이벤트는 `견적` 상태 복귀를 허용한다.
 - **직원 판단 우선:** 시스템은 "변화가 있었다"를 먼저 보여주고, 직원이 그 신호를 보고 상태를 유지할지 `견적/진행`으로 바꿀지 결정하게 한다. 자동화는 판단을 대체하지 않고 강한 업무 증거가 있을 때만 제한적으로 상태를 움직인다.
 
+### 상담 관리 대시보드 운영 원칙 (2026-03-11)
+- **적용 범위 한정:** 최근 프론트 개선은 **`상담 관리` 페이지에만** 적용한다. 다른 페이지는 업무 성격과 레이아웃이 다르므로 공통 레이아웃·전역 스크롤 정책으로 일반화하지 않는다.
+- **우측은 기준판, 좌측은 탐색판:** 상담 관리는 대시보드 성격이 강하므로, 데스크톱에서는 우측 상세 패널을 비교적 안정적으로 유지하고 좌측 목록 탐색 효율을 높이는 방향이 맞다.
+- **선택 안정성 우선:** 직원이 직접 카드 선택을 바꾸지 않았다면 시스템이 임의로 첫 카드로 되돌리지 않는다. 현재 선택 카드가 필터 결과 안에 남아 있으면 그대로 유지하는 것이 기본 UX다.
+- **"사라진 것처럼 보이지 않기"가 중요:** 상태 변경 후 탭이 바뀌더라도, 해당 카드가 포함된 페이지로 자동 따라가야 한다. 실제 데이터는 존재하지만 페이지네이션 때문에 안 보이는 상황을 운영 리스크로 본다.
+- **상단 제어 3종:** 상담 관리 상단은 `인입일 기간`, `업데이트일 기간`, `정렬 토글(최근업데이트순/인입일순)` 3개를 함께 사용한다. 인입일은 유입 시기 분석, 업데이트일은 최근 활동 관리, 정렬 토글은 작업 우선순위 판단용으로 역할을 분리한다.
+- **페이지당 40개 카드:** 우측 패널이 비교적 고정된 현재 구조에서는 20개보다 40개가 더 작업 친화적이다. 페이지 전환으로 카드가 "튄다"는 느낌을 줄이고, 연속 탐색 흐름을 보존하는 것이 목적이다.
+
+### Takeout 기반 견적 이미지 운영 원칙 (2026-03-10)
+- **현재는 Takeout만 사용:** 구글챗 실시간 첨부파일 수집은 아직 하지 않았다. 현재 견적 이미지 보조 기능은 대표님 PC에 있는 **Google Takeout 이미지**를 기반으로만 동작한다.
+- **수동 선택 우선:** 대표님 판단대로, 초기 버전은 OCR 선별보다 **사람이 이미지를 직접 보고 고르는 방식**이 더 빠르고 안전하다. 따라서 기본 UX는 `스페이스별 이미지 모아보기 → 크게 보기 → 견적 검토로 가져오기`다.
+- **현재 범위 제한:** 지금 구현은 **최신 1개 Takeout 인덱스** 기준이다. PC에 총 10개 Takeout이 있어도 아직 전체 통합은 하지 않았다.
+- **복사본은 캐시:** 앱 화면에 보이는 이미지는 Takeout 원본을 직접 읽는 대신, 앱 내부 `public/assets/takeout-quote-inbox/` 아래에 복사한 캐시를 사용한다. 원본은 유지하고, 캐시는 필요 시 삭제 후 재생성한다.
+- **스페이스 이동 해석:** 같은 스페이스를 여러 프로젝트가 재사용한 레거시 상황 때문에, 스페이스 클릭 시 무조건 카드 강제 이동하는 방식은 신뢰하기 어렵다. 현재는 **displayName을 메인 검색창에 자동 입력해 사람이 결과 카드로 이동하는 방식**을 기본으로 둔다.
+- **카드 스플릿은 후순위:** 같은 스페이스를 여러 상담카드로 분리하는 기능은 아직 구현하지 않았다. 지금 단계에서는 먼저 데이터를 충분히 모으고, 원본 스페이스 연결정보를 보존한 뒤, 나중에 사람 승인형으로 스플릿하는 것이 원칙이다.
+
+### Google Chat 견적서 자동화 운영 원칙 (2026-03-12, 롤백 반영)
+- **이중 경로 인식:** 견적 이미지 유입은 여전히 `Takeout 기반 수동 선택`과 `Google Chat 실시간 자동 처리` 두 축으로 이해할 수 있다. 다만 현재 운영 기준은 전자이며, 후자는 보류 상태다.
+- **실험 결과 해석:** 공식 Chat 앱 웹훅은 `@멘션` 등 앱 호출 맥락에서만 안정적으로 다뤄야 하고, Google Chat은 무거운 후처리보다 **즉시 HTTP 응답**을 먼저 요구한다. 이 조건이 운영 난도를 높였다.
+- **현재 운영 판단:** 라이브 `n8n`에서는 `Respond to Webhook` 기반 Chat 응답 커스터마이징을 제거하고, 다시 기본 응답(`{"message":"Workflow was started"}`) 구조로 복귀했다.
+- **현재 기준 문서:** 라이브 `n8n`과 로컬 `gas/n8n-workflow.json`은 모두 같은 롤백 상태로 동기화되어 있다. 따라서 문서/로컬 정의/운영이 서로 어긋난 상태가 아니다.
+- **재개 원칙:** Google Chat 자동 견적 처리를 다시 시도할 경우, 운영 워크플로우를 직접 수정하지 말고 **복제 워크플로우에서만 재검증**한 뒤 반영한다.
+
+### 쇼룸 운영 원칙 (2026-03-12)
+- **쇼룸 역할 분리:** `/showroom`은 고객이 사례를 탐색하는 **탐색형 랜딩 페이지**로 유지한다. 특정 사진만 골라 보내는 목적은 `/image-assets` 기반 선별 공유 링크가 담당한다.
+- **공감카드와 검색창 분리:** 공감카드는 고객의 문제의식을 빠르게 선택하게 하는 장치이고, 검색창은 실제 데이터 검색 도구다. 따라서 공감카드 선택값을 검색창 입력값에 주입하지 않는다.
+- **Before/After는 특수 섹션으로 격리:** 전후 비교 사례는 일반 현장 탐색과 성격이 다르므로, 기본 갤러리에 섞지 않는다. 현재 운영 기준으로는 `스터디카페를 관리형 스타일로` 카드 아래에서만 **엑시트 전략형 전환 사례**로 노출한다.
+- **쇼룸 문의는 맥락이 남아야 한다:** 쇼룸 문의는 단순히 `source = 쇼룸`만으로는 부족하다. 어떤 카드/문맥을 보고 들어왔는지(`showroom_entry_label`, `showroom_context`)가 상담 카드에 남아야 담당자가 톤과 제안 방향을 맞출 수 있다.
+- **아파트 문구 톤:** 아파트 리뉴얼 메시지는 창업·원장님 문법을 쓰지 않는다. 관리 주체는 `입주자대표회의` 문맥으로 해석하며, 표현도 `입주민 만족`과 `단지 가치` 중심으로 가져간다.
+
 ## 7. 설계 문서 및 확정 원칙 (2026-02-07 반영)
 - **BLUEPRINT.md**와 **JOURNAL.md**에 시스템 골조 및 비즈니스 로직이 확정되어 있음. **향후 생성되는 모든 컴포넌트·라우트·기능은 이 문서들의 원칙을 따라야 함.**
 - **적용 대상 요약:** (1) 상담 카드 UI: 1행(마켓·실측·고객분류·업체명·AS·골든타임), 2행(지역|업종|전화|인입|필요|대표금액, **2행 우측 끝 고정** 구글챗 버튼·연결 상태별 초록/회색 분기), 3·4행. (2) 고객 등급: 동일 연락처 기반 등급 상향 평준화(한 번 단골은 모든 카드에서 단골). (3) AS: 신청 시 `status=AS`, [AS 대기] 탭 필터, [종료] 탭에서 AS 대기 건 미노출. (4) 다중 견적: `metadata.estimate_history[]`, 대표 금액 = 확정 견적 → 최신 견적 → expected_revenue. (5) 실측: 상담 타임라인에서 실측 데이터 직접 렌더링 금지; [실측 자료(PDF)] 버튼 → 모달 → `/measurement/upload`. 실측 PDF·메모는 Supabase Storage `measurement-drawings` 전용, Signed URL만 미리보기. (6) 오픈마켓: source·order_number·is_market_order·마켓별 배지.
@@ -112,6 +144,8 @@ Context: FindGagu OS Project
 ## 9. 현재 진행 상황 및 히스토리 (요약)
 
 - **2026-03-09 (status 7종 표준화 · DB 중복 정리 · 상담카드 핀 기능):** `status` 값을 **접수/견적/진행/완료/AS/무효/거절** 7종으로 확정. ConsultationManagement.tsx 전면 업데이트(STATUS_TO_STAGE 레거시 호환, Lead.status 타입, stageToStatus 역매핑, 상담접수→접수·견적발송→견적 전체 치환). DB 마이그레이션 SQL 실행(상담중·견적발송 등 레거시 값 → 표준값) 후 `캔슬 → 거절`까지 추가 정리해 라이브 `Supabase`의 비표준 status를 0건으로 맞춤. `channel_chat_id` 기준 중복 레코드(~28건) DELETE SQL 제공 및 정리. 상담카드 상단 고정 기능: `metadata.pinned` 패턴(DB 마이그레이션 없이), 정렬 시 pinned 카드 최상단 부상, Pin 버튼(Lucide) UI 추가.
+- **2026-03-12 (Google Chat 견적서 자동화 디버깅 → 안전 롤백):** `process-chat-estimate` 신규 플로우를 기준으로 Google Chat 첨부 이미지 자동 견적 저장을 구성했고, `company_name` 조회 오류는 `project_name`으로, `401 Invalid JWT` 문제는 Edge Function 내부 Gemini 직접 호출로 각각 정리했다. 이후 Google Chat 응답 포맷과 운영 복잡도 이슈로 라이브에서는 실험을 중단하고, `n8n`의 `responseNode` 구조와 응답 노드를 제거하는 **안전 롤백**을 완료했다. 현재 라이브와 로컬 `gas/n8n-workflow.json`은 모두 동일한 롤백 상태다.
+- **2026-03-12 (쇼룸 정교화 · 공감카드/전후사례/문의문맥 분리):** 쇼룸을 `/showroom` 탐색형 랜딩 페이지로 재정의하고, 공감카드 선택값과 검색어를 분리했다. `image_assets.category = purchase_order | floor_plan`은 쇼룸에서 제외했고, `before_after_role` 지정 자산은 일반 현장/업종/제품 보기에서 빼고 `스터디카페를 관리형 스타일로` 카드 아래 **[엑시트까지 고려한 전환 사례]** 섹션에서만 노출하도록 정리했다. 쇼룸 문의는 `showroom_context`, `showroom_entry_label`을 `consultations.metadata`에 저장하고 상담관리 리스트에서 `쇼룸 문맥` 배지로 노출되게 해, 담당자가 관리형 전환·엑시트 전략 문맥 유입임을 즉시 파악할 수 있게 했다.
 - **2026-03-08 (AutoAddBot.gs 복구 · 연락처 파싱 드라이런):** `gas/AutoAddBot.gs` 실수 삭제 → VSCode 로컬 히스토리로 1714줄 최신버전 복구. `dryRunContactScan()` 실행 — Admin 권한 없어 실행자 소속 스페이스만 스캔. 5.5분 타임리밋, total 375건 중 written 323건 완료. `CONTACT_SCAN_SHEET_ID` 시트 ID 검증 및 `applyContactScanFromSheet()` 실행이 남은 작업.
 - **2026-03-07 (견적서 AI 분석 수정 · 드래그앤드롭 · n8n MESSAGE 이벤트 처리):** analyze-quote Edge Function 수정(`.env` 삭제, `const text` 중복 선언 버그, Gemini 모델 `gemini-3.1-flash-lite-preview` 전환, API 키 갱신). EstimateFilesGallery 드래그앤드롭 업로드 추가(`processFile` 추출, 드롭존 UI). ConsultationManagement `sheetUpdateDate` 전면 제거 → `updateDate` 단일화, 정렬 버튼 토글(최근업데이트순↔인입일순), null update_date 정렬 폴백 수정. n8n 워크플로우에 MESSAGE 이벤트 처리 Switch 노드 추가 — **Google Chat 앱이 전달한 interaction event 기준**으로 `update_date` 실시간 갱신. 공식 MESSAGE 이벤트는 방 전체 모든 메시지가 아니라 `@멘션`·슬래시 명령·앱과의 DM에서 발생. 이후 운영 원칙은 `update_date = 최근 활동일(정체 감지용)`, 주 경로는 `GAS lastActiveTime`, `n8n MESSAGE`는 보조 경로로 정리. bulkAddBotToAllSpaces 2,255건 완료(실패 0건).
 - **2026-03-05 (GAS AutoAddBot 안정화 · n8n 엔드투엔드 완료 · 시스템 구조 정리):** OAuth 스코프·createTime 필터·processed 저장 시점·Invalid Date 가드 버그 수정 후 n8n 실 연동 테스트 성공. `channel_chat_id` 컬럼 추가, Check & Normalize 통합, status `접수` 수정, displayName→project_name 저장. 구글 시트는 레거시 확인(GAS가 시트 읽지 않음, AutoAddBot만 살아있음). 3세대 구조 확정: 채팅방→GAS→n8n→Supabase 직접. displayName 파싱 포기(직원 규칙 미준수 우려). 채널톡은 고객응대/마케팅 자동화 집중. 과거 데이터 start_date null 2,344건 현황 파악(미결).

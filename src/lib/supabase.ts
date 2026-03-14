@@ -26,9 +26,5 @@ export function getSupabase(): SupabaseClient<Database> {
   return _client
 }
 
-/** 동일 클라이언트 단일 인스턴스. 사용처에서는 getSupabase() 또는 supabase 셋 중 하나로 통일 권장. */
-export const supabase = new Proxy({} as SupabaseClient<Database>, {
-  get(_, prop) {
-    return getSupabase()[prop as keyof SupabaseClient<Database>]
-  },
-})
+/** 동일 클라이언트 단일 인스턴스. 사용처에서는 이 export를 직접 import해서 사용. */
+export const supabase = getSupabase()

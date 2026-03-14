@@ -3,19 +3,11 @@
  */
 import { supabase } from '@/lib/supabase'
 import type { Json } from '@/types/database'
+import { getCloudinaryCloudName, getCloudinaryUploadPreset } from '@/lib/config'
+import { CLOUDINARY_ADMIN_THUMBNAIL_OPTIONS } from '@/lib/constants'
 
-function getCloudinaryCloudName(): string {
-  const name = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME
-  return typeof name === 'string' && name.trim() ? name.trim() : 'demo'
-}
-
-function getCloudinaryUploadPreset(): string | null {
-  const preset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET
-  return typeof preset === 'string' && preset.trim() ? preset.trim() : null
-}
-
-/** 관리자 목록용 표준 썸네일 변환 옵션 (upload/ 바로 뒤 삽입). 가로 800px, 보정·포맷 최적화 */
-export const CLOUDINARY_ADMIN_THUMBNAIL_OPTIONS = 'w_800,c_scale,e_improve,e_sharpen,f_auto,q_auto'
+/** 관리자 목록용 표준 썸네일 변환 옵션 — src/lib/constants.ts 에서 import 후 re-export */
+export { CLOUDINARY_ADMIN_THUMBNAIL_OPTIONS } from '@/lib/constants'
 
 /** Cloudinary 썸네일 URL: w_800 리사이즈 + e_improve/e_sharpen 보정 + f_auto,q_auto. Supabase thumbnail_url 저장용 */
 export function buildCloudinaryThumbnailUrl(cloudName: string, publicId: string): string {
@@ -90,6 +82,8 @@ export interface ImageAssetInsertPayload {
   storage_path?: string | null
   /** 앱 내 스코어링으로 채움. 업로드 시에는 null */
   ai_score?: number | null
+  /** 이 업로드 폼에서 올라온 이미지는 기본적으로 상담컷으로 간주 */
+  is_consultation?: boolean | null
 }
 
 /**
@@ -122,6 +116,7 @@ export async function insertImageAsset(payload: ImageAssetInsertPayload): Promis
       storage_type: payload.storage_type ?? 'cloudinary',
       storage_path: payload.storage_path ?? null,
       ai_score: payload.ai_score != null ? payload.ai_score : null,
+      is_consultation: payload.is_consultation ?? null,
     })
     .select('id')
     .single()
@@ -174,16 +169,71 @@ export async function setImageAssetMain(assetId: string, siteName: string): Prom
 }
 
 /** 현장명 자동완성: 등록된 site_name 목록 (공백 제거 후 유니크, 정렬) */
-export async function getExistingSiteNames(): Promise<string[]> {
-  const { data, error } = await supabase
-    .from('image_assets')
-    .select('site_name')
-    .not('site_name', 'is', null)
-  if (error) return []
-  const set = new Set<string>()
-  for (const row of data ?? []) {
-    const name = (row?.site_name as string)?.trim()
-    if (name) set.add(name)
+export interface SpaceDisplayNameOption {
+  consultation_id: string
+  space_id: string | null
+  display_name: string
+}
+
+function parseGoogleChatSpaceId(value: unknown): string | null {
+  if (typeof value !== 'string' || !value.trim()) return null
+  const raw = value.trim()
+  if (raw.startsWith('spaces/')) return raw.slice('spaces/'.length) || null
+  const match = raw.match(/\/room\/([A-Za-z0-9_-]+)/)
+  if (match?.[1]) return match[1]
+  return raw
+}
+
+/** 스페이스 검색용 자동완성: consultations의 현장명/스페이스 표시명을 우선 사용 */
+export async function getExistingSiteNames(): Promise<SpaceDisplayNameOption[]> {
+  const rows: Array<{
+    id?: string | null
+    project_name?: string | null
+    channel_chat_id?: string | null
+    metadata?: Record<string, unknown> | null
+  }> = []
+  const pageSize = 500
+  for (let from = 0; ; from += pageSize) {
+    const to = from + pageSize - 1
+    const { data, error } = await supabase
+      .from('consultations')
+      .select('id, project_name, channel_chat_id, metadata')
+      .not('project_name', 'is', null)
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
+      .range(from, to)
+    if (error) return []
+    if (!data?.length) break
+    rows.push(...(data as unknown as typeof rows))
+    if (data.length < pageSize) break
   }
-  return Array.from(set).sort((a, b) => a.localeCompare(b, 'ko'))
+  const map = new Map<string, SpaceDisplayNameOption>()
+  for (const record of rows) {
+    const consultationId = record.id?.trim()
+    if (!consultationId) continue
+    const metadata = record.metadata ?? {}
+    const metadataSpaceId =
+      typeof metadata.space_id === 'string' && metadata.space_id.trim() ? metadata.space_id.trim() : null
+    const channelSpaceId = parseGoogleChatSpaceId(record.channel_chat_id)
+    const spaceId = metadataSpaceId || channelSpaceId
+    const projectName =
+      typeof record.project_name === 'string' && record.project_name.trim() ? record.project_name.trim() : null
+    const metadataDisplayName =
+      typeof metadata.display_name === 'string' && metadata.display_name.trim() ? metadata.display_name.trim() : null
+    const displayName =
+      (projectName && projectName !== spaceId ? projectName : null) ||
+      metadataDisplayName ||
+      projectName ||
+      spaceId
+    if (!displayName) continue
+    const key = `${displayName}\t${spaceId ?? ''}`
+    if (!map.has(key)) {
+      map.set(key, {
+        consultation_id: consultationId,
+        space_id: spaceId,
+        display_name: displayName,
+      })
+    }
+  }
+  return Array.from(map.values()).sort((a, b) => a.display_name.localeCompare(b.display_name, 'ko'))
 }

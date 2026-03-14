@@ -1,6 +1,139 @@
-# 프로젝트 저널 (JOURNAL) — 압축본 (2026-03-05 기준)
+# 프로젝트 저널 (JOURNAL) — 압축본 (2026-03-12 기준)
 
 > 세부 구현 결정은 BLUEPRINT.md 참조. 이 파일은 날짜별 핵심 결정·파일·세이브 포인트 요약.
+
+---
+
+## 2026-03-12 — 쇼룸 정교화 (공감카드 분리 · Before/After 격리 · 문의 문맥 저장)
+
+**핵심 결정:**
+- 쇼룸은 `/showroom` 단일 기준으로만 본다. `/portfolio`, `/assets` 같은 영업용 뱅크와 역할을 섞지 않고, 쇼룸은 **탐색형 랜딩 페이지**로 유지한다.
+- 공감카드는 검색창에 문구를 주입하지 않는다. 카드 선택은 **문맥 선택**, 검색창은 **실제 데이터 검색**으로 역할을 분리한다.
+- `Before/After` 사례는 일반 현장 카드와 성격이 다르므로, 기본 갤러리에 섞지 않고 별도 섹션으로 격리한다.
+- 쇼룸 문의는 단순 `source = 쇼룸`으로 끝내지 않고, **어떤 공감 문맥으로 들어왔는지** 상담 카드에 남겨야 한다.
+
+**수정 내역:**
+
+*ShowroomPage.tsx:*
+- 공감카드 선택 상태를 `searchQuery`와 분리. URL도 기존 `?tag=` 대신 `?q=`(검색어) + `?concern=`(공감카드) 구조로 재정리하고, 레거시 `?tag=`는 읽기만 호환.
+- 공감카드 클릭 시 검색창 값이 바뀌지 않도록 수정. 같은 카드를 다시 누르면 선택 해제 가능.
+- `image_assets.metadata.before_after_role`이 지정된 자산은 일반 현장/제품/업종 리스트에서 제외하도록 변경.
+- `스터디카페를 관리형 스타일로` 카드 선택 시에만 별도 섹션 **[엑시트까지 고려한 전환 사례]** 노출. `Before`/`After`를 좌우 비교 카드로 표시하고 상세 모달은 `beforeAfter` 모드로 분기.
+- 공감카드 클릭 스크롤 대상을 갤러리가 아닌 전문가 코멘트 시작 앵커로 교체. sticky 헤더에 가리지 않도록 `scroll-mt` 오프셋 추가.
+- 아파트 전문가 코멘트 문구 보정:
+  - `원장님(관리 주체)` → `입주자대표회의`
+  - `호텔급 시설` → `입주민의 만족과 단지의 가치를 함께 높이는 공간`
+
+*imageAssetService.ts / projectImage.ts / ImageAssetViewer.tsx:*
+- `image_assets.metadata`에서 `before_after_role`, `before_after_group_id`를 읽는 구조 추가.
+- `/image-assets`에서 사진별 `비포어`, `애프터` 지정 버튼 추가. 해당 값은 metadata에 저장.
+- 쇼룸 조회에서 `category = purchase_order | floor_plan` 제외 유지.
+
+*ContactPage.tsx / ConsultationManagement.tsx:*
+- 쇼룸 진입 문의 시 `showroom_context`, `showroom_entry_label`을 `consultations.metadata`에 저장.
+- `관리형 스타일 리뉴얼 상담하기` 및 해당 문맥의 현장 문의 링크에 `관리형 스타일 전환 + 엑시트 전략` 컨텍스트를 함께 전달.
+- 상담관리 리스트 카드에 `쇼룸 문맥` 배지 추가. 예: `스터디카페를 관리형 스타일로`.
+
+**운영 확인 포인트:**
+- 공감카드 선택 후 제품/업종 버튼을 눌러도 검색창 문자열 때문에 결과가 사라지지 않아야 한다.
+- `Before/After` 자산은 일반 쇼룸 결과에 섞이지 않고, 관리형 전환 카드 아래 전용 섹션에서만 보여야 한다.
+- 쇼룸 문의가 생성되면 상담 카드에서 `쇼룸 문맥` 배지로 어떤 메시지를 보고 들어왔는지 즉시 인지할 수 있어야 한다.
+
+**변경 파일:**
+- `src/pages/ShowroomPage.tsx`
+- `src/lib/imageAssetService.ts`
+- `src/types/projectImage.ts`
+- `src/pages/ImageAssetViewer.tsx`
+- `src/pages/ContactPage.tsx`
+- `src/pages/ConsultationManagement.tsx`
+- `BLUEPRINT.md`
+- `CONTEXT.md`
+- `JOURNAL.md`
+
+---
+
+## 2026-03-12 — Google Chat 견적서 자동 처리 롤백 및 기준 문서 정리 완료
+
+**핵심 결정:**
+- Google Chat 견적 자동화는 `@멘션` 기반 앱 호출 흐름으로 재해석해 디버깅했지만, 최종적으로는 **운영 워크플로우에서 안전 롤백**하는 쪽이 맞다고 판단했다.
+- `process-chat-estimate`는 별도 `analyze-quote` 내부 호출에 의존하지 않고, **Gemini 직접 호출형 Edge Function**으로 단순화하는 쪽이 구현 자산으로서 더 낫다고 정리했다.
+- Google Chat 즉시 응답 실험(`Respond to Webhook` + Chat JSON 응답)은 운영 난도가 높고 실무 혼선을 만들 수 있어, 현재 기준에서는 **운영에서 제거하고 코드 자산만 남겨두는 것**으로 결론냈다.
+
+**수정 내역:**
+
+*Supabase Edge Function (`supabase/functions/process-chat-estimate/index.ts`):*
+- consultation 조회 컬럼을 `company_name`에서 `project_name`으로 수정. 라이브 DB 컬럼 불일치로 인한 조회 실패 해결.
+- `analyze-quote` 내부 HTTP 호출 제거. `GoogleGenerativeAI`를 직접 import하여 Gemini Vision 분석을 함수 내부에서 수행하도록 변경.
+- 견적서 여부 Pre-check, JSON 파싱(`parseJsonBlock`), rows 매핑, `skipped` 응답 처리까지 `process-chat-estimate` 안으로 내재화.
+
+*GAS (`gas/Code.gs`):*
+- `doPost()`에 `download_attachment` 액션 분기 추가 유지. Google Chat attachment resource를 OAuth 토큰으로 다운로드 후 base64로 반환하는 구조 확인.
+
+*n8n (`gas/n8n-workflow.json`, 라이브 `n8n` 워크플로우):*
+- 한때 로컬 정의에 `Webhook(responseNode)` + `Prepare Chat Response` + `Respond to Google Chat` 구조를 추가해 Google Chat 호환 응답을 실험했다.
+- 이후 라이브 `n8n`과 로컬 `gas/n8n-workflow.json` 모두에서 해당 응답 노드들을 제거하고, `Webhook.responseMode`를 다시 `onReceived`로 되돌렸다.
+- 라이브 워크플로우 화면에서도 상단 가지에 남아 있던 `Prepare Chat Response`, `Respond to Webhook` 노드를 직접 삭제하고 재게시했다.
+
+**운영 확인 결과:**
+- Google Chat 앱 이름 `1일정등록`으로 멘션 호출 자체는 도달함.
+- `responseNode` 실험 중에는 `{"text":"..."}` 응답, 빈 200, `응답하지 않음` 상태를 모두 확인하면서 운영 불안정성을 재확인했다.
+- 최종적으로 라이브 `n8n`을 롤백한 뒤, 프로덕션 웹훅 응답이 다시 `{"message":"Workflow was started"}` 로 고정되는 것을 `curl`로 검증했다.
+- 즉, **운영은 현재 안전 롤백 상태**이며, 응답 커스터마이징 실험은 더 이상 라이브에 남아 있지 않다.
+
+**현재 상태:**
+- 라이브 `n8n`, 로컬 `gas/n8n-workflow.json`, 기준 문서(`BLUEPRINT.md`, `CONTEXT.md`, `JOURNAL.md`)를 모두 **같은 롤백 상태로 동기화 완료**.
+- `process-chat-estimate`, `gas/Code.gs`의 첨부 다운로드, 견적 분기 코드는 자산으로 남아 있지만, 현재 운영 기본 흐름은 아니다.
+- 현재 기준 운영은 상담카드/견적 관리와 Takeout 기반 수동 보조 흐름이며, Google Chat 실시간 견적 자동화는 **보류** 상태다.
+
+**관련 파일:**
+- `supabase/functions/process-chat-estimate/index.ts`
+- `gas/Code.gs`
+- `gas/n8n-workflow.json`
+- `BLUEPRINT.md`
+- `CONTEXT.md`
+- `JOURNAL.md`
+
+---
+
+## 2026-03-11 — 상담 관리 프론트 UX 정리 (선택 유지 · 우측 고정 · 40개 페이지 · 이중 기간 필터)
+
+**핵심 결정:**
+- 상담 관리는 다른 화면과 분리된 **작업형 대시보드**로 본다. 따라서 최근 프론트 수정은 `ConsultationManagement.tsx` 내부에만 한정하고, 공통 레이아웃이나 다른 페이지는 건드리지 않는다.
+- 데스크톱에서는 우측 상세 패널을 기준 화면처럼 유지하는 쪽이 실무에 더 맞다고 판단했다. 완전 독립 스크롤까지는 가지 않고, **우측 패널 고정(sticky) 기반**으로 먼저 정리.
+- 직원이 카드 선택을 바꾸지 않았다면 시스템이 첫 카드로 강제 복귀시키지 않는다. **선택 유지**를 기본 규칙으로 확정.
+- 상태 변경으로 `종료/견적중/진행중` 탭으로 이동할 때는, 선택 카드가 들어 있는 **페이지로 자동 추적**해야 한다. 페이지네이션 때문에 카드가 사라진 것처럼 보이는 UX를 해소하는 것이 목적.
+- 상담 목록은 페이지당 **40개**가 현재 작업 패턴에 더 적합하다고 판단했다. 우측 패널 고정 이후 20개는 너무 자주 페이지를 넘기게 만든다.
+- 상단 필터는 **인입일 기간 필터 + 업데이트일 기간 필터 + 정렬 토글**의 3개 제어로 확장. 인입 시기와 최근 활동일을 별도로 볼 수 있게 한다.
+
+**수정 내역:**
+
+*ConsultationManagement.tsx:*
+- 우측 상세 패널: 데스크톱에서 `sticky top-6 h-[calc(100vh-8rem)]` 적용. 좌측 목록 탐색 중 우측이 기준판처럼 유지되도록 조정.
+- 선택 유지: `listTab` 변경 시 `filteredLeads[0]`을 강제로 `setSelectedLead` 하던 `useEffect` 제거. 이제 현재 선택 카드가 필터 결과 안에 있으면 그대로 유지.
+- 상태 변경 후 자동 추적: `handleStageChange` 성공 후 `setSelectedLead(leadId)` + `setScrollToLeadId(leadId)` 추가. 완료 처리 후 `종료` 탭으로 이동해도 해당 카드가 포함된 페이지로 자동 이동.
+- 페이지 크기: `LIST_PAGE_SIZE = 20` → `40`.
+- 상단 필터 확장:
+  - `dateRange` = 인입일 기준 기간
+  - `updateDateRange` = 최신 업데이트일 기준 기간
+  - `sortByNeglect` = 최근업데이트순 / 인입일순 정렬 토글
+- 날짜 필터 유틸 추가:
+  - `DATE_RANGE_OPTIONS`
+  - `getDateRangeStarts()`
+  - `getComparableDateValue()`
+  - `matchesDateRange()`
+- `kpi`, `tabCounts`, `filteredLeads` 전부 인입일·업데이트일 2중 기간 필터를 함께 반영하도록 정리.
+- 상단 UI에 `인입일`, `업데이트일` 라벨을 붙여 두 드롭다운의 의미를 즉시 구분 가능하게 함.
+
+**운영 중 확인된 현상과 해석:**
+- 완료 처리 후 카드가 "사라진" 것처럼 보인 원인은 삭제가 아니라 **`종료` 탭 이동 + 페이지네이션 미추적**이었다.
+- 상담카드가 최상단으로 튀던 주요 원인은 (1) 탭 변경 시 첫 카드 강제 선택 로직, (2) `update_date` 기준 정렬에 따른 리스트 재배치였다.
+- 개발 서버가 포트 `5174`에서 `5175/5176`으로 밀리는 일이 반복되어, 포트 점유 프로세스 정리 후 `127.0.0.1:5174`로 재기동하는 패턴을 재확인했다.
+
+**문서 반영:**
+- `BLUEPRINT.md`: 상담 관리 대시보드 고정 규칙, 선택 유지 원칙, 상태 변경 후 페이지 추적, 페이지당 40개, 상단 필터 3종 추가
+- `CONTEXT.md`: 상담 관리 대시보드 운영 원칙(적용 범위 한정, 우측 기준판, 선택 안정성, 페이지 추적, 3종 필터, 40개 카드) 추가
+
+**변경 파일:** `src/pages/ConsultationManagement.tsx`, `BLUEPRINT.md`, `CONTEXT.md`, `JOURNAL.md`
 
 ---
 
@@ -296,6 +429,46 @@ Webhook → Event Type?(Switch)
 - dryRunContactScan 이어서 실행 + applyContactScanFromSheet
 
 **변경 파일:** `src/pages/ConsultationManagement.tsx`, `gas/AutoAddBot.gs`, `supabase/migrations/20260308000000_standardize_consultation_status.sql`(신규), `BLUEPRINT.md`, `CONTEXT.md`, `JOURNAL.md`
+
+---
+
+## 2026-03-10 — Takeout 기반 견적 이미지 브라우저 1차 정리
+
+**핵심 결정:**
+- 구글챗 실시간 첨부파일 수집이 아니라 **Google Takeout 기반**으로 먼저 간다.
+- OCR 자동 선별 중심이 아니라 **스페이스별 전체 이미지 수동 선택**을 기본 UX로 둔다.
+- 같은 스페이스를 여러 프로젝트 카드가 재사용한 레거시 상황 때문에, 스페이스 클릭 시 카드 강제 이동보다 **displayName을 메인 검색창에 자동 입력**하는 방식이 더 안정적이라고 판단했다.
+- **카드 스플릿 기능은 아직 구현하지 않음.** 먼저 데이터를 충분히 모으고, 나중에 사람 승인형으로 분리하는 방향 유지.
+
+**구현 상태:**
+- `견적 관리` 탭에 `테이크아웃 이미지 가져오기` 버튼 추가
+- 현재 상담카드의 스페이스 이미지 우선 표시 + `전체 스페이스 보기`
+- 썸네일 클릭 시 앱 내부 확대 미리보기 Dialog 추가
+- 확대 화면에서 `견적 검토로 가져오기` → 기존 AI 검토 흐름 연결
+- 연결된 스페이스는 `스페이스 ID + displayName` 함께 표시
+- 스페이스 제목 클릭 시 해당 displayName을 **메인 검색창에 자동 입력**하고, 상담 목록을 그 이름 기준으로 필터링
+
+**데이터/파일 구조:**
+- 원본: 대표님 PC의 Takeout 폴더 유지
+- 앱 표시용 캐시: `public/assets/takeout-quote-inbox/`
+- 인덱스: `public/data/takeout-quote-inbox.json`
+- 현재 인덱스 범위: **최신 1개 Takeout**만 반영. PC 전체 10개 Takeout 통합은 아직 미구현
+
+**검증:**
+- 로컬 개발 서버 `127.0.0.1:5174`에서 UI 동선 확인
+- 썸네일 확대 미리보기 정상
+- `견적 검토로 가져오기` 정상
+- 스페이스 제목 클릭 → 검색창 자동 입력 정상
+
+**세이브 포인트:**
+- `3272786` checkpoint: 완료 카드 재활동 신호와 운영 원칙 정리
+- `5d885c2` checkpoint: 테이크아웃 이미지 가져오기 1차 연결
+- `39a9060` checkpoint: 테이크아웃 이미지 확대보기 추가
+
+**미결:**
+- 전체 10개 Takeout 통합 인덱스
+- 작업 후 캐시 이미지 정리 스크립트
+- 카드 스플릿(같은 스페이스의 다중 프로젝트 분리) 기능
 
 ---
 

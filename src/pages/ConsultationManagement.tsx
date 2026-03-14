@@ -44,6 +44,7 @@ const BUTTON_SUBMIT_CLASS = 'h-9 w-full text-sm font-semibold'
 /** 인입채널 옵션(9종) — consultations.metadata.source에 저장. 기본값 채널톡으로 오입력 방지 */
 const CONSULT_SOURCES = [
   { value: '채널톡', label: '채널톡' },
+  { value: '쇼룸', label: '쇼룸' },
   { value: '전화', label: '전화' },
   { value: '소개', label: '소개' },
   { value: '네이버', label: '네이버' },
@@ -189,10 +190,51 @@ const STATUS_TO_STAGE: Record<string, ConsultationStage> = {
   신규: '상담접수',
 }
 
-const LIST_PAGE_SIZE = 20
+const LIST_PAGE_SIZE = 40
 /** 업무 단계별 탭 — 영업 사원 우선순위 파악용 */
 type ListTab = '전체' | '미처리' | '견적중' | '진행중' | '종료' | '거절' | '무효'
 type DateRangeKey = 'all' | 'thisMonth' | '1m' | '3m' | '6m' | '1y'
+
+const DATE_RANGE_OPTIONS: Array<{ value: DateRangeKey; label: string }> = [
+  { value: 'all', label: '전체 기간' },
+  { value: 'thisMonth', label: '이번달' },
+  { value: '1m', label: '최근 1개월' },
+  { value: '3m', label: '최근 3개월' },
+  { value: '6m', label: '최근 6개월' },
+  { value: '1y', label: '최근 1년' },
+]
+
+function getDateRangeStarts(now: number) {
+  return {
+    thisMonth: startOfMonth(new Date(now)).getTime(),
+    '1m': startOfDay(subMonths(new Date(now), 1)).getTime(),
+    '3m': startOfDay(subMonths(new Date(now), 3)).getTime(),
+    '6m': startOfDay(subMonths(new Date(now), 6)).getTime(),
+    '1y': startOfDay(subMonths(new Date(now), 12)).getTime(),
+  } as const
+}
+
+function getComparableDateValue(dateString?: string | null, fallbackDate?: string | null): number | null {
+  const primary = typeof dateString === 'string' && dateString.trim() ? dateString.trim() : null
+  const fallback = typeof fallbackDate === 'string' && fallbackDate.trim() ? fallbackDate.trim() : null
+  const source = primary ?? fallback
+  if (!source) return null
+  const normalized = /^\d{4}-\d{2}-\d{2}$/.test(source) ? `${source}T12:00:00.000Z` : source
+  const value = new Date(normalized).getTime()
+  return Number.isNaN(value) ? null : value
+}
+
+function matchesDateRange(
+  value: number | null,
+  range: DateRangeKey,
+  now: number,
+  starts: ReturnType<typeof getDateRangeStarts>
+): boolean {
+  if (range === 'all') return true
+  if (value == null) return false
+  if (range === 'thisMonth') return value >= starts.thisMonth && value <= now
+  return value >= starts[range]
+}
 
 /** 시공완료·거절·무효 — 활성 리스트에서 제외. 무효=통계 제외, 거절=사유 보존 */
 function isEnded(lead: Lead): boolean {
@@ -287,6 +329,8 @@ interface Lead {
   showroomImageUrl?: string
   showroomSiteName?: string
   showroomCategory?: string
+  showroomContext?: string
+  showroomEntryLabel?: string
 }
 
 /** 상담 식별자 자동 생성: [YYMM] [상호/성함] [연락처 뒷4자리]. refDate는 상담 생성일(YYMM 고정용). */
@@ -427,6 +471,8 @@ function mapConsultationRowToLead(item: Record<string, unknown>): Lead {
   const showroomImageUrl = meta && typeof meta.showroom_image_url === 'string' && meta.showroom_image_url.trim() ? meta.showroom_image_url.trim() : undefined
   const showroomSiteName = meta && typeof meta.showroom_site_name === 'string' ? meta.showroom_site_name : undefined
   const showroomCategory = meta && typeof meta.showroom_category === 'string' ? meta.showroom_category : undefined
+  const showroomContext = meta && typeof meta.showroom_context === 'string' && meta.showroom_context.trim() ? meta.showroom_context.trim() : undefined
+  const showroomEntryLabel = meta && typeof meta.showroom_entry_label === 'string' && meta.showroom_entry_label.trim() ? meta.showroom_entry_label.trim() : undefined
   const rawUpdate = item.update_date
   const updateDate =
     rawUpdate == null
@@ -485,6 +531,8 @@ function mapConsultationRowToLead(item: Record<string, unknown>): Lead {
     showroomImageUrl,
     showroomSiteName,
     showroomCategory,
+    showroomContext,
+    showroomEntryLabel,
     expectedRevenue: expectedRevenueNum,
     estimateHistory,
     displayAmount,
@@ -533,24 +581,36 @@ function getNeglectDDisplay(updateDate: string | null | undefined): { text: stri
   }
 }
 
-const COMPLETED_REACTIVATION_WINDOW_DAYS = 7
+const REACTIVATION_WINDOW_DAYS = 7
 
-function getCompletedReactivationSignal(
+function getReactivationSignal(
   status: Lead['status'],
   workflowStage: ConsultationStage,
   updateDate: string | null | undefined,
 ): { days: number; label: string; title: string } | null {
-  if (status !== '완료' || workflowStage !== '시공완료') return null
   const days = getNeglectDays(updateDate)
-  if (days < 0 || days > COMPLETED_REACTIVATION_WINDOW_DAYS) return null
-  return {
-    days,
-    label: days === 0 ? '오늘 재활동' : '종료 후 활동',
-    title:
-      days === 0
-        ? '완료 카드에서 오늘 새 활동이 감지되었습니다. 상태 변경 필요 여부를 확인하세요.'
-        : `완료 카드에서 최근 ${days}일 내 활동이 감지되었습니다. 상태 변경 필요 여부를 확인하세요.`,
+  if (days < 0 || days > REACTIVATION_WINDOW_DAYS) return null
+  if (status === '완료' && workflowStage === '시공완료') {
+    return {
+      days,
+      label: days === 0 ? '오늘 재활동' : '종료 후 활동',
+      title:
+        days === 0
+          ? '완료 카드에서 오늘 새 활동이 감지되었습니다. 상태 변경 필요 여부를 확인하세요.'
+          : `완료 카드에서 최근 ${days}일 내 활동이 감지되었습니다. 상태 변경 필요 여부를 확인하세요.`,
+    }
   }
+  if (status === '거절') {
+    return {
+      days,
+      label: days === 0 ? '오늘 재문의' : '거절 후 재문의',
+      title:
+        days === 0
+          ? '거절 카드에서 오늘 새 활동이 감지되었습니다. 새 상담 재개 여부를 확인하세요.'
+          : `거절 카드에서 최근 ${days}일 내 활동이 감지되었습니다. 같은 채팅방 재문의인지 확인하세요.`,
+    }
+  }
+  return null
 }
 
 /** 연락처 표시: 010-1234-5678 전체 노출 (실전에서 바로 전화) */
@@ -761,14 +821,14 @@ function StageProgressBar({
   onAsClick,
   onInvalidClick,
   onCancelClick,
-  showCompletedReactivation = false,
+  showReactivationSignal = false,
 }: {
   item: Lead
   onStageChange: (stage: ConsultationStage) => void
   onAsClick: () => void
   onInvalidClick: () => void
   onCancelClick: () => void
-  showCompletedReactivation?: boolean
+  showReactivationSignal?: boolean
 }) {
   const current = getStageBarValue(item)
 
@@ -780,7 +840,7 @@ function StageProgressBar({
           <button
             key={key}
             type="button"
-            title={showCompletedReactivation && key === '시공완료' && isActive ? '완료 상태에서 최근 활동이 다시 감지되었습니다.' : (title ?? key)}
+            title={showReactivationSignal && isActive && (key === '시공완료' || key === '거절') ? '최근 재활동이 감지되었습니다.' : (title ?? key)}
             onClick={(e) => {
               e.stopPropagation()
               if (key === '무효') onInvalidClick()
@@ -796,7 +856,7 @@ function StageProgressBar({
           >
             <span className="inline-flex items-center gap-1">
               {label}
-              {showCompletedReactivation && key === '시공완료' && isActive && (
+              {showReactivationSignal && isActive && (key === '시공완료' || key === '거절') && (
                 <span className="inline-flex h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" aria-hidden />
               )}
             </span>
@@ -875,13 +935,14 @@ function ConsultationListItem({
   const isD7OrMore = elapsedDays >= 7
   /** 방치 방지: update_date 기준 D-Day */
   const neglectD = getNeglectDDisplay(item.updateDate)
-  const completedReactivation = getCompletedReactivationSignal(item.status, item.workflowStage, item.updateDate)
+  const reactivationSignal = getReactivationSignal(item.status, item.workflowStage, item.updateDate)
   /** 2행 맨 오른쪽: 최종 견적가. 실제 소스 1개만 — DB(consultations.estimate_amount → expectedRevenue). pending은 견적서로 저장 직후 낙관적 표시용 */
   const pendingAmount = getPendingEstimateAmount?.(item.id)
   const amountToShow =
     (pendingAmount != null && pendingAmount > 0 ? pendingAmount : null) ?? (item.expectedRevenue > 0 ? item.expectedRevenue : 0)
   const finalAmountDisplay = amountToShow > 0 ? `${Number(amountToShow).toLocaleString()}원` : '견적 미정'
   const requiredDateDisplay = item.requiredDate && /^\d{4}-\d{2}-\d{2}$/.test(item.requiredDate) ? item.requiredDate : '미정'
+  const showroomIntentLabel = item.showroomEntryLabel?.trim() || item.showroomCategory?.trim() || ''
 
   return (
     // [DOM 수정] button→div: 내부에 StageProgressBar·편집·삭제 button이 있어 button-in-button 금지 위반 방지
@@ -925,7 +986,7 @@ function ConsultationListItem({
             onAsClick={() => onAsClick(item.id)}
             onInvalidClick={() => onInvalidClick(item.id)}
             onCancelClick={() => onCancelClick(item.id)}
-            showCompletedReactivation={!!completedReactivation}
+            showReactivationSignal={!!reactivationSignal}
           />
           <button
             type="button"
@@ -968,6 +1029,19 @@ function ConsultationListItem({
         <p className="text-[11px] text-destructive/90 font-medium truncate" title={cancelReason}>
           거절 사유: {cancelReason}
         </p>
+      )}
+      {item.source === '쇼룸' && showroomIntentLabel && (
+        <div className="flex items-center gap-1.5 min-h-[16px] flex-wrap">
+          <span className="inline-flex items-center rounded-full bg-violet-500/15 px-2 py-0.5 text-[10px] font-semibold text-violet-700 ring-1 ring-violet-500/25 dark:text-violet-300">
+            쇼룸 문맥
+          </span>
+          <span
+            className="text-[11px] text-violet-700/90 dark:text-violet-300/90 truncate"
+            title={item.showroomContext?.trim() || showroomIntentLabel}
+          >
+            {showroomIntentLabel}
+          </span>
+        </div>
       )}
 
       {/* 2행: 고객등급 | 인입채널 | 업종 | 지역 | 전화번호 | 최종견적 */}
@@ -1026,18 +1100,18 @@ function ConsultationListItem({
               <span className="text-border shrink-0 mx-0.5">|</span>
             </>
           )}
-          {completedReactivation && (
+          {reactivationSignal && (
             <>
               <span
                 className={cn(
                   'inline-flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[10px] font-semibold shrink-0 ring-1',
-                  completedReactivation.days === 0
+                  reactivationSignal.days === 0
                     ? 'bg-amber-500 text-white ring-amber-500/50'
                     : 'bg-amber-500/15 text-amber-700 dark:text-amber-300 ring-amber-500/30'
                 )}
-                title={completedReactivation.title}
+                title={reactivationSignal.title}
               >
-                {completedReactivation.label}
+                {reactivationSignal.label}
               </span>
               <span className="text-border shrink-0 mx-0.5">|</span>
             </>
@@ -1050,14 +1124,14 @@ function ConsultationListItem({
                 title={neglectD.days === 0 ? '오늘 갱신됨' : `마지막 업데이트 ${(item.updateDate)?.toString().slice(0, 10) ?? '—'}로부터 ${neglectD.days}일 경과 — 방치 주의`}
                 className={cn(
                   'font-medium shrink-0 text-[11px] inline-flex items-center gap-0.5',
-                  completedReactivation && 'rounded-md px-1.5 py-0.5 bg-amber-500/10 text-amber-800 dark:text-amber-200 ring-1 ring-amber-500/20'
+                  reactivationSignal && 'rounded-md px-1.5 py-0.5 bg-amber-500/10 text-amber-800 dark:text-amber-200 ring-1 ring-amber-500/20'
                 )}
               >
-                <span className={cn(completedReactivation ? 'text-current' : 'text-muted-foreground')}>
+                <span className={cn(reactivationSignal ? 'text-current' : 'text-muted-foreground')}>
                   마지막 업데이트 {(item.updateDate)?.toString().slice(0, 10) ?? '—'}
                 </span>
                 <span className={cn(
-                  neglectD.days === 0 && (completedReactivation ? 'text-current' : 'text-muted-foreground'),
+                  neglectD.days === 0 && (reactivationSignal ? 'text-current' : 'text-muted-foreground'),
                   neglectD.days >= 3 && neglectD.days < 7 && 'text-orange-600 dark:text-orange-400 font-semibold',
                   neglectD.days >= 7 && 'text-red-600 dark:text-red-400 font-semibold'
                 )}>+{neglectD.days}일</span>
@@ -1087,7 +1161,7 @@ function ConsultationListItem({
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); window.open(item.google_chat_url!, '_blank') }}
-              className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[10px] font-medium bg-[#00A862]/15 text-[#00875A] hover:bg-[#00A862]/25 dark:bg-[#00A862]/20 dark:text-emerald-400 border border-[#00A862]/30"
+              className="inline-flex items-center gap-0.5 px-1 py-2 rounded text-[10px] font-medium bg-[#00A862]/15 text-[#00875A] hover:bg-[#00A862]/25 dark:bg-[#00A862]/20 dark:text-emerald-400 border border-[#00A862]/30"
               title="구글챗 스페이스 입장"
             >
               <MessageCircle className="h-2.5 w-2.5" />
@@ -1193,6 +1267,11 @@ export default function ConsultationManagement() {
   /** 현재 상담 건의 발주서(PPT/PDF) 목록 — 갤러리·퀵뷰용 */
   const [orderDocumentsList, setOrderDocumentsList] = useState<OrderDocument[]>([])
   const [estimateFilesList, setEstimateFilesList] = useState<ConsultationEstimateFile[]>([])
+  const [pendingTakeoutImport, setPendingTakeoutImport] = useState<{
+    consultationId: string
+    file: File
+    requestId: string
+  } | null>(null)
   /** 업로드 견적서 AI 분석 저장 시 견적 목록 새로고침용 */
   const [estimateListRefreshKey, setEstimateListRefreshKey] = useState(0)
   /** 상담 ID별 견적 건수 (estimates 테이블 기준) — 카드 "견적 이력 N건" 표시용 */
@@ -1287,6 +1366,7 @@ export default function ConsultationManagement() {
   const [listTab, setListTab] = useState<ListTab>('전체')
   const [searchQuery, setSearchQuery] = useState('')
   const [dateRange, setDateRange] = useState<DateRangeKey>('all')
+  const [updateDateRange, setUpdateDateRange] = useState<DateRangeKey>('1m')
   const [listPage, setListPage] = useState(0)
   const [sortByNeglect, setSortByNeglect] = useState(true)
   /** admin 권한 — 시스템 메시지 영구 삭제 버튼 노출. localStorage 'findgagu-role' === 'admin' 또는 URL ?admin=1 */
@@ -1297,28 +1377,27 @@ export default function ConsultationManagement() {
     return false
   }, [])
 
+  const getListTabForLead = useCallback((lead: Lead): ListTab => {
+    if (lead.status === '거절') return '거절'
+    if (lead.status === '무효') return '무효'
+    if (lead.workflowStage === '시공완료') return '종료'
+    if (lead.workflowStage === '상담접수') return '미처리'
+    if (lead.workflowStage === '견적중') return '견적중'
+    if (lead.workflowStage === '계약완료') return '진행중'
+    return '전체'
+  }, [])
+
   /** KPI: 무효 제외 유효 상담 수, 성공률 = 계약완료(시공완료) / 유효 상담. 무효는 분모에서 제외. 필터와 동일한 inRange 사용 */
   const kpi = useMemo(() => {
     const now = Date.now()
-    const cutThisMonth = startOfMonth(new Date()).getTime()
-    const cut1m = startOfDay(subMonths(new Date(now), 1)).getTime()
-    const cut3m = startOfDay(subMonths(new Date(now), 3)).getTime()
-    const cut6m = startOfDay(subMonths(new Date(now), 6)).getTime()
-    const cut1y = startOfDay(subMonths(new Date(now), 12)).getTime()
+    const starts = getDateRangeStarts(now)
     const inRange = (lead: Lead) => {
-      let t: number
-      if (lead.inboundDate && /^\d{4}-\d{2}-\d{2}$/.test(lead.inboundDate)) {
-        t = new Date(lead.inboundDate + 'T12:00:00.000Z').getTime()
-      } else {
-        t = new Date(lead.createdAt).getTime()
-      }
-      if (Number.isNaN(t)) return false
-      if (dateRange === 'thisMonth') return t >= cutThisMonth && t <= now
-      if (dateRange === '1m') return t >= cut1m
-      if (dateRange === '3m') return t >= cut3m
-      if (dateRange === '6m') return t >= cut6m
-      if (dateRange === '1y') return t >= cut1y
-      return true
+      const inboundValue = getComparableDateValue(lead.inboundDate, lead.createdAt)
+      const updateValue = getComparableDateValue(lead.updateDate)
+      return (
+        matchesDateRange(inboundValue, dateRange, now, starts) &&
+        matchesDateRange(updateValue, updateDateRange, now, starts)
+      )
     }
     const q = (searchQuery ?? '').trim().toLowerCase()
     const qDigits = q.replace(/\D/g, '')
@@ -1336,30 +1415,19 @@ export default function ConsultationManagement() {
     const successCount = base.filter((l) => l.workflowStage === '시공완료' && l.status !== '거절' && l.status !== '무효').length
     const successRate = totalValid > 0 ? Math.round((successCount / totalValid) * 100) : 0
     return { totalValid, successCount, successRate }
-  }, [leads, searchQuery, dateRange])
+  }, [leads, searchQuery, dateRange, updateDateRange])
 
   /** 탭별 개수 (숫자 표시용). 필터와 동일한 inRange 사용 */
   const tabCounts = useMemo(() => {
     const now = Date.now()
-    const cutThisMonth = startOfMonth(new Date()).getTime()
-    const cut1m = startOfDay(subMonths(new Date(now), 1)).getTime()
-    const cut3m = startOfDay(subMonths(new Date(now), 3)).getTime()
-    const cut6m = startOfDay(subMonths(new Date(now), 6)).getTime()
-    const cut1y = startOfDay(subMonths(new Date(now), 12)).getTime()
+    const starts = getDateRangeStarts(now)
     const inRange = (lead: Lead) => {
-      let t: number
-      if (lead.inboundDate && /^\d{4}-\d{2}-\d{2}$/.test(lead.inboundDate)) {
-        t = new Date(lead.inboundDate + 'T12:00:00.000Z').getTime()
-      } else {
-        t = new Date(lead.createdAt).getTime()
-      }
-      if (Number.isNaN(t)) return false
-      if (dateRange === 'thisMonth') return t >= cutThisMonth && t <= now
-      if (dateRange === '1m') return t >= cut1m
-      if (dateRange === '3m') return t >= cut3m
-      if (dateRange === '6m') return t >= cut6m
-      if (dateRange === '1y') return t >= cut1y
-      return true
+      const inboundValue = getComparableDateValue(lead.inboundDate, lead.createdAt)
+      const updateValue = getComparableDateValue(lead.updateDate)
+      return (
+        matchesDateRange(inboundValue, dateRange, now, starts) &&
+        matchesDateRange(updateValue, updateDateRange, now, starts)
+      )
     }
     const q = (searchQuery ?? '').trim().toLowerCase()
     const qDigits = q.replace(/\D/g, '')
@@ -1375,7 +1443,8 @@ export default function ConsultationManagement() {
     const base = leads.filter((l) => inRange(l) && matchSearch(l))
     const active = base.filter((l) => !isEnded(l))
     const completedCount = base.filter((l) => l.workflowStage === '시공완료' && l.status !== '거절' && l.status !== '무효').length
-    const completedReactivatedCount = base.filter((l) => getCompletedReactivationSignal(l.status, l.workflowStage, l.updateDate)).length
+    const completedReactivatedCount = base.filter((l) => l.status === '완료' && l.workflowStage === '시공완료' && !!getReactivationSignal(l.status, l.workflowStage, l.updateDate)).length
+    const rejectedReactivatedCount = base.filter((l) => l.status === '거절' && !!getReactivationSignal(l.status, l.workflowStage, l.updateDate)).length
     const rejectCount = base.filter((l) => l.status === '거절').length
     const invalidCount = base.filter((l) => l.status === '무효').length
     return {
@@ -1385,33 +1454,23 @@ export default function ConsultationManagement() {
       진행중: active.filter((l) => l.workflowStage === '계약완료').length,
       종료: completedCount,
       종료재활동: completedReactivatedCount,
+      거절재활동: rejectedReactivatedCount,
       거절: rejectCount,
       무효: invalidCount,
     }
-  }, [leads, searchQuery, dateRange])
+  }, [leads, searchQuery, dateRange, updateDateRange])
 
   /** 필터+정렬된 리스트 (최신 순 = start_date/inboundDate desc) */
   const filteredLeads = useMemo(() => {
     const now = Date.now()
-    const cutThisMonth = startOfMonth(new Date()).getTime()
-    const cut1m = startOfDay(subMonths(new Date(now), 1)).getTime()
-    const cut3m = startOfDay(subMonths(new Date(now), 3)).getTime()
-    const cut6m = startOfDay(subMonths(new Date(now), 6)).getTime()
-    const cut1y = startOfDay(subMonths(new Date(now), 12)).getTime()
+    const starts = getDateRangeStarts(now)
     const inRange = (lead: Lead) => {
-      let t: number
-      if (lead.inboundDate && /^\d{4}-\d{2}-\d{2}$/.test(lead.inboundDate)) {
-        t = new Date(lead.inboundDate + 'T12:00:00.000Z').getTime()
-      } else {
-        t = new Date(lead.createdAt).getTime()
-      }
-      if (Number.isNaN(t)) return false
-      if (dateRange === 'thisMonth') return t >= cutThisMonth && t <= now
-      if (dateRange === '1m') return t >= cut1m
-      if (dateRange === '3m') return t >= cut3m
-      if (dateRange === '6m') return t >= cut6m
-      if (dateRange === '1y') return t >= cut1y
-      return true
+      const inboundValue = getComparableDateValue(lead.inboundDate, lead.createdAt)
+      const updateValue = getComparableDateValue(lead.updateDate)
+      return (
+        matchesDateRange(inboundValue, dateRange, now, starts) &&
+        matchesDateRange(updateValue, updateDateRange, now, starts)
+      )
     }
     const q = (searchQuery ?? '').trim().toLowerCase()
     const qDigits = q.replace(/\D/g, '')
@@ -1459,16 +1518,97 @@ export default function ConsultationManagement() {
       const db = b.inboundDate ? new Date(b.inboundDate).getTime() : new Date(b.createdAt).getTime()
       return db - da
     })
-  }, [leads, listTab, searchQuery, dateRange, sortByNeglect])
+  }, [leads, listTab, searchQuery, dateRange, updateDateRange, sortByNeglect])
 
-  /** 진행상태 탭 변경 시 최상단 상담카드 자동 선택 */
-  useEffect(() => {
-    if (filteredLeads.length > 0) {
-      setSelectedLead(filteredLeads[0].id)
-    } else {
-      setSelectedLead(null)
+  const searchMatchedTabCounts = useMemo(() => {
+    const empty: Record<ListTab, number> = {
+      전체: 0,
+      미처리: 0,
+      견적중: 0,
+      진행중: 0,
+      종료: 0,
+      거절: 0,
+      무효: 0,
     }
-  }, [listTab])
+    const now = Date.now()
+    const starts = getDateRangeStarts(now)
+    const q = (searchQuery ?? '').trim().toLowerCase()
+    const qDigits = q.replace(/\D/g, '')
+    if (!q) return empty
+    const inRange = (lead: Lead) => {
+      const inboundValue = getComparableDateValue(lead.inboundDate, lead.createdAt)
+      const updateValue = getComparableDateValue(lead.updateDate)
+      return (
+        matchesDateRange(inboundValue, dateRange, now, starts) &&
+        matchesDateRange(updateValue, updateDateRange, now, starts)
+      )
+    }
+    const matchSearch = (l: Lead) => {
+      const company = (l.company ?? '').toLowerCase()
+      const displayName = (l.displayName ?? '').toLowerCase()
+      const name = (l.name ?? '').toLowerCase()
+      const projectName = (l.projectName ?? '').toLowerCase()
+      const contactDigits = (l.contact ?? '').replace(/\D/g, '')
+      return (
+        company.includes(q) ||
+        displayName.includes(q) ||
+        name.includes(q) ||
+        projectName.includes(q) ||
+        (qDigits.length > 0 && contactDigits.includes(qDigits)) ||
+        (qDigits.length === 4 && contactDigits.endsWith(qDigits))
+      )
+    }
+    for (const lead of leads) {
+      if (!inRange(lead) || !matchSearch(lead)) continue
+      empty[getListTabForLead(lead)] += 1
+    }
+    return empty
+  }, [leads, searchQuery, dateRange, updateDateRange, getListTabForLead])
+
+  const searchFocusLead = useMemo(() => {
+    const now = Date.now()
+    const starts = getDateRangeStarts(now)
+    const q = (searchQuery ?? '').trim().toLowerCase()
+    const qDigits = q.replace(/\D/g, '')
+    if (!q) return null
+    const inRange = (lead: Lead) => {
+      const inboundValue = getComparableDateValue(lead.inboundDate, lead.createdAt)
+      const updateValue = getComparableDateValue(lead.updateDate)
+      return (
+        matchesDateRange(inboundValue, dateRange, now, starts) &&
+        matchesDateRange(updateValue, updateDateRange, now, starts)
+      )
+    }
+    const matchSearch = (l: Lead) => {
+      const company = (l.company ?? '').toLowerCase()
+      const displayName = (l.displayName ?? '').toLowerCase()
+      const name = (l.name ?? '').toLowerCase()
+      const projectName = (l.projectName ?? '').toLowerCase()
+      const contactDigits = (l.contact ?? '').replace(/\D/g, '')
+      return (
+        company.includes(q) ||
+        displayName.includes(q) ||
+        name.includes(q) ||
+        projectName.includes(q) ||
+        (qDigits.length > 0 && contactDigits.includes(qDigits)) ||
+        (qDigits.length === 4 && contactDigits.endsWith(qDigits))
+      )
+    }
+    const matches = leads.filter((lead) => inRange(lead) && matchSearch(lead))
+    if (matches.length === 0) return null
+    return [...matches].sort((a, b) => {
+      if (a.pinned && !b.pinned) return -1
+      if (!a.pinned && b.pinned) return 1
+      if (sortByNeglect) {
+        const da = new Date(a.updateDate ?? a.inboundDate ?? a.createdAt).getTime()
+        const db = new Date(b.updateDate ?? b.inboundDate ?? b.createdAt).getTime()
+        return db - da
+      }
+      const da = a.inboundDate ? new Date(a.inboundDate).getTime() : new Date(a.createdAt).getTime()
+      const db = b.inboundDate ? new Date(b.inboundDate).getTime() : new Date(b.createdAt).getTime()
+      return db - da
+    })[0]
+  }, [leads, searchQuery, dateRange, updateDateRange, sortByNeglect])
 
   /** 검색/기간 필터 변경 시: 현재 선택이 필터 결과에 없으면 첫 번째 결과로 선택 (검색 시 우측 패널이 결과와 맞도록) */
   useEffect(() => {
@@ -1479,6 +1619,29 @@ export default function ConsultationManagement() {
       return filteredLeads.length > 0 ? filteredLeads[0].id : null
     })
   }, [filteredLeads])
+
+  const lastAutoSearchFocusKeyRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    const q = (searchQuery ?? '').trim().toLowerCase()
+    if (!q) {
+      lastAutoSearchFocusKeyRef.current = null
+      return
+    }
+    if (!searchFocusLead) return
+    const nextTab = getListTabForLead(searchFocusLead)
+    const focusKey = `${q}:${searchFocusLead.id}:${nextTab}`
+    if (lastAutoSearchFocusKeyRef.current === focusKey) return
+    lastAutoSearchFocusKeyRef.current = focusKey
+    if (listTab !== nextTab) setListTab(nextTab)
+    setSelectedLead(searchFocusLead.id)
+    setScrollToLeadId(searchFocusLead.id)
+    setHighlightedLeadId(searchFocusLead.id)
+    const t = setTimeout(() => {
+      setHighlightedLeadId((current) => (current === searchFocusLead.id ? null : current))
+    }, 2200)
+    return () => clearTimeout(t)
+  }, [searchQuery, searchFocusLead, getListTabForLead, listTab])
 
   const totalPages = Math.max(1, Math.ceil(filteredLeads.length / LIST_PAGE_SIZE))
   const paginatedLeads = useMemo(
@@ -1545,7 +1708,24 @@ export default function ConsultationManagement() {
     return () => { cancelled = true }
   }, [paginatedLeads])
 
-  /** 카드별 이미지 첨부 개수 조회 — consultation_messages 중 FILE + 이미지(Cloudinary URL 또는 metadata.public_id) */
+  const loadImageCountsForConsultations = useCallback(async (consultationIds: string[]) => {
+    if (consultationIds.length === 0) return {}
+    const wantedIds = new Set(consultationIds)
+    const { data: rows } = await supabase.from('image_assets').select('metadata')
+    const byId: Record<string, number> = {}
+    for (const row of rows ?? []) {
+      const metadata = (row as { metadata?: Record<string, unknown> | null }).metadata
+      const consultationId =
+        typeof metadata?.consultation_id === 'string' && metadata.consultation_id.trim()
+          ? metadata.consultation_id.trim()
+          : ''
+      if (!consultationId || !wantedIds.has(consultationId)) continue
+      byId[consultationId] = (byId[consultationId] ?? 0) + 1
+    }
+    return byId
+  }, [])
+
+  /** 카드별 이미지 첨부 개수 조회 — image_assets.metadata.consultation_id 기준 */
   useEffect(() => {
     const ids = paginatedLeads.map((l) => l.id)
     if (ids.length === 0) {
@@ -1554,40 +1734,19 @@ export default function ConsultationManagement() {
     }
     let cancelled = false
       ; (async () => {
-        const { data: rows } = await supabase
-          .from('consultation_messages')
-          .select('consultation_id, file_url, metadata')
-          .in('consultation_id', ids)
-          .eq('message_type', 'FILE')
+        const byId = await loadImageCountsForConsultations(ids)
         if (cancelled) return
-        const byId: Record<string, number> = {}
-        for (const row of rows ?? []) {
-          const r = row as { consultation_id: string; file_url?: string | null; metadata?: { public_id?: string } | null }
-          const isImage = (r.file_url?.startsWith('http') ?? false) || !!(r.metadata as { public_id?: string } | null)?.public_id
-          if (isImage) {
-            byId[r.consultation_id] = (byId[r.consultation_id] ?? 0) + 1
-          }
-        }
         setImageCountByConsultationId(byId)
       })()
     return () => { cancelled = true }
-  }, [paginatedLeads])
+  }, [paginatedLeads, loadImageCountsForConsultations])
 
-  /** 특정 상담의 이미지 개수만 재조회 후 state 반영 (히스토리에서 이미지 추가 시 호출) */
+  /** 특정 상담의 이미지 개수만 재조회 후 state 반영 (image_assets 기준) */
   const refetchImageCountForConsultation = useCallback(async (consultationId: string) => {
-    const { data: rows } = await supabase
-      .from('consultation_messages')
-      .select('consultation_id, file_url, metadata')
-      .eq('consultation_id', consultationId)
-      .eq('message_type', 'FILE')
-    let count = 0
-    for (const row of rows ?? []) {
-      const r = row as { consultation_id: string; file_url?: string | null; metadata?: { public_id?: string } | null }
-      const isImage = (r.file_url?.startsWith('http') ?? false) || !!(r.metadata as { public_id?: string } | null)?.public_id
-      if (isImage) count++
-    }
+    const byId = await loadImageCountsForConsultations([consultationId])
+    const count = byId[consultationId] ?? 0
     setImageCountByConsultationId((prev) => ({ ...prev, [consultationId]: count }))
-  }, [])
+  }, [loadImageCountsForConsultations])
 
   const handleSubmitConsultation = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -2255,6 +2414,8 @@ export default function ConsultationManagement() {
         detail: `상태가 [${stage}]로 변경되었습니다`,
         metadata: { type: 'status_change', from_stage: prevStage, to_stage: stage },
       })
+      setSelectedLead(leadId)
+      setScrollToLeadId(leadId)
       if (stage === '시공완료') setListTab('종료')
       else if (stage === '상담접수') setListTab('미처리')
       else if (stage === '견적중') setListTab('견적중')
@@ -2747,6 +2908,31 @@ export default function ConsultationManagement() {
     }
     void fetchLeads()
   }, [selectedLeadData, pendingEstimateAmountRef, setLeads, setEstimateFilesList, setEstimateListRefreshKey, handleStageChange, fetchLeads])
+
+  const handleTakeoutImportToConsultation = useCallback(async (payload: {
+    candidate: { assetUrl: string; fileName: string; spaceId: string; spaceIdNormalized: string }
+    consultationId: string
+  }) => {
+    const response = await fetch(payload.candidate.assetUrl)
+    if (!response.ok) throw new Error('선택한 이미지를 불러오지 못했습니다.')
+    const blob = await response.blob()
+    const file = new File([blob], payload.candidate.fileName, {
+      type: blob.type || 'image/png',
+      lastModified: Date.now(),
+    })
+
+    setSelectedLead(payload.consultationId)
+    setDetailPanelTab('estimate')
+    setPendingTakeoutImport({
+      consultationId: payload.consultationId,
+      file,
+      requestId: `${payload.consultationId}-${payload.candidate.fileName}-${Date.now()}`,
+    })
+
+    const targetLead = leads.find((lead) => lead.id === payload.consultationId)
+    const targetName = targetLead?.displayName || targetLead?.company || '해당 상담카드'
+    toast.success(`${targetName}의 AI 검수 미리보기로 이미지를 불러왔습니다.`)
+  }, [leads])
 
   /** 선택한 견적 물리 삭제 후 상담 카드 금액/상태 동기화 */
   const handleDeleteSelectedEstimates = useCallback(async () => {
@@ -3682,8 +3868,8 @@ export default function ConsultationManagement() {
           </DialogContent>
         </Dialog>
 
-        {/* 대시보드 1:1 분할 — 좌측 리스트 50% | 우측 상세 50%, 업체명 가독성 확보 */}
-        <div className="grid grid-cols-2 gap-4 flex-1 min-h-0">
+        {/* 상담 관리 전용: 우측 상세 패널은 데스크톱에서 고정해 좌측 탐색 중에도 기준 화면을 유지 */}
+        <div className="grid grid-cols-2 items-start gap-4 flex-1 min-h-0">
           <div className={`min-w-0 flex flex-col gap-2 ${isMobile && selectedLead ? 'hidden' : ''}`}>
             {/* 검색 + 기간 필터 — 상단 고정 */}
             <div className="flex flex-wrap items-center gap-2 shrink-0">
@@ -3696,18 +3882,34 @@ export default function ConsultationManagement() {
                   className="pl-8 h-9 text-sm"
                 />
               </div>
-              <select
-                value={dateRange}
-                onChange={(e) => { setDateRange(e.target.value as DateRangeKey); setListPage(0) }}
-                className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-              >
-                <option value="all">전체 기간</option>
-                <option value="thisMonth">이번달</option>
-                <option value="1m">최근 1개월</option>
-                <option value="3m">최근 3개월</option>
-                <option value="6m">최근 6개월</option>
-                <option value="1y">최근 1년</option>
-              </select>
+              <div className="flex items-center gap-1 shrink-0">
+                <span className="text-xs text-muted-foreground">인입일</span>
+                <select
+                  value={dateRange}
+                  onChange={(e) => { setDateRange(e.target.value as DateRangeKey); setListPage(0) }}
+                  className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                  aria-label="인입일 기준 기간 필터"
+                  title="인입일 기준 기간 필터"
+                >
+                  {DATE_RANGE_OPTIONS.map((option) => (
+                    <option key={`inbound-${option.value}`} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                <span className="text-xs text-muted-foreground">업데이트일</span>
+                <select
+                  value={updateDateRange}
+                  onChange={(e) => { setUpdateDateRange(e.target.value as DateRangeKey); setListPage(0) }}
+                  className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                  aria-label="최신업데이트일 기준 기간 필터"
+                  title="최신업데이트일 기준 기간 필터"
+                >
+                  {DATE_RANGE_OPTIONS.map((option) => (
+                    <option key={`update-${option.value}`} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </div>
               <Button
                 variant={sortByNeglect ? 'secondary' : 'outline'}
                 size="sm"
@@ -3743,15 +3945,38 @@ export default function ConsultationManagement() {
                   <Tabs value={listTab} onValueChange={(v) => { setListTab(v as ListTab); setListPage(0) }} className="flex-1 flex flex-col min-h-0">
                     <TabsList className="w-full justify-start rounded-none border-b border-border bg-transparent p-0 h-auto shrink-0 flex-wrap">
                       {(['전체', '미처리', '견적중', '진행중', '종료', '거절', '무효'] as const).map((tab) => (
-                        <TabsTrigger key={tab} value={tab} className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-2.5 py-1.5 text-xs sm:px-3 sm:py-2 sm:text-sm">
+                        <TabsTrigger
+                          key={tab}
+                          value={tab}
+                          className={cn(
+                            'rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-2.5 py-1.5 text-xs sm:px-3 sm:py-2 sm:text-sm',
+                            searchQuery.trim() &&
+                              searchMatchedTabCounts[tab] > 0 &&
+                              'bg-amber-500/10 text-amber-800 dark:text-amber-200',
+                            searchQuery.trim() &&
+                              searchFocusLead &&
+                              getListTabForLead(searchFocusLead) === tab &&
+                              'border-amber-500 data-[state=active]:border-amber-500'
+                          )}
+                        >
                           <span className="inline-flex items-center gap-1.5">
-                            <span>{tab} {tabCounts[tab]}</span>
+                            <span className={cn(
+                              searchQuery.trim() && searchMatchedTabCounts[tab] > 0 && 'font-semibold'
+                            )}>{tab} {tabCounts[tab]}</span>
                             {tab === '종료' && tabCounts.종료재활동 > 0 && (
                               <span
                                 className="inline-flex items-center rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300 ring-1 ring-amber-500/30"
-                                title={`종료 카드 중 최근 ${COMPLETED_REACTIVATION_WINDOW_DAYS}일 내 다시 활동한 상담 ${tabCounts.종료재활동}건`}
+                                title={`종료 카드 중 최근 ${REACTIVATION_WINDOW_DAYS}일 내 다시 활동한 상담 ${tabCounts.종료재활동}건`}
                               >
                                 활동 {tabCounts.종료재활동}
+                              </span>
+                            )}
+                            {tab === '거절' && tabCounts.거절재활동 > 0 && (
+                              <span
+                                className="inline-flex items-center rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300 ring-1 ring-amber-500/30"
+                                title={`거절 카드 중 최근 ${REACTIVATION_WINDOW_DAYS}일 내 다시 활동한 상담 ${tabCounts.거절재활동}건`}
+                              >
+                                활동 {tabCounts.거절재활동}
                               </span>
                             )}
                           </span>
@@ -3811,7 +4036,7 @@ export default function ConsultationManagement() {
           {/* 우측: 상담 상세 패널(채팅 메인) — [상담 히스토리 | 실측 자료 | 견적 관리] 탭 / 모바일: 풀폭 + 목록으로 버튼 */}
           <aside
             className={`flex flex-col border border-border rounded-xl bg-card overflow-hidden transition-[opacity] duration-200 min-w-0 ${selectedLeadData
-              ? (isMobile ? 'w-full opacity-100' : 'flex-1 opacity-100')
+              ? (isMobile ? 'w-full opacity-100' : 'sticky top-6 h-[calc(100vh-8rem)] opacity-100')
               : 'w-0 min-w-0 opacity-0 pointer-events-none overflow-hidden border-0'
               }`}
           >
@@ -3827,8 +4052,8 @@ export default function ConsultationManagement() {
                 )}
                 <TabsList className="w-full grid grid-cols-3 rounded-none border-b border-border bg-muted/50 h-10">
                   <TabsTrigger value="history" className="text-xs rounded-none">상담 히스토리</TabsTrigger>
-                  <TabsTrigger value="measurement" className="text-xs rounded-none">배치도&발주서</TabsTrigger>
                   <TabsTrigger value="estimate" className="text-xs rounded-none">견적 관리</TabsTrigger>
+                  <TabsTrigger value="measurement" className="text-xs rounded-none">배치도&발주서</TabsTrigger>
                 </TabsList>
                 <div className="flex-1 overflow-y-auto min-h-0">
                   {/* 탭 1: 상담 히스토리 */}
@@ -3846,21 +4071,48 @@ export default function ConsultationManagement() {
                       refetchImageCountForConsultation={refetchImageCountForConsultation}
                     />
                   </div>
-                  {/* 탭 2: 실측·발주서 — BLUEPRINT Supabase Storage 기반 비주얼 갤러리(파일 리스트 아님), 퀵뷰 라이트박스 */}
-                  <div className={detailPanelTab === 'measurement' ? 'p-4 space-y-4' : 'hidden'}>
-                    <ConsultationMeasurementTab
-                      consultationId={selectedLeadData.id}
-                      projectName={selectedLeadData.company || selectedLeadData.displayName || ''}
-                      orderDocuments={orderDocumentsList}
-                      measurementDrawingPath={selectedLeadData.measurementDrawingPath}
-                      onOrderDocumentsChange={(data) => setOrderDocumentsList(data ?? [])}
-                    />
-                  </div>
-                  {/* 탭 3: 견적 관리 */}
+                  {/* 탭 2: 견적 관리 */}
                   <div className={detailPanelTab === 'estimate' ? 'p-4 flex flex-col min-h-0' : 'hidden'}>
                     <ConsultationEstimateTab
                       selectedLeadData={selectedLeadData}
+                      takeoutSpaceLinks={leads
+                        .map((lead) => ({
+                          spaceId: lead.channelChatId || lead.google_chat_url || '',
+                          displayName: lead.displayName || lead.company || '',
+                          consultationId: lead.id,
+                          inboundDate: lead.inboundDate ?? null,
+                        }))
+                        .filter((item) => item.spaceId)}
+                      onApplyTakeoutSearch={({ query, consultationId }) => {
+                        const targetLead = consultationId ? leads.find((lead) => lead.id === consultationId) : null
+                        let nextTab: ListTab = '전체'
+                        if (targetLead?.status === '거절') nextTab = '거절'
+                        else if (targetLead?.status === '무효') nextTab = '무효'
+                        else if (targetLead?.workflowStage === '시공완료') nextTab = '종료'
+                        else if (targetLead?.workflowStage === '상담접수') nextTab = '미처리'
+                        else if (targetLead?.workflowStage === '견적중') nextTab = '견적중'
+                        else if (targetLead?.workflowStage === '계약완료') nextTab = '진행중'
+
+                        setSelectedLead(null)
+                        setListPage(0)
+                        setListTab(nextTab)
+                        setSearchQuery(query)
+                      }}
+                      onImportTakeoutCandidate={handleTakeoutImportToConsultation}
                       estimateFilesList={estimateFilesList}
+                      takeoutImportRequest={
+                        pendingTakeoutImport?.consultationId === selectedLeadData.id
+                          ? {
+                            file: pendingTakeoutImport.file,
+                            requestId: pendingTakeoutImport.requestId,
+                          }
+                          : null
+                      }
+                      onTakeoutImportHandled={() => {
+                        setPendingTakeoutImport((current) =>
+                          current?.consultationId === selectedLeadData.id ? null : current
+                        )
+                      }}
                       onFileUploadComplete={handleEstimateFileUploadComplete}
                       estimateListFilter={estimateListFilter}
                       setEstimateListFilter={setEstimateListFilter}
@@ -3876,6 +4128,16 @@ export default function ConsultationManagement() {
                       setEstimateModalEditId={setEstimateModalEditId}
                       setEstimateModalInitialData={setEstimateModalInitialData}
                       setEstimateModalOpen={setEstimateModalOpen}
+                    />
+                  </div>
+                  {/* 탭 3: 실측·발주서 — BLUEPRINT Supabase Storage 기반 비주얼 갤러리(파일 리스트 아님), 퀵뷰 라이트박스 */}
+                  <div className={detailPanelTab === 'measurement' ? 'p-4 space-y-4' : 'hidden'}>
+                    <ConsultationMeasurementTab
+                      consultationId={selectedLeadData.id}
+                      projectName={selectedLeadData.company || selectedLeadData.displayName || ''}
+                      orderDocuments={orderDocumentsList}
+                      measurementDrawingPath={selectedLeadData.measurementDrawingPath}
+                      onOrderDocumentsChange={(data) => setOrderDocumentsList(data ?? [])}
                     />
                   </div>
                 </div>
@@ -4337,13 +4599,13 @@ export default function ConsultationManagement() {
                       estimateModalInitialData
                         ? {
                           ...(selectedLeadData && {
-                            recipientName: selectedLeadData.company?.trim() || '(업체명 없음)',
+                            recipientName: selectedLeadData.contact?.trim() || '',
                             recipientContact: selectedLeadData.contact ?? '',
                           }),
                           ...estimateModalInitialData,
                         }
                         : {
-                          recipientName: selectedLeadData?.company?.trim() || '(업체명 없음)',
+                          recipientName: selectedLeadData?.contact?.trim() || '',
                           recipientContact: selectedLeadData?.contact ?? '',
                         }
                     }

@@ -7,10 +7,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Link } from 'react-router-dom'
-import { toast } from 'sonner'
-import { supabase } from '@/lib/supabase'
 import { fetchShowroomImageAssets, type ShowroomImageAsset } from '@/lib/imageAssetService'
-import type { Json } from '@/types/database'
 import {
   Dialog,
   DialogContent,
@@ -18,7 +15,7 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Search, X, ChevronLeft, ChevronRight, LayoutGrid, Package, Images, Sparkles, FileText, MousePointerClick, MessageCircle, FileCheck, Users, Wrench, ClipboardCheck, ArrowRight } from 'lucide-react'
+import { Search, X, ChevronLeft, ChevronRight, LayoutGrid, Package, Building2, Images, Sparkles, FileText, MousePointerClick, MessageCircle, FileCheck, Users, Wrench, ClipboardCheck, ArrowRight, Ruler } from 'lucide-react'
 
 /** 말풍선 문구에서 하이라이트할 핵심 단어 (주황/브랜드 강조색) */
 const HIGHLIGHT_KEYWORDS = ['실패', '매출', '디테일', '통제력', '점유율', '프리미엄', '원스톱', '품격', '인건비']
@@ -57,13 +54,13 @@ function highlightKeywords(text: string) {
 const CONCERN_CARDS: { tag: string; industryFilter: string; emoji: string; message: string; imageSrc?: string }[] = [
   { tag: '관리형 창업 또는 전환', industryFilter: '관리형', emoji: '💼', message: '관리형 오픈한다고 만석이 되는 시기는 끝났습니다. 수익률을 가르는 건 화려함이 아니라, \'실패 없는 관리 동선\'의 디테일입니다. 확인해 보시겠습니까? 📋', imageSrc: '/showroom-concern-management.png' },
   { tag: '매출 향상 스터디카페 리뉴얼', industryFilter: '스터디카페', emoji: '📈', message: '무작정 예쁘게만 바꾼다고 매출이 오를까요? 잘되는 곳은 \'좌석 회전율\'을 설계합니다. 매출이 좋은 곳들은 그 디테일이 다릅니다. 📈', imageSrc: '/showroom-concern-studycafe-sales.png' },
+  { tag: '스터디카페를 관리형 스타일로', industryFilter: '스터디카페리뉴얼', emoji: '🎯', message: '기존 스터디카페처럼 보여서는 차별화가 어렵습니다. 관리형 스타일 리뉴얼로 경쟁력과 엑시트 전략을 함께 준비해 보시겠습니까? 🧭' },
   { tag: '스터디카페 같은 학원 자습실', industryFilter: '학원', emoji: '😭', message: '공간만 만든다고 애들이 남을까요? 스터디카페로 유출되는 아이들을 붙잡는 건 \'공부하고 싶게 만드는\' 한 끗 차이의 가구 배치입니다. 🏫', imageSrc: '/showroom-concern-academy-study.png' },
   { tag: '고교학점제 자습공간 구축', industryFilter: '학교', emoji: '📚', message: '예산만 낭비하는 교실 리뉴얼은 이제 그만하세요. 실제 교육 현장에서 아이들의 학습 몰입도가 검증된 \'성공적인 학교 공간\'의 표준을 제안드립니다. 🏛️', imageSrc: '/showroom-concern-highschool-credit.png' },
   { tag: '아파트 독서실 리뉴얼', industryFilter: '아파트', emoji: '🏠', message: '입주민들이 찾지 않는 무늬만 독서실인가요? 우리 아파트 가치를 높이고 아이들이 먼저 찾는 \'성공적인 커뮤니티\'의 디테일을 담았습니다. ✨', imageSrc: '/showroom-concern-apartment-reading.png' },
-  { tag: '무인 창업 공간', industryFilter: '무인창업', emoji: '🤖', message: '인건비 부담 없이, 진짜 무인으로 돌아가는 공간 창업을 고민 중이신가요? 🤖', imageSrc: '/showroom-concern-unmanned-startup.png' },
 ]
 
-type ViewMode = 'site' | 'product'
+type ViewMode = 'site' | 'product' | 'industry'
 
 /** 현장별 그룹: 대표 이미지(is_main), 현장명, 지역, 업종, 제품명, 색상 */
 interface SiteGroup {
@@ -74,6 +71,7 @@ interface SiteGroup {
   colors: string[]
   images: ShowroomImageAsset[]
   mainImage: ShowroomImageAsset | null
+  hasBeforeAfter: boolean
 }
 
 /** 제품별 그룹: 제품명, 현장명·지역·업종·색상(해당 제품 쓰인 사례 기준) */
@@ -101,7 +99,9 @@ function buildSiteGroups(assets: ShowroomImageAsset[]): SiteGroup[] {
     const businessTypes = Array.from(new Set(images.map((i) => i.business_type?.trim()).filter(Boolean) as string[]))
     const products = Array.from(new Set(images.map((i) => i.product_name?.trim()).filter(Boolean) as string[]))
     const colors = Array.from(new Set(images.map((i) => i.color_name?.trim()).filter(Boolean) as string[]))
-    groups.push({ siteName, location, businessTypes, products, colors, images, mainImage })
+    const hasBefore = images.some((i) => i.before_after_role === 'before')
+    const hasAfter = images.some((i) => i.before_after_role === 'after')
+    groups.push({ siteName, location, businessTypes, products, colors, images, mainImage, hasBeforeAfter: hasBefore && hasAfter })
   }
   return groups.sort((a, b) => a.siteName.localeCompare(b.siteName, 'ko'))
 }
@@ -125,29 +125,74 @@ function buildProductGroups(assets: ShowroomImageAsset[]): ProductGroup[] {
     .sort((a, b) => a.productName.localeCompare(b.productName, 'ko'))
 }
 
+function buildShowroomContactUrl(params: {
+  siteName?: string | null
+  category?: string | null
+  imageUrl?: string | null
+  showroomContext?: string | null
+  showroomEntryLabel?: string | null
+}): string {
+  const query = new URLSearchParams()
+  if (params.siteName?.trim()) query.set('site_name', params.siteName.trim())
+  if (params.category?.trim()) query.set('category', params.category.trim())
+  if (params.imageUrl?.trim()) query.set('image_url', params.imageUrl.trim())
+  if (params.showroomContext?.trim()) query.set('showroom_context', params.showroomContext.trim())
+  if (params.showroomEntryLabel?.trim()) query.set('showroom_entry_label', params.showroomEntryLabel.trim())
+  return `/contact?${query.toString()}`
+}
+
+function isConcernTag(value: string | null | undefined): value is string {
+  if (!value) return false
+  return CONCERN_CARDS.some((card) => card.tag === value)
+}
+
 export default function ShowroomPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [assets, setAssets] = useState<ShowroomImageAsset[]>([])
   const [loading, setLoading] = useState(true)
   const [viewMode, setViewMode] = useState<ViewMode>('site')
-  const [searchQuery, setSearchQuery] = useState(() => searchParams.get('tag') ?? '')
-  const [detailOpen, setDetailOpen] = useState<'site' | 'product' | null>(null)
+  const [selectedProductFilter, setSelectedProductFilter] = useState<string | null>(null)
+  const [selectedIndustryFilter, setSelectedIndustryFilter] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState(() => searchParams.get('q') ?? '')
+  const [selectedConcernTag, setSelectedConcernTag] = useState<string | null>(() => {
+    const concern = searchParams.get('concern')
+    if (isConcernTag(concern)) return concern
+    const legacyTag = searchParams.get('tag')
+    return isConcernTag(legacyTag) ? legacyTag : null
+  })
+  const [detailOpen, setDetailOpen] = useState<'site' | 'product' | 'beforeAfter' | null>(null)
   const [detailKey, setDetailKey] = useState<string | null>(null)
   const [lightboxIndex, setLightboxIndex] = useState(0)
-  const [unmannedNameOrCompany, setUnmannedNameOrCompany] = useState('')
-  const [unmannedContact, setUnmannedContact] = useState('')
-  const [unmannedRegion, setUnmannedRegion] = useState('')
-  const [unmannedSubmitting, setUnmannedSubmitting] = useState(false)
 
-  // 딥링크: URL ?tag= 변경 시(뒤로가기 등) 검색어 동기화
+  // 딥링크: URL ?q, ?concern 변경 시(뒤로가기 등) 상태 동기화. 레거시 ?tag도 지원.
   useEffect(() => {
-    const tag = searchParams.get('tag') ?? ''
-    setSearchQuery(tag)
+    const q = searchParams.get('q')
+    const concern = searchParams.get('concern')
+    const legacyTag = searchParams.get('tag')
+    setSearchQuery(q ?? (isConcernTag(legacyTag) ? '' : (legacyTag ?? '')))
+    setSelectedConcernTag(isConcernTag(concern) ? concern : (isConcernTag(legacyTag) ? legacyTag : null))
   }, [searchParams])
+
+  const updateShowroomParams = (next: { q?: string; concern?: string | null }) => {
+    const params = new URLSearchParams(searchParams)
+    const q = next.q ?? searchQuery
+    const concern = next.concern === undefined ? selectedConcernTag : next.concern
+    params.delete('tag')
+    if (q.trim()) params.set('q', q.trim())
+    else params.delete('q')
+    if (concern?.trim()) params.set('concern', concern.trim())
+    else params.delete('concern')
+    setSearchParams(params)
+  }
 
   const setSearchQueryAndUrl = (value: string) => {
     setSearchQuery(value)
-    setSearchParams(value ? { tag: value } : {})
+    updateShowroomParams({ q: value })
+  }
+
+  const setConcernTagAndUrl = (value: string | null) => {
+    setSelectedConcernTag(value)
+    updateShowroomParams({ concern: value })
   }
 
   useEffect(() => {
@@ -161,16 +206,38 @@ export default function ShowroomPage() {
     return () => { cancelled = true }
   }, [])
 
-  const siteGroups = useMemo(() => buildSiteGroups(assets), [assets])
-  const productGroups = useMemo(() => buildProductGroups(assets), [assets])
+  const showroomAssets = useMemo(
+    () => assets.filter((asset) => !asset.before_after_role),
+    [assets]
+  )
+  const beforeAfterAssets = useMemo(
+    () => assets.filter((asset) => asset.before_after_role === 'before' || asset.before_after_role === 'after'),
+    [assets]
+  )
+  const siteGroups = useMemo(() => buildSiteGroups(showroomAssets), [showroomAssets])
+  const productGroups = useMemo(() => buildProductGroups(showroomAssets), [showroomAssets])
+  const beforeAfterGroups = useMemo(
+    () => buildSiteGroups(beforeAfterAssets).filter((group) => group.hasBeforeAfter),
+    [beforeAfterAssets]
+  )
+  const productOptions = useMemo(
+    () => productGroups.map((group) => group.productName),
+    [productGroups]
+  )
+  const industryOptions = useMemo(
+    () =>
+      Array.from(new Set(showroomAssets.map((a) => a.business_type?.trim()).filter(Boolean) as string[]))
+        .sort((a, b) => a.localeCompare(b, 'ko')),
+    [showroomAssets]
+  )
 
   const searchTrim = searchQuery.trim()
   const searchLower = searchTrim.toLowerCase()
   /** 카드 태그와 일치할 때 해당 카드의 업종 키워드로만 필터 (업종 기준) */
   const industryFilterForTag = useMemo(() => {
-    const card = CONCERN_CARDS.find((c) => c.tag === searchTrim)
+    const card = CONCERN_CARDS.find((c) => c.tag === selectedConcernTag)
     return card?.industryFilter ?? null
-  }, [searchTrim])
+  }, [selectedConcernTag])
 
   const filteredSiteGroups = useMemo(() => {
     if (!searchTrim) return siteGroups
@@ -208,17 +275,49 @@ export default function ShowroomPage() {
     )
   }, [productGroups, searchTrim, searchLower, industryFilterForTag])
 
+  const productFilteredGroups = useMemo(() => {
+    if (!selectedProductFilter) return filteredProductGroups
+    return filteredProductGroups.filter((g) => g.productName === selectedProductFilter)
+  }, [filteredProductGroups, selectedProductFilter])
+
+  const industryFilteredSiteGroups = useMemo(() => {
+    if (!selectedIndustryFilter) return filteredSiteGroups
+    return filteredSiteGroups.filter((g) => g.businessTypes.some((b) => b === selectedIndustryFilter))
+  }, [filteredSiteGroups, selectedIndustryFilter])
+
+  const beforeAfterShowcaseGroups = useMemo(() => {
+    if (selectedConcernTag === '스터디카페를 관리형 스타일로') {
+      return beforeAfterGroups.filter((group) =>
+        group.businessTypes.some((type) => type.includes('스터디카페') || type.includes('관리형'))
+      )
+    }
+    return []
+  }, [beforeAfterGroups, selectedConcernTag])
+  const showroomContactContext = useMemo(() => {
+    if (selectedConcernTag === '스터디카페를 관리형 스타일로') {
+      return {
+        showroomContext: '관리형 스타일 전환과 엑시트 전략을 염두에 두고 문의한 고객',
+        showroomEntryLabel: '스터디카페를 관리형 스타일로',
+      }
+    }
+    return null
+  }, [selectedConcernTag])
+
   const detailImages = useMemo(() => {
     if (!detailKey || detailOpen === null) return []
     if (detailOpen === 'site') {
       const g = siteGroups.find((x) => x.siteName === detailKey)
       return g?.images ?? []
     }
+    if (detailOpen === 'beforeAfter') {
+      const g = beforeAfterGroups.find((x) => x.siteName === detailKey)
+      return g?.images ?? []
+    }
     const g = productGroups.find((x) => x.productName === detailKey)
     return g?.images ?? []
-  }, [detailOpen, detailKey, siteGroups, productGroups])
+  }, [detailOpen, detailKey, siteGroups, productGroups, beforeAfterGroups])
 
-  const openDetail = (mode: 'site' | 'product', key: string) => {
+  const openDetail = (mode: 'site' | 'product' | 'beforeAfter', key: string) => {
     setDetailOpen(mode)
     setDetailKey(key)
     setLightboxIndex(0)
@@ -240,9 +339,30 @@ export default function ShowroomPage() {
       {/* 헤더: 타이틀 + 토글 + 검색 */}
       <header className="sticky top-0 z-10 bg-white/90 backdrop-blur border-b border-neutral-200 px-4 py-4 md:px-8">
         <div className="max-w-6xl mx-auto flex flex-col gap-4">
-          <h1 className="text-xl md:text-2xl font-semibold text-neutral-900 tracking-tight">
-            시공사례 쇼룸
-          </h1>
+          <div className="flex items-center justify-between gap-3">
+            <h1 className="text-xl md:text-2xl font-semibold text-neutral-900 tracking-tight">
+              시공사례 쇼룸
+            </h1>
+            <div className="flex items-center gap-2">
+              <Link to="/consultation">
+                <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
+                  <Users className="h-4 w-4" />
+                  상담 관리
+                </Button>
+              </Link>
+              <Link to="/order-assets">
+                <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
+                  <Ruler className="h-4 w-4" />
+                  발주 자산 관리
+                </Button>
+              </Link>
+              <Link to="/image-assets">
+                <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
+                  이미지 자산 관리
+                </Button>
+              </Link>
+            </div>
+          </div>
           <div className="flex flex-col sm:flex-row sm:items-center gap-3">
             <div className="flex rounded-lg border border-neutral-200 p-0.5 bg-neutral-100/80">
               <button
@@ -253,7 +373,7 @@ export default function ShowroomPage() {
                 }`}
               >
                 <LayoutGrid className="h-4 w-4" />
-                현장 중심
+                현장별로 보기
               </button>
               <button
                 type="button"
@@ -263,19 +383,95 @@ export default function ShowroomPage() {
                 }`}
               >
                 <Package className="h-4 w-4" />
-                제품 중심
+                제품별로 보기
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('industry')}
+                className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors ${
+                  viewMode === 'industry' ? 'bg-white text-neutral-900 shadow-sm' : 'text-neutral-600 hover:text-neutral-900'
+                }`}
+              >
+                <Building2 className="h-4 w-4" />
+                업종별로 보기
               </button>
             </div>
             <div className="relative flex-1 max-w-md">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-400" />
               <Input
-                placeholder={viewMode === 'site' ? '현장명, 지역, 컬러 검색' : '제품명 검색 (예: 아카시아, 원목)'}
+                placeholder={
+                  viewMode === 'site'
+                    ? '현장명, 지역, 컬러 검색'
+                    : viewMode === 'product'
+                      ? '제품명 검색 (예: 아카시아, 원목)'
+                      : '선택한 업종 안에서 현장명, 제품명 검색'
+                }
                 value={searchQuery}
                 onChange={(e) => setSearchQueryAndUrl(e.target.value)}
                 className="pl-9 h-10 bg-white border-neutral-200 rounded-lg"
               />
             </div>
           </div>
+          {viewMode === 'product' && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-neutral-500 shrink-0">제품 선택</span>
+              <button
+                type="button"
+                onClick={() => setSelectedProductFilter(null)}
+                className={`rounded-md border px-3 py-1.5 text-sm transition-colors ${
+                  selectedProductFilter === null
+                    ? 'border-neutral-900 bg-neutral-900 text-white'
+                    : 'border-neutral-200 bg-white text-neutral-700 hover:border-neutral-300 hover:text-neutral-900'
+                }`}
+              >
+                전체
+              </button>
+              {productOptions.map((product) => (
+                <button
+                  key={product}
+                  type="button"
+                  onClick={() => setSelectedProductFilter(product)}
+                  className={`rounded-md border px-3 py-1.5 text-sm transition-colors ${
+                    selectedProductFilter === product
+                      ? 'border-neutral-900 bg-neutral-900 text-white'
+                      : 'border-neutral-200 bg-white text-neutral-700 hover:border-neutral-300 hover:text-neutral-900'
+                  }`}
+                >
+                  {product}
+                </button>
+              ))}
+            </div>
+          )}
+          {viewMode === 'industry' && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-neutral-500 shrink-0">업종 선택</span>
+              <button
+                type="button"
+                onClick={() => setSelectedIndustryFilter(null)}
+                className={`rounded-md border px-3 py-1.5 text-sm transition-colors ${
+                  selectedIndustryFilter === null
+                    ? 'border-neutral-900 bg-neutral-900 text-white'
+                    : 'border-neutral-200 bg-white text-neutral-700 hover:border-neutral-300 hover:text-neutral-900'
+                }`}
+              >
+                전체
+              </button>
+              {industryOptions.map((industry) => (
+                <button
+                  key={industry}
+                  type="button"
+                  onClick={() => setSelectedIndustryFilter(industry)}
+                  className={`rounded-md border px-3 py-1.5 text-sm transition-colors ${
+                    selectedIndustryFilter === industry
+                      ? 'border-neutral-900 bg-neutral-900 text-white'
+                      : 'border-neutral-200 bg-white text-neutral-700 hover:border-neutral-300 hover:text-neutral-900'
+                  }`}
+                >
+                  {industry}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </header>
 
@@ -286,6 +482,9 @@ export default function ShowroomPage() {
             실패하지 않는 공간 기획, 그 차이는 <span className="text-amber-600">디테일</span>에 있습니다.
           </h1>
           <p className="text-neutral-600 text-base md:text-lg">대표님의 공간, 어떤 변화가 필요하신가요?</p>
+          <p className="text-xs md:text-sm text-neutral-500 mt-2">
+            이 페이지는 다양한 사례를 탐색하는 쇼룸입니다. 상담 중 특정 사진을 따로 안내받으셨다면 전달받은 선별 공유 링크를 확인해 주세요.
+          </p>
         </section>
 
         {/* 전문가가 먼저 질문하는 공감 카드: 말풍선 + 핵심어 하이라이트 + 성공 사례 보기 CTA */}
@@ -293,10 +492,12 @@ export default function ShowroomPage() {
           <h2 id="showroom-concern-heading" className="sr-only">고민별 시공사례 보기</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {CONCERN_CARDS.map((card) => {
-              const isSelected = searchQuery === card.tag
+              const isSelected = selectedConcernTag === card.tag
               const handleCardClick = () => {
-                setSearchQueryAndUrl(card.tag)
-                document.getElementById('showroom-gallery')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                setConcernTagAndUrl(selectedConcernTag === card.tag ? null : card.tag)
+                requestAnimationFrame(() => {
+                  document.getElementById('showroom-concern-result-anchor')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                })
               }
               return (
                 <button
@@ -310,25 +511,32 @@ export default function ShowroomPage() {
                     성공 사례 보기
                   </span>
                   <div className="flex items-center gap-3 flex-1 min-h-0">
-                    <span
-                      className="flex-shrink-0 w-14 h-14 rounded-full bg-neutral-100 flex items-center justify-center text-3xl border-2 border-neutral-200 group-hover:border-amber-200 transition-colors overflow-hidden"
-                      aria-hidden
-                    >
-                      {card.imageSrc ? (
-                        <img src={card.imageSrc} alt="" className="w-full h-full object-cover object-top" />
-                      ) : (
-                        card.emoji
-                      )}
-                    </span>
-                    <div
-                      className={`flex-1 min-w-0 pr-8 rounded-xl rounded-tl-none px-4 py-3 border border-neutral-100 group-hover:bg-amber-50/50 group-hover:border-amber-100 transition-colors ${
-                        isSelected ? 'bg-amber-50/80 border-amber-200' : ''
-                      }`}
-                      style={{ boxShadow: '0 1px 2px rgba(0,0,0,0.04)' }}
-                    >
+                    <div className="flex shrink-0 self-center flex-col items-center justify-center gap-2">
+                      <span
+                        className="w-14 h-14 rounded-full bg-neutral-100 flex items-center justify-center text-3xl border-2 border-neutral-200 group-hover:border-amber-200 transition-colors overflow-hidden"
+                        aria-hidden
+                      >
+                        {card.imageSrc ? (
+                          <img src={card.imageSrc} alt="" className="w-full h-full object-cover object-top" />
+                        ) : (
+                          card.emoji
+                        )}
+                      </span>
+                      <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-700 ring-1 ring-slate-200">
+                        {card.industryFilter}
+                      </span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div
+                        className={`pr-8 rounded-xl rounded-tl-none px-4 py-3 border border-neutral-100 group-hover:bg-amber-50/50 group-hover:border-amber-100 transition-colors ${
+                          isSelected ? 'bg-amber-50/80 border-amber-200' : ''
+                        }`}
+                        style={{ boxShadow: '0 1px 2px rgba(0,0,0,0.04)' }}
+                      >
                       <p className="text-sm text-neutral-700 leading-relaxed font-medium">
                         {highlightKeywords(card.message)}
                       </p>
+                      </div>
                     </div>
                   </div>
                 </button>
@@ -336,8 +544,9 @@ export default function ShowroomPage() {
             })}
           </div>
         </section>
+        <div id="showroom-concern-result-anchor" className="h-px scroll-mt-28 md:scroll-mt-32" aria-hidden />
         {/* 전문가 코멘트: 해당 카드 클릭 시에만 표시 — 왼쪽 코멘트, 오른쪽 전문가 이미지(답하는 느낌) */}
-        {searchQuery === '관리형 창업 또는 전환' && (
+        {selectedConcernTag === '관리형 창업 또는 전환' && (
           <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
             <div className="flex-1 min-w-0 py-5 px-5">
               <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
@@ -372,7 +581,7 @@ export default function ShowroomPage() {
             </div>
           </section>
         )}
-        {searchQuery === '매출 향상 스터디카페 리뉴얼' && (
+        {selectedConcernTag === '매출 향상 스터디카페 리뉴얼' && (
           <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
             <div className="flex-1 min-w-0 py-5 px-5">
               <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
@@ -408,7 +617,111 @@ export default function ShowroomPage() {
             </div>
           </section>
         )}
-        {searchQuery === '스터디카페 같은 학원 자습실' && (
+        {selectedConcernTag === '스터디카페를 관리형 스타일로' && (
+          <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
+            <div className="flex-1 min-w-0 py-5 px-5">
+              <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
+              <p className="text-slate-700 text-sm font-medium mb-3">같은 스터디카페처럼 보여서는 나중에 프리미엄을 받기 어렵습니다.</p>
+              <div className="text-slate-600 text-sm leading-relaxed space-y-3">
+                <p>
+                  지금 운영 중인 스터디카페라도, 공간의 인상과 동선을 <span className="font-bold text-slate-800">관리형 스타일로 재설계</span>하면 기존 매장과의 차별화가 훨씬 선명해집니다.
+                </p>
+                <p>
+                  이것은 단순히 예쁘게 바꾸는 리뉴얼이 아닙니다. 고객이 느끼는 프리미엄을 높이고, 향후 관리형 오픈을 고민하는 인수자에게도 <span className="font-bold text-slate-800">더 설득력 있는 매장 자산</span>으로 보이게 만드는 전략입니다.
+                </p>
+                <p>
+                  결국 잘된 리뉴얼은 현재의 경쟁력을 만들고, 나중의 엑시트 가능성까지 바꿉니다. 파인드가구는 그 흐름까지 고려해 공간을 제안합니다.
+                </p>
+              </div>
+              <div className="mt-4 pt-4 border-t border-slate-200">
+                <Link
+                  to={buildShowroomContactUrl({
+                    category: '스터디카페 관리형 스타일 리뉴얼',
+                    showroomContext: '관리형 스타일 전환과 엑시트 전략을 염두에 두고 문의한 고객',
+                    showroomEntryLabel: '스터디카페를 관리형 스타일로',
+                  })}
+                  className="inline-flex items-center justify-center rounded-xl px-4 py-3 bg-slate-700 hover:bg-slate-800 text-white text-sm font-semibold transition-colors"
+                >
+                  관리형 스타일 리뉴얼 상담하기
+                </Link>
+              </div>
+            </div>
+            <div className="sm:w-40 shrink-0 flex items-center justify-center sm:justify-end pr-4 pb-2">
+              <span className="w-32 h-32 sm:w-40 sm:h-40 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center shrink-0">
+                <img
+                  src="/showroom-expert-comment.png"
+                  alt=""
+                  className="w-full h-full object-cover object-top"
+                />
+              </span>
+            </div>
+          </section>
+        )}
+        {beforeAfterShowcaseGroups.length > 0 && (
+          <section className="my-6 rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4 md:p-5">
+            <div className="flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
+              <div>
+                <h3 className="text-base font-semibold text-neutral-900">엑시트까지 고려한 전환 사례</h3>
+                <p className="text-sm text-neutral-600">
+                  기존 스터디카페를 관리형 스타일로 바꿨을 때, 공간의 인상과 매각 경쟁력이 어떻게 달라지는지 전후 사례로 보여드립니다.
+                </p>
+              </div>
+              <p className="text-xs text-neutral-500">{beforeAfterShowcaseGroups.length}개 현장</p>
+            </div>
+            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+              {beforeAfterShowcaseGroups.map((group) => {
+                const beforeImage = group.images.find((image) => image.before_after_role === 'before') ?? null
+                const afterImage = group.images.find((image) => image.before_after_role === 'after') ?? null
+                if (!beforeImage || !afterImage) return null
+                return (
+                  <button
+                    key={`before-after-${group.siteName}`}
+                    type="button"
+                    onClick={() => openDetail('beforeAfter', group.siteName)}
+                    className="overflow-hidden rounded-2xl border border-emerald-200 bg-white text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
+                  >
+                    <div className="grid grid-cols-2">
+                      <div className="relative aspect-[4/3] bg-neutral-100">
+                        <img
+                          src={beforeImage.thumbnail_url || beforeImage.cloudinary_url}
+                          alt={`${group.siteName} before`}
+                          className="w-full h-full object-cover"
+                        />
+                        <span className="absolute left-2 top-2 rounded-full bg-black/75 px-2 py-1 text-[11px] font-semibold text-white">
+                          Before
+                        </span>
+                      </div>
+                      <div className="relative aspect-[4/3] bg-neutral-100">
+                        <img
+                          src={afterImage.thumbnail_url || afterImage.cloudinary_url}
+                          alt={`${group.siteName} after`}
+                          className="w-full h-full object-cover"
+                        />
+                        <span className="absolute left-2 top-2 rounded-full bg-emerald-600/90 px-2 py-1 text-[11px] font-semibold text-white">
+                          After
+                        </span>
+                      </div>
+                    </div>
+                    <div className="p-4">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h4 className="font-semibold text-neutral-900">{group.siteName}</h4>
+                        {group.businessTypes[0] && (
+                          <span className="rounded-full bg-neutral-100 px-2.5 py-1 text-[11px] font-medium text-neutral-600">
+                            {group.businessTypes[0]}
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-1 text-sm text-neutral-600">
+                        전후 비교가 가능한 리뉴얼 사례입니다. 눌러서 전체 사진을 확인해 보세요.
+                      </p>
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          </section>
+        )}
+        {selectedConcernTag === '스터디카페 같은 학원 자습실' && (
           <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
             <div className="flex-1 min-w-0 py-5 px-5">
               <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
@@ -445,7 +758,7 @@ export default function ShowroomPage() {
           </section>
         )}
 
-        {searchQuery === '고교학점제 자습공간 구축' && (
+        {selectedConcernTag === '고교학점제 자습공간 구축' && (
           <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
             <div className="flex-1 min-w-0 py-5 px-5">
               <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
@@ -484,7 +797,7 @@ export default function ShowroomPage() {
           </section>
         )}
 
-        {searchQuery === '아파트 독서실 리뉴얼' && (
+        {selectedConcernTag === '아파트 독서실 리뉴얼' && (
           <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
             <div className="flex-1 min-w-0 py-5 px-5">
               <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
@@ -497,7 +810,7 @@ export default function ShowroomPage() {
                   아파트 리뉴얼은 일반 창업과 다릅니다. 의사결정 주체에 따른 계약 방식의 차이, 단지 내 관리 규정 준수 등 <span className="font-bold text-slate-800">복잡한 행정 절차를 완벽하게 이해</span>해야 합니다. 단순히 가구를 잘 만드는 것을 넘어, <span className="font-bold text-slate-800">실수 없는 행정 처리와 투명한 공정 관리</span>가 동반되어야 입주민들의 신뢰를 얻을 수 있습니다.
                 </p>
                 <p>
-                  입주민이 만족하는 호텔급 시설은 기본입니다. 복잡한 절차는 파인드가구가 책임지고, 원장님(관리 주체)께는 <span className="font-bold text-slate-800">단지의 가치가 올라가는 결과</span>만 드립니다.
+                  입주민의 만족과 단지의 가치를 함께 높이는 공간은 기본입니다. 복잡한 절차는 파인드가구가 책임지고, 입주자대표회의에는 <span className="font-bold text-slate-800">단지의 가치가 올라가는 결과</span>만 드립니다.
                 </p>
               </div>
               <div className="mt-4 flex flex-wrap items-center gap-1.5 sm:gap-2 text-xs text-slate-700">
@@ -532,114 +845,17 @@ export default function ShowroomPage() {
           </section>
         )}
 
-        {searchQuery === '무인 창업 공간' && (
-          <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
-            <div className="flex-1 min-w-0 py-5 px-5">
-              <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
-              <p className="text-slate-700 text-sm font-medium mb-3">파인드가구의 무인창업 솔루션, 곧 공개됩니다.</p>
-              <div className="text-slate-600 text-sm leading-relaxed space-y-3">
-                <p>
-                  공간 그 이상의 가치를 만드는 파인드가구가 현재 <span className="font-bold text-slate-800">업계 최고 수준의 기술력을 가진 협력업체들과 함께 &apos;무인창업 최적화 솔루션&apos;을 긴밀히 협의 중</span>에 있습니다.
-                </p>
-                <p>
-                  단순한 무인 매장이 아닙니다. 인건비는 최소화하고 운영 효율은 극대화하는, 파인드가구만의 디테일이 담긴 차세대 무인 공간 모델을 준비하고 있습니다.
-                </p>
-                <p>
-                  지금 아래에 연락처를 남겨주시면, 솔루션이 런칭되는 즉시 <span className="font-bold text-slate-800">가장 먼저 상세 제안서와 창업 혜택을 전달</span>해 드리겠습니다. 잠시만 기다려 주십시오.
-                </p>
-              </div>
-              <div className="mt-4 pt-4 border-t border-slate-200">
-                <p className="text-slate-600 text-xs font-medium mb-3">출시 알림을 받으실 연락처를 남겨주세요.</p>
-                <form
-                  onSubmit={async (e) => {
-                    e.preventDefault()
-                    const phone = (unmannedContact || '').trim().replace(/\s/g, '')
-                    if (!phone) {
-                      toast.error('연락처를 입력해 주세요.')
-                      return
-                    }
-                    setUnmannedSubmitting(true)
-                    try {
-                      const nameOrCompany = unmannedNameOrCompany.trim() || '(성함/업체명 미입력)'
-                      const { error } = await supabase.from('consultations').insert({
-                        company_name: nameOrCompany,
-                        manager_name: '(출시 알림 신청)',
-                        contact: phone,
-                        status: '상담중',
-                        metadata: {
-                          source: '쇼룸',
-                          showroom_category: '무인창업 출시 알림',
-                          interest_region: (unmannedRegion || '').trim() || null,
-                        } as Json,
-                        is_visible: true,
-                        expected_revenue: 0,
-                      })
-                      if (error) throw error
-                      toast.success('신청이 완료되었습니다. 출시 시 가장 먼저 연락드리겠습니다.')
-                      setUnmannedNameOrCompany('')
-                      setUnmannedContact('')
-                      setUnmannedRegion('')
-                    } catch (err) {
-                      console.error(err)
-                      toast.error('신청에 실패했습니다. 잠시 후 다시 시도해 주세요.')
-                    } finally {
-                      setUnmannedSubmitting(false)
-                    }
-                  }}
-                  className="space-y-3"
-                >
-                  <Input
-                    value={unmannedNameOrCompany}
-                    onChange={(e) => setUnmannedNameOrCompany(e.target.value)}
-                    placeholder="성함 / 업체명"
-                    className="bg-white border-slate-200"
-                  />
-                  <Input
-                    type="tel"
-                    value={unmannedContact}
-                    onChange={(e) => setUnmannedContact(e.target.value)}
-                    placeholder="연락처 *"
-                    className="bg-white border-slate-200"
-                    required
-                  />
-                  <Input
-                    value={unmannedRegion}
-                    onChange={(e) => setUnmannedRegion(e.target.value)}
-                    placeholder="관심 지역"
-                    className="bg-white border-slate-200"
-                  />
-                  <Button
-                    type="submit"
-                    disabled={unmannedSubmitting}
-                    className="w-full rounded-xl px-4 py-3 bg-slate-700 hover:bg-slate-800 text-white text-sm font-semibold transition-colors"
-                  >
-                    {unmannedSubmitting ? '신청 중…' : '무인창업 솔루션 출시 알림 신청하기'}
-                  </Button>
-                </form>
-              </div>
-            </div>
-            <div className="sm:w-40 shrink-0 flex items-center justify-center sm:justify-end pr-4 pb-2">
-              <span className="w-32 h-32 sm:w-40 sm:h-40 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center shrink-0">
-                <img
-                  src="/showroom-expert-comment.png"
-                  alt=""
-                  className="w-full h-full object-cover object-top"
-                />
-              </span>
-            </div>
-          </section>
-        )}
-
         {viewMode === 'site' && (
           <div id="showroom-gallery" className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 items-stretch">
             {filteredSiteGroups.map((group) => {
               const imageUrl = group.mainImage?.thumbnail_url || group.mainImage?.cloudinary_url || ''
-              const contactParams = new URLSearchParams({
-                site_name: group.siteName,
+              const contactUrl = buildShowroomContactUrl({
+                siteName: group.siteName,
                 category: searchQuery.trim() || (group.businessTypes[0] ?? ''),
-                image_url: imageUrl,
+                imageUrl,
+                showroomContext: showroomContactContext?.showroomContext ?? null,
+                showroomEntryLabel: showroomContactContext?.showroomEntryLabel ?? null,
               })
-              const contactUrl = `/contact?${contactParams.toString()}`
               return (
                 <div
                   key={group.siteName}
@@ -656,6 +872,11 @@ export default function ShowroomPage() {
                         alt={group.siteName}
                         className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-300"
                       />
+                      {group.businessTypes.length > 0 && (
+                        <span className="absolute top-2 left-2 rounded-full bg-black/70 px-2.5 py-1 text-[11px] font-medium text-white backdrop-blur-sm">
+                          {group.businessTypes[0]}
+                        </span>
+                      )}
                       {group.images.length > 1 && (
                         <div className="absolute bottom-2 right-2 flex gap-0.5" aria-hidden>
                           {group.images.slice(1, 4).map((img, i) => (
@@ -726,16 +947,17 @@ export default function ShowroomPage() {
 
         {viewMode === 'product' && (
           <div id="showroom-gallery" className="grid grid-cols-2 lg:grid-cols-3 gap-6 items-stretch">
-            {filteredProductGroups.map((group) => {
+            {productFilteredGroups.map((group) => {
               const mainImg = group.images[0]
               const imageUrl = mainImg?.thumbnail_url || mainImg?.cloudinary_url || ''
               const siteNameForContact = group.siteNames[0] || group.productName
-              const contactParams = new URLSearchParams({
-                site_name: siteNameForContact,
+              const contactUrl = buildShowroomContactUrl({
+                siteName: siteNameForContact,
                 category: searchQuery.trim() || (group.businessTypes[0] ?? ''),
-                image_url: imageUrl,
+                imageUrl,
+                showroomContext: showroomContactContext?.showroomContext ?? null,
+                showroomEntryLabel: showroomContactContext?.showroomEntryLabel ?? null,
               })
-              const contactUrl = `/contact?${contactParams.toString()}`
               return (
                 <div
                   key={group.productName}
@@ -752,6 +974,11 @@ export default function ShowroomPage() {
                         alt={group.productName}
                         className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-300"
                       />
+                      {group.businessTypes.length > 0 && (
+                        <span className="absolute top-2 left-2 rounded-full bg-black/70 px-2.5 py-1 text-[11px] font-medium text-white backdrop-blur-sm">
+                          {group.businessTypes[0]}
+                        </span>
+                      )}
                       {group.images.length > 1 && (
                         <div className="absolute bottom-2 right-2 flex gap-0.5" aria-hidden>
                           {group.images.slice(1, 4).map((img, i) => (
@@ -820,10 +1047,118 @@ export default function ShowroomPage() {
           </div>
         )}
 
+        {viewMode === 'industry' && (
+          <div id="showroom-gallery" className="grid grid-cols-2 lg:grid-cols-3 gap-6 items-stretch">
+            {industryFilteredSiteGroups.map((group) => {
+              const imageUrl = group.mainImage?.thumbnail_url || group.mainImage?.cloudinary_url || ''
+              const contactUrl = buildShowroomContactUrl({
+                siteName: group.siteName,
+                category: searchQuery.trim() || (group.businessTypes[0] ?? ''),
+                imageUrl,
+                showroomContext: showroomContactContext?.showroomContext ?? null,
+                showroomEntryLabel: showroomContactContext?.showroomEntryLabel ?? null,
+              })
+              return (
+                <div
+                  key={group.siteName}
+                  className="flex flex-col h-full rounded-2xl overflow-hidden bg-white border border-neutral-200 shadow-sm hover:shadow-md hover:border-neutral-300 transition-all"
+                >
+                  <button
+                    type="button"
+                    onClick={() => openDetail('site', group.siteName)}
+                    className="flex flex-col flex-1 min-h-0 text-left group"
+                  >
+                    <div className="aspect-[4/3] relative bg-neutral-100 overflow-hidden shrink-0 rounded-t-2xl">
+                      <img
+                        src={imageUrl}
+                        alt={group.siteName}
+                        className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-300"
+                      />
+                      {group.businessTypes.length > 0 && (
+                        <span className="absolute top-2 left-2 rounded-full bg-black/70 px-2.5 py-1 text-[11px] font-medium text-white backdrop-blur-sm">
+                          {group.businessTypes[0]}
+                        </span>
+                      )}
+                      {group.hasBeforeAfter && (
+                        <span className="absolute top-2 right-2 rounded-full bg-emerald-600/90 px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur-sm">
+                          Before/After
+                        </span>
+                      )}
+                      {group.images.length > 1 && (
+                        <div className="absolute bottom-2 right-2 flex gap-0.5" aria-hidden>
+                          {group.images.slice(1, 4).map((img, i) => (
+                            <div
+                              key={img.id}
+                              className="w-10 h-10 rounded-md border-2 border-white shadow-md overflow-hidden bg-neutral-200"
+                              style={{ transform: `translateY(${i * 2}px) rotate(${i * 3 - 2}deg)` }}
+                            >
+                              <img
+                                src={img.thumbnail_url || img.cloudinary_url}
+                                alt=""
+                                className="w-full h-full object-cover"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <div className="p-4 flex-1 flex flex-col min-h-0">
+                      <h3 className="font-semibold text-neutral-900 truncate">{group.siteName}</h3>
+                      <dl className="text-xs text-neutral-500 mt-1.5 space-y-0.5">
+                        {group.businessTypes.length > 0 && (
+                          <div className="flex gap-1.5">
+                            <span className="text-neutral-400 shrink-0">업종</span>
+                            <span>{group.businessTypes.slice(0, 3).join(', ')}</span>
+                          </div>
+                        )}
+                        {group.location && (
+                          <div className="flex gap-1.5">
+                            <span className="text-neutral-400 shrink-0">지역</span>
+                            <span>{group.location}</span>
+                          </div>
+                        )}
+                        {group.products.length > 0 && (
+                          <div className="flex gap-1.5">
+                            <span className="text-neutral-400 shrink-0">제품명</span>
+                            <span className="truncate">{group.products.slice(0, 3).join(', ')}</span>
+                          </div>
+                        )}
+                        {group.colors.length > 0 && (
+                          <div className="flex gap-1.5 items-center flex-wrap">
+                            <span className="text-neutral-400 shrink-0">색상</span>
+                            <span>{group.colors.slice(0, 4).join(', ')}</span>
+                          </div>
+                        )}
+                      </dl>
+                      <p className="mt-2 pt-2 border-t border-neutral-100 flex items-center gap-1.5 text-xs text-neutral-500">
+                        <Images className="h-3.5 w-3.5 shrink-0" />
+                        <span>사진 {group.images.length}장</span>
+                      </p>
+                    </div>
+                  </button>
+                  <div className="p-2 border-t border-neutral-100 bg-neutral-50/50">
+                    <Link
+                      to={contactUrl}
+                      onClick={(e) => e.stopPropagation()}
+                      className="flex items-center justify-center gap-1.5 w-full rounded-lg py-2.5 bg-neutral-900 hover:bg-neutral-800 text-white text-sm font-medium transition-colors"
+                    >
+                      <FileText className="h-4 w-4 shrink-0" />
+                      이 현장처럼 견적 받기
+                    </Link>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+
         {viewMode === 'site' && filteredSiteGroups.length === 0 && (
           <p className="text-center text-neutral-500 py-12">검색 결과가 없습니다.</p>
         )}
-        {viewMode === 'product' && filteredProductGroups.length === 0 && (
+        {viewMode === 'product' && productFilteredGroups.length === 0 && (
+          <p className="text-center text-neutral-500 py-12">검색 결과가 없습니다.</p>
+        )}
+        {viewMode === 'industry' && industryFilteredSiteGroups.length === 0 && (
           <p className="text-center text-neutral-500 py-12">검색 결과가 없습니다.</p>
         )}
       </main>
@@ -835,6 +1170,7 @@ export default function ShowroomPage() {
             <DialogTitle className="text-white font-semibold truncate">
               {detailOpen === 'site' && detailKey}
               {detailOpen === 'product' && detailKey}
+              {detailOpen === 'beforeAfter' && detailKey}
             </DialogTitle>
             <Button
               variant="ghost"
@@ -868,9 +1204,17 @@ export default function ShowroomPage() {
                     const current = detailImages[lightboxIndex]
                     const productName = current?.product_name?.trim()
                     const colorName = current?.color_name?.trim()
-                    if (!productName && !colorName) return null
+                    const beforeAfterRole = current?.before_after_role
+                    if (!productName && !colorName && !beforeAfterRole) return null
                     return (
                       <div className="absolute top-2 right-2 z-10 px-3 py-2 rounded-lg bg-black/70 text-white text-sm shadow-lg backdrop-blur-sm">
+                        {beforeAfterRole && (
+                          <div className="mb-1">
+                            <span className="inline-flex rounded-full bg-white/15 px-2 py-0.5 text-[11px] font-semibold text-white">
+                              {beforeAfterRole === 'before' ? 'Before' : 'After'}
+                            </span>
+                          </div>
+                        )}
                         {productName && <div className="font-medium">제품명 {productName}</div>}
                         {colorName && <div className="text-neutral-200 text-xs mt-0.5">색상 {colorName}</div>}
                       </div>

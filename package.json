@@ -10,7 +10,9 @@
     "preview": "vite preview",
     "migrate:preview": "tsx scripts/migrate-data.ts --mode preview",
     "migrate:upload": "tsx scripts/migrate-data.ts --mode upload",
-    "detect:quote": "tsx scripts/detectQuoteLocal.ts"
+    "detect:quote": "tsx scripts/detectQuoteLocal.ts",
+    "collect:quotes": "tsx scripts/collectQuoteImages.ts",
+    "build:price": "tsx scripts/buildPriceTable.ts && tsx scripts/updatePriceTable.ts"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
-import { X, Copy, CheckCircle, AlertCircle, Search, Link2, ImageIcon, ChevronLeft, ChevronRight, ChevronDown, Upload } from 'lucide-react'
+import { X, Copy, CheckCircle, AlertCircle, Search, Link2, ImageIcon, ChevronLeft, ChevronRight, ChevronDown, Upload, Users, Ruler, Images } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -28,7 +28,10 @@ import {
   incrementImageAssetShareCount,
   updateProjectAsset,
   updateProjectAssets,
+  updateImageAssetBeforeAfter,
   updateImageAssetConsultation,
+  updateImageAssetIndustry,
+  updateImageAssetLocation,
 } from '@/lib/imageAssetService'
 import type { ImageAssetTreeMeta } from '@/lib/imageAssetService'
 import { setImageAssetMain } from '@/lib/imageAssetUploadService'
@@ -119,13 +122,16 @@ function usePageMode() {
   const isBank = pathname === '/portfolio' || pathname === '/assets'
   return {
     pageTitle: isBank ? '시공 사례 뱅크' : '이미지 자산 관리',
+    pageDescription: isBank
+      ? '탐색형 사례 전시 화면입니다.'
+      : '고객에게 보낼 사진을 고르고 선별 공유 링크를 만드는 작업 화면입니다.',
     isBankView: isBank,
   }
 }
 
 export default function ImageAssetViewer() {
   const navigate = useNavigate()
-  const { pageTitle, isBankView } = usePageMode()
+  const { pageTitle, pageDescription, isBankView } = usePageMode()
   const [assets, setAssets] = useState<ProjectImageAsset[]>([])
   const [loading, setLoading] = useState(true)
   const [sort, setSort] = useState<SortKey>('latest')
@@ -151,6 +157,8 @@ export default function ImageAssetViewer() {
   const [editingAssetId, setEditingAssetId] = useState<string | null>(null)
   const [editingTagsText, setEditingTagsText] = useState('')
   const [editingColor, setEditingColor] = useState('')
+  const [editingIndustry, setEditingIndustry] = useState('')
+  const [editingLocation, setEditingLocation] = useState('')
   /** 태그 드래그 복사: 드래그 중인 소스 페이로드, 드롭 대상 카드 ID */
   const [dragPayload, setDragPayload] = useState<{ productTags: string[]; color: string | null } | null>(null)
   const [dropTargetId, setDropTargetId] = useState<string | null>(null)
@@ -248,6 +256,11 @@ export default function ImageAssetViewer() {
     return () => { cancelled = true }
   }, [fetchFromDb, isBankView])
 
+  useEffect(() => {
+    setEditingIndustry(lightboxAsset?.industry ?? '')
+    setEditingLocation(lightboxAsset?.location ?? '')
+  }, [lightboxAsset])
+
   /** 이미지 자산 관리: 트리 데이터 로드. 첫 연도 자동 펼침 */
   useEffect(() => {
     if (isBankView) return
@@ -343,6 +356,70 @@ export default function ImageAssetViewer() {
       toast.success('태그를 붙여넣었습니다.')
     },
     []
+  )
+
+  const saveImageAssetIndustryInline = useCallback(
+    async (assetId: string) => {
+      const nextIndustry = editingIndustry.trim() || null
+      const { error } = await updateImageAssetIndustry(assetId, nextIndustry)
+      if (error) {
+        toast.error((error as { message?: string }).message ?? '업종 저장 실패')
+        return
+      }
+      setAssets((prev) =>
+        prev.map((a) =>
+          a.id === assetId
+            ? {
+                ...a,
+                industry: nextIndustry,
+              }
+            : a
+        )
+      )
+      setLightboxAsset((prev) =>
+        prev && prev.id === assetId
+          ? {
+              ...prev,
+              industry: nextIndustry,
+            }
+          : prev
+      )
+      toast.success('업종을 수정했습니다.')
+    },
+    [editingIndustry]
+  )
+
+  const saveImageAssetLocationInline = useCallback(
+    async (assetId: string) => {
+      const nextLocation = editingLocation.trim() || null
+      const { error } = await updateImageAssetLocation(assetId, nextLocation)
+      if (error) {
+        toast.error((error as { message?: string }).message ?? '지역 저장 실패')
+        return
+      }
+      setAssets((prev) =>
+        prev.map((a) =>
+          a.id === assetId
+            ? {
+                ...a,
+                location: nextLocation,
+                projectTitle: a.siteName?.trim() || nextLocation,
+              }
+            : a
+        )
+      )
+      setLightboxAsset((prev) =>
+        prev && prev.id === assetId
+          ? {
+              ...prev,
+              location: nextLocation,
+              projectTitle: prev.siteName?.trim() || nextLocation,
+            }
+          : prev
+      )
+      toast.success('지역을 수정했습니다.')
+    },
+    [editingLocation]
   )
 
   /** 이미지 자산 관리: 트리에서 현장/업종/제품 선택 시 필터 */
@@ -710,6 +787,46 @@ export default function ImageAssetViewer() {
     toast.success(next ? '상담용으로 표시했습니다.' : '상담용 표시를 해제했습니다.')
   }, [])
 
+  const setBeforeAfterRole = useCallback(
+    async (asset: ProjectImageAsset, role: 'before' | 'after' | null) => {
+      if (asset.sourceTable !== 'image_assets') return
+      const groupId = role ? ((asset.projectTitle ?? '').trim() || asset.id) : null
+      const { error } = await updateImageAssetBeforeAfter(asset.id, asset.metadata, { role, groupId })
+      if (error) {
+        toast.error('비포어/애프터 저장에 실패했습니다.')
+        return
+      }
+      setAssets((prev) =>
+        prev.map((a) =>
+          a.id === asset.id
+            ? {
+                ...a,
+                beforeAfterRole: role,
+                beforeAfterGroupId: groupId,
+                metadata: (() => {
+                  const nextMeta = { ...(a.metadata ?? {}) }
+                  if (role) {
+                    nextMeta.before_after_role = role
+                    nextMeta.before_after_group_id = groupId
+                  } else {
+                    delete nextMeta.before_after_role
+                    delete nextMeta.before_after_group_id
+                  }
+                  return nextMeta
+                })(),
+              }
+            : a
+        )
+      )
+      if (!role) {
+        toast.success('전후 비교 표시를 해제했습니다.')
+        return
+      }
+      toast.success(role === 'before' ? '비포어로 표시했습니다.' : '애프터로 표시했습니다.')
+    },
+    []
+  )
+
   const showBulkActions = !isBankView && reviewFilter === 'pending' && selectedIds.size > 0
 
   return (
@@ -717,10 +834,10 @@ export default function ImageAssetViewer() {
       <header className="sticky top-0 z-10 border-b border-border bg-background/95 backdrop-blur px-4 py-3 flex flex-col gap-3">
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-3 flex-wrap">
-            <Link to="/consultation" className="text-sm text-muted-foreground hover:text-foreground">
-              ← 상담 관리
-            </Link>
-            <h1 className="text-lg font-bold text-foreground">{pageTitle}</h1>
+            <div className="min-w-0">
+              <h1 className="text-lg font-bold text-foreground">{pageTitle}</h1>
+              <p className="text-xs text-muted-foreground mt-0.5">{pageDescription}</p>
+            </div>
             {isBankView && (
               <div className="flex items-center gap-1 rounded-lg border border-border p-0.5 bg-muted/30">
                 <button
@@ -744,10 +861,30 @@ export default function ImageAssetViewer() {
               </div>
             )}
           </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <Link to="/consultation">
+              <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
+                <Users className="h-4 w-4" />
+                상담 관리
+              </Button>
+            </Link>
+            <Link to="/order-assets">
+              <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
+                <Ruler className="h-4 w-4" />
+                발주 자산 관리
+              </Button>
+            </Link>
+            <Link to="/showroom">
+              <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
+                <Images className="h-4 w-4" />
+                시공사례 쇼룸
+              </Button>
+            </Link>
+          </div>
+        </div>
+        {!isBankView && (
           <div className="flex flex-wrap items-center gap-2">
-            {!isBankView && (
-            <>
-              <span className="text-xs text-muted-foreground mr-1">지능형 필터:</span>
+            <span className="text-xs text-muted-foreground mr-1">지능형 필터:</span>
               {(
                 [
                   { value: 'all' as FilterMode, label: '전체' },
@@ -772,8 +909,9 @@ export default function ImageAssetViewer() {
                   {label}
                 </button>
               ))}
-            </>
-          )}
+          </div>
+        )}
+        <div className="flex flex-wrap items-center gap-2">
           <select
             value={sort}
             onChange={(e) => setSort(e.target.value as SortKey)}
@@ -827,7 +965,6 @@ export default function ImageAssetViewer() {
               {backfillLoading ? '갱신 중…' : '스코어 갱신'}
             </Button>
           )}
-          </div>
         </div>
         {/* 통합 검색 + 업로드 진입 */}
         <div className="flex items-center gap-2 flex-wrap">
@@ -859,6 +996,14 @@ export default function ImageAssetViewer() {
             </div>
           )}
         </div>
+        {!isBankView && (
+          <div className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2">
+            <p className="text-sm font-medium text-foreground">선별 공유 작업</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              고객에게 보여줄 사진만 체크해서 공유 링크를 만드세요. 쇼룸은 탐색용이고, 구체적인 상담 고객에게는 여기서 선별 공유하는 흐름을 기준으로 사용합니다.
+            </p>
+          </div>
+        )}
         {/* 시공 사례 뱅크: 용도 필터 (한글 라벨) */}
         {isBankView && (
           <div className="flex items-center gap-2 flex-wrap">
@@ -1029,12 +1174,34 @@ export default function ImageAssetViewer() {
       {/* 이미지 자산 관리: 공유 장바구니 하단 플로팅 바 */}
       {!isBankView && shareCartIds.size > 0 && (
         <div className="fixed bottom-0 left-0 right-0 z-20 border-t border-border bg-background/95 backdrop-blur shadow-lg px-4 py-3 flex items-center justify-between gap-4 flex-wrap">
-          <span className="text-sm font-medium text-foreground">{shareCartIds.size}장의 사진 선택됨</span>
+          <div className="min-w-0">
+            <span className="text-sm font-medium text-foreground">{shareCartIds.size}장의 사진 선택됨</span>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              이 링크는 고객이 로그인 없이 보는 선별 공유 페이지로 열립니다.
+            </p>
+          </div>
           <div className="flex items-center gap-2">
             <Button variant="default" size="sm" className="gap-1.5" onClick={copyShareLink}>
               <Link2 className="h-4 w-4" />
-              공유 URL 복사
+              선별 공유 링크 복사
             </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              onClick={() =>
+                shareGalleryKakao(shareGalleryUrl, '선별 시공 사례', '담당자가 고른 시공 사례를 확인해 보세요.', () =>
+                  toast.success('링크가 복사되었습니다. 카톡에 붙여 넣어 공유하세요.')
+                )
+              }
+            >
+              카톡으로 공유
+            </Button>
+            <a href={shareGalleryUrl} target="_blank" rel="noreferrer">
+              <Button variant="outline" size="sm">
+                미리보기
+              </Button>
+            </a>
             <Button variant="ghost" size="sm" onClick={() => setShareCartIds(new Set())}>
               선택 해제
             </Button>
@@ -1271,7 +1438,17 @@ export default function ImageAssetViewer() {
                             대표
                           </span>
                         )}
-                        <div className="absolute top-1 right-1 flex flex-col items-end gap-0.5">
+                      <div className="absolute top-1 right-1 flex flex-col items-end gap-0.5">
+                        {asset.sourceTable === 'image_assets' && asset.beforeAfterRole && (
+                          <span
+                            className={`rounded text-[10px] px-1.5 py-0.5 text-white ${
+                              asset.beforeAfterRole === 'before' ? 'bg-slate-700/90' : 'bg-emerald-600/90'
+                            }`}
+                            title={asset.beforeAfterGroupId ? `전후 비교 묶음: ${asset.beforeAfterGroupId}` : '전후 비교'}
+                          >
+                            {asset.beforeAfterRole === 'before' ? 'Before' : 'After'}
+                          </span>
+                        )}
                           {asset.sourceTable === 'image_assets' && asset.isConsultation && (
                             <span className="rounded bg-primary/90 text-primary-foreground text-[10px] px-1.5 py-0.5" title="상담용">
                               상담용
@@ -1411,6 +1588,24 @@ export default function ImageAssetViewer() {
                               >
                                 상담용
                               </Button>
+                              <Button
+                                type="button"
+                                variant={asset.beforeAfterRole === 'before' ? 'secondary' : 'outline'}
+                                size="sm"
+                                className="h-6 text-[10px] shrink-0"
+                                onClick={(e) => { e.stopPropagation(); setBeforeAfterRole(asset, asset.beforeAfterRole === 'before' ? null : 'before') }}
+                              >
+                                비포어
+                              </Button>
+                              <Button
+                                type="button"
+                                variant={asset.beforeAfterRole === 'after' ? 'secondary' : 'outline'}
+                                size="sm"
+                                className="h-6 text-[10px] shrink-0"
+                                onClick={(e) => { e.stopPropagation(); setBeforeAfterRole(asset, asset.beforeAfterRole === 'after' ? null : 'after') }}
+                              >
+                                애프터
+                              </Button>
                               {asset.projectTitle?.trim() && (
                                 <>
                                   <Button
@@ -1515,6 +1710,16 @@ export default function ImageAssetViewer() {
                       </span>
                     )}
                     <div className="absolute top-1 right-1 flex flex-col items-end gap-0.5">
+                      {asset.sourceTable === 'image_assets' && asset.beforeAfterRole && (
+                        <span
+                          className={`rounded text-[10px] px-1.5 py-0.5 text-white ${
+                            asset.beforeAfterRole === 'before' ? 'bg-slate-700/90' : 'bg-emerald-600/90'
+                          }`}
+                          title={asset.beforeAfterGroupId ? `전후 비교 묶음: ${asset.beforeAfterGroupId}` : '전후 비교'}
+                        >
+                          {asset.beforeAfterRole === 'before' ? 'Before' : 'After'}
+                        </span>
+                      )}
                       {asset.sourceTable === 'image_assets' && asset.isConsultation && (
                         <span className="rounded bg-primary/90 text-primary-foreground text-[10px] px-1.5 py-0.5" title="상담용">
                           상담용
@@ -1653,6 +1858,24 @@ export default function ImageAssetViewer() {
                             onClick={(e) => { e.stopPropagation(); toggleConsultation(asset) }}
                           >
                             상담용
+                          </Button>
+                          <Button
+                            type="button"
+                            variant={asset.beforeAfterRole === 'before' ? 'secondary' : 'outline'}
+                            size="sm"
+                            className="h-6 text-[10px] shrink-0"
+                            onClick={(e) => { e.stopPropagation(); setBeforeAfterRole(asset, asset.beforeAfterRole === 'before' ? null : 'before') }}
+                          >
+                            비포어
+                          </Button>
+                          <Button
+                            type="button"
+                            variant={asset.beforeAfterRole === 'after' ? 'secondary' : 'outline'}
+                            size="sm"
+                            className="h-6 text-[10px] shrink-0"
+                            onClick={(e) => { e.stopPropagation(); setBeforeAfterRole(asset, asset.beforeAfterRole === 'after' ? null : 'after') }}
+                          >
+                            애프터
                           </Button>
                           {asset.projectTitle?.trim() && (
                             <>
@@ -1804,7 +2027,51 @@ export default function ImageAssetViewer() {
                 )}
                 <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
                   <span>Sync: {SYNC_LABEL[lightboxAsset.syncStatus]}</span>
-                  {lightboxAsset.industry && <span>업종: {lightboxAsset.industry}</span>}
+                  {lightboxAsset.sourceTable === 'image_assets' ? (
+                    <>
+                      <span className="flex items-center gap-2">
+                        <span>지역:</span>
+                        <Input
+                          value={editingLocation}
+                          onChange={(e) => setEditingLocation(e.target.value)}
+                          placeholder="지역 입력"
+                          className="h-8 w-36"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-8 text-xs"
+                          onClick={() => saveImageAssetLocationInline(lightboxAsset.id)}
+                        >
+                          저장
+                        </Button>
+                      </span>
+                      <span className="flex items-center gap-2">
+                        <span>업종:</span>
+                        <select
+                          value={editingIndustry && SECTOR_OPTIONS.includes(editingIndustry as (typeof SECTOR_OPTIONS)[number]) ? editingIndustry : '기타'}
+                          onChange={(e) => setEditingIndustry(e.target.value)}
+                          className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                        >
+                          {SECTOR_OPTIONS.map((opt) => (
+                            <option key={opt} value={opt}>{opt}</option>
+                          ))}
+                        </select>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-8 text-xs"
+                          onClick={() => saveImageAssetIndustryInline(lightboxAsset.id)}
+                        >
+                          저장
+                        </Button>
+                      </span>
+                    </>
+                  ) : (
+                    lightboxAsset.industry && <span>업종: {lightboxAsset.industry}</span>
+                  )}
                   <Button variant="ghost" size="sm" className="h-8 gap-1 text-xs" onClick={copyCurrentMarkdown}>
                     <Copy className="h-3 w-3" />
                     Markdown 복사

@@ -133,9 +133,9 @@ export default function PublicGalleryView() {
   if (ids.length === 0 || assets.length === 0) {
     return (
       <div className="min-h-screen bg-background flex flex-col items-center justify-center p-6 text-center">
-        <h1 className="text-lg font-semibold text-foreground mb-2">시공 사례 갤러리</h1>
+        <h1 className="text-lg font-semibold text-foreground mb-2">선별 시공 사례</h1>
         <p className="text-sm text-muted-foreground">
-          {ids.length === 0 ? '공유할 사진이 선택되지 않았습니다.' : '해당 사진을 불러올 수 없습니다.'}
+          {ids.length === 0 ? '공유할 사진이 선택되지 않았습니다.' : '선별된 사진을 불러올 수 없습니다.'}
         </p>
       </div>
     )
@@ -144,11 +144,19 @@ export default function PublicGalleryView() {
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-10 border-b border-border bg-background/95 backdrop-blur px-4 py-3">
-        <h1 className="text-lg font-bold text-foreground">시공 사례</h1>
-        <p className="text-xs text-muted-foreground mt-0.5">{assets.length}장</p>
+        <h1 className="text-lg font-bold text-foreground">선별 시공 사례</h1>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          담당자가 고른 참고 사진 {assets.length}장
+        </p>
       </header>
 
       <main className="p-3 pb-8">
+        <div className="max-w-lg mx-auto mb-3 rounded-xl border border-border bg-muted/20 px-3 py-2">
+          <p className="text-sm font-medium text-foreground">안내받은 사진만 모아둔 페이지입니다.</p>
+          <p className="text-xs text-muted-foreground mt-1">
+            상담 중 공유받은 참고 사례만 확인하실 수 있으며, 화면을 눌러 크게 볼 수 있습니다.
+          </p>
+        </div>
         <div className="grid grid-cols-2 gap-2 max-w-lg mx-auto">
           {assets.map((asset) => (
             <button

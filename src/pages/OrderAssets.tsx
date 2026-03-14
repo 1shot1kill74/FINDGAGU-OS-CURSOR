@@ -1,15 +1,16 @@
 /**
  * 발주서·배치도 통합 관리 페이지
- * - image_assets 테이블에서 category in ('purchase_order', 'floor_plan') 조회
+ * - order_assets 테이블에서 발주서/배치도 전용 자산 조회
  * - 필터: 업종, 카테고리(발주서/배치도), 고객명
  * - ImageAssetViewer 스타일의 그리드 뷰
  */
 import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import { Search, FileText, LayoutGrid } from 'lucide-react'
+import { Search, FileText, LayoutGrid, Users, Images } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { supabase } from '@/lib/supabase'
+import { fetchAllOrderAssets } from '@/lib/orderAssetService'
+import type { OrderAsset } from '@/types/orderAsset'
 
 const CATEGORY_OPTIONS = [
   { value: 'all', label: '전체' },
@@ -19,21 +20,8 @@ const CATEGORY_OPTIONS = [
 
 const SECTOR_OPTIONS = ['학원', '관리형', '스터디카페', '학교', '아파트', '기타'] as const
 
-interface OrderAssetRow {
-  id: string
-  cloudinary_url: string
-  thumbnail_url: string | null
-  category: string | null
-  site_name: string | null
-  business_type: string | null
-  storage_type: string | null
-  storage_path: string | null
-  created_at: string | null
-  metadata?: { file_type?: string; file_name?: string }
-}
-
 export default function OrderAssets() {
-  const [assets, setAssets] = useState<OrderAssetRow[]>([])
+  const [assets, setAssets] = useState<OrderAsset[]>([])
   const [loading, setLoading] = useState(true)
   const [sectorFilter, setSectorFilter] = useState<string | null>(null)
   const [categoryFilter, setCategoryFilter] = useState<string>('all')
@@ -42,13 +30,8 @@ export default function OrderAssets() {
   useEffect(() => {
     let cancelled = false
     setLoading(true)
-    supabase
-      .from('image_assets')
-      .select('id, cloudinary_url, thumbnail_url, category, site_name, business_type, storage_type, storage_path, created_at, metadata')
-      .or('category.eq.purchase_order,category.eq.floor_plan')
-      .order('created_at', { ascending: false })
-      .then(({ data }) => {
-        if (!cancelled && data) setAssets(data as OrderAssetRow[])
+    fetchAllOrderAssets().then((data) => {
+        if (!cancelled) setAssets(data)
         setLoading(false)
       })
     return () => { cancelled = true }
@@ -60,7 +43,7 @@ export default function OrderAssets() {
       list = list.filter((a) => (a.business_type ?? '').trim() === sectorFilter)
     }
     if (categoryFilter !== 'all') {
-      list = list.filter((a) => (a.category ?? '').trim() === categoryFilter)
+      list = list.filter((a) => (a.asset_type ?? '').trim() === categoryFilter)
     }
     if (customerQuery.trim()) {
       const q = customerQuery.trim().toLowerCase()
@@ -73,11 +56,25 @@ export default function OrderAssets() {
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-20 border-b border-border bg-background/95 backdrop-blur px-4 py-3 flex flex-col gap-3">
         <div className="flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-3 flex-wrap">
-            <Link to="/consultation" className="text-sm text-muted-foreground hover:text-foreground">
-              ← 상담 관리
+          <h1 className="text-lg font-bold text-foreground">발주서 · 배치도 관리</h1>
+          <div className="flex items-center gap-2">
+            <Link to="/consultation">
+              <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
+                <Users className="h-4 w-4" />
+                상담 관리
+              </Button>
             </Link>
-            <h1 className="text-lg font-bold text-foreground">발주서 · 배치도 관리</h1>
+            <Link to="/showroom">
+              <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
+                <Images className="h-4 w-4" />
+                시공사례 쇼룸
+              </Button>
+            </Link>
+            <Link to="/image-assets">
+              <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
+                이미지 자산 관리
+              </Button>
+            </Link>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -133,11 +130,11 @@ export default function OrderAssets() {
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
             {filtered.map((a) => {
               const hasThumb = !!(a.thumbnail_url && a.thumbnail_url.trim())
-              const isDocNoThumb = (a.metadata?.file_type === 'pdf' || (a.storage_path ?? '').toLowerCase().match(/\.(pdf|ppt|pptx)$/)) && !hasThumb
+              const isDocNoThumb = (a.file_type === 'pdf' || a.file_type === 'ppt' || a.file_type === 'pptx' || (a.storage_path ?? '').toLowerCase().match(/\.(pdf|ppt|pptx)$/)) && !hasThumb
               return (
               <a
                 key={a.id}
-                href={a.cloudinary_url}
+                href={a.file_url}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="relative rounded-lg border border-border overflow-hidden bg-muted/30 hover:border-primary/50 hover:bg-muted/50 transition-colors group"
@@ -147,24 +144,24 @@ export default function OrderAssets() {
                     <div className="w-full h-full flex flex-col items-center justify-center gap-1 p-2">
                       <FileText className="h-10 w-10 text-muted-foreground shrink-0" />
                       <span className="text-[10px] font-medium text-foreground truncate w-full text-center">
-                        {a.metadata?.file_name || 'PDF'}
+                        {a.file_name || 'PDF'}
                       </span>
                     </div>
                   ) : (
                     <img
-                      src={a.thumbnail_url || a.cloudinary_url}
-                      alt={a.site_name || a.category || ''}
+                      src={a.thumbnail_url || a.file_url}
+                      alt={a.site_name || a.asset_type || ''}
                       className="w-full h-full object-cover"
                       loading="lazy"
                     />
                   )}
                   <span
                     className={`absolute bottom-1 left-1 right-1 flex items-center justify-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium ${
-                      a.category === 'purchase_order' ? 'bg-blue-500/90 text-white' : 'bg-emerald-500/90 text-white'
+                      a.asset_type === 'purchase_order' ? 'bg-blue-500/90 text-white' : 'bg-emerald-500/90 text-white'
                     }`}
                   >
-                    {a.category === 'purchase_order' ? <FileText className="h-2.5 w-2.5" /> : <LayoutGrid className="h-2.5 w-2.5" />}
-                    {a.category === 'purchase_order' ? '발주서' : '배치도'}
+                    {a.asset_type === 'purchase_order' ? <FileText className="h-2.5 w-2.5" /> : <LayoutGrid className="h-2.5 w-2.5" />}
+                    {a.asset_type === 'purchase_order' ? '발주서' : '배치도'}
                   </span>
                 </div>
                 <div className="p-1.5">

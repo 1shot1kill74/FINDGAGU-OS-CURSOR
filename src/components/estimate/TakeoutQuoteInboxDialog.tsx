@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Loader2, Search, ImagePlus, ExternalLink } from 'lucide-react'
+import { Loader2, Search, ImagePlus, ExternalLink, ArrowLeft } from 'lucide-react'
 
 type TakeoutQuoteCandidate = {
   id: string
@@ -17,16 +17,19 @@ type TakeoutQuoteCandidate = {
 
 type TakeoutQuoteManifest = {
   generatedAt: string
+  takeoutVersions?: number[]
   takeoutVersion: number
   total: number
   candidates: TakeoutQuoteCandidate[]
 }
 
 function normalizeSpaceId(input: string | null | undefined): string {
-  return String(input ?? '')
+  const raw = String(input ?? '')
     .replace(/^spaces\//i, '')
     .replace(/^Space\s+/i, '')
     .trim()
+  const urlMatch = raw.match(/\/room\/([^/?#]+)/i)
+  return (urlMatch?.[1] ?? raw).trim()
 }
 
 interface TakeoutQuoteInboxDialogProps {
@@ -34,7 +37,22 @@ interface TakeoutQuoteInboxDialogProps {
   onOpenChange: (open: boolean) => void
   currentSpaceId?: string | null
   currentDisplayName?: string | null
+  spaceLinks?: Array<{ spaceId: string; displayName: string; consultationId: string; inboundDate?: string | null }>
+  onApplySearch?: (payload: { query: string; consultationId?: string }) => void
   onImportCandidate: (candidate: TakeoutQuoteCandidate) => Promise<void> | void
+}
+
+const WORKED_STORAGE_KEY = 'takeout-quote-worked-candidates-v1'
+
+function getWorkedCandidateKey(candidate: Pick<TakeoutQuoteCandidate, 'takeoutVersion' | 'sourcePath' | 'assetUrl'>): string {
+  const stableSource = candidate.sourcePath?.trim() || candidate.assetUrl.trim()
+  return `v${candidate.takeoutVersion}:${stableSource}`
+}
+
+function parseInboundTime(value: string | null | undefined): number | null {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null
+  const time = new Date(`${value}T12:00:00.000Z`).getTime()
+  return Number.isNaN(time) ? null : time
 }
 
 export function TakeoutQuoteInboxDialog({
@@ -42,6 +60,8 @@ export function TakeoutQuoteInboxDialog({
   onOpenChange,
   currentSpaceId,
   currentDisplayName,
+  spaceLinks = [],
+  onApplySearch,
   onImportCandidate,
 }: TakeoutQuoteInboxDialogProps) {
   const [manifest, setManifest] = useState<TakeoutQuoteManifest | null>(null)
@@ -51,8 +71,35 @@ export function TakeoutQuoteInboxDialog({
   const [importingId, setImportingId] = useState<string | null>(null)
   const [showAllSpaces, setShowAllSpaces] = useState(false)
   const [previewCandidate, setPreviewCandidate] = useState<TakeoutQuoteCandidate | null>(null)
+  const [workedIds, setWorkedIds] = useState<string[]>([])
+  const [spacePage, setSpacePage] = useState(1)
+  const [selectedTakeoutVersion, setSelectedTakeoutVersion] = useState<number | null>(null)
+  const [workedIdsHydrated, setWorkedIdsHydrated] = useState(false)
 
   const normalizedCurrentSpaceId = normalizeSpaceId(currentSpaceId)
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      const raw = window.localStorage.getItem(WORKED_STORAGE_KEY)
+      if (raw) {
+        const parsed = JSON.parse(raw) as unknown
+        if (Array.isArray(parsed)) {
+          setWorkedIds(parsed.filter((item): item is string => typeof item === 'string'))
+        }
+      }
+    } catch {
+      setWorkedIds([])
+    } finally {
+      setWorkedIdsHydrated(true)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    if (!workedIdsHydrated) return
+    window.localStorage.setItem(WORKED_STORAGE_KEY, JSON.stringify(workedIds))
+  }, [workedIds, workedIdsHydrated])
 
   useEffect(() => {
     if (!open) return
@@ -60,6 +107,8 @@ export function TakeoutQuoteInboxDialog({
     setLoading(true)
     setError(null)
     setShowAllSpaces(false)
+    setSpacePage(1)
+    setSelectedTakeoutVersion(null)
     fetch(`/data/takeout-quote-inbox.json?t=${Date.now()}`)
       .then(async (res) => {
         if (!res.ok) throw new Error('테이크아웃 인덱스를 찾지 못했습니다. 먼저 buildTakeoutQuoteInbox 스크립트를 실행해 주세요.')
@@ -68,6 +117,10 @@ export function TakeoutQuoteInboxDialog({
       .then((data) => {
         if (cancelled) return
         setManifest(data)
+        const versions = (data.takeoutVersions && data.takeoutVersions.length > 0)
+          ? data.takeoutVersions
+          : [data.takeoutVersion]
+        setSelectedTakeoutVersion(versions[0] ?? data.takeoutVersion)
       })
       .catch((err: unknown) => {
         if (cancelled) return
@@ -89,7 +142,9 @@ export function TakeoutQuoteInboxDialog({
 
   const filteredCandidates = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
-    const candidates = manifest?.candidates ?? []
+    const candidates = (manifest?.candidates ?? []).filter((candidate) =>
+      selectedTakeoutVersion == null ? true : candidate.takeoutVersion === selectedTakeoutVersion
+    )
     const baseFiltered = !q
       ? candidates
       : candidates.filter((candidate) =>
@@ -111,8 +166,27 @@ export function TakeoutQuoteInboxDialog({
       if (a.spaceIdNormalized !== b.spaceIdNormalized) return a.spaceIdNormalized.localeCompare(b.spaceIdNormalized)
       return a.fileName.localeCompare(b.fileName)
     })
-  }, [manifest, normalizedCurrentSpaceId, searchQuery, showAllSpaces])
+  }, [manifest, normalizedCurrentSpaceId, searchQuery, selectedTakeoutVersion, showAllSpaces])
 
+  const availableTakeoutVersions = useMemo(() => {
+    const versions = manifest?.takeoutVersions ?? []
+    if (versions.length > 0) return versions
+    return manifest?.takeoutVersion ? [manifest.takeoutVersion] : []
+  }, [manifest])
+
+  const spaceLinkMap = useMemo(() => {
+    const map = new Map<string, { displayName: string; consultationId: string; inboundDate?: string | null }>()
+    spaceLinks.forEach((link) => {
+      const key = normalizeSpaceId(link.spaceId)
+      if (!key || map.has(key)) return
+      map.set(key, {
+        displayName: link.displayName,
+        consultationId: link.consultationId,
+        inboundDate: link.inboundDate ?? null,
+      })
+    })
+    return map
+  }, [spaceLinks])
   const groupedCandidates = useMemo(() => {
     const grouped = new Map<string, TakeoutQuoteCandidate[]>()
     filteredCandidates.forEach((candidate) => {
@@ -121,12 +195,67 @@ export function TakeoutQuoteInboxDialog({
       bucket.push(candidate)
       grouped.set(key, bucket)
     })
-    return Array.from(grouped.entries())
-  }, [filteredCandidates])
+    return Array.from(grouped.entries()).sort(([a, aCandidates], [b, bCandidates]) => {
+      const aNorm = normalizeSpaceId(a)
+      const bNorm = normalizeSpaceId(b)
+      const aInbound = parseInboundTime(spaceLinkMap.get(aNorm)?.inboundDate)
+      const bInbound = parseInboundTime(spaceLinkMap.get(bNorm)?.inboundDate)
+      if (aInbound != null && bInbound != null && aInbound !== bInbound) return bInbound - aInbound
+      if (aInbound != null && bInbound == null) return -1
+      if (aInbound == null && bInbound != null) return 1
+      const aLatestTakeout = Math.max(...aCandidates.map((candidate) => candidate.takeoutVersion))
+      const bLatestTakeout = Math.max(...bCandidates.map((candidate) => candidate.takeoutVersion))
+      if (aLatestTakeout !== bLatestTakeout) return bLatestTakeout - aLatestTakeout
+      return aNorm.localeCompare(bNorm)
+    })
+  }, [filteredCandidates, normalizedCurrentSpaceId, spaceLinkMap])
+
+  const spacesPerPage = 12
+
+  const totalSpacePages = useMemo(() => {
+    if (!showAllSpaces || searchQuery.trim()) return 1
+    return Math.max(1, Math.ceil(groupedCandidates.length / spacesPerPage))
+  }, [groupedCandidates.length, searchQuery, showAllSpaces])
+
+  const visibleGroupedCandidates = useMemo(() => {
+    if (!showAllSpaces || searchQuery.trim()) return groupedCandidates
+    const start = (spacePage - 1) * spacesPerPage
+    return groupedCandidates.slice(start, start + spacesPerPage)
+  }, [groupedCandidates, searchQuery, showAllSpaces, spacePage])
+
+  useEffect(() => {
+    setSpacePage(1)
+  }, [searchQuery, selectedTakeoutVersion, showAllSpaces])
+
+  useEffect(() => {
+    if (spacePage > totalSpacePages) {
+      setSpacePage(totalSpacePages)
+    }
+  }, [spacePage, totalSpacePages])
+
+  const visiblePageNumbers = useMemo(() => {
+    const maxVisible = 7
+    if (totalSpacePages <= maxVisible) {
+      return Array.from({ length: totalSpacePages }, (_, index) => index + 1)
+    }
+
+    let start = Math.max(1, spacePage - 3)
+    let end = Math.min(totalSpacePages, start + maxVisible - 1)
+    start = Math.max(1, end - maxVisible + 1)
+
+    return Array.from({ length: end - start + 1 }, (_, index) => start + index)
+  }, [spacePage, totalSpacePages])
 
   const currentSpaceCount = (manifest?.candidates ?? []).filter(
     (candidate) => normalizeSpaceId(candidate.spaceIdNormalized) === normalizedCurrentSpaceId
   ).length
+
+  const workedIdSet = useMemo(() => new Set(workedIds), [workedIds])
+
+  const toggleWorked = (candidate: TakeoutQuoteCandidate) => {
+    const workedKey = getWorkedCandidateKey(candidate)
+    setWorkedIds((prev) => (prev.includes(workedKey) ? prev.filter((id) => id !== workedKey) : [...prev, workedKey]))
+  }
 
   const handleImport = async (candidate: TakeoutQuoteCandidate) => {
     setImportingId(candidate.id)
@@ -146,11 +275,33 @@ export function TakeoutQuoteInboxDialog({
         <DialogHeader>
           <DialogTitle>Takeout 견적 이미지 불러오기</DialogTitle>
           <DialogDescription>
-            최신 Takeout 이미지 전체를 스페이스별로 보고, 필요한 이미지를 현재 상담카드의 견적 검토 흐름으로 가져옵니다.
+            한 번에 하나의 Takeout만 열어서 스페이스별로 보고, 필요한 이미지를 현재 상담카드의 AI 검수 미리보기로 가져옵니다.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex items-center gap-2 pb-3">
+        <div className="flex flex-col gap-2 pb-3">
+          {availableTakeoutVersions.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-medium text-muted-foreground">Takeout 선택</span>
+              {availableTakeoutVersions.map((version) => (
+                <Button
+                  key={version}
+                  type="button"
+                  variant={selectedTakeoutVersion === version ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => {
+                    setSelectedTakeoutVersion(version)
+                    setShowAllSpaces(false)
+                    setSpacePage(1)
+                  }}
+                >
+                  Takeout {version}
+                </Button>
+              ))}
+            </div>
+          ) : null}
+
+          <div className="flex items-center gap-2">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -160,18 +311,28 @@ export function TakeoutQuoteInboxDialog({
               className="pl-9"
             />
           </div>
-          {normalizedCurrentSpaceId && (
-            <>
+            {normalizedCurrentSpaceId && (
               <div className="shrink-0 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
                 현재 카드 스페이스 {normalizedCurrentSpaceId}
                 {currentDisplayName ? ` · ${currentDisplayName}` : ''}
                 {currentSpaceCount > 0 ? ` · 이미지 ${currentSpaceCount}건` : ''}
               </div>
-              <Button type="button" variant="outline" size="sm" onClick={() => setShowAllSpaces((prev) => !prev)}>
-                {showAllSpaces ? '현재 스페이스만 보기' : '전체 스페이스 보기'}
-              </Button>
-            </>
-          )}
+            )}
+            <div className="shrink-0 rounded-md border border-border bg-background px-3 py-2 text-xs text-muted-foreground">
+              작업 체크 {workedIds.length}건
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setShowAllSpaces((prev) => !prev)
+                setSpacePage(1)
+              }}
+            >
+              {showAllSpaces ? '현재 스페이스만 보기' : '전체 스페이스 보기'}
+            </Button>
+          </div>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-border bg-muted/10 p-3">
@@ -190,13 +351,57 @@ export function TakeoutQuoteInboxDialog({
             </div>
           ) : (
             <div className="space-y-5">
-              {groupedCandidates.map(([spaceId, candidates]) => {
+              <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2 text-xs text-muted-foreground">
+                <span>
+                  {selectedTakeoutVersion ? `Takeout ${selectedTakeoutVersion} · ` : ''}
+                  스페이스 {groupedCandidates.length.toLocaleString()}개 · 이미지 {filteredCandidates.length.toLocaleString()}건
+                </span>
+                {showAllSpaces && !searchQuery.trim() ? (
+                  <span>
+                    {spacePage.toLocaleString()} / {totalSpacePages.toLocaleString()} 페이지
+                  </span>
+                ) : null}
+              </div>
+
+              <div className="rounded-lg border border-border bg-background px-3 py-2 text-xs text-muted-foreground">
+                `AI 검수로 가져오기`는 바로 저장하는 기능이 아니라, 아래 업로드 영역의 확인용 미리보기로 넘겨서 검수한 뒤 저장하는 단계입니다.
+              </div>
+
+              {visibleGroupedCandidates.map(([spaceId, candidates]) => {
                 const isCurrentSpace = normalizeSpaceId(spaceId) === normalizedCurrentSpaceId
+                const linked = spaceLinkMap.get(normalizeSpaceId(spaceId))
                 return (
                   <section key={spaceId} className="space-y-2">
                     <div className="flex items-center gap-2">
-                      <h4 className="text-sm font-semibold text-foreground">{spaceId}</h4>
+                      {linked ? (
+                        <button
+                          type="button"
+                          className="text-left text-sm font-semibold text-foreground hover:text-primary hover:underline"
+                          onClick={() => {
+                            onApplySearch?.({
+                              query: linked.displayName || spaceId,
+                              consultationId: linked.consultationId,
+                            })
+                            onOpenChange(false)
+                          }}
+                          title="이 이름으로 메인 검색"
+                        >
+                          {spaceId}
+                          {linked.displayName ? (
+                            <span className="ml-2 text-xs font-normal text-muted-foreground">
+                              {linked.displayName}
+                            </span>
+                          ) : null}
+                        </button>
+                      ) : (
+                        <h4 className="text-sm font-semibold text-foreground">{spaceId}</h4>
+                      )}
                       <span className="text-xs text-muted-foreground">{candidates.length}건</span>
+                      {linked?.inboundDate ? (
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-700 ring-1 ring-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700">
+                          인입 {linked.inboundDate}
+                        </span>
+                      ) : null}
                       {isCurrentSpace && (
                         <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300 ring-1 ring-amber-500/30">
                           현재 카드
@@ -220,8 +425,20 @@ export function TakeoutQuoteInboxDialog({
                             />
                           </button>
                           <div className="mt-2 space-y-1">
+                            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                              <input
+                                type="checkbox"
+                                checked={workedIdSet.has(getWorkedCandidateKey(candidate))}
+                                onChange={() => toggleWorked(candidate)}
+                                className="rounded border-border"
+                              />
+                              작업 체크
+                            </label>
                             <p className="truncate text-xs font-medium text-foreground" title={candidate.fileName}>
                               {candidate.fileName}
+                            </p>
+                            <p className="text-[11px] text-muted-foreground">
+                              Takeout {candidate.takeoutVersion}
                             </p>
                           </div>
                           <Button
@@ -236,7 +453,7 @@ export function TakeoutQuoteInboxDialog({
                             ) : (
                               <ImagePlus className="h-3.5 w-3.5" />
                             )}
-                            견적 검토로 가져오기
+                            AI 검수로 가져오기
                           </Button>
                         </div>
                       ))}
@@ -244,6 +461,65 @@ export function TakeoutQuoteInboxDialog({
                   </section>
                 )
               })}
+
+              {showAllSpaces && !searchQuery.trim() && totalSpacePages > 1 ? (
+                <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setSpacePage((prev) => Math.max(1, prev - 1))}
+                    disabled={spacePage === 1}
+                  >
+                    이전
+                  </Button>
+                  {visiblePageNumbers[0] > 1 ? (
+                    <>
+                      <Button type="button" variant="outline" size="sm" onClick={() => setSpacePage(1)}>
+                        1
+                      </Button>
+                      {visiblePageNumbers[0] > 2 ? (
+                        <span className="px-1 text-xs text-muted-foreground">...</span>
+                      ) : null}
+                    </>
+                  ) : null}
+                  {visiblePageNumbers.map((pageNumber) => (
+                    <Button
+                      key={pageNumber}
+                      type="button"
+                      variant={spacePage === pageNumber ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setSpacePage(pageNumber)}
+                    >
+                      {pageNumber}
+                    </Button>
+                  ))}
+                  {visiblePageNumbers[visiblePageNumbers.length - 1] < totalSpacePages ? (
+                    <>
+                      {visiblePageNumbers[visiblePageNumbers.length - 1] < totalSpacePages - 1 ? (
+                        <span className="px-1 text-xs text-muted-foreground">...</span>
+                      ) : null}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setSpacePage(totalSpacePages)}
+                      >
+                        {totalSpacePages}
+                      </Button>
+                    </>
+                  ) : null}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setSpacePage((prev) => Math.min(totalSpacePages, prev + 1))}
+                    disabled={spacePage === totalSpacePages}
+                  >
+                    다음
+                  </Button>
+                </div>
+              ) : null}
             </div>
           )}
         </div>
@@ -255,13 +531,36 @@ export function TakeoutQuoteInboxDialog({
           <DialogHeader>
             <DialogTitle>{previewCandidate?.fileName ?? '이미지 크게 보기'}</DialogTitle>
             <DialogDescription>
-              이미지를 크게 확인한 뒤 바로 현재 상담카드의 견적 검토 흐름으로 가져올 수 있습니다.
+              이미지를 크게 확인한 뒤 현재 상담카드의 AI 검수 미리보기로 넘길 수 있습니다.
             </DialogDescription>
           </DialogHeader>
 
           {previewCandidate && (
             <>
-              <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-black/5">
+              <div className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background px-3 py-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setPreviewCandidate(null)}
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                  목록으로 돌아가기
+                </Button>
+                <span className="text-xs text-muted-foreground">
+                  이 단계는 저장 전 확인용입니다.
+                </span>
+              </div>
+
+              <div className="relative min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-black/5">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="absolute left-3 top-3 z-10 bg-background/95 shadow-sm"
+                  onClick={() => setPreviewCandidate(null)}
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                  목록으로 돌아가기
+                </Button>
                 <img
                   src={previewCandidate.assetUrl}
                   alt={previewCandidate.fileName}
@@ -273,8 +572,25 @@ export function TakeoutQuoteInboxDialog({
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium text-foreground">{previewCandidate.spaceIdNormalized}</p>
                   <p className="truncate text-xs text-muted-foreground">{previewCandidate.fileName}</p>
+                  <label className="mt-2 inline-flex items-center gap-2 text-xs text-muted-foreground">
+                    <input
+                      type="checkbox"
+                      checked={workedIdSet.has(getWorkedCandidateKey(previewCandidate))}
+                      onChange={() => toggleWorked(previewCandidate)}
+                      className="rounded border-border"
+                    />
+                    작업 체크
+                  </label>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setPreviewCandidate(null)}
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                    목록으로
+                  </Button>
                   <Button
                     type="button"
                     variant="outline"
@@ -294,7 +610,7 @@ export function TakeoutQuoteInboxDialog({
                     ) : (
                       <ImagePlus className="h-4 w-4" />
                     )}
-                    견적 검토로 가져오기
+                    AI 검수로 가져오기
                   </Button>
                 </div>
               </div>

@@ -279,6 +279,57 @@ export type Database = {
         }
         Relationships: []
       }
+      order_assets: {
+        Row: {
+          id: string
+          consultation_id: string | null
+          asset_type: string
+          storage_type: string
+          file_url: string
+          thumbnail_url: string | null
+          storage_path: string | null
+          public_id: string | null
+          file_name: string | null
+          file_type: string | null
+          site_name: string | null
+          business_type: string | null
+          metadata: Json | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          consultation_id?: string | null
+          asset_type: string
+          storage_type?: string
+          file_url: string
+          thumbnail_url?: string | null
+          storage_path?: string | null
+          public_id?: string | null
+          file_name?: string | null
+          file_type?: string | null
+          site_name?: string | null
+          business_type?: string | null
+          metadata?: Json | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          consultation_id?: string | null
+          asset_type?: string
+          storage_type?: string
+          file_url?: string
+          thumbnail_url?: string | null
+          storage_path?: string | null
+          public_id?: string | null
+          file_name?: string | null
+          file_type?: string | null
+          site_name?: string | null
+          business_type?: string | null
+          metadata?: Json | null
+          created_at?: string
+        }
+        Relationships: []
+      }
       project_images: {
         Row: {
           id: string
@@ -592,13 +643,13 @@ export type Database = {
     }
     Enums: {
       consultation_status:
-        | '상담중'
-        | '견적발송'
-        | '계약완료'
-        | '휴식기'
+        | '접수'
+        | '견적'
+        | '진행'
+        | '완료'
         | '거절'
         | '무효'
-        | 'AS_WAITING'
+        | 'AS'
       ContentStatus: 'DRAFT' | 'REVIEW' | 'PUBLISHED' | 'ARCHIVED'
       LeadStatus:
         | 'NEW'
@@ -733,7 +784,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
-      consultation_status: ['상담중', '견적발송', '계약완료', '휴식기', '거절', '무효', 'AS_WAITING'],
+      consultation_status: ['접수', '견적', '진행', '완료', '거절', '무효', 'AS'],
       ContentStatus: ['DRAFT', 'REVIEW', 'PUBLISHED', 'ARCHIVED'],
       LeadStatus: [
         'NEW',

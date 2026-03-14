@@ -1,0 +1,351 @@
+{
+  "name": "Google Chat Space → Supabase Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "chat-space-created",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "node-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [200, 340]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict"},
+          "conditions": [{
+            "id": "cond-is-message",
+            "leftValue": "={{ $json.body?.type }}",
+            "rightValue": "MESSAGE",
+            "operator": {"type": "string", "operation": "equals"}
+          }],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node-if-message",
+      "name": "Is MESSAGE?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [420, 340]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body;\nconst text = (body.message?.text ?? '').trim();\nconst attachments = body.message?.attachment ?? [];\nconst hasEstimateKeyword = text.includes('견적서');\nconst hasAttachment = attachments.length > 0;\nconst firstAttachment = attachments[0] ?? {};\nconst resourceName = firstAttachment.attachmentDataRef?.resourceName ?? firstAttachment.name ?? '';\nconst fileName = firstAttachment.contentName ?? 'estimate.jpg';\nconst spaceName = body.space?.name ?? '';\n\nreturn [{ json: {\n  isEstimateCommand: hasEstimateKeyword && hasAttachment,\n  spaceName,\n  resourceName,\n  fileName,\n  messageText: text\n}}];"
+      },
+      "id": "node-parse-message",
+      "name": "Parse Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [640, 120]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict"},
+          "conditions": [{
+            "id": "cond-is-estimate",
+            "leftValue": "={{ $json.isEstimateCommand }}",
+            "rightValue": true,
+            "operator": {"type": "boolean", "operation": "equals"}
+          }],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node-if-estimate",
+      "name": "[견적서] Command?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1080, 120]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "REPLACE_ME_GAS_WEBAPP_URL",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ action: 'download_attachment', resource_name: $json.resourceName, file_name: $json.fileName, token: 'REPLACE_ME_GAS_WEBAPP_TOKEN' }) }}",
+        "options": {}
+      },
+      "id": "node-download-image",
+      "name": "[견적서] Download Image (GAS)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1080, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const download = $input.first().json;\nconst parseNode = $('Parse Message').first().json;\n\nif (!download.ok) {\n  throw new Error('[견적서] 이미지 다운로드 실패: ' + (download.error ?? 'unknown'));\n}\n\nreturn [{ json: {\n  spaceName: parseNode.spaceName,\n  imageBase64: download.imageBase64,\n  fileName: download.fileName ?? parseNode.fileName\n}}];"
+      },
+      "id": "node-prepare-estimate",
+      "name": "[견적서] Prepare Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1300, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.SUPABASE_URL || '').replace(/\\/$/, '') + '/functions/v1/process-chat-estimate' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "Content-Type", "value": "application/json"},
+            {"name": "x-bot-secret", "value": "ec7d33aef69b5908826d737fc9828a9c"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ spaceName: $json.spaceName, imageBase64: $json.imageBase64, fileName: $json.fileName }) }}",
+        "options": {}
+      },
+      "id": "node-edge-function",
+      "name": "[견적서] process-chat-estimate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1520, 0]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ ($env.SUPABASE_URL || '').replace(/\\/$/, '') + '/rest/v1/consultations?channel_chat_id=eq.' + encodeURIComponent($('Parse Message').first().json.spaceName) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_KEY }}"},
+            {"name": "Authorization", "value": "={{ 'Bearer ' + $env.SUPABASE_SERVICE_KEY }}"},
+            {"name": "Content-Type", "value": "application/json"},
+            {"name": "Prefer", "value": "return=representation"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ update_date: $now.format('yyyy-MM-dd') }) }}",
+        "options": {}
+      },
+      "id": "node-estimate-update-date",
+      "name": "[견적서] Update Date",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1740, 0]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {"id": "msg-space", "name": "spaceName", "value": "={{ $json.body.space.name }}", "type": "string"},
+            {"id": "msg-today", "name": "today", "value": "={{ $now.format('yyyy-MM-dd') }}", "type": "string"}
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-setvars-msg",
+      "name": "[MESSAGE] Set Vars",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1080, 240]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ ($env.SUPABASE_URL || '').replace(/\\/$/, '') + '/rest/v1/consultations?channel_chat_id=eq.' + encodeURIComponent($json.spaceName) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_KEY }}"},
+            {"name": "Authorization", "value": "={{ 'Bearer ' + $env.SUPABASE_SERVICE_KEY }}"},
+            {"name": "Content-Type", "value": "application/json"},
+            {"name": "Prefer", "value": "return=representation"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ update_date: $json.today }) }}",
+        "options": {}
+      },
+      "id": "node-supabase-patch-msg",
+      "name": "[MESSAGE] Supabase PATCH update_date",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1300, 240]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {"id": "asgn-spaceName", "name": "spaceName", "value": "={{ $json.body.spaceName }}", "type": "string"},
+            {"id": "asgn-chatLink", "name": "chatLink", "value": "={{ 'https://chat.google.com/room/' + $json.body.spaceName.replace('spaces/', '') }}", "type": "string"},
+            {"id": "asgn-today", "name": "today", "value": "={{ $now.format('yyyy-MM-dd') }}", "type": "string"},
+            {"id": "asgn-displayName", "name": "displayName", "value": "={{ $json.body.displayName || '' }}", "type": "string"}
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-setvars",
+      "name": "Set Variables",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [640, 560]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ ($env.SUPABASE_URL || '').replace(/\\/$/, '') + '/rest/v1/consultations?select=id&channel_chat_id=eq.' + encodeURIComponent($json.spaceName) + '&limit=1' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_KEY }}"},
+            {"name": "Authorization", "value": "={{ 'Bearer ' + $env.SUPABASE_SERVICE_KEY }}"}
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-check-supabase",
+      "name": "Check Supabase",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [860, 560]
+    },
+    {
+      "parameters": {
+        "jsCode": "const allItems = $input.all();\nconst vars = $('Set Variables').first().json;\n\nlet found = false;\nif (allItems.length > 0) {\n  const body = allItems[0].json;\n  if (Array.isArray(body)) {\n    found = body.length > 0;\n  } else if (body && body.id !== undefined) {\n    found = true;\n  }\n}\n\nreturn [{\n  json: {\n    found,\n    spaceName: vars.spaceName,\n    chatLink: vars.chatLink,\n    today: vars.today,\n    displayName: vars.displayName\n  }\n}];"
+      },
+      "id": "node-normalize",
+      "name": "Normalize Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1080, 560]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict"},
+          "conditions": [{"id": "cond-found", "leftValue": "={{ $json.found }}", "rightValue": true, "operator": {"type": "boolean", "operation": "equals"}}],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node-if",
+      "name": "Row Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1300, 560]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ ($env.SUPABASE_URL || '').replace(/\\/$/, '') + '/rest/v1/consultations?channel_chat_id=eq.' + encodeURIComponent($json.spaceName) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_KEY }}"},
+            {"name": "Authorization", "value": "={{ 'Bearer ' + $env.SUPABASE_SERVICE_KEY }}"},
+            {"name": "Content-Type", "value": "application/json"},
+            {"name": "Prefer", "value": "return=representation"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ update_date: $json.today }) }}",
+        "options": {}
+      },
+      "id": "node-supabase-patch",
+      "name": "[기존] Supabase PATCH",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1520, 420]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.SUPABASE_URL || '').replace(/\\/$/, '') + '/rest/v1/consultations' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_KEY }}"},
+            {"name": "Authorization", "value": "={{ 'Bearer ' + $env.SUPABASE_SERVICE_KEY }}"},
+            {"name": "Content-Type", "value": "application/json"},
+            {"name": "Prefer", "value": "return=representation"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ link: $json.chatLink, channel_chat_id: $json.spaceName, project_name: $json.displayName || $json.spaceName, start_date: $json.today, update_date: $json.today, status: '접수', customer_grade: '신규', is_visible: true }) }}",
+        "options": {}
+      },
+      "id": "node-supabase-insert",
+      "name": "[신규] Supabase INSERT",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1520, 700]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{"node": "Is MESSAGE?", "type": "main", "index": 0}]]
+    },
+    "Is MESSAGE?": {
+      "main": [
+        [{"node": "Parse Message", "type": "main", "index": 0}],
+        [{"node": "Set Variables", "type": "main", "index": 0}]
+      ]
+    },
+    "Parse Message": {
+      "main": [[{"node": "[견적서] Command?", "type": "main", "index": 0}]]
+    },
+    "[견적서] Command?": {
+      "main": [
+        [{"node": "[견적서] Download Image (GAS)", "type": "main", "index": 0}],
+        [{"node": "[MESSAGE] Set Vars", "type": "main", "index": 0}]
+      ]
+    },
+    "[견적서] Download Image (GAS)": {
+      "main": [[{"node": "[견적서] Prepare Payload", "type": "main", "index": 0}]]
+    },
+    "[견적서] Prepare Payload": {
+      "main": [[{"node": "[견적서] process-chat-estimate", "type": "main", "index": 0}]]
+    },
+    "[견적서] process-chat-estimate": {
+      "main": [[{"node": "[견적서] Update Date", "type": "main", "index": 0}]]
+    },
+    "[MESSAGE] Set Vars": {
+      "main": [[{"node": "[MESSAGE] Supabase PATCH update_date", "type": "main", "index": 0}]]
+    },
+    "Set Variables": {
+      "main": [[{"node": "Check Supabase", "type": "main", "index": 0}]]
+    },
+    "Check Supabase": {
+      "main": [[{"node": "Normalize Result", "type": "main", "index": 0}]]
+    },
+    "Normalize Result": {
+      "main": [[{"node": "Row Found?", "type": "main", "index": 0}]]
+    },
+    "Row Found?": {
+      "main": [
+        [{"node": "[기존] Supabase PATCH", "type": "main", "index": 0}],
+        [{"node": "[신규] Supabase INSERT", "type": "main", "index": 0}]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "4",
+  "id": "f2SGx30pVCnFFmFG",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}
