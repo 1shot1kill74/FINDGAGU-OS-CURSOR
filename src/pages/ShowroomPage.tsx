@@ -207,7 +207,7 @@ export default function ShowroomPage() {
   }, [])
 
   const showroomAssets = useMemo(
-    () => assets.filter((asset) => !asset.before_after_role),
+    () => assets.filter((asset) => asset.before_after_role !== 'before'),
     [assets]
   )
   const beforeAfterAssets = useMemo(
