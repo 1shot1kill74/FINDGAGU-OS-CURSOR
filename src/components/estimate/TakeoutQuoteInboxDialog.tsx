@@ -32,12 +32,43 @@ function normalizeSpaceId(input: string | null | undefined): string {
   return (urlMatch?.[1] ?? raw).trim()
 }
 
+function normalizeSearchText(input: string | null | undefined): string {
+  return String(input ?? '')
+    .toLowerCase()
+    .replace(/\s+/g, '')
+    .trim()
+}
+
+function normalizeDigitText(input: string | null | undefined): string {
+  return String(input ?? '').replace(/\D+/g, '')
+}
+
+function matchesSearchToken(token: string, value: string): boolean {
+  if (!token) return true
+  const normalizedToken = normalizeSearchText(token)
+  const normalizedValue = normalizeSearchText(value)
+  if (normalizedToken && normalizedValue.includes(normalizedToken)) return true
+
+  const digitToken = normalizeDigitText(token)
+  if (!digitToken) return false
+  const digitValue = normalizeDigitText(value)
+  if (!digitValue) return false
+  return digitValue.includes(digitToken) || digitValue.endsWith(digitToken)
+}
+
+function matchesTakeoutSearch(query: string, fields: Array<string | null | undefined>): boolean {
+  const trimmed = query.trim()
+  if (!trimmed) return true
+  const tokens = trimmed.split(/\s+/).filter(Boolean)
+  return tokens.every((token) => fields.some((field) => matchesSearchToken(token, field ?? '')))
+}
+
 interface TakeoutQuoteInboxDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   currentSpaceId?: string | null
   currentDisplayName?: string | null
-  spaceLinks?: Array<{ spaceId: string; displayName: string; consultationId: string; inboundDate?: string | null }>
+  spaceLinks?: Array<{ spaceId: string; displayName: string; consultationId: string; inboundDate?: string | null; updateDate?: string | null }>
   onApplySearch?: (payload: { query: string; consultationId?: string }) => void
   onImportCandidate: (candidate: TakeoutQuoteCandidate) => Promise<void> | void
 }
@@ -53,6 +84,15 @@ function parseInboundTime(value: string | null | undefined): number | null {
   if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null
   const time = new Date(`${value}T12:00:00.000Z`).getTime()
   return Number.isNaN(time) ? null : time
+}
+
+function formatDateLabel(value: string | null | undefined): string | null {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null
+  return value
+}
+
+function getLinkSortTime(link: { updateDate?: string | null; inboundDate?: string | null }): number | null {
+  return parseInboundTime(link.updateDate) ?? parseInboundTime(link.inboundDate)
 }
 
 export function TakeoutQuoteInboxDialog({
@@ -140,18 +180,57 @@ export function TakeoutQuoteInboxDialog({
     if (!open) setPreviewCandidate(null)
   }, [open])
 
+  const availableTakeoutVersions = useMemo(() => {
+    const versions = manifest?.takeoutVersions ?? []
+    if (versions.length > 0) return versions
+    return manifest?.takeoutVersion ? [manifest.takeoutVersion] : []
+  }, [manifest])
+
+  const spaceLinkMap = useMemo(() => {
+    const map = new Map<string, { displayName: string; consultationId: string; inboundDate?: string | null; updateDate?: string | null }>()
+    spaceLinks.forEach((link) => {
+      const key = normalizeSpaceId(link.spaceId)
+      if (!key) return
+      const nextValue = {
+        displayName: link.displayName,
+        consultationId: link.consultationId,
+        inboundDate: link.inboundDate ?? null,
+        updateDate: link.updateDate ?? null,
+      }
+      const existing = map.get(key)
+      if (!existing) {
+        map.set(key, nextValue)
+        return
+      }
+      const existingTime = getLinkSortTime(existing)
+      const nextTime = getLinkSortTime(nextValue)
+      if (nextTime != null && (existingTime == null || nextTime > existingTime)) {
+        map.set(key, nextValue)
+        return
+      }
+      if (!existing.displayName && nextValue.displayName) {
+        map.set(key, { ...existing, displayName: nextValue.displayName })
+      }
+    })
+    return map
+  }, [spaceLinks])
   const filteredCandidates = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase()
+    const q = searchQuery.trim()
     const candidates = (manifest?.candidates ?? []).filter((candidate) =>
       selectedTakeoutVersion == null ? true : candidate.takeoutVersion === selectedTakeoutVersion
     )
     const baseFiltered = !q
       ? candidates
-      : candidates.filter((candidate) =>
-        candidate.spaceId.toLowerCase().includes(q) ||
-        candidate.spaceIdNormalized.toLowerCase().includes(q) ||
-        candidate.fileName.toLowerCase().includes(q)
-      )
+      : candidates.filter((candidate) => {
+        const linked = spaceLinkMap.get(normalizeSpaceId(candidate.spaceIdNormalized || candidate.spaceId))
+        return matchesTakeoutSearch(q, [
+          candidate.spaceId,
+          candidate.spaceIdNormalized,
+          candidate.fileName,
+          candidate.sourcePath,
+          linked?.displayName,
+        ])
+      })
 
     const filtered =
       normalizedCurrentSpaceId && !q && !showAllSpaces
@@ -166,27 +245,7 @@ export function TakeoutQuoteInboxDialog({
       if (a.spaceIdNormalized !== b.spaceIdNormalized) return a.spaceIdNormalized.localeCompare(b.spaceIdNormalized)
       return a.fileName.localeCompare(b.fileName)
     })
-  }, [manifest, normalizedCurrentSpaceId, searchQuery, selectedTakeoutVersion, showAllSpaces])
-
-  const availableTakeoutVersions = useMemo(() => {
-    const versions = manifest?.takeoutVersions ?? []
-    if (versions.length > 0) return versions
-    return manifest?.takeoutVersion ? [manifest.takeoutVersion] : []
-  }, [manifest])
-
-  const spaceLinkMap = useMemo(() => {
-    const map = new Map<string, { displayName: string; consultationId: string; inboundDate?: string | null }>()
-    spaceLinks.forEach((link) => {
-      const key = normalizeSpaceId(link.spaceId)
-      if (!key || map.has(key)) return
-      map.set(key, {
-        displayName: link.displayName,
-        consultationId: link.consultationId,
-        inboundDate: link.inboundDate ?? null,
-      })
-    })
-    return map
-  }, [spaceLinks])
+  }, [manifest, normalizedCurrentSpaceId, searchQuery, selectedTakeoutVersion, showAllSpaces, spaceLinkMap])
   const groupedCandidates = useMemo(() => {
     const grouped = new Map<string, TakeoutQuoteCandidate[]>()
     filteredCandidates.forEach((candidate) => {
@@ -198,6 +257,11 @@ export function TakeoutQuoteInboxDialog({
     return Array.from(grouped.entries()).sort(([a, aCandidates], [b, bCandidates]) => {
       const aNorm = normalizeSpaceId(a)
       const bNorm = normalizeSpaceId(b)
+      const aUpdate = parseInboundTime(spaceLinkMap.get(aNorm)?.updateDate)
+      const bUpdate = parseInboundTime(spaceLinkMap.get(bNorm)?.updateDate)
+      if (aUpdate != null && bUpdate != null && aUpdate !== bUpdate) return bUpdate - aUpdate
+      if (aUpdate != null && bUpdate == null) return -1
+      if (aUpdate == null && bUpdate != null) return 1
       const aInbound = parseInboundTime(spaceLinkMap.get(aNorm)?.inboundDate)
       const bInbound = parseInboundTime(spaceLinkMap.get(bNorm)?.inboundDate)
       if (aInbound != null && bInbound != null && aInbound !== bInbound) return bInbound - aInbound
@@ -307,7 +371,7 @@ export function TakeoutQuoteInboxDialog({
             <Input
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="스페이스 ID 또는 파일명으로 검색"
+              placeholder="스페이스 ID, 현장명, 파일명, 숫자로 검색"
               className="pl-9"
             />
           </div>
@@ -370,6 +434,8 @@ export function TakeoutQuoteInboxDialog({
               {visibleGroupedCandidates.map(([spaceId, candidates]) => {
                 const isCurrentSpace = normalizeSpaceId(spaceId) === normalizedCurrentSpaceId
                 const linked = spaceLinkMap.get(normalizeSpaceId(spaceId))
+                const updateDateLabel = formatDateLabel(linked?.updateDate)
+                const inboundDateLabel = formatDateLabel(linked?.inboundDate)
                 return (
                   <section key={spaceId} className="space-y-2">
                     <div className="flex items-center gap-2">
@@ -397,9 +463,14 @@ export function TakeoutQuoteInboxDialog({
                         <h4 className="text-sm font-semibold text-foreground">{spaceId}</h4>
                       )}
                       <span className="text-xs text-muted-foreground">{candidates.length}건</span>
-                      {linked?.inboundDate ? (
+                      {updateDateLabel ? (
+                        <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-medium text-violet-700 ring-1 ring-violet-200 dark:bg-violet-950/40 dark:text-violet-300 dark:ring-violet-800">
+                          업데이트 {updateDateLabel}
+                        </span>
+                      ) : null}
+                      {!updateDateLabel && inboundDateLabel ? (
                         <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-700 ring-1 ring-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700">
-                          인입 {linked.inboundDate}
+                          인입 {inboundDateLabel}
                         </span>
                       ) : null}
                       {isCurrentSpace && (

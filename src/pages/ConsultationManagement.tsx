@@ -194,6 +194,7 @@ const LIST_PAGE_SIZE = 40
 /** 업무 단계별 탭 — 영업 사원 우선순위 파악용 */
 type ListTab = '전체' | '미처리' | '견적중' | '진행중' | '종료' | '거절' | '무효'
 type DateRangeKey = 'all' | 'thisMonth' | '1m' | '3m' | '6m' | '1y'
+type CustomDateTarget = 'inbound' | 'update'
 
 const DATE_RANGE_OPTIONS: Array<{ value: DateRangeKey; label: string }> = [
   { value: 'all', label: '전체 기간' },
@@ -234,6 +235,28 @@ function matchesDateRange(
   if (value == null) return false
   if (range === 'thisMonth') return value >= starts.thisMonth && value <= now
   return value >= starts[range]
+}
+
+function parseDateInputValue(dateString: string | null | undefined, mode: 'start' | 'end'): number | null {
+  const trimmed = typeof dateString === 'string' ? dateString.trim() : ''
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return null
+  const suffix = mode === 'start' ? 'T00:00:00.000Z' : 'T23:59:59.999Z'
+  const value = new Date(`${trimmed}${suffix}`).getTime()
+  return Number.isNaN(value) ? null : value
+}
+
+function matchesCustomDateRange(
+  value: number | null,
+  startDate: string | null | undefined,
+  endDate: string | null | undefined,
+): boolean {
+  if (!startDate && !endDate) return true
+  if (value == null) return false
+  const startValue = parseDateInputValue(startDate, 'start')
+  const endValue = parseDateInputValue(endDate, 'end')
+  if (startValue != null && value < startValue) return false
+  if (endValue != null && value > endValue) return false
+  return true
 }
 
 /** 시공완료·거절·무효 — 활성 리스트에서 제외. 무효=통계 제외, 거절=사유 보존 */
@@ -331,6 +354,44 @@ interface Lead {
   showroomCategory?: string
   showroomContext?: string
   showroomEntryLabel?: string
+}
+
+function normalizeDateSearchQuery(rawQuery: string): string | null {
+  const trimmed = rawQuery.trim()
+  if (!trimmed) return null
+  const normalized = trimmed.replace(/[./]/g, '-').replace(/\s+/g, '')
+  if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) return normalized
+  if (/^\d{4}-\d{2}$/.test(normalized)) return normalized
+  const digits = normalized.replace(/\D/g, '')
+  if (/^\d{8}$/.test(digits)) return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6, 8)}`
+  if (/^\d{6}$/.test(digits)) return `${digits.slice(0, 4)}-${digits.slice(4, 6)}`
+  return null
+}
+
+function matchesLeadSearch(lead: Lead, rawQuery: string): boolean {
+  const q = rawQuery.trim().toLowerCase()
+  if (!q) return true
+  const qDigits = q.replace(/\D/g, '')
+  const company = (lead.company ?? '').toLowerCase()
+  const displayName = (lead.displayName ?? '').toLowerCase()
+  const name = (lead.name ?? '').toLowerCase()
+  const projectName = (lead.projectName ?? '').toLowerCase()
+  const contactDigits = (lead.contact ?? '').replace(/\D/g, '')
+  const normalizedDateQuery = normalizeDateSearchQuery(rawQuery)
+  const inboundDate = (lead.inboundDate ?? '').trim().slice(0, 10)
+  const updateDate = (lead.updateDate ?? '').trim().slice(0, 10)
+
+  return (
+    company.includes(q) ||
+    displayName.includes(q) ||
+    name.includes(q) ||
+    projectName.includes(q) ||
+    (qDigits.length > 0 && contactDigits.includes(qDigits)) ||
+    (qDigits.length === 4 && contactDigits.endsWith(qDigits)) ||
+    (normalizedDateQuery != null &&
+      ((inboundDate !== '' && inboundDate.startsWith(normalizedDateQuery)) ||
+        (updateDate !== '' && updateDate.startsWith(normalizedDateQuery))))
+  )
 }
 
 /** 상담 식별자 자동 생성: [YYMM] [상호/성함] [연락처 뒷4자리]. refDate는 상담 생성일(YYMM 고정용). */
@@ -1367,6 +1428,9 @@ export default function ConsultationManagement() {
   const [searchQuery, setSearchQuery] = useState('')
   const [dateRange, setDateRange] = useState<DateRangeKey>('all')
   const [updateDateRange, setUpdateDateRange] = useState<DateRangeKey>('1m')
+  const [customDateTarget, setCustomDateTarget] = useState<CustomDateTarget>('inbound')
+  const [customDateStart, setCustomDateStart] = useState('')
+  const [customDateEnd, setCustomDateEnd] = useState('')
   const [listPage, setListPage] = useState(0)
   const [sortByNeglect, setSortByNeglect] = useState(true)
   /** admin 권한 — 시스템 메시지 영구 삭제 버튼 노출. localStorage 'findgagu-role' === 'admin' 또는 URL ?admin=1 */
@@ -1387,60 +1451,33 @@ export default function ConsultationManagement() {
     return '전체'
   }, [])
 
+  const matchesLeadDateFilters = useCallback((lead: Lead, now: number, starts: ReturnType<typeof getDateRangeStarts>) => {
+    const inboundValue = getComparableDateValue(lead.inboundDate, lead.createdAt)
+    const updateValue = getComparableDateValue(lead.updateDate)
+    const customDateValue = customDateTarget === 'inbound' ? inboundValue : updateValue
+    return (
+      matchesDateRange(inboundValue, dateRange, now, starts) &&
+      matchesDateRange(updateValue, updateDateRange, now, starts) &&
+      matchesCustomDateRange(customDateValue, customDateStart, customDateEnd)
+    )
+  }, [dateRange, updateDateRange, customDateTarget, customDateStart, customDateEnd])
+
   /** KPI: 무효 제외 유효 상담 수, 성공률 = 계약완료(시공완료) / 유효 상담. 무효는 분모에서 제외. 필터와 동일한 inRange 사용 */
   const kpi = useMemo(() => {
     const now = Date.now()
     const starts = getDateRangeStarts(now)
-    const inRange = (lead: Lead) => {
-      const inboundValue = getComparableDateValue(lead.inboundDate, lead.createdAt)
-      const updateValue = getComparableDateValue(lead.updateDate)
-      return (
-        matchesDateRange(inboundValue, dateRange, now, starts) &&
-        matchesDateRange(updateValue, updateDateRange, now, starts)
-      )
-    }
-    const q = (searchQuery ?? '').trim().toLowerCase()
-    const qDigits = q.replace(/\D/g, '')
-    const matchSearch = (l: Lead) => {
-      if (!q) return true
-      const company = (l.company ?? '').toLowerCase()
-      const displayName = (l.displayName ?? '').toLowerCase()
-      const name = (l.name ?? '').toLowerCase()
-      const projectName = (l.projectName ?? '').toLowerCase()
-      const contactDigits = (l.contact ?? '').replace(/\D/g, '')
-      return company.includes(q) || displayName.includes(q) || name.includes(q) || projectName.includes(q) || (qDigits.length > 0 && contactDigits.includes(qDigits)) || (qDigits.length === 4 && contactDigits.endsWith(qDigits))
-    }
-    const base = leads.filter((l) => inRange(l) && matchSearch(l))
+    const base = leads.filter((l) => matchesLeadDateFilters(l, now, starts) && matchesLeadSearch(l, searchQuery))
     const totalValid = base.filter((l) => l.status !== '무효').length
     const successCount = base.filter((l) => l.workflowStage === '시공완료' && l.status !== '거절' && l.status !== '무효').length
     const successRate = totalValid > 0 ? Math.round((successCount / totalValid) * 100) : 0
     return { totalValid, successCount, successRate }
-  }, [leads, searchQuery, dateRange, updateDateRange])
+  }, [leads, searchQuery, matchesLeadDateFilters])
 
   /** 탭별 개수 (숫자 표시용). 필터와 동일한 inRange 사용 */
   const tabCounts = useMemo(() => {
     const now = Date.now()
     const starts = getDateRangeStarts(now)
-    const inRange = (lead: Lead) => {
-      const inboundValue = getComparableDateValue(lead.inboundDate, lead.createdAt)
-      const updateValue = getComparableDateValue(lead.updateDate)
-      return (
-        matchesDateRange(inboundValue, dateRange, now, starts) &&
-        matchesDateRange(updateValue, updateDateRange, now, starts)
-      )
-    }
-    const q = (searchQuery ?? '').trim().toLowerCase()
-    const qDigits = q.replace(/\D/g, '')
-    const matchSearch = (l: Lead) => {
-      if (!q) return true
-      const company = (l.company ?? '').toLowerCase()
-      const displayName = (l.displayName ?? '').toLowerCase()
-      const name = (l.name ?? '').toLowerCase()
-      const projectName = (l.projectName ?? '').toLowerCase()
-      const contactDigits = (l.contact ?? '').replace(/\D/g, '')
-      return company.includes(q) || displayName.includes(q) || name.includes(q) || projectName.includes(q) || (qDigits.length > 0 && contactDigits.includes(qDigits)) || (qDigits.length === 4 && contactDigits.endsWith(qDigits))
-    }
-    const base = leads.filter((l) => inRange(l) && matchSearch(l))
+    const base = leads.filter((l) => matchesLeadDateFilters(l, now, starts) && matchesLeadSearch(l, searchQuery))
     const active = base.filter((l) => !isEnded(l))
     const completedCount = base.filter((l) => l.workflowStage === '시공완료' && l.status !== '거절' && l.status !== '무효').length
     const completedReactivatedCount = base.filter((l) => l.status === '완료' && l.workflowStage === '시공완료' && !!getReactivationSignal(l.status, l.workflowStage, l.updateDate)).length
@@ -1458,39 +1495,13 @@ export default function ConsultationManagement() {
       거절: rejectCount,
       무효: invalidCount,
     }
-  }, [leads, searchQuery, dateRange, updateDateRange])
+  }, [leads, searchQuery, matchesLeadDateFilters])
 
   /** 필터+정렬된 리스트 (최신 순 = start_date/inboundDate desc) */
   const filteredLeads = useMemo(() => {
     const now = Date.now()
     const starts = getDateRangeStarts(now)
-    const inRange = (lead: Lead) => {
-      const inboundValue = getComparableDateValue(lead.inboundDate, lead.createdAt)
-      const updateValue = getComparableDateValue(lead.updateDate)
-      return (
-        matchesDateRange(inboundValue, dateRange, now, starts) &&
-        matchesDateRange(updateValue, updateDateRange, now, starts)
-      )
-    }
-    const q = (searchQuery ?? '').trim().toLowerCase()
-    const qDigits = q.replace(/\D/g, '')
-    const matchSearch = (l: Lead) => {
-      if (!q) return true
-      const company = (l.company ?? '').toLowerCase()
-      const displayName = (l.displayName ?? '').toLowerCase()
-      const name = (l.name ?? '').toLowerCase()
-      const projectName = (l.projectName ?? '').toLowerCase()
-      const contactDigits = (l.contact ?? '').replace(/\D/g, '')
-      return (
-        company.includes(q) ||
-        displayName.includes(q) ||
-        name.includes(q) ||
-        projectName.includes(q) ||
-        (qDigits.length > 0 && contactDigits.includes(qDigits)) ||
-        (qDigits.length === 4 && contactDigits.endsWith(qDigits))
-      )
-    }
-    let list = leads.filter((l) => inRange(l) && matchSearch(l))
+    let list = leads.filter((l) => matchesLeadDateFilters(l, now, starts) && matchesLeadSearch(l, searchQuery))
     if (listTab === '종료') list = list.filter((l) => l.workflowStage === '시공완료' && l.status !== '거절' && l.status !== '무효')
     else if (listTab === '거절') list = list.filter((l) => l.status === '거절')
     else if (listTab === '무효') list = list.filter((l) => l.status === '무효')
@@ -1518,7 +1529,7 @@ export default function ConsultationManagement() {
       const db = b.inboundDate ? new Date(b.inboundDate).getTime() : new Date(b.createdAt).getTime()
       return db - da
     })
-  }, [leads, listTab, searchQuery, dateRange, updateDateRange, sortByNeglect])
+  }, [leads, listTab, searchQuery, sortByNeglect, matchesLeadDateFilters])
 
   const searchMatchedTabCounts = useMemo(() => {
     const empty: Record<ListTab, number> = {
@@ -1533,68 +1544,20 @@ export default function ConsultationManagement() {
     const now = Date.now()
     const starts = getDateRangeStarts(now)
     const q = (searchQuery ?? '').trim().toLowerCase()
-    const qDigits = q.replace(/\D/g, '')
     if (!q) return empty
-    const inRange = (lead: Lead) => {
-      const inboundValue = getComparableDateValue(lead.inboundDate, lead.createdAt)
-      const updateValue = getComparableDateValue(lead.updateDate)
-      return (
-        matchesDateRange(inboundValue, dateRange, now, starts) &&
-        matchesDateRange(updateValue, updateDateRange, now, starts)
-      )
-    }
-    const matchSearch = (l: Lead) => {
-      const company = (l.company ?? '').toLowerCase()
-      const displayName = (l.displayName ?? '').toLowerCase()
-      const name = (l.name ?? '').toLowerCase()
-      const projectName = (l.projectName ?? '').toLowerCase()
-      const contactDigits = (l.contact ?? '').replace(/\D/g, '')
-      return (
-        company.includes(q) ||
-        displayName.includes(q) ||
-        name.includes(q) ||
-        projectName.includes(q) ||
-        (qDigits.length > 0 && contactDigits.includes(qDigits)) ||
-        (qDigits.length === 4 && contactDigits.endsWith(qDigits))
-      )
-    }
     for (const lead of leads) {
-      if (!inRange(lead) || !matchSearch(lead)) continue
+      if (!matchesLeadDateFilters(lead, now, starts) || !matchesLeadSearch(lead, searchQuery)) continue
       empty[getListTabForLead(lead)] += 1
     }
     return empty
-  }, [leads, searchQuery, dateRange, updateDateRange, getListTabForLead])
+  }, [leads, searchQuery, getListTabForLead, matchesLeadDateFilters])
 
   const searchFocusLead = useMemo(() => {
     const now = Date.now()
     const starts = getDateRangeStarts(now)
     const q = (searchQuery ?? '').trim().toLowerCase()
-    const qDigits = q.replace(/\D/g, '')
     if (!q) return null
-    const inRange = (lead: Lead) => {
-      const inboundValue = getComparableDateValue(lead.inboundDate, lead.createdAt)
-      const updateValue = getComparableDateValue(lead.updateDate)
-      return (
-        matchesDateRange(inboundValue, dateRange, now, starts) &&
-        matchesDateRange(updateValue, updateDateRange, now, starts)
-      )
-    }
-    const matchSearch = (l: Lead) => {
-      const company = (l.company ?? '').toLowerCase()
-      const displayName = (l.displayName ?? '').toLowerCase()
-      const name = (l.name ?? '').toLowerCase()
-      const projectName = (l.projectName ?? '').toLowerCase()
-      const contactDigits = (l.contact ?? '').replace(/\D/g, '')
-      return (
-        company.includes(q) ||
-        displayName.includes(q) ||
-        name.includes(q) ||
-        projectName.includes(q) ||
-        (qDigits.length > 0 && contactDigits.includes(qDigits)) ||
-        (qDigits.length === 4 && contactDigits.endsWith(qDigits))
-      )
-    }
-    const matches = leads.filter((lead) => inRange(lead) && matchSearch(lead))
+    const matches = leads.filter((lead) => matchesLeadDateFilters(lead, now, starts) && matchesLeadSearch(lead, searchQuery))
     if (matches.length === 0) return null
     return [...matches].sort((a, b) => {
       if (a.pinned && !b.pinned) return -1
@@ -1608,7 +1571,7 @@ export default function ConsultationManagement() {
       const db = b.inboundDate ? new Date(b.inboundDate).getTime() : new Date(b.createdAt).getTime()
       return db - da
     })[0]
-  }, [leads, searchQuery, dateRange, updateDateRange, sortByNeglect])
+  }, [leads, searchQuery, sortByNeglect, matchesLeadDateFilters])
 
   /** 검색/기간 필터 변경 시: 현재 선택이 필터 결과에 없으면 첫 번째 결과로 선택 (검색 시 우측 패널이 결과와 맞도록) */
   useEffect(() => {
@@ -3876,7 +3839,7 @@ export default function ConsultationManagement() {
               <div className="relative flex-1 min-w-[200px] max-w-sm">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="업체명, 전화번호 검색"
+                  placeholder="업체명, 전화번호, 날짜 검색 (예: 2026-03-16)"
                   value={searchQuery}
                   onChange={(e) => { setSearchQuery(e.target.value); setListPage(0) }}
                   className="pl-8 h-9 text-sm"
@@ -3917,6 +3880,49 @@ export default function ConsultationManagement() {
                 onClick={() => { setSortByNeglect((v) => !v); setListPage(0) }}
               >
                 {sortByNeglect ? '최근업데이트순' : '인입일순'}
+              </Button>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <div className="flex items-center gap-1 shrink-0">
+                <span className="text-xs text-muted-foreground">직접기간</span>
+                <select
+                  value={customDateTarget}
+                  onChange={(e) => { setCustomDateTarget(e.target.value as CustomDateTarget); setListPage(0) }}
+                  className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                  aria-label="직접기간 대상 선택"
+                  title="직접기간 대상 선택"
+                >
+                  <option value="inbound">인입일</option>
+                  <option value="update">업데이트일</option>
+                </select>
+                <Input
+                  type="date"
+                  value={customDateStart}
+                  onChange={(e) => { setCustomDateStart(e.target.value); setListPage(0) }}
+                  className="h-9 w-[150px] text-sm"
+                  aria-label="직접기간 시작일"
+                />
+                <span className="text-xs text-muted-foreground">~</span>
+                <Input
+                  type="date"
+                  value={customDateEnd}
+                  onChange={(e) => { setCustomDateEnd(e.target.value); setListPage(0) }}
+                  className="h-9 w-[150px] text-sm"
+                  aria-label="직접기간 종료일"
+                />
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-9 text-xs shrink-0"
+                onClick={() => {
+                  setCustomDateTarget('inbound')
+                  setCustomDateStart('')
+                  setCustomDateEnd('')
+                  setListPage(0)
+                }}
+              >
+                직접기간 초기화
               </Button>
             </div>
 
@@ -4081,6 +4087,7 @@ export default function ConsultationManagement() {
                           displayName: lead.displayName || lead.company || '',
                           consultationId: lead.id,
                           inboundDate: lead.inboundDate ?? null,
+                          updateDate: lead.updateDate ?? null,
                         }))
                         .filter((item) => item.spaceId)}
                       onApplyTakeoutSearch={({ query, consultationId }) => {

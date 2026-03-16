@@ -25,6 +25,9 @@ export const COLOR_CHIPS_FALLBACK: ColorChip[] = [
     '백색',
     '라이트그레이',
     '샌드그레이',
+    '오크샤모니',
+    '블랙',
+    '다크그레이',
   ].map((color_name, i) => ({
     id: `std-${i}`,
     color_type: 'Standard' as ColorType,

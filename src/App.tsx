@@ -14,6 +14,7 @@ import PublicGalleryView from '@/pages/PublicGalleryView'
 import ShareRedirect from '@/pages/ShareRedirect'
 import ShowroomPage from '@/pages/ShowroomPage'
 import ContactPage from '@/pages/ContactPage'
+import HomepageConceptPage from '@/pages/HomepageConceptPage'
 import MigrationPage from '@/pages/admin/MigrationPage'
 import ArchivePage from '@/pages/admin/ArchivePage'
 import TestConsole from '@/pages/admin/TestConsole'
@@ -32,6 +33,7 @@ function Home() {
         <Link to="/image-assets" className="text-primary underline underline-offset-4 font-medium">이미지 자산 관리</Link>
         <Link to="/portfolio" className="text-primary underline underline-offset-4 font-medium">시공 사례 뱅크</Link>
         <Link to="/showroom" className="text-primary underline underline-offset-4 font-medium">시공사례 쇼룸</Link>
+        <Link to="/homepage-concept" className="text-primary underline underline-offset-4 font-medium">홈페이지 컨셉</Link>
         <Link to="/admin/migration" className="text-primary underline underline-offset-4 font-medium">데이터 통합 마이그레이션</Link>
         <Link to="/admin/archive" className="text-primary underline underline-offset-4 font-medium">숨긴 상담 아카이브</Link>
         <Link to="/admin/test-console" className="text-primary underline underline-offset-4 font-medium">채널톡 시뮬레이터</Link>
@@ -60,6 +62,7 @@ function App() {
         <Route path="/share/gallery" element={<ShareGalleryPage />} />
         <Route path="/public/share" element={<PublicGalleryView />} />
         <Route path="/showroom" element={<ShowroomPage />} />
+        <Route path="/homepage-concept" element={<HomepageConceptPage />} />
         <Route path="/contact" element={<ContactPage />} />
         <Route path="/admin/migration" element={<MigrationPage />} />
         <Route path="/admin/archive" element={<ArchivePage />} />

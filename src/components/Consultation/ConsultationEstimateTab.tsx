@@ -37,6 +37,7 @@ interface TakeoutSpaceLink {
   displayName: string
   consultationId: string
   inboundDate?: string | null
+  updateDate?: string | null
 }
 
 function parseGoogleChatSpaceId(value: unknown): string | null {
