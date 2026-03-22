@@ -239,38 +239,14 @@ export async function uploadEngine(file: File, metadata: UploadEngineMetadata): 
 }
 
 /**
- * Cloudinary 이미지 삭제 (원본 제거)
- * .env에 VITE_CLOUDINARY_API_KEY, VITE_CLOUDINARY_API_SECRET 필요.
+ * Cloudinary 원본 삭제는 서버사이드에서만 처리해야 한다.
+ * 브라우저에 API secret을 두면 누구나 원본 삭제 서명을 만들 수 있으므로 프론트에서는 막는다.
  */
-export async function deleteCloudinaryImage(publicId: string): Promise<boolean> {
-  const cloudName = getCloudinaryCloudName()
-  const apiKey = (import.meta.env.VITE_CLOUDINARY_API_KEY ?? '').toString().trim()
-  const apiSecret = (import.meta.env.VITE_CLOUDINARY_API_SECRET ?? '').toString().trim()
-  if (!apiKey || !apiSecret || cloudName === 'demo') {
-    console.warn('Cloudinary delete: API_KEY/API_SECRET 미설정. Supabase만 삭제됩니다.')
-    return false
+export async function deleteCloudinaryImage(_publicId: string): Promise<boolean> {
+  if (import.meta.env.DEV) {
+    console.warn('Cloudinary 원본 삭제는 클라이언트에서 비활성화되었습니다. 서버사이드 엔드포인트로 이전이 필요합니다.')
   }
-  const timestamp = Math.floor(Date.now() / 1000).toString()
-  const params: Record<string, string> = { invalidate: 'true', public_id: publicId, timestamp }
-  const sorted = Object.keys(params)
-    .sort()
-    .map((k) => `${k}=${params[k]}`)
-    .join('&')
-  const toSign = sorted + apiSecret
-  const encoder = new TextEncoder()
-  const data = encoder.encode(toSign)
-  const hashBuffer = await crypto.subtle.digest('SHA-1', data)
-  const signature = Array.from(new Uint8Array(hashBuffer))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('')
-  const body = new URLSearchParams({ ...params, signature, api_key: apiKey })
-  const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/destroy`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: body.toString(),
-  })
-  const json = (await res.json()) as { result?: string }
-  return json.result === 'ok'
+  return false
 }
 
 /**

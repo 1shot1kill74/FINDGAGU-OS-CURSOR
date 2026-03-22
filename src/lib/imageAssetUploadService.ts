@@ -173,6 +173,12 @@ export interface SpaceDisplayNameOption {
   consultation_id: string
   space_id: string | null
   display_name: string
+  request_date?: string | null
+  start_date?: string | null
+  created_at?: string | null
+  region?: string | null
+  industry?: string | null
+  customer_phone?: string | null
 }
 
 function parseGoogleChatSpaceId(value: unknown): string | null {
@@ -190,6 +196,12 @@ export async function getExistingSiteNames(): Promise<SpaceDisplayNameOption[]> 
     id?: string | null
     project_name?: string | null
     channel_chat_id?: string | null
+    request_date?: string | null
+    start_date?: string | null
+    created_at?: string | null
+    region?: string | null
+    industry?: string | null
+    customer_phone?: string | null
     metadata?: Record<string, unknown> | null
   }> = []
   const pageSize = 500
@@ -197,7 +209,7 @@ export async function getExistingSiteNames(): Promise<SpaceDisplayNameOption[]> 
     const to = from + pageSize - 1
     const { data, error } = await supabase
       .from('consultations')
-      .select('id, project_name, channel_chat_id, metadata')
+      .select('id, project_name, channel_chat_id, request_date, start_date, created_at, region, industry, customer_phone, metadata')
       .not('project_name', 'is', null)
       .order('created_at', { ascending: false })
       .order('id', { ascending: false })
@@ -232,6 +244,12 @@ export async function getExistingSiteNames(): Promise<SpaceDisplayNameOption[]> 
         consultation_id: consultationId,
         space_id: spaceId,
         display_name: displayName,
+        request_date: record.request_date?.trim() || null,
+        start_date: record.start_date?.trim() || null,
+        created_at: record.created_at?.trim() || null,
+        region: record.region?.trim() || null,
+        industry: record.industry?.trim() || null,
+        customer_phone: record.customer_phone?.trim() || null,
       })
     }
   }

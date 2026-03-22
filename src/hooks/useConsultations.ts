@@ -17,6 +17,8 @@ export interface ConsultationRow {
   manager_name: string
   contact: string
   created_at: string | null
+  start_date: string | null
+  update_date: string | null
   expected_revenue: number | null
   status: string | null
   is_test: boolean
@@ -43,6 +45,8 @@ function mapDbRowToConsultationRow(row: Record<string, unknown>): ConsultationRo
       (typeof row.contact === 'string' ? row.contact : '') ??
       '',
     created_at: row.created_at != null ? String(row.created_at) : null,
+    start_date: row.start_date != null ? String(row.start_date) : null,
+    update_date: row.update_date != null ? String(row.update_date) : null,
     expected_revenue:
       typeof row.estimate_amount === 'number'
         ? row.estimate_amount

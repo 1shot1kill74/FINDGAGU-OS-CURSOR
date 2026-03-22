@@ -117,7 +117,7 @@ export async function deleteOrderAsset(asset: OrderAsset): Promise<{ error: Erro
   const publicId = asset.public_id ?? parseCloudinaryPublicId(asset.file_url)
   if (publicId) {
     const ok = await deleteCloudinaryImage(publicId)
-    if (!ok) return { error: new Error('DB는 삭제되었으나 Cloudinary 원본 삭제에 실패했습니다.') }
+    if (!ok) return { error: new Error('DB는 삭제되었지만 Cloudinary 원본 삭제는 보안상 클라이언트에서 비활성화되어 있습니다.') }
   }
   return { error: null }
 }

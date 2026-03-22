@@ -1,0 +1,10 @@
+alter function public.consultations_auto_promote_customer_grade() set search_path = public;
+alter function public.consultations_auto_promote_on_status_change() set search_path = public;
+alter function public.get_consultations_by_phone(text) set search_path = public;
+alter function public.increment_image_asset_share_count(uuid) set search_path = public;
+alter function public.increment_image_asset_view_count(uuid) set search_path = public;
+alter function public.on_construction_image_insert_set_stage_complete() set search_path = public;
+alter function public.on_consultation_estimate_file_insert_set_stage_estimate() set search_path = public;
+alter function public.on_project_image_insert_set_stage_complete() set search_path = public;
+alter function public.set_consultation_display_name() set search_path = public;
+alter function public.sync_consultations_from_sheet(jsonb) set search_path = public;

@@ -2,18 +2,10 @@
  * 이미지 내부 스코어링 서비스
  * - 1단계: 기술 점수 (파일 크기, 해상도, 확장자)
  * - 2단계: 활동 점수 (조회수, 공유 횟수, 대표 추천 is_main)
- * - 3단계: AI 품질 점수 (Gemini 비전, 선택 사용)
+ * - 3단계: AI 품질 점수는 서버사이드 이전 전까지 비활성화
  * - 4단계: DB internal_score·ai_score 실시간 반영
  */
-import { GoogleGenerativeAI } from '@google/generative-ai'
 import { supabase } from '@/lib/supabase'
-
-const GEMINI_API_KEY = (
-  import.meta.env.VITE_GOOGLE_GEMINI_API_KEY ??
-  import.meta.env.GOOGLE_GEMINI_API_KEY
-) as string | undefined
-const GEMINI_MODEL = 'gemini-2.0-flash'
-const IMAGE_QUALITY_PROMPT = `이 이미지는 가구 시공 사례/인테리어 마케팅용 사진입니다. 화질, 구도, 조명, 전문성을 0.0~1.0 점수로만 평가하세요. 다른 설명 없이 소수점 포함 숫자 하나만 출력. 예: 0.85`
 
 /** 스코어 계산에 필요한 image_assets 행 필드 (메타데이터는 JSON) */
 export interface ImageAssetForScoring {
@@ -96,53 +88,11 @@ export function getActivityScore(asset: ImageAssetForScoring): number {
   return Math.min(1, viewScore + shareScore + mainBonus)
 }
 
-/**
- * 3단계 — AI 품질 점수 (0~1)
- * Gemini 비전으로 이미지 URL 분석. API 키 없거나 실패 시 null
- */
-async function fetchImageAsBase64(url: string): Promise<{ data: string; mimeType: string } | null> {
-  try {
-    const res = await fetch(url, { mode: 'cors' })
-    if (!res.ok) return null
-    const blob = await res.blob()
-    const mimeType = blob.type || 'image/jpeg'
-    const data = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader()
-      reader.onload = () => {
-        const result = reader.result as string
-        const base64 = result?.split(',')[1]
-        resolve(base64 ?? '')
-      }
-      reader.onerror = reject
-      reader.readAsDataURL(blob)
-    })
-    return data ? { data, mimeType } : null
-  } catch {
-    return null
-  }
-}
-
 export async function getAIScoreForImage(imageUrl: string): Promise<number | null> {
-  if (!GEMINI_API_KEY?.trim()) return null
-  const image = await fetchImageAsBase64(imageUrl)
-  if (!image?.data) return null
-  try {
-    const genAI = new GoogleGenerativeAI(GEMINI_API_KEY)
-    const model = genAI.getGenerativeModel({
-      model: GEMINI_MODEL,
-      generationConfig: { maxOutputTokens: 32 },
-    })
-    const result = await model.generateContent([
-      IMAGE_QUALITY_PROMPT,
-      { inlineData: { data: image.data, mimeType: image.mimeType } },
-    ])
-    const text = result.response.text?.()?.trim() ?? ''
-    const num = parseFloat(text.replace(/[^\d.]/g, ''))
-    if (Number.isFinite(num) && num >= 0 && num <= 1) return num
-    return null
-  } catch {
-    return null
+  if (import.meta.env.DEV) {
+    console.warn(`AI 이미지 스코어링은 클라이언트에서 비활성화되었습니다: ${imageUrl}`)
   }
+  return null
 }
 
 /**
@@ -192,7 +142,7 @@ export type UpdateInternalScoresOptions = {
 
 /**
  * 여러 자산 일괄 internal_score(·ai_score) 계산 후 DB 업데이트
- * aiLimit > 0 이면 ai_score가 비어 있는 순서대로 Gemini로 품질 점수 산출 후 반영
+ * aiLimit > 0 이더라도 현재는 클라이언트에서 AI 품질 점수를 계산하지 않는다.
  */
 export async function updateInternalScoresBatch(
   limit = 200,
@@ -217,7 +167,7 @@ export async function updateInternalScoresBatch(
     let aiScore: number | null = (row as { ai_score?: number | null }).ai_score ?? null
     const thumbnailUrl = (row as { thumbnail_url?: string | null }).thumbnail_url
 
-    if (aiLimit > 0 && aiApplied < aiLimit && thumbnailUrl && aiScore == null && GEMINI_API_KEY?.trim()) {
+    if (aiLimit > 0 && aiApplied < aiLimit && thumbnailUrl && aiScore == null) {
       const ai = await getAIScoreForImage(thumbnailUrl)
       if (ai != null) {
         aiScore = ai

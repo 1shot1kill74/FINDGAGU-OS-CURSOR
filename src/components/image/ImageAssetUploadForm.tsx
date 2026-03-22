@@ -16,7 +16,7 @@ import {
   getExistingSiteNames,
 } from '@/lib/imageAssetUploadService'
 import type { SpaceDisplayNameOption } from '@/lib/imageAssetUploadService'
-import { isCloudinaryConfigured } from '@/lib/imageAssetService'
+import { buildExternalDisplayName, isCloudinaryConfigured } from '@/lib/imageAssetService'
 import { getCloudinaryCloudName } from '@/lib/config'
 import { toast } from 'sonner'
 import { X, Check } from 'lucide-react'
@@ -352,6 +352,16 @@ export function ImageAssetUploadForm({
           prev.map((p) => (p.id === item.id ? { ...p, status: 'uploading' as UploadStatus } : p))
         )
         try {
+          const externalDisplayName = selectedSpaceOption
+            ? buildExternalDisplayName({
+                requestDate: selectedSpaceOption.request_date,
+                startDate: selectedSpaceOption.start_date,
+                createdAt: selectedSpaceOption.created_at,
+                region: location.trim() || null,
+                industry: business_type.trim() || null,
+                customerPhone: selectedSpaceOption.customer_phone,
+              })
+            : null
           const meta = {
             customer_name: siteTrim,
             project_id: consultationId,
@@ -378,6 +388,7 @@ export function ImageAssetUploadForm({
               consultation_id: consultationId || undefined,
               space_id: selectedSpaceId || undefined,
               space_display_name: siteTrim,
+              external_display_name: externalDisplayName || undefined,
               public_id: public_id ?? undefined,
               before_after_role: beforeAfterRole,
             },

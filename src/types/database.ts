@@ -456,6 +456,39 @@ export type Database = {
         }
         Relationships: []
       }
+      showroom_site_overrides: {
+        Row: {
+          id: string
+          site_name: string
+          industry_label: string
+          section_key: string
+          manual_priority: number | null
+          note: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          site_name: string
+          industry_label: string
+          section_key?: string
+          manual_priority?: number | null
+          note?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          site_name?: string
+          industry_label?: string
+          section_key?: string
+          manual_priority?: number | null
+          note?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       tag_mappings: {
         Row: {
           id: string

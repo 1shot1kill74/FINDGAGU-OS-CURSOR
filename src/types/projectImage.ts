@@ -69,6 +69,7 @@ export interface ProjectImageAsset {
   consultationId: string | null
   projectTitle: string | null
   siteName?: string | null
+  externalDisplayName?: string | null
   location?: string | null
   industry: string | null
   viewCount: number
@@ -101,4 +102,6 @@ export interface ProjectImageAsset {
   beforeAfterGroupId?: string | null
   /** image_assets 전용: metadata 원본(확장 필드 저장용) */
   metadata?: Record<string, unknown> | null
+  /** image_assets 전용: Google Chat space_id 기반 묶음 키 */
+  spaceId?: string | null
 }

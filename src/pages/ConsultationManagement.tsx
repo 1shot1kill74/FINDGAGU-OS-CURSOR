@@ -35,6 +35,7 @@ import { isValidUUID } from '@/lib/uuid'
 import type { OrderDocument } from '@/types/orderDocument'
 import type { ConsultationEstimateFile } from '@/types/consultationEstimateFile'
 import { cn } from '@/lib/utils'
+import { createSharedGallery } from '@/lib/sharedGalleryService'
 import type { Json } from '@/types/database'
 
 // PC 사무용: 컴팩트 (48px 규칙 미적용)
@@ -703,49 +704,31 @@ function pickDisplayName(
 }
 
 /**
- * 오픈마켓 신규 주문 등록 시 구글챗 공지방 알림 인터페이스.
- * VITE_GOOGLE_CHAT_WEBHOOK_ANNOUNCEMENT 에 Webhook URL 설정 시 POST로 메시지 전송.
- * 미설정 시 no-op (추후 백엔드/Edge Function 연동 시 교체 가능).
+ * 오픈마켓 신규 주문 알림은 서버사이드에서만 전송해야 한다.
+ * 웹훅 URL을 브라우저에 두지 않도록 프론트에서는 비활성화한다.
  */
 function notifyMarketOrderRegistered(
-  source: string,
-  companyName?: string,
-  orderNumber?: string
+  _source: string,
+  _companyName?: string,
+  _orderNumber?: string
 ): void {
-  const text = `[${source}] 신규 주문이 들어왔습니다. 해피콜이 필요합니다.${companyName ? ` (${companyName})` : ''}${orderNumber ? ` 주문번호: ${orderNumber}` : ''}`
-  const webhookUrl = import.meta.env.VITE_GOOGLE_CHAT_WEBHOOK_ANNOUNCEMENT as string | undefined
-  if (!webhookUrl || typeof webhookUrl !== 'string' || !webhookUrl.startsWith('http')) {
-    return
+  if (import.meta.env.DEV) {
+    console.warn('오픈마켓 주문 알림은 클라이언트에서 비활성화되었습니다. 서버사이드 웹훅 릴레이가 필요합니다.')
   }
-  void fetch(webhookUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text }),
-  }).catch((err) => console.warn('구글챗 공지 알림 전송 실패:', err))
 }
 
 /**
- * 실측 예정일 당일 아침 담당자 구글챗 알림 인터페이스.
- * cron/Edge Function 등에서 예정일 당일 호출 시 "오늘 [업체명] 실측 일정입니다. 체크리스트를 확인하세요" 전송.
- * VITE_GOOGLE_CHAT_WEBHOOK_MEASUREMENT_REMINDER 또는 VITE_GOOGLE_CHAT_WEBHOOK_ANNOUNCEMENT 사용.
+ * 실측 리마인더는 서버사이드 스케줄러에서 전송해야 한다.
+ * 클라이언트에 웹훅 URL을 두지 않도록 프론트에서는 no-op 처리한다.
  */
 export function notifyMeasurementReminder(
-  companyName: string,
-  assignee?: string,
+  _companyName: string,
+  _assignee?: string,
   _scheduledDate?: string
 ): void {
-  const text = `오늘 [${companyName}] 실측 일정입니다. 체크리스트를 확인하세요.${assignee ? ` (담당: ${assignee})` : ''}`
-  const webhookUrl =
-    (import.meta.env.VITE_GOOGLE_CHAT_WEBHOOK_MEASUREMENT_REMINDER as string | undefined) ||
-    (import.meta.env.VITE_GOOGLE_CHAT_WEBHOOK_ANNOUNCEMENT as string | undefined)
-  if (!webhookUrl || typeof webhookUrl !== 'string' || !webhookUrl.startsWith('http')) {
-    return
+  if (import.meta.env.DEV) {
+    console.warn('실측 리마인더는 클라이언트에서 비활성화되었습니다. 서버사이드 스케줄러가 필요합니다.')
   }
-  void fetch(webhookUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text }),
-  }).catch((err) => console.warn('구글챗 실측 리마인더 전송 실패:', err))
 }
 
 /** 인입채널 배지 공통 스타일 — 2행 맨 앞 고정, 오픈마켓/일반 통일(동일 크기·라운드·링) */
@@ -1433,6 +1416,7 @@ export default function ConsultationManagement() {
   const [customDateEnd, setCustomDateEnd] = useState('')
   const [listPage, setListPage] = useState(0)
   const [sortByNeglect, setSortByNeglect] = useState(true)
+  const consumedDashboardFocusKeyRef = useRef<string | null>(null)
   /** admin 권한 — 시스템 메시지 영구 삭제 버튼 노출. localStorage 'findgagu-role' === 'admin' 또는 URL ?admin=1 */
   const isAdmin = useMemo(() => {
     if (typeof window === 'undefined') return false
@@ -1450,6 +1434,29 @@ export default function ConsultationManagement() {
     if (lead.workflowStage === '계약완료') return '진행중'
     return '전체'
   }, [])
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search)
+    const focusLeadId = params.get('leadId')?.trim() || null
+    if (!focusLeadId || leads.length === 0) return
+
+    const focusKey = `${location.search}:${focusLeadId}`
+    if (consumedDashboardFocusKeyRef.current === focusKey) return
+
+    const targetLead = leads.find((lead) => lead.id === focusLeadId)
+    if (!targetLead) return
+
+    consumedDashboardFocusKeyRef.current = focusKey
+    const nextTab = getListTabForLead(targetLead)
+    if (listTab !== nextTab) setListTab(nextTab)
+    setSelectedLead(focusLeadId)
+    setScrollToLeadId(focusLeadId)
+    setHighlightedLeadId(focusLeadId)
+    const timer = setTimeout(() => {
+      setHighlightedLeadId((current) => (current === focusLeadId ? null : current))
+    }, 2200)
+    return () => clearTimeout(timer)
+  }, [location.search, leads, getListTabForLead, listTab])
 
   const matchesLeadDateFilters = useCallback((lead: Lead, now: number, starts: ReturnType<typeof getDateRangeStarts>) => {
     const inboundValue = getComparableDateValue(lead.inboundDate, lead.createdAt)
@@ -3528,12 +3535,6 @@ export default function ConsultationManagement() {
               </DialogContent>
             </Dialog>
 
-            <Link to="/order-assets">
-              <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
-                <Ruler className="h-4 w-4" />
-                발주 자산 관리
-              </Button>
-            </Link>
             <Link to="/showroom">
               <Button
                 type="button"
@@ -3949,24 +3950,26 @@ export default function ConsultationManagement() {
                     <span className="text-muted-foreground/80"> (무효 제외)</span>
                   </div>
                   <Tabs value={listTab} onValueChange={(v) => { setListTab(v as ListTab); setListPage(0) }} className="flex-1 flex flex-col min-h-0">
-                    <TabsList className="w-full justify-start rounded-none border-b border-border bg-transparent p-0 h-auto shrink-0 flex-wrap">
+                    <TabsList className="w-full justify-start gap-2 rounded-none border-b border-border bg-muted/20 px-2 py-2 h-auto shrink-0 flex-wrap">
                       {(['전체', '미처리', '견적중', '진행중', '종료', '거절', '무효'] as const).map((tab) => (
                         <TabsTrigger
                           key={tab}
                           value={tab}
                           className={cn(
-                            'rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-2.5 py-1.5 text-xs sm:px-3 sm:py-2 sm:text-sm',
+                            'rounded-xl border border-transparent bg-transparent px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-all duration-150 sm:px-3 sm:py-2 sm:text-sm data-[state=active]:-translate-y-0.5 data-[state=active]:border-primary/30 data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-[0_8px_20px_rgba(0,0,0,0.12)] data-[state=active]:ring-1 data-[state=active]:ring-primary/15',
+                            listTab === tab && 'px-3 py-2 text-sm sm:px-4 sm:py-2.5 sm:text-base',
                             searchQuery.trim() &&
                               searchMatchedTabCounts[tab] > 0 &&
                               'bg-amber-500/10 text-amber-800 dark:text-amber-200',
                             searchQuery.trim() &&
                               searchFocusLead &&
                               getListTabForLead(searchFocusLead) === tab &&
-                              'border-amber-500 data-[state=active]:border-amber-500'
+                              'border-amber-500 data-[state=active]:border-amber-500 data-[state=active]:ring-amber-500/20'
                           )}
                         >
                           <span className="inline-flex items-center gap-1.5">
                             <span className={cn(
+                              listTab === tab && 'font-semibold tracking-tight',
                               searchQuery.trim() && searchMatchedTabCounts[tab] > 0 && 'font-semibold'
                             )}>{tab} {tabCounts[tab]}</span>
                             {tab === '종료' && tabCounts.종료재활동 > 0 && (
@@ -4408,19 +4411,8 @@ export default function ConsultationManagement() {
                         })
                         toast.success('견적이 확정되었습니다. 상담이 견적 단계로 변경되었습니다.')
                         setPrintEstimateId(null)
-                        const sheetSyncUrl = import.meta.env.VITE_GOOGLE_SHEET_SYNC_URL
-                        if (sheetSyncUrl && typeof sheetSyncUrl === 'string' && lead?.projectName) {
-                          const token = import.meta.env.VITE_GOOGLE_SHEET_SYNC_TOKEN
-                          fetch(sheetSyncUrl.trim(), {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                              project_name: lead.projectName,
-                              status: '견적',
-                              estimate_amount: grandTotal,
-                              ...(token ? { token } : {}),
-                            }),
-                          }).catch(() => { })
+                        if (import.meta.env.DEV && lead?.projectName) {
+                          console.warn('구글 시트 동기화는 클라이언트에서 비활성화되었습니다. 서버사이드 동기화 엔드포인트로 이전이 필요합니다.', lead.projectName)
                         }
                       } catch (err) {
                         console.error(err)
@@ -4516,7 +4508,23 @@ export default function ConsultationManagement() {
                         toast.warning('해당 품목과 매칭되는 시공 사진이 없습니다.')
                         return
                       }
-                      const url = `${window.location.origin}/public/share?ids=${[...ids].join(',')}`
+                      const snapshots = Array.from(map.values()).flatMap((res) =>
+                        res.images.map((image) => ({
+                          id: image.id,
+                          sourceTable: 'project_images' as const,
+                          url: image.marketingUrl,
+                          thumbnailUrl: image.mobileUrl || image.marketingUrl,
+                          projectTitle: image.projectTitle?.trim() || image.displayName?.trim() || null,
+                          productTags: [],
+                          color: null,
+                        }))
+                      )
+                      const { url } = await createSharedGallery({
+                        items: snapshots,
+                        title: '품목 시공 사진',
+                        description: '상담 품목과 연결된 시공 사례입니다.',
+                        source: 'consultation-product-share',
+                      })
                       await navigator.clipboard.writeText(url)
                       toast.success(`품목 시공 사진 갤러리 링크를 복사했습니다. (${ids.size}장)`)
                     } catch {
