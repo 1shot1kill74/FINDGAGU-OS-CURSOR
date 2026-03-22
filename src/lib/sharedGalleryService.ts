@@ -71,14 +71,18 @@ export async function createSharedGallery(input: CreateSharedGalleryInput): Prom
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const token = createShareToken()
-    const { error } = await (supabase as any).from('shared_gallery_links').insert({
+    const insertPayload: Record<string, unknown> = {
       token,
       title: input.title?.trim() || null,
       description: input.description?.trim() || null,
       items: input.items,
       source: input.source?.trim() || null,
-      expires_at: input.expiresAt ?? null,
-    })
+    }
+    if (input.expiresAt) {
+      insertPayload.expires_at = input.expiresAt
+    }
+
+    const { error } = await (supabase as any).from('shared_gallery_links').insert(insertPayload)
 
     if (!error) {
       return { token, url: buildSharedGalleryUrl(token) }
