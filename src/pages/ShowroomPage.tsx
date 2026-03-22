@@ -1446,7 +1446,7 @@ export default function ShowroomPage() {
           )}
         </section>
 
-        {featuredBeforeAfterGroups.length > 0 && (
+        {viewMode === 'industry' && featuredBeforeAfterGroups.length > 0 && (
           <section className="mb-8 rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4 md:p-5">
             <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
               <div>

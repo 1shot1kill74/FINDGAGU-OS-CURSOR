@@ -196,7 +196,6 @@ export default function ImageAssetViewer() {
   /** 라이트박스에서 앞뒤 넘기기용 인덱스 (현재 보기 목록 기준) */
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null)
   const scrollToSiteKeyRef = useRef<string | null>(null)
-  const [activeNavGroupKey, setActiveNavGroupKey] = useState<string | null>(null)
   const [sectorAssetCache, setSectorAssetCache] = useState<Record<string, ProjectImageAsset[]>>({})
   const defaultSectorInitializedRef = useRef(false)
   const { chips: colorChips } = useColorChips()
@@ -678,41 +677,10 @@ export default function ImageAssetViewer() {
     return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label, 'ko'))
   }, [sorted, currentGroupMode, isBankView])
 
-  const navigationItems = useMemo(
-    () =>
-      (grouped ?? []).map((group) => {
-        const siteSet = new Set<string>()
-        group.items.forEach((asset) => {
-          const siteName = getAssetSiteDisplayLabel(asset)
-          if (siteName) siteSet.add(siteName)
-        })
-        return {
-          groupKey: group.key,
-          groupLabel: group.label,
-          photoCount: group.items.length,
-          siteCount: siteSet.size,
-        }
-      }),
-    [grouped]
-  )
-
   const flatForPaging = useMemo(() => {
     if (!grouped) return sorted
     return grouped.flatMap((group) => group.items)
   }, [grouped, sorted])
-
-  useEffect(() => {
-    if (activeNavGroupKey && !navigationItems.some((item) => item.groupKey === activeNavGroupKey)) {
-      setActiveNavGroupKey(null)
-    }
-  }, [navigationItems, activeNavGroupKey])
-
-  const scrollToResultGroup = useCallback((groupKey: string) => {
-    setActiveNavGroupKey(groupKey)
-    const sections = Array.from(document.querySelectorAll<HTMLElement>('[data-nav-group-key]'))
-    const target = sections.find((section) => section.dataset.navGroupKey === groupKey)
-    target?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }, [])
 
   const currentResultTitle = useMemo(() => {
     if (!isBankView && !sectorFilter) return '업종을 선택하면 해당 업종의 전체 사진이 표시됩니다.'
@@ -726,13 +694,6 @@ export default function ImageAssetViewer() {
     if (sectorFilter) return `업종: ${sectorFilter}`
     return '전체 사진 (최근 업로드)'
   }, [unmatchedOnlyFilter, colorFilter, productFilter, siteFilter, sectorFilter, distinctSiteOptions])
-
-  const currentGroupLabel = useMemo(() => {
-    if (currentGroupMode === 'by_color') return '색상 기준 결과'
-    if (currentGroupMode === 'by_product') return '제품 기준 결과'
-    if (currentGroupMode === 'by_site') return '현장 기준 결과'
-    return '업종 기준 결과'
-  }, [currentGroupMode])
 
   /** 시공 사례 뱅크: 현장별일 때만 project_title로 그룹, 사진별이면 null(평탄) */
   const bankGrouped = useMemo(() => {
@@ -1498,41 +1459,8 @@ export default function ImageAssetViewer() {
         </div>
       )}
 
-      <main className={`p-4 ${!isBankView ? 'flex gap-4' : ''} ${!isBankView && shareCartIds.size > 0 ? 'pb-24' : ''}`}>
-        {/* 이미지 자산 관리: 좌측 결과 네비게이션 */}
-        {!isBankView && (
-          <aside className="self-start w-64 shrink-0 border-r border-border pr-4">
-            <div className="sticky top-20 max-h-[calc(100vh-6rem)] overflow-y-auto">
-              <h3 className="text-sm font-semibold text-foreground mb-1">결과 네비게이션</h3>
-              <p className="text-xs text-muted-foreground mb-3">{currentGroupLabel}</p>
-              {navigationItems.length === 0 ? (
-                <p className="text-xs text-muted-foreground py-2">표시할 결과가 없습니다.</p>
-              ) : (
-                <div className="space-y-1">
-                  {navigationItems.map(({ groupKey, groupLabel, photoCount, siteCount }) => (
-                    <button
-                      key={groupKey}
-                      type="button"
-                      onClick={() => scrollToResultGroup(groupKey)}
-                      className={`w-full text-left px-2 py-1.5 rounded text-sm flex items-center justify-between gap-2 ${
-                        activeNavGroupKey === groupKey
-                          ? 'bg-primary/10 text-primary font-medium'
-                          : 'hover:bg-muted text-foreground hover:text-foreground'
-                      }`}
-                    >
-                      <span className="truncate">{groupLabel}</span>
-                      <span className="text-xs text-muted-foreground shrink-0">
-                        {siteCount}현장 · {photoCount}장
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </aside>
-        )}
-
-        <div className={!isBankView ? 'flex-1 min-w-0' : ''}>
+      <main className={`p-4 ${!isBankView && shareCartIds.size > 0 ? 'pb-24' : ''}`}>
+        <div className={!isBankView ? 'min-w-0' : ''}>
         {/* 이미지 자산 관리: 갤러리 상단 타이틀 */}
         {!isBankView && !loading && (
           <h2 className="text-sm font-semibold text-foreground mb-4">
@@ -1570,7 +1498,6 @@ export default function ImageAssetViewer() {
                 key={groupKey}
                 className="mb-8"
                 data-site-key={groupKey}
-                data-nav-group-key={!isBankView ? groupKey : undefined}
               >
                 <h2 className="text-sm font-semibold text-foreground mb-3 px-1 flex items-center gap-2">
                   <span className="rounded bg-muted px-2 py-0.5">{label}</span>
