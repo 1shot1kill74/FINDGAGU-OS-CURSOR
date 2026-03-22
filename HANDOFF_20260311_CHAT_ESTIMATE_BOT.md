@@ -31,7 +31,7 @@
 npx supabase functions deploy process-chat-estimate --no-verify-jwt
 ```
 
-인증: `x-bot-secret: ec7d33aef69b5908826d737fc9828a9c`
+인증: `x-bot-secret: <BOT_SECRET>`
 
 ---
 
@@ -84,7 +84,7 @@ Webhook → Is MESSAGE?
 
 - 워크플로우 active: true
 - 웹훅 경로: `chat-space-created`
-- 프로덕션 URL: `https://findgagu.app.n8n.cloud/webhook/chat-space-created`
+- 프로덕션 URL: `<N8N_WEBHOOK_URL>`
 - 현재 응답: `{"message":"Workflow was started"}`
 - 라이브 n8n 화면과 로컬 `gas/n8n-workflow.json` 정의를 동일한 롤백 상태로 동기화 완료
 
@@ -115,8 +115,8 @@ Webhook → Is MESSAGE?
 | 항목 | 값 |
 |------|-----|
 | n8n 워크플로우 ID | `f2SGx30pVCnFFmFG` |
-| n8n 웹훅 URL | `https://findgagu.app.n8n.cloud/webhook/chat-space-created` |
-| BOT_SECRET | `ec7d33aef69b5908826d737fc9828a9c` |
-| GAS 웹앱 URL | `https://script.google.com/a/macros/findgagu.com/s/AKfycbyCxoL6HdfW5LCnDrstt52m1NzUl6h3EXO_Q_4ssnUuSXO0rCj_SEOwRnAjlIgtyOhD/exec` |
+| n8n 웹훅 URL | `<N8N_WEBHOOK_URL>` |
+| BOT_SECRET | `<BOT_SECRET>` |
+| GAS 웹앱 URL | `<GAS_WEBAPP_URL>` |
 | Supabase Edge Function | `process-chat-estimate` (--no-verify-jwt) |
 | Storage 버킷 | `estimate-files` |
