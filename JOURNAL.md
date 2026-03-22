@@ -1,1079 +1,597 @@
-# 세이브 포인트 2026-02-22 (analyze-quote Edge Function · Gemini 클라이언트 제거)
+# 프로젝트 저널 (JOURNAL) — 압축본 (2026-03-12 기준)
 
-**이 시점까지 반영된 작업을 롤백할 때 참고용입니다.**
+> 세부 구현 결정은 BLUEPRINT.md 참조. 이 파일은 날짜별 핵심 결정·파일·세이브 포인트 요약.
 
-## 포함된 작업 요약
-- **Edge Function analyze-quote:** supabase/functions/analyze-quote/index.ts — Gemini 2.0 Flash Vision/Text API. Input: { image?, text?, fileName, mode }. Output: ParsedEstimateFromPDF | ParsedVendorPrice (metadata 구조 동일). 모드: estimates, vendor_price, detect, unit_price.
-- **parseFileWithAI 리팩토링:** 클라이언트 Gemini 직접 호출 제거 → supabase.functions.invoke('analyze-quote', ...) 전환. PDF는 extractTextFromPDF 후 text 전송, 이미지는 base64 전송.
-- **detectIsOurCompanyEstimate·parseUnitPriceTableFromFile:** Edge Function mode 'detect'·'unit_price' 호출로 전환.
-- **MigrationPage:** hasGeminiKey 제거 (클라이언트 API 키 불필요). AI 분석 버튼 항상 활성화.
-- **.env.example:** GOOGLE_GEMINI_API_KEY → Supabase Secrets 설정 안내로 변경.
+---
 
-## 롤백 시 (Git 사용 시)
-```bash
-git add -A
-git commit -m "checkpoint: analyze-quote Edge Function, parseFileWithAI invoke 전환, Gemini 클라이언트 제거"
-git tag save-20260222-analyze-quote-edge
+## 2026-03-15 — 채널톡 운영 전략 재정의 · 임시상담카드 분리 · 단계적 퍼블리시 방향 정리
 
-# 이후 이 시점으로 복귀
-git checkout save-20260222-analyze-quote-edge
+**핵심 결정:**
+- 현재 1순위는 `이미지 자산관리 마이그레이션 완료`로 재정의한다. 이 모듈은 단순 이미지 보관이 아니라 **쇼룸, 블로그 자동화, 유튜브 자동화, 카카오/채널톡 상담 자료 전송**의 공통 콘텐츠 허브가 된다.
+- 채널톡 초기 도입은 AI 대화형이 아니라 **폼 기반 질문 수집**으로 간다. 질문은 `도움 유형 -> 업종 -> 면적 -> 지역 -> 전화번호` 순으로 받고, **전화번호 입력이 상담 접수 완료의 필수 게이트**가 된다.
+- 채널톡 시작 전 인트로는 `자세히 남길수록 더 빠른 상담과 유사 사례 안내가 가능하다`는 보상형 톤으로 간다.
+- 쇼룸은 질문 중간이 아니라 **전화번호 입력 후**, `기다리시는 동안 쇼룸 보기` 형태로 제안한다. 목적은 정보 수집이 아니라 대기 중 설득과 신뢰 강화다.
+- 쇼룸은 두 개로 쪼개지 않는다. 같은 `/showroom`을 유지하되 **홈페이지 유입용 일반 모드**와 **채널톡 유입용 대기/설득 모드**를 진입 문맥 차이로 처리하는 방향으로 정리했다.
+- 채널톡 인입은 기존 정식 상담카드와 섞지 않는다. **별도 채널톡 인입 대시보드/임시상담카드**로 먼저 관리하고, 구글챗 스페이스 생성이나 실제 진행 확정 시에만 기존 `consultations` 카드로 전환하는 방향이 맞다고 판단했다.
+- 현재 직원들은 전화 + 개인/업무용 카카오톡 흐름이 실무상 가장 편하다. 따라서 이 채널을 강제로 없애기보다, 파인드가구OS는 **PC카톡 상담 보조 시스템**으로 가는 게 맞다.
+- 파인드가구OS의 가까운 실효 기능은 `이미지/사례를 OS에서 빠르게 찾고 복사해서 PC카톡에 붙여넣는 것`이다. 이 기능만으로도 핸드폰 사진첩·카톡방을 뒤지는 시간 낭비를 크게 줄일 수 있다.
+- 전체 OS는 백오피스 완성까지 기다리지 않고 **단계적으로 퍼블리시**할 수 있다. 단, 공개 범위는 `쇼룸/문의/채널톡 연결 동선` 위주로 제한하고, 운영 화면은 로그인 뒤에 두는 방향이 맞다.
+- Supabase Advisor 보안 점검 결과 `RLS disabled in public`, `RLS policy always true`, `function_search_path_mutable` 경고가 다수 확인되었다. 특히 `consultations`, `consultation_messages`, `image_assets`, `estimates`, `marketing_contents` 계열은 공개 전 우선 정리 대상으로 본다.
+
+**채널톡 폼 확정안:**
+- 1) `어떤 도움이 필요하신가요?` → 비용 문의 / 제품 추천 / 상세 상담 / 기타
+- 2) `업종은 무엇인가요?` → 관리형 / 학원 / 스터디카페 / 아파트 / 학교 / 기타
+- 3) `면적은 어느 정도인가요?` → 30평 이하 / 30~40평 / 40~50평 / 50~60평 / 60평 이상 / 기타
+- 4) `지역은 어디신가요?` → 서울/경기 / 충북/충남 / 경북/경남 / 전북/전남 / 기타
+- 5) `연락처를 남겨주세요.` → 입력 완료 시 접수 종료
+
+**운영 구조 정리:**
+- 1차 론칭 순서:
+  - 이미지 자산관리 마이그레이션 완료
+  - 쇼룸 정상 작동 점검
+  - 채널톡 폼 세팅
+  - Vercel 퍼블리시(공개/내부 분리)
+- 2차 개발 순서:
+  - 채널톡 인입 DB/임시상담카드
+  - 홈 대시보드 숫자
+  - 상담관리 화면의 채널톡 신규 수 표시
+  - 방치 경고/AI 보조
+
+**문서 반영:**
+- `BLUEPRINT.md`에 우선순위 재정의, 채널톡 폼 구조, 채널톡 인입 분리 원칙, 퍼블리시 보안 전제를 추가
+- `CONTEXT.md`에 콘텐츠 허브 우선순위, 채널톡 운영 원칙, 공개/보안 원칙을 추가
+
+**변경 파일:**
+- `BLUEPRINT.md`
+- `CONTEXT.md`
+- `JOURNAL.md`
+
+---
+
+## 2026-03-15 — 1차 마무리 세이브 포인트 (이미지 자산 필터 정리 · 쇼룸 after 기본 노출 · 상담카드 견적 배지 롤백)
+
+**핵심 결정:**
+- 현재 시점은 `1차 마무리 세이브 포인트`로 간주한다. 이후 문제가 생기면 이 상태로 돌아오는 기준점으로 사용한다.
+- 이미지 자산 관리(`/image-assets`)는 상단 필터를 더 늘리지 않고, **검색/업로드/상담용 보기 + 4개 조건 필터** 구조로 정리한 현재 상태를 운영 기준으로 본다.
+- 좌측 패널은 필터가 아니라 **결과 네비게이션**으로 해석한다.
+- 쇼룸 일반 카드에서는 `before`만 제외하고, `after` 및 역할 미지정 이미지는 노출한다.
+- 상담관리 카드의 `견적서 아이콘 배지` 실험은 현재 기준에서 **롤백 완료**로 확정한다.
+
+**수정 내역:**
+
+*ImageAssetViewer.tsx:*
+- 상단 1줄을 `검색창 + 일괄 업로드 + 상담용 사진만 보기`로 정리.
+- 상단 2줄을 `업종 전체 / 현장 전체 / 제품 전체 / 색상 전체` Select 4개로 구성.
+- 4개 조건은 단독 선택 시 각각 독립 동작, 복수 선택 시 AND 조건으로 결합되도록 정리.
+- 좌측 패널을 `결과 네비게이션`으로 변경. 현재 결과 섹션 목록을 표시하고 클릭 시 오른쪽 그룹으로 스크롤 이동.
+- 카드 우상단 배지 순서를 `Before/After -> 상담용 -> 대표지정`으로 정리.
+- sticky 헤더와 카드 오버레이의 레이어를 조정해, 스크롤 시 카드 체크박스가 상단 필터 위로 떠 보이지 않게 수정.
+- `검수` 줄, 상단 보조 라벨 텍스트는 숨김/제거하여 필터 밀도를 낮춤.
+
+*ShowroomPage.tsx:*
+- 일반 쇼룸 카드 후보에서 `before_after_role === 'before'`만 제외하도록 수정.
+- 결과적으로 `after` 업로드가 기본인 현재 운영 상황에서도 일반 쇼룸 카드가 비지 않게 유지.
+
+*ConsultationManagement.tsx:*
+- 상담카드 우측 배지 영역에 `견적서 유무 아이콘`을 잠깐 실험했으나, 구분감이 약하고 검색/카드 동작 이상 징후가 보여 **현재 세이브 포인트 기준으로 롤백**.
+
+**운영 확인 포인트:**
+- 이미지 자산 관리 상단은 더 이상 과밀하지 않아야 한다.
+- 좌측 네비게이션 클릭 시 오른쪽 결과 섹션으로 자연스럽게 이동해야 한다.
+- 대표 지정 배지는 체크박스와 겹치지 않고, `After/상담용` 아래에서 보여야 한다.
+- 일반 쇼룸 카드에는 `before`만 빠지고 `after`는 남아야 한다.
+- 상담카드는 현재 다시 `사진 유무 + 구글챗`만 우측 배지로 보이는 상태가 맞다.
+
+**변경 파일:**
+- `src/pages/ImageAssetViewer.tsx`
+- `src/pages/ShowroomPage.tsx`
+- `BLUEPRINT.md`
+- `CONTEXT.md`
+- `JOURNAL.md`
+
+---
+
+## 2026-03-12 — 쇼룸 정교화 (공감카드 분리 · Before/After 격리 · 문의 문맥 저장)
+
+**핵심 결정:**
+- 쇼룸은 `/showroom` 단일 기준으로만 본다. `/portfolio`, `/assets` 같은 영업용 뱅크와 역할을 섞지 않고, 쇼룸은 **탐색형 랜딩 페이지**로 유지한다.
+- 공감카드는 검색창에 문구를 주입하지 않는다. 카드 선택은 **문맥 선택**, 검색창은 **실제 데이터 검색**으로 역할을 분리한다.
+- `Before/After` 사례는 일반 현장 카드와 성격이 다르므로, 기본 갤러리에 섞지 않고 별도 섹션으로 격리한다.
+- 쇼룸 문의는 단순 `source = 쇼룸`으로 끝내지 않고, **어떤 공감 문맥으로 들어왔는지** 상담 카드에 남겨야 한다.
+
+**수정 내역:**
+
+*ShowroomPage.tsx:*
+- 공감카드 선택 상태를 `searchQuery`와 분리. URL도 기존 `?tag=` 대신 `?q=`(검색어) + `?concern=`(공감카드) 구조로 재정리하고, 레거시 `?tag=`는 읽기만 호환.
+- 공감카드 클릭 시 검색창 값이 바뀌지 않도록 수정. 같은 카드를 다시 누르면 선택 해제 가능.
+- `image_assets.metadata.before_after_role`이 지정된 자산은 일반 현장/제품/업종 리스트에서 제외하도록 변경.
+- `스터디카페를 관리형 스타일로` 카드 선택 시에만 별도 섹션 **[엑시트까지 고려한 전환 사례]** 노출. `Before`/`After`를 좌우 비교 카드로 표시하고 상세 모달은 `beforeAfter` 모드로 분기.
+- 공감카드 클릭 스크롤 대상을 갤러리가 아닌 전문가 코멘트 시작 앵커로 교체. sticky 헤더에 가리지 않도록 `scroll-mt` 오프셋 추가.
+- 아파트 전문가 코멘트 문구 보정:
+  - `원장님(관리 주체)` → `입주자대표회의`
+  - `호텔급 시설` → `입주민의 만족과 단지의 가치를 함께 높이는 공간`
+
+*imageAssetService.ts / projectImage.ts / ImageAssetViewer.tsx:*
+- `image_assets.metadata`에서 `before_after_role`, `before_after_group_id`를 읽는 구조 추가.
+- `/image-assets`에서 사진별 `비포어`, `애프터` 지정 버튼 추가. 해당 값은 metadata에 저장.
+- 쇼룸 조회에서 `category = purchase_order | floor_plan` 제외 유지.
+
+*ContactPage.tsx / ConsultationManagement.tsx:*
+- 쇼룸 진입 문의 시 `showroom_context`, `showroom_entry_label`을 `consultations.metadata`에 저장.
+- `관리형 스타일 리뉴얼 상담하기` 및 해당 문맥의 현장 문의 링크에 `관리형 스타일 전환 + 엑시트 전략` 컨텍스트를 함께 전달.
+- 상담관리 리스트 카드에 `쇼룸 문맥` 배지 추가. 예: `스터디카페를 관리형 스타일로`.
+
+**운영 확인 포인트:**
+- 공감카드 선택 후 제품/업종 버튼을 눌러도 검색창 문자열 때문에 결과가 사라지지 않아야 한다.
+- `Before/After` 자산은 일반 쇼룸 결과에 섞이지 않고, 관리형 전환 카드 아래 전용 섹션에서만 보여야 한다.
+- 쇼룸 문의가 생성되면 상담 카드에서 `쇼룸 문맥` 배지로 어떤 메시지를 보고 들어왔는지 즉시 인지할 수 있어야 한다.
+
+**변경 파일:**
+- `src/pages/ShowroomPage.tsx`
+- `src/lib/imageAssetService.ts`
+- `src/types/projectImage.ts`
+- `src/pages/ImageAssetViewer.tsx`
+- `src/pages/ContactPage.tsx`
+- `src/pages/ConsultationManagement.tsx`
+- `BLUEPRINT.md`
+- `CONTEXT.md`
+- `JOURNAL.md`
+
+---
+
+## 2026-03-12 — Google Chat 견적서 자동 처리 롤백 및 기준 문서 정리 완료
+
+**핵심 결정:**
+- Google Chat 견적 자동화는 `@멘션` 기반 앱 호출 흐름으로 재해석해 디버깅했지만, 최종적으로는 **운영 워크플로우에서 안전 롤백**하는 쪽이 맞다고 판단했다.
+- `process-chat-estimate`는 별도 `analyze-quote` 내부 호출에 의존하지 않고, **Gemini 직접 호출형 Edge Function**으로 단순화하는 쪽이 구현 자산으로서 더 낫다고 정리했다.
+- Google Chat 즉시 응답 실험(`Respond to Webhook` + Chat JSON 응답)은 운영 난도가 높고 실무 혼선을 만들 수 있어, 현재 기준에서는 **운영에서 제거하고 코드 자산만 남겨두는 것**으로 결론냈다.
+
+**수정 내역:**
+
+*Supabase Edge Function (`supabase/functions/process-chat-estimate/index.ts`):*
+- consultation 조회 컬럼을 `company_name`에서 `project_name`으로 수정. 라이브 DB 컬럼 불일치로 인한 조회 실패 해결.
+- `analyze-quote` 내부 HTTP 호출 제거. `GoogleGenerativeAI`를 직접 import하여 Gemini Vision 분석을 함수 내부에서 수행하도록 변경.
+- 견적서 여부 Pre-check, JSON 파싱(`parseJsonBlock`), rows 매핑, `skipped` 응답 처리까지 `process-chat-estimate` 안으로 내재화.
+
+*GAS (`gas/Code.gs`):*
+- `doPost()`에 `download_attachment` 액션 분기 추가 유지. Google Chat attachment resource를 OAuth 토큰으로 다운로드 후 base64로 반환하는 구조 확인.
+
+*n8n (`gas/n8n-workflow.json`, 라이브 `n8n` 워크플로우):*
+- 한때 로컬 정의에 `Webhook(responseNode)` + `Prepare Chat Response` + `Respond to Google Chat` 구조를 추가해 Google Chat 호환 응답을 실험했다.
+- 이후 라이브 `n8n`과 로컬 `gas/n8n-workflow.json` 모두에서 해당 응답 노드들을 제거하고, `Webhook.responseMode`를 다시 `onReceived`로 되돌렸다.
+- 라이브 워크플로우 화면에서도 상단 가지에 남아 있던 `Prepare Chat Response`, `Respond to Webhook` 노드를 직접 삭제하고 재게시했다.
+
+**운영 확인 결과:**
+- Google Chat 앱 이름 `1일정등록`으로 멘션 호출 자체는 도달함.
+- `responseNode` 실험 중에는 `{"text":"..."}` 응답, 빈 200, `응답하지 않음` 상태를 모두 확인하면서 운영 불안정성을 재확인했다.
+- 최종적으로 라이브 `n8n`을 롤백한 뒤, 프로덕션 웹훅 응답이 다시 `{"message":"Workflow was started"}` 로 고정되는 것을 `curl`로 검증했다.
+- 즉, **운영은 현재 안전 롤백 상태**이며, 응답 커스터마이징 실험은 더 이상 라이브에 남아 있지 않다.
+
+**현재 상태:**
+- 라이브 `n8n`, 로컬 `gas/n8n-workflow.json`, 기준 문서(`BLUEPRINT.md`, `CONTEXT.md`, `JOURNAL.md`)를 모두 **같은 롤백 상태로 동기화 완료**.
+- `process-chat-estimate`, `gas/Code.gs`의 첨부 다운로드, 견적 분기 코드는 자산으로 남아 있지만, 현재 운영 기본 흐름은 아니다.
+- 현재 기준 운영은 상담카드/견적 관리와 Takeout 기반 수동 보조 흐름이며, Google Chat 실시간 견적 자동화는 **보류** 상태다.
+
+**관련 파일:**
+- `supabase/functions/process-chat-estimate/index.ts`
+- `gas/Code.gs`
+- `gas/n8n-workflow.json`
+- `BLUEPRINT.md`
+- `CONTEXT.md`
+- `JOURNAL.md`
+
+---
+
+## 2026-03-11 — 상담 관리 프론트 UX 정리 (선택 유지 · 우측 고정 · 40개 페이지 · 이중 기간 필터)
+
+**핵심 결정:**
+- 상담 관리는 다른 화면과 분리된 **작업형 대시보드**로 본다. 따라서 최근 프론트 수정은 `ConsultationManagement.tsx` 내부에만 한정하고, 공통 레이아웃이나 다른 페이지는 건드리지 않는다.
+- 데스크톱에서는 우측 상세 패널을 기준 화면처럼 유지하는 쪽이 실무에 더 맞다고 판단했다. 완전 독립 스크롤까지는 가지 않고, **우측 패널 고정(sticky) 기반**으로 먼저 정리.
+- 직원이 카드 선택을 바꾸지 않았다면 시스템이 첫 카드로 강제 복귀시키지 않는다. **선택 유지**를 기본 규칙으로 확정.
+- 상태 변경으로 `종료/견적중/진행중` 탭으로 이동할 때는, 선택 카드가 들어 있는 **페이지로 자동 추적**해야 한다. 페이지네이션 때문에 카드가 사라진 것처럼 보이는 UX를 해소하는 것이 목적.
+- 상담 목록은 페이지당 **40개**가 현재 작업 패턴에 더 적합하다고 판단했다. 우측 패널 고정 이후 20개는 너무 자주 페이지를 넘기게 만든다.
+- 상단 필터는 **인입일 기간 필터 + 업데이트일 기간 필터 + 정렬 토글**의 3개 제어로 확장. 인입 시기와 최근 활동일을 별도로 볼 수 있게 한다.
+
+**수정 내역:**
+
+*ConsultationManagement.tsx:*
+- 우측 상세 패널: 데스크톱에서 `sticky top-6 h-[calc(100vh-8rem)]` 적용. 좌측 목록 탐색 중 우측이 기준판처럼 유지되도록 조정.
+- 선택 유지: `listTab` 변경 시 `filteredLeads[0]`을 강제로 `setSelectedLead` 하던 `useEffect` 제거. 이제 현재 선택 카드가 필터 결과 안에 있으면 그대로 유지.
+- 상태 변경 후 자동 추적: `handleStageChange` 성공 후 `setSelectedLead(leadId)` + `setScrollToLeadId(leadId)` 추가. 완료 처리 후 `종료` 탭으로 이동해도 해당 카드가 포함된 페이지로 자동 이동.
+- 페이지 크기: `LIST_PAGE_SIZE = 20` → `40`.
+- 상단 필터 확장:
+  - `dateRange` = 인입일 기준 기간
+  - `updateDateRange` = 최신 업데이트일 기준 기간
+  - `sortByNeglect` = 최근업데이트순 / 인입일순 정렬 토글
+- 날짜 필터 유틸 추가:
+  - `DATE_RANGE_OPTIONS`
+  - `getDateRangeStarts()`
+  - `getComparableDateValue()`
+  - `matchesDateRange()`
+- `kpi`, `tabCounts`, `filteredLeads` 전부 인입일·업데이트일 2중 기간 필터를 함께 반영하도록 정리.
+- 상단 UI에 `인입일`, `업데이트일` 라벨을 붙여 두 드롭다운의 의미를 즉시 구분 가능하게 함.
+
+**운영 중 확인된 현상과 해석:**
+- 완료 처리 후 카드가 "사라진" 것처럼 보인 원인은 삭제가 아니라 **`종료` 탭 이동 + 페이지네이션 미추적**이었다.
+- 상담카드가 최상단으로 튀던 주요 원인은 (1) 탭 변경 시 첫 카드 강제 선택 로직, (2) `update_date` 기준 정렬에 따른 리스트 재배치였다.
+- 개발 서버가 포트 `5174`에서 `5175/5176`으로 밀리는 일이 반복되어, 포트 점유 프로세스 정리 후 `127.0.0.1:5174`로 재기동하는 패턴을 재확인했다.
+
+**문서 반영:**
+- `BLUEPRINT.md`: 상담 관리 대시보드 고정 규칙, 선택 유지 원칙, 상태 변경 후 페이지 추적, 페이지당 40개, 상단 필터 3종 추가
+- `CONTEXT.md`: 상담 관리 대시보드 운영 원칙(적용 범위 한정, 우측 기준판, 선택 안정성, 페이지 추적, 3종 필터, 40개 카드) 추가
+
+**변경 파일:** `src/pages/ConsultationManagement.tsx`, `BLUEPRINT.md`, `CONTEXT.md`, `JOURNAL.md`
+
+---
+
+## 2026-03-05 오후 — n8n 운영 안정화 · 시스템 구조 정리
+
+**핵심 결정:**
+- 엔드투엔드 테스트 완료. 채팅방 생성 → 상담카드 자동 생성(project_name, start_date, channel_chat_id) 정상 동작.
+- **3세대 구조 확정:** 채팅방 → GAS AutoAddBot → n8n → Supabase 직접. 구글 시트는 레거시(읽지도 쓰지도 않음).
+- **displayName 파싱 포기:** 직원 규칙 미준수 우려 → 그대로 project_name 저장, 직원 수동 입력.
+- **채널톡 방향:** 고객응대/마케팅 자동화(첫 인사, FAQ, 상담 유도)에 집중. 구글챗 연동은 비현실적(API 제약).
+- **GAS 트리거:** 5분 유지 (1분 시 일일 쿼터 초과 우려).
+- **과거 데이터:** 전체 2,382건 중 2,344건 start_date null. Chat API createTime 활용 여부 미결.
+- **n8n 중복 체크:** channel_chat_id=eq.{spaceName}. 기존 마이그레이션 레코드(channel_chat_id null)는 중복 체크 미작동.
+
+**미결 작업:** 테스트 카드 삭제(수동), start_date 정상화 방법 결정, 기존 채팅방 봇 일괄 추가(2026-01-20 이후).
+
+---
+
+## 2026-03-05 — GAS AutoAddBot 안정화 · Make → n8n 전환
+
+**버그 수정 목록:**
+- `appsscript.json`: `chat.memberships.app` 스코프 누락 → 추가.
+- createTime 필터: `!space.createTime || ...` → `space.createTime && ...` (없는 스페이스 잘못 스킵 수정).
+- processed 저장 시점: detectNewSpaces_ 내부 → 봇 추가 성공 후에만 저장(실패 시 다음 사이클 재시도).
+- Invalid Date 가드: `isNaN(parsedLast)` 체크 → 10분 전 기본값 폴백.
+- processed 최대 100개 유지, spaceName → chatLink 변환 추가.
+
+**n8n 워크플로우 (최종 8개 노드):**
+Webhook → Set Variables(chatLink, today, displayName) → Check & Normalize(Code, Supabase 내부 조회+found 판단) → Row Found?(IF) → 기존: Sheets 업데이트 + Supabase PATCH / 신규: Sheets 추가 + Supabase INSERT.
+
+**실 연동에서 발견·수정:** channel_chat_id 컬럼 없음(400) → ALTER TABLE 추가. 0 items 체인 중단 → Check & Normalize 단일 Code 노드로 통합. project_name NOT NULL → displayName으로 교체. status '상담중' 없음 → '접수'. GAS가 테스트 Webhook URL 사용 → 프로덕션 URL 교체.
+
+**변경 파일:** `gas/AutoAddBot.gs`, `gas/appsscript.json`, `gas/n8n-workflow.json`(신규), `supabase/migrations/20260305000000_add_channel_chat_id_to_consultations.sql`(신규).
+
+---
+
+## 2026-03-02 — 구글챗 전수 마이그레이션 v5 · 1,000건 제한 해결 · Nuclear Cleanup
+
+- `user_info.json` 기반 2,344개 스페이스를 1:1 상담카드로 이식(병합 없음, 중복명 (1)/(2) 접미사).
+- start_date는 null 유지(실무 혼선 방지). metadata에 google_chat_url, space_id, original_name 저장.
+- **Supabase 1,000 Limit 극복:** fetchLeads에 range(from, from+999) 재귀 루프. 삭제는 0건 될 때까지 반복(Nuclear Cleanup).
+- **변경 파일:** `ConsultationManagement.tsx`(fetchLeads 재귀), `scripts/nuclear_fix.ts`(신규), `scripts/verify_all.ts`, `scripts/analyze_today.ts`.
+
+---
+
+## 2026-03-01 — Phase 1 구조적 정리 · 자동 견적 엔진 · 가격 분석 스크립트
+
+- **환경변수 중앙화:** `src/lib/config.ts` 신규. import.meta.env 직접 참조 금지.
+- **상수 중앙화:** `src/lib/constants.ts` 신규. CLOUDINARY_UPLOAD_FOLDER, ESTIMATES_SELECT_COLUMNS 등.
+- **탭 분리:** ConsultationManagement.tsx → `src/components/Consultation/` 하위 EstimateTab, HistoryTab, MeasurementTab, AutoEstimateDialog 분리.
+- **dateUtils 이동:** `src/utils/dateUtils.ts` → `src/lib/utils/dateUtils.ts` 삭제 후 재생성.
+- **자동 견적 엔진 (`src/lib/autoEstimate.ts`):** loadPriceTable + calculateAutoEstimate. 매칭: spec > base > none. 구간별 배송·설치 요율 + VAT 10%.
+- **AutoEstimateDialog:** Combobox 자동완성, 실시간 합계, 기존 이력 비교.
+- **가격 분석 스크립트 파이프라인 (scripts/):** collectAllTakeouts → parseCollectedQuotes → buildPriceTable → public/data/standardPriceTable.v*.json.
+
+---
+
+## 2026-02-22 — 마이그레이션 파이프라인 · 503 대응 · analyze-quote 강화
+
+- **migrate-data.ts:** 재귀 탐색, 2단계(exists→full), sharp 경량화, 503 재시도(2/4/6초, 동시성 2), 주소 파싱 오탐 방지.
+- **analyze-quote Edge Function:** exists 모드(64 token, YES/NO만), Pre-check(파인드가구 견적서 3/5 항목 필터), 캡처 이미지 가이드.
+- **detectQuoteLocal.ts:** `npm run detect:quote -- --folder "경로"` 신규.
+- **업로드 경로:** 견적서→estimate-files 직접, 발주서·평면도→uploadEngine→documents. OCR 결과→estimates.payload.
+- **세이브 포인트:** `git tag save-20260222-analyze-quote-edge`
+
+---
+
+## 세이브 포인트 2026-02-21 — 발주 자산 · uploadEngine · Dialog 접근성
+
+- uploadEngine: jpg/png/webp→Cloudinary, pdf/ppt/pptx·floor_plan·purchase_order→Supabase documents 버킷.
+- documentThumbnail.ts: PDF/PPTX 썸네일 생성. image_assets에 storage_type, storage_path 컬럼.
+- OrderAssets.tsx(`/order-assets`): 발주서·배치도 통합 관리. MeasurementSection 분리 업로드.
+- Radix Dialog: aria-describedby={undefined}, DialogTitle 필수(sr-only).
+- `git tag save-20260221-order-assets-dialog-a11y`
+
+---
+
+## 2026-02-22 긴급 — 시스템 안정화
+
+- Realtime 구독 주석 처리(CHANNEL_ERROR 방지). last_viewed_at 갱신 주석(컬럼 미존재). order_documents fetch 주석(빈 배열 반환).
+- ConsultationListItem 바깥 `<button>` → `<div role="button">` 변경(button-in-button 위반).
+
+---
+
+## 2026-02-21 — 실측 탭 분리 업로드
+
+- 통합 업로드 영역 → [발주서 업로드] / [배치도 업로드] 두 독립 섹션. category 자동 지정 → image_assets 저장.
+- OrderAssets.tsx 신규(`/order-assets`). [발주 자산 관리] 버튼으로 진입.
+
+---
+
+## 2026-02-20 — 이미지 업로드 단일 엔진 · 상담 히스토리 통합
+
+- `src/lib/uploadEngine.ts` 신규. 이미지 자산관리(입구 A)·상담 히스토리(입구 B) 모두 동일 엔진 사용.
+- 상담 히스토리에 점선 업로드 영역 추가, 항목별 휴지통 삭제(consultation_messages + image_assets + Storage).
+- 데이터 흐름: image_assets + consultation_messages만 반영. 구글 시트 행 추가 없음.
+
+---
+
+## 2026-02-19 — Claude Code 추가
+
+- 기술 스택에 Claude Code(터미널 기반 에이전트) 추가. 모든 개발 가이드는 하이브리드 환경(Cursor + Claude Code) 전제.
+
+---
+
+## 2026-02-14 — 구글 시트 갱신일 · 상담 카드 최종 견적가
+
+**갱신일 기준 (save: `save-20260214-sheet-update-date`):**
+- Lead.sheetUpdateDate = metadata.sheet_update_date. 오늘 갱신/D+n/정렬 모두 sheetUpdateDate ?? updateDate 기준.
+- GAS syncAllDataBatch에 sheet_update_date(YYYY-MM-DD) 추가. RPC update_multiple_consultations_from_sheet에서 metadata 병합.
+- 변경: `ConsultationManagement.tsx`, `supabase/migrations/20260214140000_sheet_update_date_in_metadata.sql`, `gas/Code.gs`.
+
+**최종 견적가 표시 (save: `save-20260214-card-final-estimate`):**
+- 카드 2행 맨 오른쪽: 표시 우선순위 pending → finalAmount → displayAmount → expectedRevenue.
+- EstimateFilesGallery onUploadComplete({ estimateAmount }). pendingEstimateAmountRef·낙관적 업데이트·fetchLeads 병합.
+
+---
+
+## 2026-02-13 — 구글 시트 ↔ 수파베이스 양방향 동기화
+
+- **시트→DB:** onEdit → update_single_consultation_from_sheet RPC(project_name, link, start_date, update_date, created_at). status·estimate_amount는 시트에서 미전송.
+- **DB→시트:** 앱 [최종 확정] 후 syncAppToSheet(doPost) → 해당 행 E·F·D 갱신.
+- Realtime INSERT/UPDATE 시 전체 fetch. visibilitychange → visible 시 fetch.
+- `git tag save-20260213-google-sheet-sync`
+
+---
+
+## 2026-02-12 — 견적서 업로드 이중 저장 · products 판매단가
+
+- [판매 단가표 반영] / [견적서로 저장] 모두 products + estimates 동시 저장.
+- products.supply_price = 판매단가. 원가표→마진 30% 역산. AI 퀵 가이드에서 판매단가로 인식, 원가 역산.
+- EstimateForm: applySellingToRow 추가. modalOpen prop으로 products 새로고침.
+- `git tag save-20260212-estimate-upload-products-selling-price`
+
+---
+
+## 2026-02-10 — 무효/거절 분리 · AI 퀵 커맨드 · 채널톡 웹훅
+
+- **무효/거절:** status enum에 '무효' 추가. 무효=즉시 저장(통계 제외), 거절=사유 모달 필수. 7탭 추가. KPI: total_valid_leads = count(status != '무효').
+- **식별자 고정:** display_name은 채널톡 웹훅에서 최초 생성 후 자동 변경 안 함. AI 추출값은 metadata.ai_suggestions에만, 상세 패널 [적용]으로 수동 반영.
+- **AI 퀵 커맨드:** 원가표 출처 뒤 외경·현장명 표시, 원가만 표시(종전 단가 제거). vendor-assets Signed URL로 원본보기. 참고 견적서 모달 z-[200]·캡처, justClosedPreviewRef(300ms) 방어.
+- **채널톡 웹훅:** 이벤트 타입 필터 제거. entity.fields/body.fields에서 연락처 추출. 전체 try-catch·로깅 강화. 배포: `--no-verify-jwt`.
+- **6개월 견적 통계:** 최대/최소/실제 중간값(정렬 후 중앙) + estimate_id. 클릭 시 견적서 팝업. 원가 연동.
+- **마이그레이션:** toSafeStoragePath(한글 파일명 MIME 오류 방지). 거래처 원가 AI: site_name·색상·외경·memo 추출, 수량 제거. 섹션 분리(탭 제거).
+- `git tag save-20260210-showroom-consultation-image`
+
+---
+
+## 2026-02-09 — 상담 숨기기 · 아카이브 · 채널톡 FAQ
+
+- **Soft Delete:** consultations.is_visible (default true). 히스토리 탭 [이 상담 숨기기](관리자) → 앱 내 Dialog → false. 모든 목록/통계에 is_visible=true 필터 강제.
+- **관리자 아카이브:** `/admin/archive`. [복구](is_visible true) / [영구 삭제](estimates+consultations). [TEST] 필터.
+- **useConsultations 훅:** `src/hooks/useConsultations.ts`. visibleOnly true/false.
+- **마이그레이션:** created_at = 인입일(quoteDate) 소급. 인입일 Date Picker 추가.
+- **채널톡 FAQ:** FAQ_DATA 키 `A/S` → `'A/S'`(따옴표) 문법 에러 해결. `'AS'` 키 추가(슬래시 없이도 매칭).
+- `git tag save-20260209-faq-channel`
+
+---
+
+## 2026-02-08 — 상담 UI · 이미지 분리 · 공유 시스템 · 견적 규격
+
+- **상담 UI:** 골든타임 3단계(Hot/Active/Warning), 6단계 프로그레스(접수|견적|계약|완료|AS|캔슬), 조회 기간 기본값 '이번달'. consultation_messages.is_visible 도입, 관리자 숨기기/다시보이기/시스템 메시지 영구 삭제.
+- **이미지 분리(Lock-in):** 이미지 자산관리(`/image-assets`, ImageAssetViewer) = 관리자 창고. 시공 사례 뱅크(`/portfolio`, PortfolioBank) = 영업 전용. fetchApprovedProjectAssets/rowToProjectAsset.
+- **공유 시스템(Lock-in):** `/public/share?ids=...` (PublicGalleryView). ShareCart 선택 → 링크 복사 + 카톡 공유. 외부 페이지에서 원가·마진·consultation_id 미노출.
+- **역방향 견적:** 시공 뱅크 라이트박스 product_tags 클릭 → location.state로 상담 관리 이동 → 견적 모달 자동 오픈 + 품명 삽입. lastLocationKeyRef 중복 방지.
+- **견적 규격:** 20행 고정(FIXED_ESTIMATE_ROWS=20). PDF `견적서_업체명.pdf`, 이미지 `견적서_YYYY-MM-DD_업체명.png`.
+- **데이터 통합 관리(/admin/migration):** is_test 컬럼. 파일 업로드 → AI 파싱 → 검수 테이블 → DB 저장.
+- **이미지 이원화 강제:** uploadConstructionImageDual = Cloudinary(고화질) + Supabase(썸네일).
+
+---
+
+## 2026-02-07 — 견적/기획안 · AI 견적 도우미 · 식별자 · 1단계 골조
+
+- **예산 기획안(PROPOSAL) vs 확정 견적서(FINAL):** 양식 완전 분리(컬럼 조건부 렌더링). 발행승인 3단계(미리보기 팝업 → 최종 발행 → 링크/PDF). final_proposal_data 스냅샷 저장.
+- **AI 견적 도우미:** estimateAiService(Mock, LLM 교체 예정) + estimateUtils(금액 파싱·배율) 분리. QuickCommandResult 7가지 타입. AI 퀵 커맨드 입력창.
+- **상담 식별자(display_name):** `[YYMM] [상호] [전화번호 뒷4자리]` 자동 생성. 데이터 표준으로 확정.
+- **1단계 골조 확정:** 상담 카드 UI(1행~4행), AS 신청 시 status→AS_WAITING, 오픈마켓 배지(네이버/쿠팡/오늘의집), 실측 데이터 타임라인에서 분리(→ /measurement/upload), 고객 등급 동일 연락처 상향 평준화.
+- **화이트아웃 롤백:** 채팅 인라인 테마·드래그 앤 드롭 시도 후 즉시 롤백. Tailwind 기본 스타일·파일 선택 버튼 방식 유지.
+
+---
+
+## 2026-02-06 — 데이터 모델링 · UX 설계 확정
+
+- 30일 골든타임 로직, Wake-up 자동화(3/7일 단위), 통합 타임라인 UI 설계.
+- 현장 기사 이원화 권한(일정·현장만), 카카오/T맵 딥링크, 핑크색 현장 주의사항 UI.
+- 상담 단계 '현장실측' 삭제 → 4단계(상담접수→견적중→계약완료→시공완료)로 통일.
+- AS 관리: metadata.as_requested, 카드 1행 빨간 [AS 요청] 배지, [AS 관리] 버튼.
+
+---
+
+## 2024-02-05 — Day 1 킥오프
+
+- '주문' → '상담' 용어 전면 개편. 마케팅 스타일(후킹/전문가/스토리텔러) 확정.
+- Lovable 크레딧 임박 → GitHub(1shot1kill74/ivory-os) 이관. M4 맥북 로컬 환경 셋업.
+
+---
+
+## 2026-03-07 — 견적서 AI 분석 수정 · 드래그앤드롭 · 정렬 개선 · n8n MESSAGE 이벤트 처리
+
+**핵심 결정:**
+- **bulkAddBotToAllSpaces 완료:** 2,255건 추가/스킵, 실패 0건. 전수 봇 추가 완료.
+- **update_date 갱신 구조 분석:** GAS 5분 타이머는 신규 스페이스 감지 전용. MESSAGE 이벤트 처리 없어 기존 채팅방 활동이 update_date에 미반영 → n8n Switch 노드로 보완. **단, Google Chat 공식 MESSAGE 이벤트는 방 전체 모든 메시지가 아니라 @멘션·슬래시 명령·앱과의 DM interaction에서만 발생**하므로, HTTP 엔드포인트 앱 연동 전제가 필요.
+- **sheetUpdateDate 제거:** ConsultationManagement 전체에서 `sheetUpdateDate` 참조 제거. D-Day·정렬 모두 Supabase `update_date` 단일 기준.
+- **Gemini 모델:** gemini-2.0-flash deprecated → `gemini-3.1-flash-lite-preview` 변경.
+
+**수정 내역:**
+
+*analyze-quote Edge Function:*
+- `.env` 빈 파일 삭제 → Supabase CLI 파싱 오류 원인 제거.
+- `const text` 중복 선언 버그 → `const responseText` 수정(worker boot error 해결).
+- Gemini 모델: `gemini-2.0-flash` → `gemini-3.1-flash-lite-preview`.
+- Gemini API 키 갱신(외부 정책 변경).
+
+*EstimateFilesGallery:*
+- 드래그앤드롭 업로드 추가. `processFile(file, uploadType)` 공통 함수 추출.
+- 빈 상태 → 드롭존 UI(`<label>` + dragOver 상태 기반 스타일).
+- 두 패널(견적서/외주업체 단가표) 각각 onDragOver·onDragLeave·onDrop 적용.
+
+*ConsultationManagement:*
+- 정렬 버튼 토글: 고정 "최근업데이트순" → `sortByNeglect ? '최근업데이트순' : '인입일순'` 토글.
+- null update_date 정렬: `0` 폴백 → `new Date(a.updateDate ?? a.inboundDate ?? a.createdAt).getTime()` 폴백.
+- sheetUpdateDate 전면 제거 → updateDate 단일화.
+
+*n8n 워크플로우 (`gas/n8n-workflow.json`):*
+- Switch 노드(Event Type?) 추가 — MESSAGE 분기: [MESSAGE] Set Vars → [MESSAGE] Supabase PATCH update_date.
+- 나머지 이벤트(ADDED_TO_SPACE 등) → 기존 Set Variables 분기 유지.
+- import 가능한 완전한 JSON으로 업데이트. 노드 총 12개.
+
+**플로우:**
+```
+Webhook → Event Type?(Switch)
+  ├─ MESSAGE → [MESSAGE] Set Vars → [MESSAGE] Supabase PATCH update_date
+  └─ fallback → Set Variables → Check Supabase → Normalize Result → Row Found?
+                                                                      ├─ TRUE  → [기존] Sheets 업데이트 → [기존] Supabase PATCH
+                                                                      └─ FALSE → [신규] Sheets 추가 → [신규] Supabase INSERT
 ```
 
-## 변경된 주요 파일
-- `supabase/functions/analyze-quote/index.ts` — 신규
-- `src/lib/parseFileWithAI.ts` — invoke 전환, Gemini/OpenAI 제거
-- `src/pages/admin/MigrationPage.tsx` — hasGeminiKey 제거
-- `.env.example` — Edge Function 시크릿 안내
+**변경 파일:** `supabase/functions/analyze-quote/index.ts`, `src/components/estimate/EstimateFilesGallery.tsx`, `src/pages/ConsultationManagement.tsx`, `gas/n8n-workflow.json`
 
 ---
 
-# 세이브 포인트 2026-02-21 (발주 자산·uploadEngine·Dialog 접근성)
+## 2026-03-09 — status 7종 표준화 · DB 중복 정리 · 상담카드 핀 기능
 
-**이 시점까지 반영된 작업을 롤백할 때 참고용입니다.**
+**핵심 결정:**
+- **status 7종 확정:** 접수 / 견적 / 진행 / 완료 / AS / 무효 / 거절. 휴식기는 '완료'로 흡수(마케팅 일시정지 플래그는 추후 `metadata.marketing_pause`로 분리 예정).
+- **상담카드 핀:** DB 마이그레이션 없이 `metadata.pinned`(boolean) 패턴. 정렬 우선순위 pinned → 날짜(업데이트순/인입일순).
 
-## 포함된 작업 요약
-- **uploadEngine 확장:** 확장자·카테고리별 저장소 분기. jpg/png/webp→Cloudinary, pdf/ppt/pptx·floor_plan·purchase_order→Supabase `documents`.
-- **image_assets:** storage_type('cloudinary'|'supabase'), storage_path 컬럼. documents 버킷(public) 마이그레이션.
-- **PDF/PPTX 썸네일:** documentThumbnail.ts — pdf.js 첫 페이지, PPTX docProps/thumbnail.jpeg, _thumb.jpg·thumbnail_url.
-- **발주 자산 관리:** OrderAssets.tsx, /order-assets, [발주 자산 관리] 버튼. MeasurementSection 발주서/배치도 분리 업로드.
-- **Radix Dialog 접근성:** DialogContent aria-describedby={undefined} 기본값. DialogTitle 필수 — ShowroomPage h2→DialogTitle, ConsultationManagement 견적 풀스크린 sr-only DialogTitle.
-- **마이그레이션:** 20260221000002(floor_plan 삭제), 20260221000003(document_category), 20260221000004(documents·storage_type), 20260221000005(상담 삭제).
+**수정 내역:**
 
-## 롤백 시 (Git 사용 시)
-```bash
-git add -A
-git commit -m "checkpoint: 발주 자산·uploadEngine 확장·Dialog 접근성·PDF/PPTX 썸네일"
-git tag save-20260221-order-assets-dialog-a11y
+*ConsultationManagement.tsx:*
+- `Lead.status` 타입: `'접수' | '견적' | '진행' | '완료' | 'AS' | '거절' | '무효'`
+- `STATUS_TO_STAGE`: 7종 신규값 + 레거시 호환(상담중/견적발송/계약완료/휴식기/AS_WAITING/신규 등)
+- `stageToStatus`: 4단계 → 4개 표준값 역매핑
+- `statusVal` 기본값: `'접수'`
+- `isEnded()`: AS는 종료 아님(false 반환)
+- `getStageBarValue()`: AS 상태 직접 처리
+- `handleToggleAs`: AS ↔ 완료 토글
+- 신규 상담 insert: `status: '접수'`
+- `replace_all`: `'상담중'` → `'접수'`, `'견적발송'` → `'견적'`
+- `mapConsultationRowToLead`: `pinned: meta?.pinned === true ? true : undefined`
+- 정렬 로직: pinned 카드 최상단 부상(두 정렬 모드 모두 적용)
+- `handlePin`: metadata.pinned 토글 + Supabase PATCH
+- `ConsultationListItem`: `onPinClick` prop 추가, Pin 버튼(Lucide) UI(Pencil 앞 위치)
 
-# 이후 이 시점으로 복귀
-git checkout save-20260221-order-assets-dialog-a11y
-```
+*supabase/migrations/20260308000000_standardize_consultation_status.sql (신규):*
+- 레거시 status 값 → 7종 표준값 일괄 UPDATE
+- 범위: 상담중/신규/상담접수/접수중/신규접수→접수, 견적발송/견적중/견적발송중→견적, 계약완료/진행중/계약/계약중→진행, 휴식기/시공완료/완료됨/종료→완료, AS_WAITING→AS
+- SQL 실행 완료(대표님 직접 수파베이스에서 실행)
 
-## 변경된 주요 파일
-- `src/lib/uploadEngine.ts` — 확장자·카테고리별 분기
-- `src/lib/documentThumbnail.ts` — PDF/PPTX 썸네일
-- `src/lib/imageAssetUploadService.ts` — storage_type, storage_path
-- `src/components/Consultation/MeasurementSection.tsx` — 발주서/배치도 업로드
-- `src/pages/OrderAssets.tsx` — 발주 자산 관리
-- `src/components/ui/dialog.tsx` — aria-describedby 기본값
-- `src/pages/ShowroomPage.tsx`, `src/pages/ConsultationManagement.tsx` — DialogTitle
-- `supabase/migrations/20260221000002~05`
-- `BLUEPRINT.md`, `CONTEXT.md`, `JOURNAL.md`, `soul.md`
+*DB 중복 정리:*
+- `channel_chat_id` 기준 중복 레코드 약 28건 확인
+- DELETE SQL(ROW_NUMBER, created_at ASC 기준 최신 유지, 구버전 삭제) 제공
+- 대표님 직접 실행 완료
 
----
+*gas/AutoAddBot.gs:*
+- `syncMissingSpacesToSupabase`: insert 시 `status: '신규'` → `status: '접수'`
+- 로컬 파일 수정 완료(GAS 에디터는 수동 반영 필요)
 
-# 2026-02-22 기록 (긴급 시스템 안정화)
+*BLUEPRINT.md:*
+- status enum 섹션: 구버전 목록 → 7종 확정 + 레거시 마이그레이션 노트로 교체
+- `update_date` 소스 오브 트루스 문구 보강: 앱은 `consultations.update_date` 단일 기준, 주 경로는 GAS `lastActiveTime`, n8n `MESSAGE`는 interaction event 한정 보조 경로
+- 레거시 status 매핑에 `캔슬 → 거절` 추가
 
-## 1. 오늘의 활동 요약
-- 시스템 안정화를 위한 리얼타임 중단 및 스키마 불일치 기능(last_viewed_at, order_documents) 일시 제거.
+*gas/README.md:*
+- `Google Chat → n8n MESSAGE 실운영 점검` 섹션 추가
+- 점검 순서: n8n 활성화 → 프로덕션 Webhook URL 확인 → Chat 앱 HTTP 엔드포인트 확인 → `@멘션`/슬래시/DM로 테스트 → n8n 실행 이력과 `body.space.name` 확인
+- Google Cloud Console `Google Chat API → Configuration` 화면 기준 체크리스트 추가. `HTTP endpoint URL`, 앱 사용 가능 상태, 스페이스 멤버십, Commands 등록, DM 가능 상태, Authorization Bearer 검증 메모 포함
+- `대표님용 1분 실행 절차` + `n8n 실행 이력 판독표` 추가
 
-## 2. 상세 결정 사항
-- **Realtime 구독 중단:** `ConsultationManagement.tsx` 내 `.channel('consultations-realtime').on('postgres_changes', ...).subscribe()` 전체 useEffect 주석 처리. 채널 오류(CHANNEL_ERROR)로 인한 콘솔 에러 방지.
-- **last_viewed_at 갱신 중단:** `consultations` 테이블에 해당 컬럼 미존재로 PGRST204 에러 발생 → `supabase.from('consultations').update({ last_viewed_at })` 호출 주석 처리. 로컬 state 낙관적 갱신은 유지.
-- **order_documents fetch 중단:** 테이블 미존재 또는 스키마 불일치로 400 에러 발생 → fetch useEffect 주석 처리 후 `setOrderDocumentsList([])` 빈 배열 반환으로 대체.
-- **DOM 구조 수정:** `ConsultationListItem` 바깥 `<button>`을 `<div role="button" tabIndex={0}>`으로 변경 — 내부 StageProgressBar·편집·삭제 button과의 button-in-button 금지 위반 해소. 키보드(Enter/Space) 핸들러 추가로 접근성 유지.
-- **미사용 import 정리:** `OrderDocumentCategory` import 제거 (주석 처리된 코드에서만 사용되어 TS Hint 경고 해소).
+**미결:**
+- GAS 에디터에 AutoAddBot.gs 수동 복붙
+- 내부 관리 스페이스: is_visible=false + status='무효' 일괄 처리
+- dryRunContactScan 이어서 실행 + applyContactScanFromSheet
 
----
-
-# 2026-02-21 기록 (실측 탭 버튼 삭제 및 발주서/배치도 분리 업로드)
-
-## 1. 오늘의 활동 요약
-- 실측 자료 탭 내 "실측 정보 입력 페이지로 이동" 버튼 삭제 (연결 끊김으로 제거 결정).
-- 통합 업로드 영역을 **[발주서 업로드]**와 **[배치도 업로드]** 두 개 독립 섹션으로 분리.
-- uploadEngine 사용, 업로드 시 category 'purchase_order'·'floor_plan' 자동 지정 → image_assets 테이블에 저장.
-- 발주서·배치도 통합 관리 페이지 OrderAssets.tsx 신규 생성. 필터: 업종, 카테고리, 고객명. ImageAssetViewer 스타일 그리드 뷰.
-
-## 2. 상세 결정 사항
-- **MeasurementSection:** 실측 탭 전용 컴포넌트. 두 업로드 섹션 + image_assets 갤러리 + 기존 order_documents(PDF/PPT) 갤러리 유지.
-- **카테고리 분리:** DB(image_assets.category)에 purchase_order/floor_plan 명확 저장 → "이번 달 상업 공간 발주서만" 등 필터링 가능.
-- **파일 관리 일관성:** uploadEngine 공통 사용으로 실측 탭·전용 관리 페이지 어디서 올려도 image_assets에 동일하게 저장.
+**변경 파일:** `src/pages/ConsultationManagement.tsx`, `gas/AutoAddBot.gs`, `supabase/migrations/20260308000000_standardize_consultation_status.sql`(신규), `BLUEPRINT.md`, `CONTEXT.md`, `JOURNAL.md`
 
 ---
 
-# 2026-02-19 기록 (하이브리드 개발 환경 — Claude Code 추가)
+## 2026-03-10 — Takeout 기반 견적 이미지 브라우저 1차 정리
 
-## 1. 오늘의 활동 요약
-- 프로젝트 기술 스택에 **Claude Code**가 추가되었습니다.
-- **모든 개발 가이드**는 이제 Cursor(시각적 편집)와 Claude Code(터미널 기반 에이전트)를 병행하는 **하이브리드 환경**을 전제로 합니다.
+**핵심 결정:**
+- 구글챗 실시간 첨부파일 수집이 아니라 **Google Takeout 기반**으로 먼저 간다.
+- OCR 자동 선별 중심이 아니라 **스페이스별 전체 이미지 수동 선택**을 기본 UX로 둔다.
+- 같은 스페이스를 여러 프로젝트 카드가 재사용한 레거시 상황 때문에, 스페이스 클릭 시 카드 강제 이동보다 **displayName을 메인 검색창에 자동 입력**하는 방식이 더 안정적이라고 판단했다.
+- **카드 스플릿 기능은 아직 구현하지 않음.** 먼저 데이터를 충분히 모으고, 나중에 사람 승인형으로 분리하는 방향 유지.
 
-## 2. 상세 결정 사항 (Decisions)
-- **기술 스택:** Editor/AI에 Cursor(시각적 편집·메인 개발), Claude Code(터미널 기반 에이전트) 명시.
-- **개발 가이드 전제:** soul.md, CONTEXT.md, BLUEPRINT.md, JOURNAL.md에 하이브리드 환경 전제 반영. 신규 가이드 작성 시에도 동일 전제 적용.
+**구현 상태:**
+- `견적 관리` 탭에 `테이크아웃 이미지 가져오기` 버튼 추가
+- 현재 상담카드의 스페이스 이미지 우선 표시 + `전체 스페이스 보기`
+- 썸네일 클릭 시 앱 내부 확대 미리보기 Dialog 추가
+- 확대 화면에서 `견적 검토로 가져오기` → 기존 AI 검토 흐름 연결
+- 연결된 스페이스는 `스페이스 ID + displayName` 함께 표시
+- 스페이스 제목 클릭 시 해당 displayName을 **메인 검색창에 자동 입력**하고, 상담 목록을 그 이름 기준으로 필터링
 
-## 3. 문서 반영
-- **soul.md:** Technology Stack에 Claude Code 추가, "4. Development Environment (하이브리드)" 섹션 추가, Work Flow에 병행 명시.
-- **CONTEXT.md:** 기술적 환경 및 스택에 하이브리드 환경·에디터/AI(Cursor, Claude Code) 반영.
-- **BLUEPRINT.md:** 시스템 아키텍처에 하이브리드 환경 명시, 문서 상단에 개발 환경 전제 문구 추가.
-- **JOURNAL.md:** 본일(2026-02-19) 기록 추가.
+**데이터/파일 구조:**
+- 원본: 대표님 PC의 Takeout 폴더 유지
+- 앱 표시용 캐시: `public/assets/takeout-quote-inbox/`
+- 인덱스: `public/data/takeout-quote-inbox.json`
+- 현재 인덱스 범위: **최신 1개 Takeout**만 반영. PC 전체 10개 Takeout 통합은 아직 미구현
 
----
+**검증:**
+- 로컬 개발 서버 `127.0.0.1:5174`에서 UI 동선 확인
+- 썸네일 확대 미리보기 정상
+- `견적 검토로 가져오기` 정상
+- 스페이스 제목 클릭 → 검색창 자동 입력 정상
 
-Journal: Project Ivory-OS Development 2024-02-05 (Day 1) - 진행 상황: 프로젝트 킥오프 및 프론트엔드 도면 완성. - 주요 결정: - '주문' 대신 '상담'으로 용어 전면 개편. - 마케팅 관리 페이지 문구 스타일(후킹/전문가/스토리텔러) 확정. - 현장 담당 페이지에 시공 직후 실시간 후기(별점/QR) 수집 기능 통합. - 기술 이슈: - Lovable 크레딧 한도 임박에 따른 신속한 GitHub 이관 처리. - M4 맥북 터미널을 통한 로컬 개발 환경 셋업. - 내일의 할 일: - 전체 프론트엔드 화면 전수 조사. - 화면 기반 Supabase DB 스키마(Table) 역설계. - Lovable 배지 등 불필요한 코드 제거. 이부장 코멘트: 대표님의 빠른 결단력 덕분에 오늘 이사까지 무사히 마쳤습니다. 푹 쉬십시오!
+**세이브 포인트:**
+- `3272786` checkpoint: 완료 카드 재활동 신호와 운영 원칙 정리
+- `5d885c2` checkpoint: 테이크아웃 이미지 가져오기 1차 연결
+- `39a9060` checkpoint: 테이크아웃 이미지 확대보기 추가
 
-# 프로젝트 저널 (JOURNAL) - 2026-02-06 상세 기록
-
-## 1. 오늘의 활동 요약
-- 가구 비즈니스 전 과정(영업-견적-시공-마케팅)을 관통하는 데이터 모델링 및 UX 설계 완료.
-- 비개발자 대표와 시니어 아키텍트가 협업하여 M4 MacBook Air 환경에 최적화된 개발 전략 수립.
-
-## 2. 상세 결정 사항 (Decisions)
-
-### [영업 및 고객 관리 파트]
-- **30일 골든타임 로직:** 가망 고객 유입 후 30일 이내 계약 성사율이 가장 높음을 반영하여, 시스템이 자동으로 '골든타임'을 관리하고 종료 5일 전 알림을 줌.
-- **Wake-up 자동화:** "검토 후 연락할게요"라고 답한 고객을 위해 3일/7일 단위로 자동 안부(관심 표명) 메시지 발송 프로세스 설계.
-- **통합 타임라인 UI:** 고객 클릭 시 우측에서 슬라이드되는 팝업창 구현. 페이스북 스타일의 타임라인을 통해 자동 문자 발송 이력과 직원 상담 메모를 동기화하여 인수인계 누락 방지.
-
-### [현장 및 운영 파트]
-- **이원화 권한 시스템:** 현장 기사님은 로그인 시 영업/마케팅 데이터를 배제하고 오직 [일정]과 [현장 상세]만 볼 수 있게 하여 업무 집중도 향상 및 보안 강화.
-- **현장 실무 최적화:** 주소 텍스트 복사 필요 없이 버튼 클릭 한 번으로 카카오내비/T맵이 연동되는 딥링크 구조 확정. 엘리베이터 유무 등 현장 주의사항은 핑크색 강조 UI로 시각화.
-
-### [AI 마케팅 및 분석 파트]
-- **OSMU 콘텐츠 공장:** 현장 기사님이 업로드한 사진 한 장을 OpenCLO AI가 분석하여 블로그, 카드뉴스, 숏폼 스크립트로 자동 변환 후 8개 채널에 배포하는 구조 설계.
-- **콘텐츠 허브 재활용:** OpenCLO에서 생성된 결과물 URL을 상담 상세창에 노출하여, 상담원이 고객의 페인포인트에 맞는 콘텐츠를 즉시 전송할 수 있게 함.
-- **마케팅 분석 대시보드:** 광고비 잔액 경고 알림 및 콘텐츠 반응도(조회/공유) 기반의 ROI 분석 지표 확정.
-
-## 3. 상담 UI 최적화 및 AS 관리 (2026-02-06 반영)
-
-### 상담 단계 표시 UI 최적화
-- **배지 제거:** 1행 우측 끝의 [상담접수] 배지를 삭제. 단계는 프로그레스 바(점)로만 표시하면 중복 정보가 되어 가독성이 떨어지므로, 배지 대신 **텍스트 전용 영역**으로 전환.
-- **텍스트 고정:** 4단계 프로그레스 바 옆에 고정 너비 텍스트 영역을 두어, 상담접수·견적중·계약완료·시공완료 네 단계를 **항상 노출**. 현재 단계만 진하고 선명하게, 나머지는 연한 회색으로 표시해 '지나온 길'과 '가야 할 길'을 구분. 이 영역 너비를 고정하여 업체명 길이에 따라 우측 요소 위치가 흔들리지 않도록 함.
-- **버튼 정리:** 기능 없던 연필 버튼 제거. 그 자리에 **[AS 관리]** 버튼 배치. 전화번호 복사 버튼은 유지. AS 요청 시 업체명 옆 빨간 [AS 요청] 배지 노출, [AS 관리] 클릭으로 요청/완료 토글. 모달 사용 시 AS 사유 한 줄만 입력 후 즉시 저장하도록 제약.
-
-### 실측 단계 삭제 결정
-- **결정:** 상담 워크플로우에서 '현장실측' 단계를 **삭제**하고, 4단계(상담접수 → 견적중 → 계약완료 → 시공완료)로 통일.
-- **사유:** 단계 수를 줄여 리스트 카드와 상세 화면에서 인지 부담을 낮추고, 실측은 '견적중' 내부 활동으로 보는 것이 실무와 맞음. 기존 데이터에 `workflow_stage === '현장실측'`이 있으면 표시 시 '견적중'으로 매핑하여 호환 유지.
-
-## 4. 기술적 특이사항 (Technical Notes)
-- **DB 하이브리드 구조:** OpenCLO DB와 메인 DB를 분리하여 시스템 부하를 최소화하되, 콘텐츠 결과값(URL/메타데이터)만 API로 연동함.
-- **AG 에이전트 운용:** DB, UI, 로직 에이전트로 역할을 나누어 M4 16GB RAM 환경에서 효율적으로 작업 진행 예정.
-
-## 5. 내일의 목표 (Next Steps)
-- [ ] Supabase 초기 테이블 스키마 SQL 실행 및 RLS 설정.
-- [ ] '가망 고객 관리' 리스트 페이지와 우측 슬라이드 팝업 UI 컴포넌트 개발.
-- [ ] 실제 데이터 입력 테스트 및 30일 골든타임 계산 로직 검증.
+**미결:**
+- 전체 10개 Takeout 통합 인덱스
+- 작업 후 캐시 이미지 정리 스크립트
+- 카드 스플릿(같은 스페이스의 다중 프로젝트 분리) 기능
 
 ---
 
-# 2026-02-07 기록 (프로젝트 설계 문서 최신화 및 구조 확정)
+## 2026-03-08 — AutoAddBot.gs 복구 · 연락처 파싱 드라이런
 
-## 1. 오늘의 활동 요약
-- BLUEPRINT.md 및 JOURNAL.md에 지금까지 논의된 비즈니스 로직 변경 사항을 반영하여 시스템 골조를 확정함.
-- 1단계 골조(상담 카드 UI 및 필터링) 확정, AS/오픈마켓/실측 모듈 관련 설계 원칙을 문서에 명시함.
+**사고 및 복구:**
+- `gas/AutoAddBot.gs` 실수로 내용 삭제. git 복구 시도 → 커밋에는 452줄 구버전만 존재(최신 1714줄 미커밋 상태).
+- VSCode 로컬 히스토리(Local History)로 1714줄 전체 복구 완료.
+- 복구된 파일에 `dryRunContactScan`, `applyContactScanFromSheet`, `scanAllContactInfo`, `parseContactFromMessages_`, `extractPhone_`, `extractRegion_` 등 연락처 파싱 함수 전부 포함 확인.
 
-## 2. 상세 결정 사항 (Decisions)
+**dryRunContactScan() 실행:**
+- Script Properties: `CONTACT_SCAN_SHEET_ID`(구글 시트 파일 ID) 등록 필요. `연락처_스캔결과` 탭은 자동 생성.
+- Admin 권한 없음 → 스크립트 실행자 본인이 소속된 스페이스만 스캔 가능(봇만 있는 스페이스 제외).
+- 5.5분 타임리밋 후 자동 중단·체크포인트 저장 → 재실행 시 이어서 진행.
+- **1차 실행 결과:** total 375건 중 written 323건, skipped 7건, noData 45건.
+- 구글 시트 데이터 미반영 → `CONTACT_SCAN_SHEET_ID`가 다른 파일을 가리키고 있을 가능성(확인 중).
 
-### [1단계 골조 확정]
-- **상담 카드 UI 및 필터링:** 1행(마켓·실측·고객분류·업체명·AS·골든타임), 2행(지역|업종|전화|인입|필요|대표금액, 우측 고정 구글챗), 3행(요청사항), 4행(히스토리 요약). 탭 필터(전체/미처리/진행중/AS대기/종료) 및 검색·기간 필터 동작 확정.
-
-### [AS 신청 시 'AS 대기' 탭 강제 이동]
-- AS 신청(또는 [AS 관리] 클릭 후 요청) 시 해당 카드의 `status`를 즉시 **`AS_WAITING`**으로 변경.
-- [AS 대기] 탭 필터: `status === 'AS_WAITING'`. [종료] 탭에는 `AS_WAITING` 건 노출하지 않음. AS 처리 완료 후 다시 시공완료(휴식기)로 복귀할 때까지 종료 탭에 나타나지 않도록 처리.
-- 시각적 피드백: AS 신청 성공 시 "AS 대기 목록으로 이동되었습니다" 알림, 카드 우측 [AS 관리] 배지 빨간색 활성화.
-
-### [오픈마켓 인입 채널 공식화 및 배지]
-- 인입 채널(Lead Source)에 **네이버 스토어, 쿠팡, 오늘의집, 자사몰** 추가. 오픈마켓 선택 시 주문번호 입력 필드 활성화.
-- 마켓별 고유 배지: 상담 카드 1행 좌측에 네이버(연두), 쿠팡(붉은색), 오늘의집(청록), 자사몰(보라) 시각적 구분.
-- 오픈마켓 건은 `is_market_order: true`로 저장하여 마켓 수수료 제외 정산 등 마케팅 자동화 기반 마련.
-
-### [실측 데이터 분리 및 전문성 강화]
-- **실측 데이터를 상담 히스토리 타임라인에서 분리**하여 가독성 확보 및 실측 전용 워크플로우 구축 결정.
-- 상담 상세 내에서는 실측 PDF/메모를 직접 렌더링하지 않고, 우측 상단 **[실측 자료(PDF)]** 버튼만 배치. 클릭 시 모달 → "실측 정보 입력 페이지로 이동"으로 전용 라우트(`/measurement/upload`) 연결.
-- 실측 전용 모듈: **실측 관리** 메뉴(`/measurement`)에서 프로젝트별 실측 도면 통합 검색·열람. 실측 정보 입력(`/measurement/upload`)에서 PDF·텍스트 메모 업로드 시 Supabase Storage `measurement-drawings` 버킷에 저장. 내부 기술 자산으로 시공사례 뱅크(Cloudinary)와 완전 격리.
-
-## 3. 문서 반영 사항
-- **BLUEPRINT.md:** 고객 등급 동기화(동일 연락처 등급 상향 평준화), 구글챗 버튼 2행 우측 고정 및 연결 상태(초록/회색) 분기, 다중 견적 관리(estimate_history·대표 금액 우선순위), 실측 모듈 독립화(measurement-drawings·Signed URL), 오픈마켓 인입·배지 명시.
-- **JOURNAL.md:** 본일(2026-02-07) 결정 사항 및 설계 원칙 추가. 향후 생성되는 모든 컴포넌트는 위 BLUEPRINT·JOURNAL에 확정된 원칙을 따름.
-
-## 4. 다음 단계
-- 확정된 설계 원칙에 따라 신규 컴포넌트·라우트 개발 시 BLUEPRINT 섹션 2(UI/UX 인터랙션 표준) 및 3(비즈니스 로직) 참조.
-- 실측 완료 시 구글챗 Webhook 전송, 오픈마켓 신규 주문 시 공지방 알림 등 자동화 연동은 env Webhook URL 설정 후 동작 검증.
+**미결:**
+- `CONTACT_SCAN_SHEET_ID` 올바른 시트 ID 여부 확인 후 재실행
+- dryRun 결과 검토 후 `applyContactScanFromSheet()` 실행(G열 체크박스 TRUE인 행만 Supabase PATCH)
 
 ---
 
-# 2026-02-07 기록 (상담 엔진 고도화 — 식별자 도입 / UI 롤백)
-
-## 1. 오늘의 활동 요약
-- **업체명 자동 식별자(display_name) 도입 성공.** 상담 리스트·히스토리에서 `[YYMM] [상호] [전화번호 뒷4자리]` 형식 적용 및 검색(뒷4자리) 지원.
-- 채팅 UI 고도화(인라인 테마·드래그 앤 드롭) 시도 중 **화이트아웃 현상 발견** → 즉각 **롤백 조치** 완료. 채팅은 Tailwind 기본 스타일·파일 선택 버튼 방식만 유지.
-
-## 2. 상세 작업 내용
-- **상담 식별자(display_name):** 리스트 및 히스토리 내 표시·검색에 사용. 데이터 표준으로 확정.
-- **UI 롤백:** 채팅창 인라인 테마 강제(#f1f5f9/#000000)·ThemeLock·드래그 앤 드롭 이벤트 제거. 화면 정상 출력을 위해 안정 버전으로 복구.
-- **향후:** 드래그 앤 드롭·테마 강제는 안정성 검증 후 별도 모듈로 재구현 예정.
-
----
-
-# 2026-02-07 기록 (견적·예산 기획안 실무 전면 리팩토링)
-
-## 1. 오늘의 활동 요약
-- 견적 관리 탭의 **예산 기획안(PROPOSAL)** 및 **확정 견적서(FINAL)** 를 실무 방식에 맞춰 전면 개편함.
-- 예산 기획안 **발행승인 3단계**(미리보기 → 최종 발행 → 공유/PDF) 구현 및 **final_proposal_data** 도입으로 발행 시점 데이터 독립 보존.
-
-## 2. 상세 결정·구현 사항
-
-### [예산 기획안(PROPOSAL) 개편]
-- **공급자 정보 고정:** 사업자번호 374-81-02631, 상호 주식회사 파인드가구, 대표이사 김지윤, 주소·연락처 고정 표시(수정 불가). 직인 영역 삭제(법적 책임 방지).
-- **범위형 단가·금액:** 단가(최소)/단가(최대) 두 입력 필드, 금액(공급가)은 수량×단가(최소)~수량×단가(최대) 자동 계산·표시. 합계도 최소~최대 범위 표시.
-- **면책문구:** 하단 노란 박스에 "이 자료는 예산 수립의 참고용이며, 협의 완료 후 확정된 최종 견적서는 별도 발급이 되며, 이때 단가는 변경이 될 수 있습니다."
-- **비고 컬럼:** 예산 기획서에서는 삭제 유지. 품명·금액(공급가) 각 50px 확장(150px). 숫자 입력 시 천 단위 콤마 자동.
-
-### [확정 견적서(FINAL) 분리]
-- **비고(Remarks) 복구:** 확정 견적에서는 특이사항 기록 필수로 비고 컬럼 복구.
-- **컬럼 비율:** 가로폭 A4 유지, 품명·비고가 공간을 나누고 단가 120px·금액(공급가) 200px 등으로 조정.
-- **양식 분리 로직:** 선택 탭(예산 기획 / 확정 견적)에 따라 테이블 헤더·셀을 **조건부 렌더링(if/else)** 으로 완전 분리.
-
-### [공통·기타]
-- **행 삭제 버튼:** 각 행 끝에 삭제(X) 버튼 추가. 행 1개일 때 비활성화, 인쇄 시 숨김.
-- **공간별/패키지별 섹션 삭제:** 단일 품목 리스트 기반으로만 동작. 패키지 추가 버튼 제거.
-- **고객 정보 간소화:** '상호(업체명)'만 입력 필드로 두고, 상담 리스트에서 불러온 업체명 자동 입력. 성함·연락처 입력란 제거(연락처는 데이터로만 유지).
-- **A4 인쇄:** 출력 시 가로폭 210mm 고정(@media print 및 print: 클래스).
-
-### [발행승인 3단계 및 데이터 보존]
-- **1단계(관리자 미리보기):** 발행승인 클릭 시 즉시 승인하지 않고, 고객에게 보여질 화면(PDF 디자인)을 팝업으로 표시. 공급자 고정·면책문구 포함. '취소'/'최종 발행' 버튼.
-- **2단계(최종 발행):** 팝업 내 '최종 발행' 클릭 시 문서 상태 APPROVED, **final_proposal_data**에 해당 시점 데이터(행·단가·수량·상호 등) 스냅샷 저장. 원본 상담·임시저장 변경과 무관하게 발행본만 독립 보존.
-- **3단계(공유·PDF):** 승인 후 견적 관리 탭에 '링크 복사'(`/p/estimate/:id`), 'PDF 다운로드'(인쇄 대화상자) 노출. 채팅에 시스템 메시지 "기획안이 발행되었습니다." 자동 생성.
-- **DB:** `estimates` 테이블에 `final_proposal_data`(jsonb) 컬럼 추가(마이그레이션 `20260207130000_estimates_final_proposal_data.sql`). 표시/PDF/공유 시 `approved_at` 존재하면 `final_proposal_data` 사용.
-
-### [확정 견적 컬럼 폭]
-- 단가·금액(공급가) 항목 폭을 실무에 맞게 여러 차례 조정. 최종: 단가 min-w-[120px], 금액(공급가) min-w-[200px].
-
-## 3. 변경·추가된 파일 요약
-- **EstimateForm.tsx:** PROPOSAL/FINAL 모드별 테이블·헤더·셀 분리, 비고(FINAL만), 행 삭제, 공급자 고정, computeProposalTotals·ProposalPreviewContent(패키지 제거 반영).
-- **ConsultationManagement.tsx:** 관리자 미리보기 팝업, handleProposalFinalPublish, final_proposal_data 저장/조회, 링크 복사·PDF 다운로드, 상호(업체명) 자동 입력.
-- **PublicProposalView.tsx:** `/p/estimate/:id` 공개 페이지, final_proposal_data 우선 표시.
-- **App.tsx:** 라우트 `/p/estimate/:id` 추가.
-- **database.ts:** estimates.final_proposal_data 타입 추가.
-- **App.css:** A4 인쇄용 @media print.
-- **supabase/migrations:** estimates_final_proposal_data 마이그레이션 추가.
-
-## 4. 다음 단계
-- 공유 링크(`/p/estimate/:id`) 익명 접근 시 Supabase RLS 정책 검토(필요 시 estimates 읽기 허용).
-- 확정 견적서 PDF 저장·전송 플로우는 기존 handleEstimateApproved 유지.
-
----
-
-# 2026-02-07 기록 (AI 견적 도우미 & 코드 단순화)
-
-## 1. 오늘의 활동 요약
-- 견적 입력 시 자연어 처리 로직을 **LLM API 전환 가능 구조**로 단순화함. 정규식·if-else 파싱 제거, Mock 서비스로 결과값만 리턴하도록 정리.
-- `estimateAiService`와 `estimateUtils` 분리, EstimateForm에서 복잡한 파싱 제거.
-
-## 2. 상세 결정·구현 사항
-
-### [역할 분리]
-- **estimateAiService.ts:** `parseQuickCommand(text, context?)` → `QuickCommandResult` JSON. 타입: `add_row`, `past_price`, `target_total`, `needs_unit_price`, `needs_spec`, `spec_reply`, `unknown`. PDF/JPG 파싱은 Gemini API 사용.
-- **estimateUtils.ts:** `parseAmountToWon`(금액 문자열 → 원화), `scaleFactorToTarget`(총액 맞춤 배율). 복잡한 케이스는 코드로 방어하지 않음.
-- **EstimateForm.tsx:** `aiParse()` 호출 후 `switch (res.type)`로 분기. `addRowFromQuickCommand`, `applyTargetPricing`, `searchPastPrice` 등 핸들러만 사용.
-
-### [UI]
-- 견적 테이블 위 "AI 퀵 커맨드" 입력창. 빈 행 우선 채우기, Enter 처리.
-- 규격 되묻기: 품명+수량만 입력 시 `needs_spec` → 규격 입력 유도.
-- 과거 단가 조회: "이전 [품명] 단가 알려줘". 총액 맞춤: "총액 [금액]에 맞춰줘".
-- 조정됨 표시: 총액 맞춤 후 `row.adjusted`로 "조정됨" 뱃지 표시.
-
-### [파일 경로]
-- `src/lib/estimateAiService.ts` — Mock AI 파싱 (LLM 교체 예정)
-- `src/lib/estimateUtils.ts` — 금액 파싱, 총액 맞춤 유틸
-- `src/components/estimate/EstimateForm.tsx` — 견적 폼, AI 퀵 커맨드 UI
-
-## 3. 다음 단계
-- LLM 연동: `estimateAiService.ts`에서 `fetch('/api/estimate-parse', { body: JSON.stringify({ text, context }) })`로 교체. 응답 JSON이 `QuickCommandResult` 형태가 되도록 스키마 정의.
-
----
-
-# 2026-02-08 기록 (PPT/PDF 발주서 중심·이미지 이원화·역산 전역)
-
-## 1. 오늘의 활동 요약
-- PPT/PDF 발주서를 시스템의 중심에 두고, 현장별 갤러리·제품별 시공 현장 리스트·라이트박스 퀵뷰를 구현함.
-- 가구 데이터에 색상·역산 태그를 반영하고, 원가-단가-마진율 양방향 역산 및 반올림·신호등 로직을 전역 적용함.
-- BLUEPRINT 원칙에 따라 이미지 이원화(Cloudinary 고화질 + Supabase 썸네일) 강제 및 데이터 매칭 엔진을 구축함.
-
-## 2. 상세 결정·구현 사항
-
-### [발주서·상담 카드 통합]
-- **order_documents 테이블:** consultation_id, storage_path, file_name, file_type(pdf/ppt/pptx), thumbnail_path, product_tags(jsonb). Storage 버킷 `order-documents`(RLS·anon 정책).
-- **실측·발주서 탭:** 단순 파일 리스트가 아닌 **Supabase Storage 기반 비주얼 갤러리**로 동작. OrderDocumentsGallery: 썸네일 또는 타입 아이콘 그리드, 발주서 추가 업로드, 제품·규격 태그 편집.
-- **라이트박스(Quick View):** DocumentLightbox — PDF는 iframe 즉시 보기, PPT는 다운로드 안내. 실측 PDF 동일 방식.
-- **제품별 시공 현장:** `/products-sites` 페이지. order_documents.product_tags 기준으로 태그별 현장(상담) 목록 자동 구성, 상담 보기 링크( state.focusConsultationId )로 연동.
-
-### [데이터 매칭 엔진]
-- **productDataMatching.ts:** `getDataByProductTag(productTag)` — 해당 태그가 포함된 order_documents, consultations, project_images(Cloudinary URL 포함)를 한 번에 반환. 견적/발주서 product_name 태그 기반으로 Supabase·Cloudinary 데이터 정확 호출 인터페이스.
-
-### [이미지 이원화 강제]
-- **원칙:** 모든 시공 사진 업로드는 Cloudinary(고화질)와 Supabase(썸네일)로 분기. 벗어난 코드 미허용.
-- **uploadConstructionImageDual(file, publicId):** 1) Cloudinary Upload API로 고화질 업로드, 2) Supabase Storage construction-assets에 썸네일 경로 업로드. ImageAssetViewer 업로드 폼에서 해당 함수 사용. env: VITE_CLOUDINARY_CLOUD_NAME, VITE_CLOUDINARY_UPLOAD_PRESET 필수.
-
-### [견적·원가·마진 역산 전역]
-- **품명 표준:** [품명] ([사이즈] / [색상]). EstimateRow에 color, costEstimated. AI 입력 "스마트A 1200 600 모번" → 품명(사이즈/색상) 자동 변환.
-- **역산 수식 고정:** 마진율 = (판매가 − 원가) / 판매가 × 100; 판매가 = 원가 / (1 − 마진율/100). estimateUtils에 주석 명시.
-- **roundToPriceUnit:** 10만원 미만 100원 단위, 이상 1,000원 단위. 역산 단가·원가·adjustUnitPricesToTargetMargin 전역 적용.
-- **신호등 전역:** getMarginSignalClass(marginPercent) — ≥30% 초록, 25~30% 주황, <25% 빨강. 행 마진율 셀 및 수익 분석기 패널 마진율에 동일 적용.
-- **원가 이력:** 단가만 있는 과거 건은 역산 원가로 이력 표시 시 '(추정)' 표기. 이력 선택 시 costEstimated 플래그 반영.
-
-## 3. 변경·추가된 파일 요약
-- **BLUEPRINT.md:** 이미지 이원화 강제, 발주서 중심(3-0), 역산 로직 전역·품명 표준·유틸 보강.
-- **src/types/orderDocument.ts,** **src/components/order/DocumentLightbox.tsx,** **src/components/order/OrderDocumentsGallery.tsx,** **src/pages/ProductSitesPage.tsx,** **src/lib/productDataMatching.ts.**
-- **src/lib/imageAssetService.ts:** uploadConstructionImageDual 추가. **src/pages/ImageAssetViewer.tsx:** 업로드 시 이원화 분기.
-- **src/lib/estimateUtils.ts:** roundToPriceUnit, getMarginSignalClass, MARGIN_SIGNAL_THRESHOLDS, 역산 수식 주석. **EstimateForm.tsx:** getMarginSignalClass 사용, 품명/색상/역산됨/이력(추정) 반영.
-- **DB:** order_documents 테이블, order-documents 버킷 마이그레이션. **database.ts:** order_documents, project_images 타입 추가.
-
-## 4. 다음 단계
-- LLM API 연동 시 estimateAiService Mock 교체. 필요 시 발주서에서 제품 태그 자동 추출(API) 확장.
-
----
-
-# 2026-02-08 기록 (세이브 포인트 — 이부장 시스템 로직 최종 점검 및 문서 최신화)
-
-## 1. 핵심 로직 박제 (Lock-in)
-- **통합 검색:** `filterByUnifiedSearch(assets, query)` — 제품명(product_tags)·색상(color)·현장명(project_title)을 공백 기준 토큰으로 나누어 **모든 토큰이 포함된** 자산만 노출(AND 조건). ImageAssetViewer 상단 검색바와 연동. 확정.
-- **역방향 견적:** 시공 뱅크 라이트박스에서 product_tags 클릭 → `navigate('/consultation', { state: { focusConsultationId?, addEstimateProductName } })` → ConsultationManagement의 useEffect에서 state 수신 후 견적 모달 오픈 및 `estimateModalInitialData.rows`에 해당 품명 단일 행 삽입. 흐름 고정.
-- **이미지 이원화:** `useDualSourceGallery(productTag)` 훅 — `getDataByProductTag` 기반으로 Supabase(썸네일/mobileUrl)·Cloudinary(고화질/marketingUrl) 분기 반환. 견적서 시공 버튼·EstimateRowGalleryDialog에서 사용. 안정성 최종 확인.
-
-## 2. 에러 징후 선제 대응 (Safety Check)
-- **상태 관리:** (1) ImageAssetViewer `goToEstimateWithProduct`: `productName` trim·빈 문자열 시 navigate 스킵. `lightboxAsset?.consultationId` Optional Chaining, state에 `focusConsultationId`는 consultationId가 있을 때만 포함. (2) ConsultationManagement: `state?.focusConsultationId`, `state?.addEstimateProductName` 접근 시 Optional Chaining 및 `String(…).trim()` 적용. `focusId`는 null/빈 문자열 검사 후에만 setSelectedLead 등 호출.
-- **무한 루프 방지:** `?focus=` 및 역방향 견적 처리 useEffect 의존성 배열은 `[location.state, location.search]`만 사용. `lastLocationKeyRef`로 동일 location key(또는 search+addProduct 조합)에 대해 모달 오픈·초기 데이터 설정을 **한 번만** 수행하도록 제한.
-- **타입 무결성:** 역방향 견적 시 설정하는 `estimateModalInitialData.rows[0]`는 EstimateRow 필수 필드(no, name, spec, qty, unit, unitPrice, costPrice, color) 포함. `Partial<EstimateFormData>` 타입으로 저장되며, EstimateForm에서 initialData 병합 시 selectedLeadData와 merge하여 recipientName·recipientContact 보강.
-
-## 3. 문서 업데이트
-- **BLUEPRINT.md:** 섹션 2에 "6) 시공 사례 뱅크 (검색 엔진형) — Lock-in" 추가. 통합 검색(filterByUnifiedSearch)·색상 퀵필터·공유 최적화·역방향 견적(location.state)·useDualSourceGallery·tag_mappings 1:N 명시.
-- **CONTEXT.md:** 섹션 9 현재 진행 상황을 시공 뱅크 Lock-in·Safety 요약·이미지 이원화·매칭·역산·AI 견적·채팅·빌드 상태로 최신화.
-- **JOURNAL.md:** 본 세이브 포인트 기록 및 잠재적 에러 가능성(아래) 반영.
-
-## 4. 잠재적 에러 가능성 (발견·대응)
-- **React Router location.key:** 환경에 따라 `location.key`가 없을 수 있음. 대응: `(location as { key?: string }).key ?? \`${location.search}-${addProduct}\`` 로 폴백하여 중복 처리 방지 키 생성.
-- **브라우저 뒤로가기:** 사용자가 역방향 견적로 진입 후 뒤로가기 시 `location.state`가 이전 값으로 복원될 수 있음. lastLocationKeyRef로 동일 키 재진입 시 모달 재오픈은 차단됨.
-- **상담 미선택 역방향 견적:** addEstimateProductName만 있고 focusConsultationId 없이 진입 시 견적 모달은 열리나, 임시저장·승인 시 selectedLeadData가 null이면 handleEstimateApproved 등에서 consultationId 필요. 대응: onApproved·pastEstimates를 selectedLeadData 존재 시에만 유효하도록 이미 분기 처리함.
-- **EstimateForm initialData 병합:** estimateModalInitialData에 rows만 있고 recipientName이 없을 때 selectedLeadData가 있으면 병합 로직에서 recipientName·recipientContact 보강. selectedLeadData가 없으면 수신자 필드 빈 값으로 표시되며, 추후 상담 선택 후 저장 가능.
-
----
-
-# 2026-02-08 기록 (실전 테스트 전 세이브 포인트 — 공유·검수·명칭 통일)
-
-## 1. 오늘의 활동 요약
-- [이부장] 공유 기능 최종 반영 및 문서화. 검수 프로세스(중복 방지·status·검수 대기 뷰) 확정. 이미지 자산 vs 시공 사례 뱅크 명칭·경로 통일.
-
-## 2. 상세 결정 사항 (Decisions)
-
-### [명칭·경로 통일]
-- **이미지 자산 관리** (`/image-assets`): 관리자 전용 창고. 개별 사진 태그 수정·삭제·Cloudinary 원본 관리에 집중.
-- **시공 사례 뱅크** (`/portfolio`, `/assets`): 영업용 전시관. 현장별 카드 뷰·지능형 필터(제품군·색상별)·공유에 집중. 상단 [+ 사진 등록]으로 업로드 모달 연결.
-
-### [검수 프로세스 및 중복 방지]
-- **중복 감지:** 업로드 시 파일 SHA-256 해시(`content_hash`) 계산 후 DB 조회, 동일 해시 존재 시 해당 파일 업로드 차단(토스트 안내).
-- **검수 상태:** `project_images.status` (default `pending`). 현장 직원 업로드 = pending, 관리자 승인 후 `approved`. 시공 사례 뱅크·제품별 매칭·공유 갤러리는 **approved만** 노출.
-- **관리자 검수 뷰:** 이미지 자산 관리 페이지에 [검수 대기 사진] 필터. 선택 다중 건에 대해 태그·색상 일괄 수정 및 [선택 항목 승인] 버튼으로 일괄 approved 전환.
-
-### [공유 시스템 — Share Logic]
-- **공유 전용 페이지:** `/public/share?ids=uuid1,uuid2,...`. **PublicGalleryView** 구현. 로그인 없이 접근, 모바일 최적화(2열 그리드·라이트박스).
-- **보안:** 외부 공유 페이지에서는 **사진·제품명(product_tags)·색상(color)** 만 노출. 원가·마진·consultation_id 등 민감 정보 배제.
-- **성능:** 리스트는 썸네일 우선 로딩, 클릭 시 고화질(marketing) URL로 전환.
-- **공유 모드 UI:** 시공 사례 뱅크에서 사진 체크박스(ShareCart) → 상단 [N장 공유 링크 복사]·카톡 공유. 복사 URL은 `/public/share?ids=...` 고정.
-- **견적서 연동:** 견적서 모달 [이 품목 사진들 공유하기] → 품목명으로 `getDataByProductTags` 호출 → 매칭 시공 사진 ID로 공유 링크 생성·복사.
-- **경로 호환:** `/share/gallery?ids=...` → `/public/share?ids=...` 리다이렉트.
-- **카카오 공유:** `VITE_KAKAO_JS_KEY` 설정 시 SDK 로드·카톡 피드 카드 공유. 미설정 시 링크 복사만.
-
-## 3. 문서 반영
-- **BLUEPRINT.md:** 섹션 2에 "7) 공유 시스템 (Share Logic) — Lock-in" 추가. 공유 전용 페이지·공유 모드 UI·보안·성능·견적서 연동·카카오 공유 명시.
-- **CONTEXT.md:** 섹션 9에 2026-02-08 반영(명칭 통일·검수 프로세스·공유 시스템) 요약 추가.
-- **JOURNAL.md:** 본일(2026-02-08) 세이브 포인트 기록.
-
-## 4. 다음 단계
-- 실전 테스트: 공유 링크 복사 → `/public/share` 접근·썸네일→고화질 전환·보안(민감 정보 미노출) 검증.
-- 카카오 공유 실제 동작은 `VITE_KAKAO_JS_KEY` 및 도메인 등록 후 확인.
-
----
-
-# 2026-02-08 기록 (이미지 자산 vs 시공 사례 뱅크 — 페이지·컴포넌트 완전 분리)
-
-## 1. 오늘의 활동 요약
-- **캡틴 지시:** ImageAssetViewer는 수정하지 않고, 시공 사례 뱅크 전용 페이지를 별도 컴포넌트로 분리함.
-- **PortfolioBank.tsx** 신규 생성. `/portfolio`, `/assets` 라우트는 모두 PortfolioBank로 연결. ImageAssetViewer는 `/image-assets`만 담당(관리자 창고).
-
-## 2. 상세 결정·구현 사항
-
-### [역할 분리 확정]
-- **이미지 자산 관리** (`/image-assets`, **ImageAssetViewer**): 관리자 전용. 업로드·태그·삭제·검수·Cloudinary 원본 관리. 뱅크 UI와 혼용하지 않음.
-- **시공 사례 뱅크** (`/portfolio`, `/assets`, **PortfolioBank**): 영업 전용. 현장별/사진별 토글, 업종 필터, 통합 검색, 사진 선택(ShareCart), 카톡 공유 바(공유 링크 복사 + 카톡 공유). 라이트박스에서 이전/다음, 「이 현장 앨범 보기」로 현장별 모드 전환·스크롤.
-
-### [데이터·서비스]
-- **imageAssetService:** `rowToProjectAsset(row)`, `fetchApprovedProjectAssets()` 추가. 뱅크는 approved 행만 조회하여 ProjectImageAsset 형태로 사용.
-- **App.tsx:** `/portfolio`, `/assets` → PortfolioBank 컴포넌트로 라우팅 변경.
-
-### [이미지 자산 쪽 보강 (이전 세션 반영)]
-- **인라인 태그 편집·태그 드래그:** 카드에서 태그 영역 클릭 시 수정 모드, `saveInlineTag`로 DB 반영. 위 카드 태그를 아래 카드에 드롭 시 `pasteTagsToAsset`로 복사.
-- **라이트박스 → 관리 연동:** 라이트박스에 「관리 페이지에서 수정하기 →」 링크, `focusAssetId`로 해당 카드 포커스·편집 모드.
-- **목업 업로드:** `import.meta.env.DEV` 시 Cloudinary 스킵, 3초 대기 후 Supabase만 저장, `mock_` public_id. API 키 없을 때 콘솔/업로드 창 안내.
-- **UUID:** mock 자산 id를 `crypto.randomUUID()`로 통일. `src/lib/uuid.ts`에 `isValidUUID`·`ensureUUIDOrNull` 추가. `project_images` insert/update 및 consultation_id 사용처에 UUID 검사 적용.
-- **배열 태그:** `toProductTagsArray`(utils), insert/update 시 `product_tags` 배열 보장. `productDataMatching`에서 `product_tags` contains 검색 유지.
-- **시드 데이터:** project_images 시드 5건(seed_1~seed_5), `getSeedImageUrl`로 picsum.photos URL 적용.
-- **견적서 이미지:** 아이콘/썸네일 클릭 시 highResUrl console.log, 라이트박스 fixed+z-[100], 로드 실패 시 「이미지를 불러올 수 없습니다」+ 플레이스홀더.
-
-## 3. 변경·추가된 파일 요약
-- **신규:** `src/pages/PortfolioBank.tsx` (시공 사례 뱅크 전용).
-- **수정:** `src/App.tsx` (라우팅), `src/lib/imageAssetService.ts` (fetchApprovedProjectAssets, rowToProjectAsset).
-- **유지:** ImageAssetViewer.tsx는 뱅크 분리 후에도 관리 전용으로만 사용.
-
-## 4. 다음 단계
-- 뱅크 실사용 테스트(현장별/사진별 전환, 공유 링크·카톡 공유). 필요 시 업종 필터·검색과 approved 데이터 연동 재검증.
-
----
-
-# 2026-02-08 기록 (완료된 작업 — 20행·PDF 파일명·상담 카드 금액·3단계 뱃지·데이터 이사 기초)
-
-## 1. 완료된 작업 요약
-- 견적서 **20행 고정** 규격 적용, **PDF/이미지 저장 파일명** 규격화, **상담 카드 금액 동기화**(삭제·확정 연동), **3단계(4단계) 뱃지** 텍스트 고정 영역 확정.
-- PDF 미리보기 모달 스크롤·최종 확정 버튼·확정견적 필드 통합, 상담 히스토리 타임라인 왼쪽 정렬·수직 가이드라인, **데이터 통합 관리** 페이지(`/admin/migration`) 기초 구현.
-
-## 2. 상세 완료 사항 (Decisions & Implementation)
-
-### [20행 고정 규격]
-- **규격:** 견적서 테이블은 **최대 20행**으로 고정. 부족분은 `createEmptyRow(index)`로 빈 행 패딩. PDF 인쇄·미리보기·이미지 저장 시 동일 20행 기준으로 렌더링하여 A4 레이아웃 일관성 확보.
-- **적용 위치:** EstimateForm 초기/병합 시 `FIXED_ESTIMATE_ROWS(20)`, ConsultationManagement PDF 모달·관리자 미리보기에서 `rawRows.length >= 20 ? slice(0,20) : [...rawRows, ...Array(20 - length)]` 로 패딩 후 ProposalPreviewContent/FinalEstimatePreviewContent에 전달.
-
-### [PDF/이미지 파일명 규격]
-- **이미지(PNG):** `buildEstimateImageFilename(quoteDate?, recipientName?)` — `견적서_YYYY-MM-DD_업체명.png` 형식. 날짜·업체명 없으면 플레이스홀더 적용.
-- **PDF:** `buildEstimatePdfFilename(recipientName?)` — `견적서_업체명.pdf` 형식. `estimatePdfExport.ts`에 규격 정의 및 exportEstimateToPdf/exportEstimateToImage 호출 시 동일 함수 사용.
-
-### [상담 카드 금액 동기화 및 무결성]
-- **삭제 연동:** `handleDeleteSelectedEstimates`에서 견적 삭제 후 해당 `consultation_id`로 남은 견적 재조회 → `metadata.estimate_history`·`expected_revenue` 재계산. 남은 견적 0건이면 `status = '상담중'`, 금액 0으로 초기화. FINAL(확정) 견적 삭제 시 `metadata.final_amount`·`final_estimate_id` 제거, 카드 `finalAmount: null` 반영.
-- **확정 연동:** PDF 모달 [최종 확정] 클릭 시 `metadata.final_amount`·`final_estimate_id` 저장, `status = '계약완료'`, 카드에 `finalAmount` 즉시 반영.
-- **표시 단일화:** 카드 3행에는 **확정견적: [금액]원** 만 표시. `final_amount` 값이 있을 때만 라벨·금액 노출, 없으면 해당 블록 비표시. 금액은 ReadOnly(견적 확정으로만 변경). 상세 패널 금액은 `validatedDisplayAmount`(실제 유효 견적 기반)로 검증 후 렌더링.
-
-### [3단계(4단계) 뱃지 로직 — 텍스트 고정 영역]
-- **표시:** 카드 1행 우측에 **4단계 프로그레스(점) + 고정 너비 텍스트 영역**. 상담접수·견적중·계약완료·시공완료 네 단계 **항상 노출**, 현재 단계만 진하게·나머지 연한 회색. 업체명 길이와 무관하게 우측 요소 위치 고정.
-- **매핑:** `metadata.workflow_stage` 또는 `STATUS_TO_STAGE[status]`로 4단계 중 현재 단계 결정. 배지 제거·텍스트 전용으로 가독성 확보(기존 JOURNAL 2026-02-06 결정 유지).
-
-### [PDF 미리보기 모달 강화]
-- **스크롤:** 컨텐츠 영역 `max-h-[80vh]`·`overflow-y-auto`, 하단 `pb-10`으로 면책 문구까지 스크롤 가능. 상단 버튼 바 `sticky top-0 z-10 bg-card` 고정.
-- **최종 확정:** [PNG 저장]·[PDF 저장] 옆에 [최종 확정] 버튼(강조 색). 클릭 시 해당 견적을 FINAL로 저장(미승인 시 `final_proposal_data`·`approved_at` 설정), consultations `status=계약완료`·`expected_revenue`·`metadata.final_amount`·`final_estimate_id` 반영, 카드 상태 즉시 갱신.
-
-### [상담 히스토리 타임라인 레이아웃]
-- **정렬:** 시스템 메시지(날짜·발행 안내)를 **왼쪽 정렬**(`items-start`, `text-left`). 스크롤 영역 `pl-6 pr-2`, 시스템 메시지에 아이콘(MessageCircle)·텍스트 `gap-2` 유지.
-- **수직 가이드라인:** 타임라인 좌측에 `left-4 top-0 bottom-0 w-0.5 bg-slate-300/80` 수직선 추가. 직원 아바타·시스템 아이콘 흐름을 따라 가독성 향상.
-
-### [데이터 통합 관리 페이지 — 데이터 이사 기초]
-- **경로:** `/admin/migration`. 홈에서 "데이터 통합 관리" 링크 노출.
-- **기능:** (1) 상단 [테스트 모드 활성화] 토글 — 켜면 파싱 업체명 앞에 `[TEST]` 접두사. (2) 멀티 파일 업로드(드래그·파일 선택), 파일별 상태 **대기 → 분석중(AI 인식) → 검수대기 → 완료**. (3) AI 파싱 Mock: 이미지/PDF/PPT → 견적 스키마(품목·규격·수량·단가) JSON 변환. (4) **최종 검수** 단계: 테이블 형태 미리보기·업체명·연락처·행 편집·행 추가/삭제 후 DB 저장. (5) DB 저장 시 Consultations·Estimates 생성, `is_test: true`, `metadata.migration_tag: '과거데이터'`. (6) [모든 테스트 데이터 삭제]로 `is_test: true` 건 일괄 삭제.
-- **DB:** `consultations`·`estimates`에 `is_test`(boolean, default false) 컬럼 추가 마이그레이션 적용. TypeScript 타입(database.ts) 동기화.
-
-## 3. BLUEPRINT 동기화 사항
-- 20행 고정·PDF/이미지 파일명 규격·상담 카드 확정견적·4단계 텍스트 고정·타임라인 왼쪽 정렬·데이터 통합 관리(is_test·과거데이터)를 BLUEPRINT.md 본문에 반영함.
-
-## 4. 코드 안정화 점검
-- **충돌 없음:** 견적 삭제 ↔ 확정견적 초기화, 최종 확정 ↔ 카드 finalAmount 반영, validatedDisplayAmount ↔ 상세 패널 금액 표시 간 데이터 흐름 일치 확인. 마이그레이션 페이지는 `is_test` 전용으로 상담 리스트·견적 관리와 분리되어 동작.
-- **다음 단계 대비:** 데이터 이사 화면은 `/admin/migration`에서 확장. 실제 OCR/LLM 연동 시 `mockParseEstimateFromFile`을 API 호출로 교체하면 됨. 기존 상담·견적 CRUD와 is_test 플래그로 필터 분리 유지.
-
-## 5. 커밋 준비
-- JOURNAL.md·BLUEPRINT.md·CONTEXT.md 최신화 완료. 위 완료 사항 기준으로 커밋 메시지 예시: `feat: 20행 고정, PDF/이미지 파일명 규격, 상담 카드 금액 동기화·확정견적, PDF 최종 확정, 타임라인 왼쪽 정렬, 데이터 통합 관리(/admin/migration) 기초`
-
----
-
-# 2026-02-09 기록 (채널톡 FAQ 객체 키 문법 수정·AS 매칭)
-
-## 1. 오늘의 활동 요약
-- `channelTalkService.ts`의 **FAQ_DATA** 객체에서 **A/S** 키로 인한 문법 에러(Expected "}" but found "/")를 해결하고, 특수문자·일반 키 모두 따옴표로 감싸 안정성을 높임. "AS 문의드려요"처럼 슬래시 없이 입력해도 A/S 답변이 나오도록 **'AS'** 키를 추가함.
-
-## 2. 상세 결정·구현 사항
-
-### [FAQ_DATA 키 문법]
-- **A/S:** `A/S`(식별자 불가) → **`'A/S'`**(문자열 리터럴)로 변경하여 파싱 에러 제거.
-- **전체 키 따옴표 적용:** 가격, 비용, 사이즈, 규격, 배송, 설치, 견적, 상담, 기간, A/S를 모두 `'...'` 형태로 통일.
-- **A/S 답변 공통화:** `FAQ_ANSWER_AS` 상수로 A/S 관련 답변 한 번만 정의. `'A/S'`, `'AS'` 두 키가 동일 답변을 참조.
-
-### [AS 매칭]
-- **'AS' 키 추가:** 문의 텍스트에 "AS"(슬래시 없음)만 포함되어도 `matchFaqKeyword`가 매칭하도록 `FAQ_DATA['AS']` 추가. "AS 문의드려요" 입력 시 A/S 표준 답변·3단계 자동 응답이 정상 파싱·타임라인 기록됨.
-
-### [관련 파일]
-- **src/lib/channelTalkService.ts:** FAQ_ANSWER_AS, FAQ_DATA 키 따옴표·'AS' 추가. TestConsole(`/admin/test-console`)에서 문의 내용에 "AS 문의드려요" 입력 후 시뮬레이션 전송 시 해당 답변 검증 가능.
-
-## 3. 세이브 포인트와의 관계
-- 본일 작업은 기존 채널톡 시뮬레이터·FAQ 엔진 위에 문법 수정·AS 매칭만 반영. BLUEPRINT·CONTEXT·JOURNAL·soul.md에 오늘 내용 반영 후 **세이브 포인트 2026-02-09 (FAQ·채널톡)** 로 롤백 참고용 기록.
-
----
-
-# 2026-02-08 기록 (상담 UI·타임라인 개편 — 선수교체용)
-
-## 1. 오늘의 활동 요약
-- 상담 관리 페이지(ConsultationManagement.tsx)에서 상태 바·탭·인입채널·카드 레이아웃·골든타임 3단계·6단계 프로그레스·조회 기간(이번달) 반영 완료.
-- 타임라인(ConsultationChat.tsx)에서 consultation_messages.is_visible 도입, 관리자 시스템 메시지 영구 삭제·메시지 숨기기/다시 보이기 구현 완료.
-
-## 2. 상세 결정·구현 사항
-
-### [상태 바·탭 연동]
-- **상태 바:** 6개 텍스트 버튼(상담접수·견적중·계약완료·시공완료·AS·캔슬). 비활성 `text-gray-400`, 활성만 단계별 색상, `transition-colors`.
-- **탭 연동:** 상태 변경 성공 시 `setListTab` 호출 — 상담접수→미처리, 견적중→진행중, 계약/시공완료→종료, AS→AS대기, 캔슬 제출→캔슬.
-- **캔슬 탭:** ListTab에 '캔슬' 추가, `status === '거절'`만 필터. 종료 탭은 시공완료만, 캔슬 탭은 거절만.
-
-### [인입채널]
-- **CONSULT_SOURCES** 9종 고정: 채널톡·전화·소개·네이버·쿠팡·유튜브·블로그·SNS·기타. 기본값 **채널톡**. 저장은 `consultations.metadata.source` (inflow_channel 컬럼 없음).
-
-### [상담 카드 레이아웃]
-- **1행:** 등급배지·업체명·골든타임 배지·AS요청·확정견적(금액, text-[11px]).
-- **2행:** 인입채널 배지 → 지역·업종·전화·(주문번호)·인입날짜·요청날짜. 인입채널 배지 스타일 통일(INFLOW_BADGE_BASE).
-
-### [골든타임 3단계]
-- **dateUtils.ts:** `getElapsedDays`, `getGoldenTimeState` (Hot 0~7, Active 8~20, Warning 21~30, Expired 31+), `GOLDEN_TIME_DEADLINE_SOON_DAYS`(27).
-- **카드 2행 최좌측 배지:** Hot ⚡골든타임(주황), Active 🌿집중상담(초록), Warning 🔔이탈경고(노랑), 계약완료 시 🏗️진행중(파랑). 31일 초과 시 배지 제거, 카드 opacity-70. 완료·캔슬·AS 시 골든 배지 미노출. Lead에 `goldenTimeTier`, `goldenTimeDeadlineSoon`, `goldenTimeElapsedDays` 추가.
-
-### [6단계 프로그레스 텍스트]
-- **STAGE_BAR_OPTIONS:** 접수|견적|계약|완료|AS|캔슬. key는 기존 유지, label만 짧게. min-w-[2rem], flex-nowrap, title={key}.
-
-### [조회 기간 필터]
-- **DateRangeKey**에 `'thisMonth'` 추가. Select에 "이번달" 옵션(최근 1개월 위). `startOfMonth(new Date())` ~ 현재 시각으로 필터. **기본값** `useState('thisMonth')`. tabCounts·filteredLeads의 inRange에 thisMonth 분기.
-
-### [타임라인 — 시스템 메시지 삭제·숨기기/다시 보이기]
-- **ConsultationChat** prop `isAdmin`: 기본 false. localStorage `findgagu-role` === 'admin' 또는 URL `?admin=1`. 시스템 메시지 블록 호버 시 **Trash2** 버튼 노출. 확인 후 consultation_messages DELETE, setMessages로 목록에서 제거.
-- **consultation_messages.is_visible:** boolean, default true. 마이그레이션 적용. 일반 사용자는 is_visible !== false만 표시; 관리자는 전부 표시하고 is_visible === false인 메시지는 opacity-60. 모든 타임라인 메시지에 호버 시 **EyeOff(숨기기)**. 관리자만 숨긴 메시지에 **Eye(다시 보이기)** 로 is_visible = true 복구. database.ts Row/Insert/Update에 is_visible 반영.
-
-## 3. 참고 (파일/구조)
-- ConsultationCard·ConsultationTimeline·useConsultationTimeline·ConsultationFilters·constants는 별도 파일 없음. 카드·타임라인·기간 필터는 **ConsultationManagement.tsx**와 **ConsultationChat.tsx**에서 처리. 테이블명 **consultation_messages** 사용(consultation_history 아님).
-
----
-
-# 2026-02-09 기록 (마이그레이션 날짜 소급·인입일 수정·골든타임 연동)
-
-## 1. 오늘의 활동 요약
-- 데이터 통합 관리(/admin/migration)에서 **날짜 소급 적용**, **인입일 수동 수정**, **골든타임 연동** 로직 반영.
-
-## 2. 상세 결정·구현 사항
-
-### [날짜 소급 적용]
-- 저장 시 `consultations.created_at`을 **오늘이 아닌** AI가 파싱한 **실제 견적일(인입일)**로 설정.
-- `toCreatedAtISO(quoteDate)`: `YYYY-MM-DD` → 로컬 자정 ISO 문자열. 유효하지 않으면 당일 시각 사용.
-
-### [수동 수정 지원]
-- 검수 테이블 상단에 **인입일(날짜)** Date Picker 컬럼 추가. `quoteDate`와 연동되어 AI가 잘못 읽은 경우 사용자가 직접 수정 가능.
-
-### [골든타임 연동 검증]
-- 상담 리스트는 `consultations` 조회 시 `select('*')`로 **created_at** 포함. `mapConsultationRowToLead`에서 `getGoldenTimeState(created)`로 배지 계산.
-- 마이그레이션 저장 시 **created_at**을 인입일로 소급하므로, 상담 관리 페이지 진입 시 **소급된 날짜 기준**으로 골든타임(주황/초록/노랑)이 실시간 정확히 표시됨.
-
----
-
-# 2026-02-09 기록 (상담 카드 숨기기·관리자 아카이브·데이터 무결성)
-
-## 1. 오늘의 활동 요약
-- **Soft Delete:** consultations.is_visible (boolean, default true) 컬럼 추가. 숨기면 리스트·통계에서 제외.
-- **관리자 아카이브:** /admin/archive 전용 페이지, 복구·영구 삭제·[TEST] 필터.
-- **데이터 무결성:** 모든 상담 목록/통계용 select에 is_visible = true 필터 강제.
-
-## 2. 상세 결정·구현 사항
-
-### [상담 카드 숨기기]
-- 상담 상세 슬라이드 패널(히스토리 탭)에 관리자 전용 **[이 상담 숨기기]** 버튼. 클릭 시 is_visible = false, 리스트에서 제거·패널 닫힘.
-- fetchLeads: .eq('is_visible', true) 적용 → 메인 리스트·탭 카운트·이번 달 실적·골든타임 카운트에 숨긴 데이터 미포함.
-
-### [관리자 아카이브 페이지]
-- **경로:** /admin/archive. **ArchivePage.tsx** (src/pages/admin/ArchivePage.tsx).
-- **데이터:** useConsultations(false) → is_visible = false만 조회.
-- **복구:** [복구] 클릭 시 is_visible = true → 상담 리스트/통계 재포함.
-- **영구 삭제:** [영구 삭제] 클릭 시 estimates 해당 consultation_id 삭제 후 consultations 삭제.
-- **필터:** 체크박스 "[TEST] 데이터만 보기" → company_name 앞 [TEST] 접두사만 표시.
-
-### [useConsultations 훅]
-- **경로:** src/hooks/useConsultations.ts.
-- useConsultations(visibleOnly: true) → 리스트/대시보드용. useConsultations(false) → 아카이브용.
-
-### [is_visible 필터 강제]
-- ConsultationManagement fetchLeads, MeasurementUpload 목록, MeasurementArchive 목록, ProductSitesPage consultations, productDataMatching getDataByProductTag, ConsultationChat 동일 연락처 조회 — 모두 **is_visible = true** 조건 추가. 숨긴 데이터는 이번 달 실적·골든타임 카운트·제품별 시공·시공 뱅크 매칭에 영향 없음.
-
-### [숨기기 확인 Dialog]
-- 네이티브 confirm() 대신 **앱 내 Dialog** 사용. [이 상담 숨기기] 클릭 시 "이 상담을 숨깁니다. … 계속할까요?" [취소]/[숨기기] 버튼으로 확인 후 처리.
-
----
-
-# 세이브 포인트 2026-02-09 (상담 숨기기·아카이브·마이그레이션 완료)
-
-**이 시점까지 반영된 작업을 롤백할 때 참고용입니다.**
-
-## 포함된 작업 요약
-- **DB:** consultations.is_visible 컬럼 (마이그레이션 `consultations_is_visible`).
-- **상담 숨기기:** [이 상담 숨기기] 버튼(히스토리 탭, 관리자 전용) + 확인 Dialog → is_visible false. 메인 리스트·통계에서 제외.
-- **관리자 아카이브:** `/admin/archive` (ArchivePage), useConsultations(false), [복구]/[영구 삭제], [TEST] 필터.
-- **useConsultations:** src/hooks/useConsultations.ts (visibleOnly true/false).
-- **데이터 무결성:** 상담 목록·통계·실측·제품별 시공·채팅 조회 전부 is_visible = true 필터.
-- **마이그레이션:** created_at = 인입일(quoteDate) 소급, 인입일(날짜) Date Picker, 저장 후 상담 관리 이동. VITE_MIGRATION_PARSE_API 연동 구조.
-- **문서:** BLUEPRINT.md, CONTEXT.md, soul.md, JOURNAL.md 최신화.
-
-## 롤백 시 (Git 사용 시)
-이 상태를 태그로 남겨 두었다면 아래로 복귀할 수 있습니다.
-
-```bash
-# 현재 상태를 커밋한 뒤 태그 생성 (아직 안 했다면)
-git add -A
-git commit -m "checkpoint: 상담 숨기기·아카이브·마이그레이션 날짜 소급 완료"
-git tag save-20260209-archive-migration
-
-# 이후 실수 시 이 시점으로 복귀
-git checkout save-20260209-archive-migration
-# 또는 특정 파일만 복원 시 해당 커밋에서 파일 체크아웃
-```
-
-## 변경된 주요 파일 (롤백 시 참고)
-- `src/pages/ConsultationManagement.tsx` — fetch is_visible, handleHideLead, hideConfirmLeadId Dialog.
-- `src/pages/admin/ArchivePage.tsx` — 신규.
-- `src/hooks/useConsultations.ts` — 신규.
-- `src/types/database.ts` — consultations.is_visible.
-- `src/pages/AdminMigration.tsx` — handleSave, created_at 소급, 인입일 Date Picker.
-- `src/lib/migrationParseService.ts` — parseEstimateFromFile, VITE_MIGRATION_PARSE_API.
-- `src/App.tsx` — /admin/archive 라우트, 숨긴 상담 아카이브 링크.
-- `src/pages/MeasurementUpload.tsx`, `MeasurementArchive.tsx`, `ProductSitesPage.tsx`, `productDataMatching.ts`, `ConsultationChat.tsx` — is_visible 필터.
-- `supabase/migrations` — consultations_is_visible 마이그레이션.
-- `BLUEPRINT.md`, `CONTEXT.md`, `soul.md`, `JOURNAL.md`.
-
----
-
-# 세이브 포인트 2026-02-09 (오늘 작업 마감 — FAQ·채널톡 문법·문서 통합)
-
-**이 시점까지 반영된 작업을 롤백할 때 참고용입니다. (상담 숨기기·아카이브·마이그레이션 + 채널톡 FAQ 문법·AS 매칭 포함)**
-
-## 포함된 작업 요약
-- **이전 세이브:** 상담 숨기기(is_visible)·아카이브·마이그레이션 날짜 소급·인입일 수정 (위 블록 참고).
-- **오늘 추가:** **channelTalkService.ts** — FAQ_DATA 객체 키 문법 수정 (`A/S` → `'A/S'`, 모든 키 따옴표), **'AS'** 키 추가로 "AS 문의드려요" 시 A/S 답변 매칭. BLUEPRINT(채널톡 시뮬레이터·FAQ 자동 응답 섹션), CONTEXT, JOURNAL, soul.md 최신화.
-
-## 롤백 시 (Git 사용 시)
-```bash
-git add -A
-git commit -m "checkpoint: 상담 숨기기·아카이브·마이그레이션·채널톡 FAQ 문법·AS 매칭 완료"
-git tag save-20260209-faq-channel
-
-# 이후 이 시점으로 복귀
-git checkout save-20260209-faq-channel
-```
-
-## 오늘 변경된 주요 파일
-- `src/lib/channelTalkService.ts` — FAQ_ANSWER_AS, FAQ_DATA 키 따옴표·'AS' 추가.
-- `BLUEPRINT.md` — 섹션 3에 "5) 채널톡 시뮬레이터 및 FAQ 자동 응답" 추가.
-- `CONTEXT.md`, `JOURNAL.md`, `soul.md` — 2026-02-09 FAQ·세이브 포인트 반영.
-
----
-
-# 2026-02-10 기록 (마이그레이션 섹션 분리·거래처 원가 확장·AI 퀵 커맨드 출처)
-
-## 1. 오늘의 활동 요약
-- **데이터 통합 마이그레이션:** 탭 제거, 판매 견적서(상단)·거래처 원가(하단) 별도 섹션 구성. 거래처 원가 AI 분석 항목 확장(현장명·품명·색상·단가·외경·메모). 업로드 완료 목록·원본보기·메모 필드 추가. 수량 필드 제거.
-- **AI 퀵 커맨드:** 비교대상 카드에 외주업체 원가 출처(원가표/제품DB) 및 원본보기 버튼 추가.
-
-## 2. 상세 결정·구현 사항
-
-### [마이그레이션 섹션 분리]
-- 탭(판매 견적서 | 거래처 원가) 제거. 같은 창 공유로 인한 실수 방지.
-- 상단: 판매 견적서 등록 (드래그존·파일 목록·업로드 완료 목록)
-- 하단: 거래처 원가 등록 (거래처명·드래그존·업로드 파일·검수 테이블·업로드 완료 목록)
-- 각 섹션별 독립 드래그존(dragOverEstimates, dragOverVendor)
-
-### [거래처 원가 AI 분석 확장]
-- **현장명(site_name):** "[파인드가구] 루브르" → "루브르" 추출
-- **품명, 색상, 단가:** 손글씨 162,000원 포함
-- **외경 사이즈:** 가로×세로×높이 (예: 1000×1320×1200)
-- **메모:** "상판 모번 23T", "그외 18T 라이트그레이" 등 상세 사양
-- **수량 제거:** 원가 이상 표시 이슈로 수량 컬럼 삭제
-
-### [거래처 원가 업로드 완료 목록]
-- 판매 견적서와 동일 테이블: No·파일명·금액·견적일·업로드시간·상태·원본보기·삭제
-- localStorage(UPLOADED_VENDOR_ITEMS_STORAGE_KEY) 영구 저장
-- 목록 비우기, DB 미존재 항목 자동 정리
-- 원본보기: image_url 새 탭 오픈
-
-### [메모 필드]
-- vendor_price_book.memo 컬럼 추가
-- ParsedVendorPriceItem.memo, 검수 테이블 메모 컬럼
-- AI 프롬프트에 memo 추출 규칙 반영
-
-### [AI 퀵 커맨드 비교대상]
-- PastCaseRecommendation에 source, image_url 추가
-- 출처: 원가표(vendor_price_book) / 제품DB(products)
-- 원본보기: image_url 있을 때 onRequestPriceBookImage 호출 → 라이트박스
-
-## 3. 변경된 주요 파일
-- `src/pages/admin/MigrationPage.tsx` — 섹션 분리, accumulatedVendorItems·검수 테이블 확장, 업로드 완료 목록, 메모
-- `src/lib/parseFileWithAI.ts` — VISION_VENDOR_PROMPT·ParsedVendorPriceItem 확장
-- `src/components/estimate/EstimateForm.tsx` — 비교대상 출처·원본보기
-- `src/lib/estimateAiService.ts` — PastCaseRecommendation source, image_url
-- Supabase: vendor_price_book site_name, color, quantity, quote_date, memo 컬럼
-
----
-
-# 2026-02-10 기록 (MigrationPage 파일명·저장=확정·6개월 견적 통계·원가 연동)
-
-## 1. 오늘의 활동 요약
-- **MigrationPage:** Mac 환경 파일명 인코딩 문제 방지용 `toSafeStoragePath` 적용. 저장 시 `approved_at` 자동 설정(기존 적용 확인).
-- **ConsultationManagement:** 임시저장 = 확정(approved_at), 6개월 견적 통계(최대/최소/실제 중간값 + estimate_id), 원가 연동, 견적 이력 UI 4가지 지표(클릭 가능·툴팁) 반영.
-
-## 2. 상세 결정·구현 사항
-
-### [MigrationPage — 파일명 인코딩]
-- **toSafeStoragePath(originalName, prefix):** 원본 파일명 대신 `{prefix}_{timestamp}_{random}.{safeExt}` 형식. pdf/jpg/jpeg/png만 허용, jpeg→jpg 통일. Mac/한글 파일명으로 인한 MIME 오류·저장 실패 방지.
-- **적용:** 견적 PDF/이미지 업로드(prefix: estimate), 원가표 업로드(prefix: vendor) 모두 적용.
-
-### [ConsultationManagement — 저장 = 확정]
-- **handleEstimateSaveDraft:** insert/update 시 `approved_at: new Date().toISOString()` 추가. 별도 승인 없이 저장 즉시 확정 데이터로 처리.
-
-### [6개월 견적 통계]
-- **estimatesLast6Months:** subMonths(now, 6) 이후 created_at, is_visible=true. approved_at 필터 없음.
-- **estimateStats:** 최대(max)·최소(min)·중간(median). **중간값**은 max/min 평균이 아니라, grand_total 정렬 후 실제 발행 견적 중 **중앙에 가장 가까운 값** 선택. 각 지표에 estimate_id 매핑.
-
-### [원가 연동]
-- **costSum:** 최근 견적 1건의 rows 기준. 품명별 getVendorPriceRecommendation 호출 → vendor_price_book 또는 products에서 원가 조회 → (원가 × 수량) 합산.
-
-### [견적 이력 UI]
-- **위치:** 견적 관리 탭, "기존 견적 이력" 제목 위.
-- **형식:** `[최대: 122,000원 | 중간: 110,000원 | 최소: 94,500원 | 원가: 85,000원]`
-- **클릭:** 최대/중간/최소 수치 클릭 시 setPrintEstimateId(해당 estimate_id) → 견적서 상세(인쇄/PDF) 팝업.
-- **UX:** title="해당 견적서 보기" 툴팁, cursor-pointer, hover:text-primary hover:underline.
-
-## 3. 변경된 주요 파일
-- `src/pages/admin/MigrationPage.tsx` — toSafeStoragePath, storagePath 변경(견적·원가).
-- `src/pages/ConsultationManagement.tsx` — getVendorPriceRecommendation import, handleEstimateSaveDraft approved_at, estimatesLast6Months·estimateStats·costSum, 견적 이력 4지표 UI.
-
----
-
-# 세이브 포인트 2026-02-10 (마이그레이션·통계·아카이브 완료)
-
-**이 시점까지 반영된 작업을 롤백할 때 참고용입니다.**
-
-## 포함된 작업 요약
-- **ConsultationManagement:** 6개월→12개월 통계(최근 1년 시세), 전체 이력 리스트(기간 제한 없음), 연도별 그룹·아카이브 스타일, 조회 기간 기본값 '전체', 금액 클릭→견적 상세 팝업
-- **MigrationPage:** 업로드 완료 목록 localStorage 영구 저장, DB 복원·원본 파일명(payload._migration_original_filename), 견적일 컬럼, 중복 체크, 목록 비우기·DB 미존재 항목 자동 정리, 클릭→상담 견적 상세
-- **데이터:** 통계 vs 리스트 분리(12개월 시세 / 전체 아카이브), dateRange 기본 'all'
-
-## 롤백 시 (Git 사용 시)
-```bash
-git checkout save-20260210-migration-stats
-# 또는 특정 파일만 복원 시 해당 커밋에서 파일 체크아웃
-```
-
-## 변경된 주요 파일
-- `src/pages/ConsultationManagement.tsx` — estimatesLast12Months, estimateListByYear, archiveCutoff, dateRange default 'all'
-- `src/pages/admin/MigrationPage.tsx` — uploadedItems localStorage, DB 복원, _migration_original_filename, 견적일 컬럼, 목록 비우기
-- `BLUEPRINT.md`, `CONTEXT.md`, `JOURNAL.md`, `soul.md`
-
----
-
-# 2026-02-10 기록 (AI 퀵 커맨드·원가표·참고 견적서 모달 UX)
-
-## 1. 오늘의 활동 요약
-- **AI 퀵 커맨드 원본보기:** 원가표 원본 이미지가 팝업에 안 보이던 문제 — vendor-assets 비공개 버킷 대비 Signed URL 생성 후 표시. 참고 견적서(PDF) 모달 z-[200]·캡처로 견적 작성창이 같이 닫히지 않도록 방어.
-- **마이그레이션:** DB 조회 빈 결과일 때 업로드 완료 목록을 비우지 않도록 수정(새로고침 후 데이터 유지).
-- **원가표 비교대상:** 출처 뒤 외경사이즈·현장명 표시, 원가표는 원가만 표시(종전 단가 제거). 올데이C 검색 시 올데이CA 포함·품명·규격 기준 중복 제거.
-- **참고 견적서 모달:** 닫기 버튼 제거(바깥 클릭·Escape로 닫기). 미리보기 닫을 때 견적 한 줄도 없는 상태에서 작성창이 닫히지 않도록 printEstimateId·justClosedPreviewRef 방어.
-
-## 2. 상세 결정·구현 사항
-
-### [원가표 원본보기]
-- **Signed URL:** priceBookImageUrl이 vendor-assets public URL이면 경로 추출 후 createSignedUrl(3600초)로 표시 URL 생성. priceBookImageDisplayUrl state로 분리, 로딩 문구 표시.
-- **참고 견적서(PDF) 모달:** z-[200], onPointerDownCapture/onClickCapture로 클릭이 견적 모달로 전달되지 않도록 함. 닫기 버튼 삭제.
-
-### [견적 작성창 닫힘 방지]
-- **justClosedPreviewRef + 300ms:** 미리보기 닫을 때 ref true 설정, 300ms 후 false. 견적 모달 onOpenChange(false) 시 printEstimateId 있거나 justClosedPreviewRef면 닫지 않고 return.
-
-### [마이그레이션 업로드 완료 목록]
-- DB 정리 useEffect에서 rows.length === 0이면 목록을 비우지 않음(RLS/오류 시 새로고침 후 사라지는 현상 방지).
-
-### [AI 퀵 커맨드 원가표]
-- **getVendorPriceRecommendations:** 다건 조회(limit 10), 품명·규격 기준 중복 제거. spec(외경)·site_name(현장명) 반환.
-- **원가만 표시:** 출처가 원가표일 때 "종전 단가" 제거, "원가: N원"만 표시. 출처 줄에 "· 외경 {size}"·"· 현장명 {siteName}" 추가.
-- **올데이C → 올데이CA:** 과거 견적 결과와 원가표 결과 항상 병합, 품명·규격·색상 기준 dedupe 후 최대 8건.
-
-### [DB 정리]
-- vendor_price_book 품명·규격별 중복 행 정리(최신 1건만 유지). 올데이CA 1000×1280×1200 삭제, 상판 모변 23T는 1000×1320×1200 행 memo로 병합.
-
-## 3. 변경된 주요 파일
-- `src/pages/ConsultationManagement.tsx` — priceBookImageDisplayUrl·Signed URL, 참고 견적서 z-[200]·캡처·닫기 버튼 삭제, justClosedPreviewRef·onOpenChange 방어
-- `src/pages/admin/MigrationPage.tsx` — DB 정리 시 rows.length === 0이면 return
-- `src/lib/estimateRecommendationService.ts` — getVendorPriceRecommendations, spec·site_name, 중복 제거
-- `src/components/estimate/EstimateForm.tsx` — 원가표 원가만 표시, 출처 뒤 외경·현장명, vendor 병합·dedupe
-
----
-
-# 세이브 포인트 2026-02-10 (AI 퀵·원가표·참고 견적서 모달)
-
-**이 시점까지 반영된 작업을 롤백할 때 참고용입니다.**
-
-## 포함된 작업 요약
-- **원가표 원본보기:** Signed URL로 이미지 표시, 참고 견적서 모달 z-[200]·캡처, 닫기 버튼 삭제.
-- **견적 작성창 유지:** 미리보기 닫을 때 printEstimateId·justClosedPreviewRef(300ms)로 견적 모달 닫힘 방지.
-- **마이그레이션:** DB 조회 빈 결과일 때 업로드 완료 목록 비우지 않음.
-- **AI 퀵 커맨드:** 원가표 출처 뒤 외경·현장명, 원가만 표시(종전 단가 제거). 올데이C 검색 시 올데이CA 병합·중복 제거. getVendorPriceRecommendations·spec·site_name.
-
-## 롤백 시 (Git 사용 시)
-```bash
-git add -A
-git commit -m "checkpoint: AI 퀵 원가표·참고 견적서 모달 UX·마이그레이션 목록 유지"
-git tag save-20260210-ai-quick-estimate-modal
-
-# 이후 이 시점으로 복귀
-git checkout save-20260210-ai-quick-estimate-modal
-```
-
-## 변경된 주요 파일
-- `src/pages/ConsultationManagement.tsx` — 원가표 Signed URL, 참고 견적서 모달, justClosedPreviewRef
-- `src/pages/admin/MigrationPage.tsx` — DB 정리 시 빈 결과 방어
-- `src/lib/estimateRecommendationService.ts` — getVendorPriceRecommendations, spec, site_name, 중복 제거
-- `src/components/estimate/EstimateForm.tsx` — 원가만 표시, 외경·현장명, vendor 병합
-- `BLUEPRINT.md`, `CONTEXT.md`, `JOURNAL.md`, `soul.md`
-
----
-
-# 2026-02-10 기록 (상담 무효/거절 분리·7탭·AI 제안·채널톡 웹훅 전 이벤트 수용)
-
-## 1. 오늘의 활동 요약
-- **상담 UI:** 무효 vs 거절 분리, 7탭(전체|미처리|견적중|진행중|종료|거절|무효), KPI(무효 제외 성공률), 상세 패널 [무효 처리]/[거절 처리]. 식별자 고정 및 AI 제안(metadata.ai_suggestions) 수동 [적용].
-- **채널톡 웹훅:** 이벤트 타입 필터 제거, 모든 수신에 대해 entity/폼 필드에서 연락처·메시지 추출 후 DB Insert 시도. 로깅·try-catch·완료 로그·배포 옵션 반영.
-
-## 2. 상세 결정·구현 사항
-
-### [무효 vs 거절]
-- **DB:** `consultation_status` enum에 '무효' 추가(마이그레이션 add_consultation_status_invalid).
-- **무효:** 단순 이탈, 통계에서 완전 제외. [무효 처리] 클릭 시 팝업 없이 즉시 status '무효' 저장.
-- **거절:** 영업 실패, metadata.cancel_reason 보존. [거절 처리] 시 거절 사유 입력 모달 필수 후 저장.
-- **KPI:** total_valid_leads = count(status != '무효'), success_rate = 시공완료(비거절·비무효) / total_valid_leads. 상단 "유효 상담 N건 · 성공률 M% (무효 제외)" 표시.
-
-### [7탭·상태 바]
-- **탭:** 전체|미처리|견적중|진행중|종료|거절|무효. 업무 단계별 우선순위 파악.
-- **상태 바:** 7버튼(접수|견적|계약|완료|AS|무효|거절). 무효/거절 클릭 시 각각 즉시 무효 처리·거절 사유 모달.
-- **카드:** 거절 건 2행에 거절 사유 강조, 무효 건 카드 opacity-60.
-
-### [식별자·AI 제안]
-- **식별자 고정:** 채널톡 웹훅에서 최초 생성된 display_name은 후속 메시지로 자동 변경하지 않음.
-- **ai_suggestions:** 추출 상호·평수·업종은 metadata.ai_suggestions에만 저장. 상담 상세 패널 "AI가 분석한 정보가 있습니다" + [상호/평수/업종] [적용] 버튼으로 수동 반영.
-
-### [채널톡 웹훅 — 모든 이벤트 수용]
-- **이벤트 필터 제거:** body.type/event로 스킵하지 않음. body.entity에 텍스트·유저·연락처 중 하나라도 있으면 extractFromPayload 호출 후 DB Insert 경로 진행.
-- **연락처 추출:** user → entity → body → **entity.fields / body.fields**(폼 응답) → 메시지 본문 순. extractPhoneFromFields로 phone, 휴대폰, 연락처, 전화번호 등 키 및 한국 휴대폰 패턴 매칭.
-- **로깅:** 수신 이벤트 타입, "처리 중인 데이터 구조:" JSON.stringify(body), DB Insert 시도 데이터·에러 상세·Insert 성공, "--- 함수 실행 완료 ---" 등 분기별 완료 로그.
-- **안정성:** 전체 try-catch, catch에서 console.error 상세, 모든 supabase.from().insert/update에 await. SUPABASE_SERVICE_ROLE_KEY 확인 로그.
-- **배포:** `npx supabase functions deploy channel-talk-webhook --no-verify-jwt`. (테스트용 서명 검증 bypass는 운영 전 복구.)
-
-## 3. 변경된 주요 파일
-- `src/pages/ConsultationManagement.tsx` — ListTab 7탭, endSubTab 제거, tabCounts/filteredLeads, handleInvalidLead, KPI, 상태 바 무효/거절, 상세 패널 버튼·AI 제안 UI
-- `src/types/database.ts` — consultation_status '무효'
-- `supabase/functions/channel-talk-webhook/index.ts` — 이벤트 필터 제거, extractFromPayload·extractPhoneFromFields 보강, 로깅·try-catch·완료 로그
-- `supabase/migrations/20260210180000_add_consultation_status_invalid.sql`
-- `BLUEPRINT.md`, `CONTEXT.md`, `soul.md`
-
----
-
-# 2026-02-12 기록 (견적서 업로드·products 판매단가·AI 퀵 가이드 — 세이브 포인트)
-
-## 1. 오늘의 활동 요약
-- **상담별 견적서 업로드(EstimateFilesGallery):** [판매 단가표 반영]과 [견적서로 저장] 모두 products + estimates 동시 저장.
-- **products.supply_price = 판매단가:** 원가표는 원가→마진 30% 역산 판매단가로 저장. 견적서는 unitPrice(판매단가) 그대로 저장.
-- **AI 퀵 가이드:** products를 판매단가로 인식, 원가는 역산(수익률 판단용). 판매단가를 원가로 잘못 인식해 부가세·마진 이중 적용되던 오류 수정.
-
-## 2. 상세 결정·구현 사항
-
-### [EstimateFilesGallery — 이중 저장]
-- **판매 단가표 반영:** products 저장 + 견적서 이력(estimates) 저장. 원가표 → 견적 형식 변환 후 estimates insert.
-- **견적서로 저장:** estimates 저장 + products 저장. 견적서 품목을 판매단가로 products에 upsert.
-
-### [products 판매단가 저장]
-- **원가표:** cost → sellingPrice = roundToPriceUnit(cost / (1 - 0.3)) 저장.
-- **견적서:** unitPrice(판매단가) 우선, 없으면 costPrice에서 역산.
-- **MigrationPage:** 동일 원칙 적용.
-
-### [AI 퀵 가이드·EstimateForm]
-- **estimateRecommendationService:** products fallback 시 supply_price를 판매단가로 사용, cost = unitPrice * 0.7 역산.
-- **estimateAiService:** searchPastCaseRecommendations에서 products의 price = supply_price(판매단가), costPrice 역산.
-- **EstimateForm:** `applySellingToRow` 추가 — products 조회 시 판매단가 적용, 원가 역산. `applyCostToRow`는 과거 이력(vendor_price_book 등)용 유지.
-- **productsList 새로고침:** `modalOpen` prop으로 견적 모달 열릴 때 productsList 재조회 → AI 퀵 가이드 검색 최신 반영.
-
-## 3. 변경된 주요 파일
-- `src/components/estimate/EstimateFilesGallery.tsx` — handleSaveVendor/handleSaveEstimate 이중 저장, supply_price = 판매단가
-- `src/components/estimate/EstimateForm.tsx` — applySellingToRow, modalOpen, products 조회 시 applySellingToRow 사용
-- `src/pages/ConsultationManagement.tsx` — EstimateForm modalOpen={estimateModalOpen}
-- `src/lib/estimateRecommendationService.ts` — products fallback 시 판매단가 인식·원가 역산
-- `src/lib/estimateAiService.ts` — searchPastCaseRecommendations products 판매단가·원가 역산
-- `src/pages/admin/MigrationPage.tsx` — supply_price = 판매단가(roundToPriceUnit)
-
-## 4. 세이브 포인트
-```bash
-git add -A
-git commit -m "checkpoint: 견적서 업로드 products+estimates 이중저장, products 판매단가, AI 퀵 가이드 원가 역산"
-git tag save-20260212-estimate-upload-products-selling-price
-```
-
----
-
-# 세이브 포인트 2026-02-10 (쇼룸·상담 삭제·이미지 자산 상담용)
-
-**이 시점까지 반영된 작업을 롤백할 때 참고용입니다.**
-
-## 포함된 작업 요약
-- **쇼룸(ShowroomPage):** 고교학점제·아파트·무인창업 전문가 코멘트 섹션 추가. 모든 전문가 카드 색상/CTA를 고교학점제 기준(slate)으로 통일. 관리형·스터디카페 카드에 학원 스타일 [상담하기] CTA(Link 버튼) 추가.
-- **상담 관리(ConsultationManagement):** 각 상담 카드 우측에 휴지통(Trash2) 삭제 버튼. 클릭 시 "이 상담 내역을 영구 삭제할까요?" 확인 후 Supabase consultations DELETE, 성공 시 새로고침 없이 해당 카드만 목록에서 제거.
-- **이미지 자산:** DB `image_assets.is_consultation`(boolean, default false) 컬럼 추가(마이그레이션 add_image_assets_is_consultation). ImageAssetViewer: 상단 [상담용 사진만 보기] Switch, 카드 [상담용] 토글(DB 갱신). 스코어링 배지(AI 점수·AI 추천·내부 점수) 제거. 용도 배지는 sourceTable === 'image_assets' && isConsultation일 때만 "상담용" 표시. 공유 URL·PublicGalleryView에서 상담용 카드 우선 정렬·뱃지·테두리 강조. Switch 컴포넌트(src/components/ui/switch.tsx) 추가.
-
-## 롤백 시 (Git 사용 시)
-```bash
-git add -A
-git commit -m "checkpoint: 쇼룸 전문가 통일·상담 영구 삭제·이미지 자산 상담용 필터"
-git tag save-20260210-showroom-consultation-image
-
-# 이후 이 시점으로 복귀
-git checkout save-20260210-showroom-consultation-image
-```
-
-## 변경된 주요 파일
-- `src/pages/ShowroomPage.tsx` — 전문가 카드 slate 통일, CTA 추가
-- `src/pages/ConsultationManagement.tsx` — 휴지통 삭제, handleDeleteLead, onDeleteClick
-- `src/pages/ImageAssetViewer.tsx` — 상담용 스위치·카드 토글·배지 정책·공유 정렬
-- `src/pages/PublicGalleryView.tsx` — is_consultation 조회·상담용 뱃지·테두리
-- `src/lib/imageAssetService.ts` — is_consultation select·updateImageAssetConsultation
-- `src/types/projectImage.ts` — ProjectImageAsset.isConsultation
-- `src/components/ui/switch.tsx` — 신규
-- `supabase/migrations` — add_image_assets_is_consultation
-- `BLUEPRINT.md`, `CONTEXT.md`, `JOURNAL.md`, `soul.md`
-
----
-
-# 2026-02-13 기록 (구글 시트 ↔ 수파베이스 양방향 동기화 — 세이브 포인트)
-
-## 1. 오늘의 활동 요약
-- 구글 시트 `상담리스트`와 수파베이스 consultations를 양방향으로 연동. 시트 편집 시 RPC로 DB 반영, 앱 [최종 확정] 시 시트 해당 행(E·F·D) 갱신. status·estimate_amount는 시트에서 DB로 보내지 않고 앱·DB 전용으로 유지. Realtime·visibilitychange로 앱 리스트 캐시 무효화.
-
-## 2. 상세 결정·구현
-- **시트→DB:** gas/Code.gs onEdit → update_single_consultation_from_sheet(project_name, link, start_date, update_date, created_at). RPC 인자에 status·estimate_amount 없음.
-- **DB→시트:** syncAppToSheet(projectName, status, estimateAmount), doPost(body: project_name, status, estimate_amount, token). 앱에서 최종 확정 성공 후 VITE_GOOGLE_SHEET_SYNC_URL POST.
-- **앱:** fetchLeadsRef, Realtime INSERT/UPDATE 시 전체 fetch, document.visibilitychange → visible 시 fetch. mapConsultationRowToLead에서 update_date·projectName 처리.
-
-## 3. 문서·세이브 포인트
-- BLUEPRINT에 "6) 구글 시트 ↔ 수파베이스 양방향 동기화" 추가. CONTEXT·JOURNAL·soul.md에 2026-02-13 반영. snapshots/SAVE_20260213_GOOGLE_SHEET_SYNC/README.md 생성.
-
-# 세이브 포인트 2026-02-13 (구글 시트 ↔ 수파베이스 양방향 동기화)
-
-**이 시점까지 반영된 작업을 롤백할 때 참고용입니다.**
-
-## 포함된 작업 요약
-- 구글 시트 `상담리스트` onEdit → RPC(project_name, link, start_date, update_date, created_at). status·estimate_amount 시트 미연동.
-- RPC update_single_consultation_from_sheet, consultations.updated_at·REPLICA IDENTITY FULL.
-- 앱 [최종 확정] → doPost·syncAppToSheet. Realtime·visibilitychange 시 전체 리스트 재조회. Lead.projectName, update_date 파싱.
-
-## 롤백 시 (Git 사용 시)
-```bash
-git add -A
-git commit -m "checkpoint: 구글 시트↔수파베이스 양방향 동기화, status/estimate_amount 시트 미연동, Realtime·캐시 무효화"
-git tag save-20260213-google-sheet-sync
-
-# 이후 이 시점으로 복귀
-git checkout save-20260213-google-sheet-sync
-```
-
-## 변경된 주요 파일
-- `gas/Code.gs` — onEdit, syncAppToSheet, doPost, payload 컬럼명·status/estimate_amount 제외
-- `src/pages/ConsultationManagement.tsx` — fetchLeadsRef, visibilitychange, Realtime 시 fetch, Lead.projectName, 최종 확정 후 시트 sync
-- `supabase/migrations` — update_single_consultation_from_sheet, consultations updated_at·REPLICA IDENTITY FULL
-- `.env.example` — VITE_GOOGLE_SHEET_SYNC_URL, VITE_GOOGLE_SHEET_SYNC_TOKEN
-- `BLUEPRINT.md`, `CONTEXT.md`, `JOURNAL.md`, `soul.md`, `snapshots/SAVE_20260213_GOOGLE_SHEET_SYNC/README.md`
-
----
-
-# 2026-02-14 기록 (상담 카드 2행 최종 견적가 표시 — 세이브 포인트)
-
-## 1. 오늘의 활동 요약
-- 상담 리스트 카드 **2행 맨 오른쪽** "견적 미정" 자리에 **최종 견적 금액**이 확실히 표시되도록 수정. 견적서로 저장 직후 낙관적 업데이트·pending ref·fetch 병합으로 즉시 반영 및 유지.
-
-## 2. 상세 결정·구현
-- **표시 우선순위:** pendingEstimateAmountRef(견적서로 저장 직후) → item.finalAmount → item.displayAmount → item.expectedRevenue. 없으면 "견적 미정".
-- **EstimateFilesGallery:** [견적서로 저장] 성공 시 onUploadComplete({ estimateAmount: finalAmount }) 호출.
-- **ConsultationManagement:** onUploadComplete(payload) 시 pendingEstimateAmountRef.current[consultationId] 저장, setLeads로 해당 카드 displayAmount·expectedRevenue·status 낙관적 업데이트, fetchLeads() 호출. fetchLeads 결과 병합 시 서버 estimate_amount가 아직 0이면 pending 금액으로 displayAmount·expectedRevenue 유지.
-- **ConsultationListItem:** getPendingEstimateAmount(consultationId) prop 추가. 2행 맨 오른쪽 span에 data-final-estimate, data-consultation-id, title(최종 견적가/견적 미정).
-
-## 3. 문서·세이브 포인트
-- BLUEPRINT에 2행 "최종 견적가" 표시 규격 추가. CONTEXT·JOURNAL·soul.md에 2026-02-14 반영.
-
-# 세이브 포인트 2026-02-14 (상담 카드 2행 최종 견적가)
-
-**이 시점까지 반영된 작업을 롤백할 때 참고용입니다.**
-
-## 포함된 작업 요약
-- 상담 카드 2행 맨 오른쪽: "견적 미정" → 최종 견적 금액 표시. pending ref·낙관적 업데이트·fetch 병합.
-- EstimateFilesGallery onUploadComplete({ estimateAmount }). ConsultationManagement pendingEstimateAmountRef·getPendingEstimateAmount.
-
-## 롤백 시 (Git 사용 시)
-```bash
-git add -A
-git commit -m "checkpoint: 상담 카드 2행 최종 견적가 표시, pending ref·fetch 병합"
-git tag save-20260214-card-final-estimate
-
-# 이후 이 시점으로 복귀
-git checkout save-20260214-card-final-estimate
-```
-
-## 변경된 주요 파일
-- `src/pages/ConsultationManagement.tsx` — pendingEstimateAmountRef, fetchLeads 병합, onUploadComplete 낙관적 업데이트, ConsultationListItem getPendingEstimateAmount
-- `src/components/estimate/EstimateFilesGallery.tsx` — onUploadComplete({ estimateAmount: finalAmount })
-- `BLUEPRINT.md`, `CONTEXT.md`, `JOURNAL.md`, `soul.md`
-
----
-
-# 2026-02-14 기록 (구글 시트 갱신일 기준 '오늘 갱신'·미갱신 D-Day — 세이브 포인트)
-
-## 1. 오늘의 활동 요약
-- 상담 카드의 **'오늘 갱신'·미갱신 D+n** 표시 및 **최근업데이트순** 정렬을 **구글 시트 최신 업데이트일** 기준으로 동작하도록 변경. 기존에는 앱(consultations.update_date)만 반영되었으나, 시트 D열(업데이트일)을 metadata.sheet_update_date로 저장해 앱에서 우선 사용.
-
-## 2. 상세 결정·구현
-- **Lead.sheetUpdateDate:** metadata.sheet_update_date(YYYY-MM-DD) 매핑. mapConsultationRowToLead에서 updateDateNorm, sheetUpdateRaw, sheetUpdateDate 파싱 후 return에 sheetUpdateDate 추가.
-- **갱신 표시·정렬:** getNeglectDDisplay·getNeglectDays 호출 시 **sheetUpdateDate ?? updateDate** 사용. ConsultationListItem neglectD, sortByNeglect 정렬 모두 동일 기준.
-- **Supabase RPC:** update_multiple_consultations_from_sheet에서 input에 sheet_update_date 추가, INSERT/UPDATE 시 metadata에 sheet_update_date 병합. 마이그레이션 `20260214140000_sheet_update_date_in_metadata.sql`. (대시보드 SQL Editor 또는 db push로 적용.)
-- **GAS:** gas/Code.gs syncAllDataBatch에서 각 row에 sheet_update_date(updateDateStr, D열 YYYY-MM-DD) 전송. 사용자 단순 GAS 스크립트에도 동일 필드 추가 안내.
-
-## 3. 문서·세이브 포인트
-- BLUEPRINT에 배치 RPC·갱신일·Lead.sheetUpdateDate·앱 표시/정렬 기준 반영. CONTEXT·soul.md에 2026-02-14 구글 시트 갱신일 항목 추가. JOURNAL 본 블록 및 세이브 포인트 안내.
-
-# 세이브 포인트 2026-02-14 (구글 시트 갱신일 기준 오늘 갱신·미갱신 D-Day)
-
-**이 시점까지 반영된 작업을 롤백할 때 참고용입니다.**
-
-## 포함된 작업 요약
-- **갱신 표시·정렬:** '오늘 갱신'·미갱신 D+n·최근업데이트순 = sheetUpdateDate ?? updateDate.
-- **Lead.sheetUpdateDate:** metadata.sheet_update_date 매핑. mapConsultationRowToLead, getNeglectDDisplay, getNeglectDays, 정렬 로직 반영.
-- **Supabase:** update_multiple_consultations_from_sheet에 sheet_update_date → metadata.sheet_update_date 저장. 마이그레이션 20260214140000_sheet_update_date_in_metadata.
-- **GAS:** syncAllDataBatch 시 row에 sheet_update_date(YYYY-MM-DD) 전송. gas/Code.gs 수정.
-
-## 롤백 시 (Git 사용 시)
-```bash
-git checkout save-20260214-sheet-update-date
-# 또는 특정 파일만 복원 시 해당 커밋에서 파일 체크아웃
-```
-
-## 변경된 주요 파일
-- `src/pages/ConsultationManagement.tsx` — Lead 타입 sheetUpdateDate, mapConsultationRowToLead, neglectD·정렬 sheetUpdateDate ?? updateDate
-- `supabase/migrations/20260214140000_sheet_update_date_in_metadata.sql` — 신규
-- `gas/Code.gs` — rows.push에 sheet_update_date 추가
-- `BLUEPRINT.md`, `CONTEXT.md`, `JOURNAL.md`, `soul.md`
-
----
-
-# 2026-02-20 기록 (이미지 업로드 단일 엔진·상담 히스토리 통합 — 작업 종료)
-
-## 1. 오늘의 활동 요약
-- **이미지 자산 관리**와 **상담 카드(상담 히스토리)** 업로드 로직을 **단일 엔진(uploadEngine)**으로 통합. 입구는 두 개, Cloudinary 저장 규격·context/tags는 100% 동일.
-- 상담 히스토리에는 이미지 자산관리와 **동일한 점선 업로드 영역** 배치, 잘못 올린 항목 삭제(휴지통) 지원.
-
-## 2. 상세 결정·구현 사항
-
-### [공통 모듈 uploadEngine]
-- **파일:** `src/lib/uploadEngine.ts`. **uploadEngine(file, metadata)** — 동일 폴더(`assets/projects`), 동일 프리셋, Cloudinary context(key=value 파이프 구분), tags(쉼표 구분). public_id: `assets/projects/YYMMDD_고객명_카테고리_고유접미사`.
-- **메타데이터:** customer_name, project_id, category, upload_date, source. **validateMetadataForConsultation(meta)** — 상담 입구에서 메타 비어 있으면 업로드 불가. **CONSULTATION_UPLOAD_ERROR_MESSAGE** = "상담 정보가 부족하여 업로드할 수 없습니다."
-
-### [입구 A — 이미지 자산관리]
-- **ImageAssetUpload.tsx:** 기존 폼 제출 시 **uploadEngine(item.file, meta)** 호출. meta: customer_name=현장명, category·upload_date=폼값, source=image_asset_upload. 이후 insertImageAsset 동일.
-
-### [입구 B — 상담 히스토리]
-- **ConsultationHistoryLog.tsx:** 클립 버튼 제거 → **이미지 자산관리와 동일한 점선 영역**("클릭하거나 이미지를 여기에 놓으세요", "여러 장 동시 선택 가능", 드래그 앤 드롭, multiple). **uploadEngine(file, meta)** 호출. meta: customer_name=projectName, project_id=consultationId, category='상담/실측', upload_date=오늘, source=consultation_card. 검증 실패 시 토스트로 CONSULTATION_UPLOAD_ERROR_MESSAGE.
-- **데이터 흐름:** 업로드 후 image_assets Insert(category='상담/실측', metadata.source=consultation_card) + consultation_messages Insert(file_url=썸네일, metadata.public_id·cloud_name·image_asset_id). 구글 시트 행 추가 없음.
-- **표시:** 목록에는 썸네일만, 클릭 시 MediaViewer(이미지 자산관리와 동일 확장 뷰). **삭제:** 각 히스토리 항목 우측 휴지통 → consultation_messages DELETE, metadata.image_asset_id 있으면 image_assets DELETE, Storage 경로면 chat-media 삭제.
-
-## 3. 문서 반영
-- **BLUEPRINT.md:** 섹션 3-0-1 "이미지 업로드 단일 엔진 (uploadEngine)" 추가. 입구 A/B, 메타데이터 규격, 데이터 흐름, 상담 히스토리 삭제 명시.
-- **CONTEXT.md:** 섹션 9에 2026-02-20 반영 항목 추가.
-- **JOURNAL.md:** 본일(2026-02-20) 기록 추가.
-- **soul.md:** 2026-02-20 반영 항목 추가.
-
-## 4. 변경된 주요 파일
-- `src/lib/uploadEngine.ts` — 신규(공통 엔진·메타·검증)
-- `src/pages/ImageAssetUpload.tsx` — uploadEngine 호출, meta 구성
-- `src/components/chat/ConsultationHistoryLog.tsx` — 점선 업로드 영역, uploadEngine·검증, 삭제(휴지통), insertImageAsset·consultation_messages 연동
-- `BLUEPRINT.md`, `CONTEXT.md`, `JOURNAL.md`, `soul.md`
+## 세이브 포인트 인덱스
+
+| 태그 | 내용 |
+|------|------|
+| save-20260305 | GAS AutoAddBot + n8n 엔드투엔드 완료 |
+| save-20260222-analyze-quote-edge | analyze-quote Edge Function, parseFileWithAI invoke 전환 |
+| save-20260221-order-assets-dialog-a11y | 발주 자산·uploadEngine 확장·Dialog 접근성 |
+| save-20260214-sheet-update-date | 구글 시트 갱신일 기준 오늘 갱신·D-Day |
+| save-20260214-card-final-estimate | 상담 카드 2행 최종 견적가 표시 |
+| save-20260213-google-sheet-sync | 구글 시트 ↔ 수파베이스 양방향 동기화 |
+| save-20260212-estimate-upload-products-selling-price | 견적서 이중저장·products 판매단가 |
+| save-20260210-ai-quick-estimate-modal | AI 퀵 원가표·참고 견적서 모달 UX |
+| save-20260210-showroom-consultation-image | 쇼룸 통일·상담 삭제·이미지 상담용 |
+| save-20260210-migration-stats | 마이그레이션·6개월 통계·아카이브 |
+| save-20260209-faq-channel | 상담 숨기기·아카이브·마이그레이션·FAQ |
+| save-20260209-archive-migration | 상담 숨기기·아카이브·마이그레이션 날짜 소급 |

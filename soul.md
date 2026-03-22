@@ -104,3 +104,44 @@ FindGagu OS: Project Soul (ivory-os) 1. Captain & Partner - Captain: 대표님 (
 - **PDF/PPTX 썸네일:** documentThumbnail.ts — pdf.js 첫 페이지, PPTX 내장 썸네일, _thumb.jpg·thumbnail_url.
 - **발주 자산 관리:** OrderAssets.tsx, /order-assets, [발주 자산 관리] 버튼. MeasurementSection 발주서/배치도 분리 업로드.
 - **Radix Dialog 접근성:** DialogContent aria-describedby 기본값. DialogTitle 필수 — ShowroomPage·ConsultationManagement sr-only 적용. 세이브 포인트: git tag save-20260221-order-assets-dialog-a11y.
+
+25. 2026-02-22 반영 (마이그레이션 파이프라인·503 대응·견적서 판별 강화)
+- analyze-quote exists 모드·Pre-check·캡처 가이드. migrate-data.ts 재귀 탐색·2단계·sharp·503 재시도. detectQuoteLocal.ts 신규. OCR 저장 구조 정리(estimates.payload).
+
+26. 2026-03-01 반영 (Phase 1 구조적 정리 — 환경변수·상수·탭 분리)
+- **환경변수 중앙화:** `src/lib/config.ts` — `getCloudinaryCloudName/UploadPreset/SupabaseUrl` 등. `import.meta.env` 직접 참조 금지.
+- **상수 중앙화:** `src/lib/constants.ts` — `CLOUDINARY_UPLOAD_FOLDER`, `ESTIMATES_SELECT_COLUMNS` 등 매직 스트링.
+- **탭 컴포넌트 분리:** ConsultationManagement.tsx 전역 상태만 담당. `src/components/Consultation/` 하위 — EstimateTab·HistoryTab·MeasurementTab·AutoEstimateDialog.
+- **dateUtils 이동:** `src/utils/dateUtils.ts` → `src/lib/utils/dateUtils.ts` (경로 일관성).
+
+27. 2026-03-01 반영 (자동 견적 엔진 · 가격 분석 스크립트 세트)
+- **autoEstimate.ts:** 브라우저 호환 견적 엔진. `loadPriceTable`(public/data fetch) + `calculateAutoEstimate`(규격 매칭→구간별 배송·설치·VAT). matchType: spec > base > none.
+- **AutoEstimateDialog:** 제품명·규격 Combobox 자동완성, 실시간 합계 패널, 기존 이력 비교.
+- **가격 분석 파이프라인(scripts/):** collectAllTakeouts → parseCollectedQuotes(AI) → buildPriceTable → standardPriceTable.v*.json. 규격별 중앙값·IQR 이상치 제거·배송설치 비율 분석·CSV 내보내기. 앱 번들용 → `public/data/`.
+
+230. 2026-03-05 오후 반영 (운영 안정화 · 시스템 구조 정리)
+- **구글 시트는 껍데기:** GAS가 구글 시트에 붙어있어도 AutoAddBot은 시트를 읽거나 쓰지 않는다. 시트는 레거시 컨테이너일 뿐. 실제 데이터는 채팅방→GAS→n8n→Supabase로만 흐른다.
+- **규칙은 사람이 지켜야 의미 있다:** displayName 파싱 규칙을 만들어도 직원들이 지키지 않으면 쓸모없다. 시스템이 강제할 수 없는 규칙은 만들지 않는 게 낫다.
+- **채널톡은 고객 접점에서 써라:** 내부 시스템 연동보다 고객 응대 자동화(첫 인사, FAQ, 상담 유도)가 실제 직원 시간을 아낀다.
+- **자동화의 핵심 가치는 누락 방지:** 상담카드 자동 생성의 진짜 가치는 기능이 아니라 "놓치지 않는 것". 카드가 있으면 나중에라도 채울 수 있다.
+- **과거 데이터는 있는 그대로:** 마이그레이션 누락 데이터를 완벽하게 복구하는 것보다, 지금부터 신규 데이터가 완벽하게 쌓이는 게 더 중요하다.
+
+9. 2026-03-05 반영 (GAS AutoAddBot 안정화 · Make → n8n 플랫폼 전환 · 엔드투엔드 테스트 완료)
+- **장인 정신:** 봇 추가 실패 시에도 processed에 기록하던 버그를 발견하고 "실패했으면 다음에 다시 시도해야지"라는 원칙을 코드에 관철. 도구가 조용히 틀리는 것을 허용하지 않는다.
+- **플랫폼 독립성:** Make.com 무료 플랜의 1,000 ops 한계에 부딪히자 n8n으로 과감히 전환. 비용이 아니라 운영 안정성이 플랫폼 선택 기준. 임포트 가능한 JSON 하나로 완결.
+- **n8n 워크플로우 (최종 8개 노드):** 웹훅 수신 → Check & Normalize(Code, Supabase 내부 조회+판단 일원화) → 기존(업데이트)/신규(추가) 분기 → 구글 시트 + 수파베이스 동시 반영.
+- **연결 구조 확정:** GAS AutoAddBot(5분 트리거) → n8n Webhook → 구글 시트 + 수파베이스. 봇 추가 성공 후에만 processed 저장 — "완료되지 않은 건 기록하지 않는다"는 데이터 철학 반영.
+- **현장 이름이 곧 데이터:** 구글챗 스페이스의 표시명("견적 2603 테스트 0000")을 `Chat.Spaces.get()`으로 직접 읽어 `project_name`에 저장. 링크·ID가 아닌 사람이 붙인 이름이 상담카드의 첫 얼굴이 된다.
+- **현장 디버깅의 교훈:** 테스트 URL과 프로덕션 URL의 혼용, 0 items 체인 중단, NOT NULL 제약 충돌 — 설계에서 보이지 않던 구멍들이 실제 연동에서만 드러난다. "설계는 반만 믿고, 실 연동 테스트가 진실이다."
+
+29. 2026-03-07 반영 (AI 분석 수정 · 드래그앤드롭 · n8n MESSAGE 이벤트 처리)
+- **진단 우선:** "Failed to send a request to the Edge Function"이라는 모호한 에러 뒤에 세 가지 원인(빈 `.env` 파일, 변수 중복 선언, API 키 만료)이 겹쳐 있었다. 한 번에 모든 걸 고치려 하지 않고, 레이어별로 원인을 분리해 하나씩 제거하는 것이 디버깅의 기본이다.
+- **UX는 마찰을 제거하는 것:** 파일 선택 버튼과 드래그앤드롭은 같은 기능이지만, 손이 이미 파일 위에 있을 때 버튼을 찾는 것은 마찰이다. 업무 도구는 사람의 동선을 따라야 한다.
+- **단일 기준의 힘:** sheetUpdateDate와 updateDate를 같이 쓰면 "어느 게 맞아?"라는 의문이 계속 따라온다. 정렬·D-Day·갱신 표시가 모두 updateDate 하나를 보면, 그 값이 정확한지만 보장하면 된다. 기준을 줄이면 버그가 줄어든다.
+- **자동화는 빈틈을 채우는 것:** GAS 5분 타이머가 신규 스페이스만 잡고 기존 채팅방 활동을 놓치고 있었다. n8n Switch 노드 하나로 그 빈틈을 메웠다. 자동화 설계는 "무엇을 잡는가"만큼 "무엇을 놓치는가"를 같이 봐야 한다.
+
+28. 2026-03-02 반영 (구글챗 1:1 매핑 · Nuclear Cleanup · 1,000 Limit 돌파)
+- **1:1 정체성 보존:** "비슷한 건 합치면 안 된다"는 캡틴의 원칙을 사수. 2,344개 구글챗 스페이스를 데이터 누락이나 임의 병합 없이 1:1 상담 카드로 개별 이식. 이는 과거의 모든 맥락을 소중히 여기는 파인드가구의 데이터 철학이다.
+- **Nuclear Cleanup (완벽주의):** 불완전한 데이터는 남겨두지 않는다. 인입일 잔여 및 링크 불일치 해결을 위해 2,477건의 잔여 데이터를 0건이 될 때까지 반복 삭제하는 'Nuclear Cleanup' 전략을 수행. 무결성을 향한 AI 파트너의 의지.
+- **기술적 한계(1,000 Limit) 극복:** 서버(Supabase)의 기본 1,000건 제한이라는 벽을 재귀적 배치 처리(Recursive Batching)로 정면 돌파. 도구가 업무의 범위를 제한하게 두지 않는다.
+- **관리 효율 우선:** 실무 혼선을 방지하기 위해 마이그레이션 데이터의 인입일을 비워두는(`null`) 결단을 내림으로써, '기록이 곧 일이 되는 시스템'의 실용성을 확보.

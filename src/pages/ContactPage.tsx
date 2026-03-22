@@ -1,6 +1,6 @@
 /**
  * 쇼룸 시공사례에서 진입하는 문의(상담) 페이지
- * - URL query: site_name, category, image_url → 문의 내용 자동 완성 및 metadata 저장
+ * - URL query: site_name, category, image_url, showroom_context, showroom_entry_label → 문의 내용 자동 완성 및 metadata 저장
  * - 관리자 상담 목록에서 쇼룸 썸네일(showroom_image_url) 확인 가능
  */
 import { useState, useEffect } from 'react'
@@ -18,6 +18,8 @@ export default function ContactPage() {
   const siteName = searchParams.get('site_name') ?? ''
   const category = searchParams.get('category') ?? ''
   const imageUrl = searchParams.get('image_url') ?? ''
+  const showroomContext = searchParams.get('showroom_context') ?? ''
+  const showroomEntryLabel = searchParams.get('showroom_entry_label') ?? ''
 
   const [companyName, setCompanyName] = useState('')
   const [managerName, setManagerName] = useState('')
@@ -27,6 +29,13 @@ export default function ContactPage() {
 
   useEffect(() => {
     const cat = (category || '').trim()
+    const showroomContextTrim = showroomContext.trim()
+    const showroomEntryTrim = showroomEntryLabel.trim()
+    if (showroomContextTrim) {
+      const entryPrefix = showroomEntryTrim ? `[${showroomEntryTrim}] ` : ''
+      setMessage(`${entryPrefix}${showroomContextTrim} 관련 상담을 요청합니다.`)
+      return
+    }
     if (cat === '학원 자습실 문의') {
       setMessage('학원 자습실 맞춤형 예산 상담을 신청합니다.')
       return
@@ -43,7 +52,7 @@ export default function ContactPage() {
     }
     const initial = siteName ? DEFAULT_MESSAGE(siteName) : ''
     setMessage(initial)
-  }, [siteName, category, searchParams])
+  }, [siteName, category, searchParams, showroomContext, showroomEntryLabel])
 
   const [submitting, setSubmitting] = useState(false)
 
@@ -70,6 +79,8 @@ export default function ContactPage() {
         showroom_site_name: siteName || null,
         showroom_category: category || null,
         showroom_image_url: imageUrl || null,
+        showroom_context: showroomContext || null,
+        showroom_entry_label: showroomEntryLabel || null,
         ...(isApartmentRenewal && {
           apartment_complex_name: company || null,
           facility_condition: (facilityCondition || '').trim() || null,
@@ -79,7 +90,7 @@ export default function ContactPage() {
         company_name: company || (isHighSchoolConsult ? '(학교명 미입력)' : isApartmentRenewal ? '(단지명 미입력)' : '(업체명 없음)'),
         manager_name: displayNameForSubmit,
         contact: phone,
-        status: '상담중',
+        status: '접수',
         metadata: metadata as Json,
         is_visible: true,
         expected_revenue: 0,

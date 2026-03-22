@@ -5,10 +5,13 @@
  * - base_alt_text: display_name에서 도출한 {date}_{company}_{space} — 싱글 소스, 외부 AI는 이를 접두어로 사용
  */
 import { supabase } from '@/lib/supabase'
+import { getCloudinaryCloudName, getCloudinaryUploadPreset } from '@/lib/config'
+import { CLOUDINARY_ADMIN_THUMBNAIL_OPTIONS } from '@/lib/constants'
 import type { ProjectImageAsset, SyncStatus } from '@/types/projectImage'
 import { USAGE_TYPES, REVIEW_STATUSES, type UsageType, type ReviewStatus } from '@/types/projectImage'
 import type { ImageAssetExportItem } from '@/types/imageExport'
 import { ALT_TEXT_PROMPT_GUIDE } from '@/types/imageExport'
+import type { Json } from '@/types/database'
 
 /** 이미지 추출 도구에서 텍스트(업체명, 날짜 등) 합성 파라미터를 받을 때 사용. (추후 구현) */
 export type { ImageExportOptions, ImageAssetExportItem } from '@/types/imageExport'
@@ -57,15 +60,6 @@ export function getCloudinaryUploadOptions(publicId: string): {
   }
 }
 
-function getCloudinaryCloudName(): string {
-  const name = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME
-  return typeof name === 'string' && name.trim() ? name.trim() : 'demo'
-}
-
-function getCloudinaryUploadPreset(): string | null {
-  const preset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET
-  return typeof preset === 'string' && preset.trim() ? preset.trim() : null
-}
 
 /** API 키가 설정되어 있으면 true. 업로드 창에서 테스트 모드 안내 표시용 */
 export function isCloudinaryConfigured(): boolean {
@@ -83,6 +77,129 @@ export function isMockPublicId(publicId: string | null | undefined): boolean {
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
+
+function parseBeforeAfterMeta(metadata: unknown): {
+  role: 'before' | 'after' | null
+  groupId: string | null
+  raw: Record<string, unknown> | null
+} {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return { role: null, groupId: null, raw: null }
+  }
+  const raw = metadata as Record<string, unknown>
+  const role = raw.before_after_role === 'before' || raw.before_after_role === 'after'
+    ? raw.before_after_role
+    : null
+  const groupId = typeof raw.before_after_group_id === 'string' && raw.before_after_group_id.trim()
+    ? raw.before_after_group_id.trim()
+    : null
+  return { role, groupId, raw }
+}
+
+function parseStoredSpaceId(value: unknown): string | null {
+  if (typeof value !== 'string' || !value.trim()) return null
+  const raw = value.trim()
+  if (raw.startsWith('spaces/')) return raw.slice('spaces/'.length) || null
+  const roomMatch = raw.match(/\/room\/([A-Za-z0-9_-]+)/)
+  if (roomMatch?.[1]) return roomMatch[1]
+  return raw
+}
+
+function normalizeConsultationName(value: string | null | undefined): string {
+  const normalized = (value ?? '').trim().replace(/\s+/g, ' ')
+  if (!normalized) return ''
+  return normalized
+    .replace(/^(상담접수|견적중|계약완료|시공완료|접수|견적|진행|완료|거절|무효|AS)\s+/i, '')
+    .trim()
+    .toLowerCase()
+}
+
+function normalizeDisplayToken(value: string | null | undefined, fallback: string): string {
+  const normalized = (value ?? '').trim().replace(/\s+/g, ' ')
+  return normalized || fallback
+}
+
+function formatExternalDisplayNameMonth(...dateCandidates: Array<string | null | undefined>): string | null {
+  for (const candidate of dateCandidates) {
+    const raw = (candidate ?? '').trim()
+    if (!raw) continue
+    const parsed = new Date(raw)
+    const time = parsed.getTime()
+    if (!Number.isFinite(time)) continue
+    const year = String(parsed.getFullYear()).slice(-2)
+    const month = String(parsed.getMonth() + 1).padStart(2, '0')
+    return `${year}${month}`
+  }
+  return null
+}
+
+function getExternalDisplayNamePhoneSuffix(value: string | null | undefined): string {
+  const digits = (value ?? '').replace(/\D/g, '')
+  return digits.length >= 4 ? digits.slice(-4) : '0000'
+}
+
+export function buildExternalDisplayName(params: {
+  requestDate?: string | null
+  startDate?: string | null
+  createdAt?: string | null
+  region?: string | null
+  industry?: string | null
+  customerPhone?: string | null
+}): string | null {
+  const monthCode = formatExternalDisplayNameMonth(params.requestDate, params.startDate, params.createdAt)
+  if (!monthCode) return null
+  const region = normalizeDisplayToken(params.region, '미지정')
+  const industry = normalizeDisplayToken(params.industry, '기타')
+  const phoneSuffix = getExternalDisplayNamePhoneSuffix(params.customerPhone)
+  return `${monthCode} ${region} ${industry} ${phoneSuffix}`
+}
+
+function parseImageAssetMeta(metadata: unknown): {
+  raw: Record<string, unknown>
+  spaceId: string | null
+  consultationId: string | null
+  canonicalSiteName: string | null
+  legacySiteName: string | null
+  spaceDisplayName: string | null
+  externalDisplayName: string | null
+} {
+  const raw = metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+    ? { ...(metadata as Record<string, unknown>) }
+    : {}
+  const consultationId = typeof raw.consultation_id === 'string' && raw.consultation_id.trim()
+    ? raw.consultation_id.trim()
+    : null
+  const canonicalSiteName = typeof raw.canonical_site_name === 'string' && raw.canonical_site_name.trim()
+    ? raw.canonical_site_name.trim()
+    : null
+  const legacySiteName = typeof raw.legacy_site_name === 'string' && raw.legacy_site_name.trim()
+    ? raw.legacy_site_name.trim()
+    : null
+  const spaceDisplayName = typeof raw.space_display_name === 'string' && raw.space_display_name.trim()
+    ? raw.space_display_name.trim()
+    : null
+  const externalDisplayName = typeof raw.external_display_name === 'string' && raw.external_display_name.trim()
+    ? raw.external_display_name.trim()
+    : null
+  return {
+    raw,
+    spaceId: parseStoredSpaceId(raw.space_id),
+    consultationId,
+    canonicalSiteName,
+    legacySiteName,
+    spaceDisplayName,
+    externalDisplayName,
+  }
+}
+
+export function getExternalDisplayNameFromImageAssetMeta(metadata: unknown): string | null {
+  return parseImageAssetMeta(metadata).externalDisplayName
+}
+
+const IMAGE_ASSET_MANAGEMENT_SELECT =
+  'id, created_at, cloudinary_url, thumbnail_url, site_name, is_main, product_name, color_name, location, business_type, category, ai_score, view_count, internal_score, share_count, is_consultation, metadata'
+const IMAGE_ASSET_MANAGEMENT_CATEGORIES = ['책상', '의자', '책장', '사물함', '상담/실측', '기타'] as const
+const IMAGE_ASSET_PAGE_SIZE = 500
 
 /**
  * BLUEPRINT 이미지 이원화: 시공 사진 업로드는 반드시 Cloudinary(고화질) + Supabase(썸네일) 분기.
@@ -252,8 +369,7 @@ export function uploadConstructionImageDualWithProgress(
   })
 }
 
-/** 관리자 목록용 표준 썸네일 변환 (w_800, 보정·포맷 최적화). imageAssetUploadService.CLOUDINARY_ADMIN_THUMBNAIL_OPTIONS와 동일 유지 */
-const ADMIN_THUMBNAIL_OPTIONS = 'w_800,c_scale,e_improve,e_sharpen,f_auto,q_auto'
+/** 관리자 목록용 표준 썸네일 변환 파라미터 — src/lib/constants.ts 의 CLOUDINARY_ADMIN_THUMBNAIL_OPTIONS 사용 */
 
 /**
  * Cloudinary URL 생성 (변환 파라미터 포함)
@@ -269,7 +385,7 @@ export function buildCloudinaryUrl(
   if (type === 'marketing') {
     return `${base}/f_auto,q_auto,w_1200/${publicId}`
   }
-  return `${base}/${ADMIN_THUMBNAIL_OPTIONS}/${publicId}`
+  return `${base}/${CLOUDINARY_ADMIN_THUMBNAIL_OPTIONS}/${publicId}`
 }
 
 /** 상담 타임라인 등에서 사용할 Cloudinary 변환 URL (이미지 자산 관리와 동일 규격 활용) */
@@ -408,11 +524,20 @@ function rowImageAssetToProjectAsset(row: {
   internal_score?: number | null
   share_count?: number | null
   is_consultation?: boolean | null
+  metadata?: unknown
 }): ProjectImageAsset {
   const url = row.cloudinary_url?.trim() || ''
   const thumbnailUrl = row.thumbnail_url?.trim() || null
   const match = url.match(/\/upload\/(.+)$/)
   const cloudinaryPublicId = match ? match[1] : `image_asset_${row.id}`
+  const beforeAfter = parseBeforeAfterMeta(row.metadata)
+  const meta = parseImageAssetMeta(row.metadata)
+  const canonicalSiteName =
+    meta.canonicalSiteName ||
+    row.site_name?.trim() ||
+    meta.spaceDisplayName ||
+    row.location?.trim() ||
+    null
   return {
     id: row.id,
     cloudinaryPublicId,
@@ -421,8 +546,11 @@ function rowImageAssetToProjectAsset(row: {
     url,
     thumbnailUrl,
     storagePath: null,
-    consultationId: null,
-    projectTitle: row.site_name?.trim() || row.location?.trim() || null,
+    consultationId: meta.consultationId,
+    projectTitle: canonicalSiteName,
+    siteName: canonicalSiteName,
+    externalDisplayName: meta.externalDisplayName,
+    location: row.location?.trim() || null,
     industry: row.business_type?.trim() || null,
     viewCount: Number(row.view_count ?? 0),
     createdAt: row.created_at ?? new Date().toISOString(),
@@ -437,6 +565,194 @@ function rowImageAssetToProjectAsset(row: {
     internalScore: row.internal_score != null ? row.internal_score : null,
     shareCount: row.share_count != null ? Number(row.share_count) : 0,
     isConsultation: row.is_consultation === true,
+    beforeAfterRole: beforeAfter.role,
+    beforeAfterGroupId: beforeAfter.groupId,
+    metadata: meta.raw,
+    spaceId: meta.spaceId,
+  }
+}
+
+type ConsultationSpaceRow = {
+  id: string
+  project_name: string | null
+  channel_chat_id: string | null
+  request_date: string | null
+  start_date: string | null
+  created_at: string | null
+  region: string | null
+  industry: string | null
+  customer_phone: string | null
+  metadata?: Record<string, unknown> | null
+}
+
+type ImageAssetMigrationRow = {
+  id: string
+  site_name: string | null
+  business_type: string | null
+  location: string | null
+  metadata?: Record<string, unknown> | null
+}
+
+export type ImageAssetSpaceBackfillResult = {
+  updated: number
+  matchedByConsultationId: number
+  matchedBySpaceId: number
+  matchedByName: number
+  skippedUnmatched: number
+  skippedAmbiguous: number
+}
+
+export async function backfillImageAssetSpaceMetadata(): Promise<ImageAssetSpaceBackfillResult> {
+  const consultations: ConsultationSpaceRow[] = []
+  for (let from = 0; ; from += IMAGE_ASSET_PAGE_SIZE) {
+    const to = from + IMAGE_ASSET_PAGE_SIZE - 1
+    const { data, error } = await supabase
+      .from('consultations')
+      .select('id, project_name, channel_chat_id, request_date, start_date, created_at, region, industry, customer_phone, metadata')
+      .order('created_at', { ascending: false })
+      .range(from, to)
+    if (error) throw new Error(error.message)
+    if (!data?.length) break
+    consultations.push(...(data as unknown as ConsultationSpaceRow[]))
+    if (data.length < IMAGE_ASSET_PAGE_SIZE) break
+  }
+
+  const imageAssets: ImageAssetMigrationRow[] = []
+  for (let from = 0; ; from += IMAGE_ASSET_PAGE_SIZE) {
+    const to = from + IMAGE_ASSET_PAGE_SIZE - 1
+    const { data, error } = await supabase
+      .from('image_assets')
+      .select('id, site_name, business_type, location, metadata')
+      .order('created_at', { ascending: false })
+      .range(from, to)
+    if (error) throw new Error(error.message)
+    if (!data?.length) break
+    imageAssets.push(...(data as ImageAssetMigrationRow[]))
+    if (data.length < IMAGE_ASSET_PAGE_SIZE) break
+  }
+
+  const consultationsById = new Map<string, ConsultationSpaceRow>()
+  const consultationsBySpaceId = new Map<string, ConsultationSpaceRow>()
+  const consultationsByNormalizedName = new Map<string, ConsultationSpaceRow[]>()
+
+  consultations.forEach((row) => {
+    consultationsById.set(row.id, row)
+    const metaSpaceId = row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
+      ? parseStoredSpaceId((row.metadata as Record<string, unknown>).space_id)
+      : null
+    const spaceId = metaSpaceId || parseStoredSpaceId(row.channel_chat_id)
+    if (spaceId && !consultationsBySpaceId.has(spaceId)) consultationsBySpaceId.set(spaceId, row)
+    const normalizedName = normalizeConsultationName(row.project_name)
+    if (!normalizedName) return
+    const list = consultationsByNormalizedName.get(normalizedName) ?? []
+    list.push(row)
+    consultationsByNormalizedName.set(normalizedName, list)
+  })
+
+  let updated = 0
+  let matchedByConsultationId = 0
+  let matchedBySpaceId = 0
+  let matchedByName = 0
+  let skippedUnmatched = 0
+  let skippedAmbiguous = 0
+
+  for (const row of imageAssets) {
+    const meta = parseImageAssetMeta(row.metadata)
+    let matched: ConsultationSpaceRow | null = null
+    let matchSource: 'consultation' | 'space' | 'name' | null = null
+
+    if (meta.consultationId && consultationsById.has(meta.consultationId)) {
+      matched = consultationsById.get(meta.consultationId) ?? null
+      matchSource = 'consultation'
+    } else if (meta.spaceId && consultationsBySpaceId.has(meta.spaceId)) {
+      matched = consultationsBySpaceId.get(meta.spaceId) ?? null
+      matchSource = 'space'
+    } else {
+      const normalizedSiteName = normalizeConsultationName(
+        meta.canonicalSiteName || row.site_name || meta.spaceDisplayName || meta.legacySiteName
+      )
+      const nameMatches = normalizedSiteName ? (consultationsByNormalizedName.get(normalizedSiteName) ?? []) : []
+      if (nameMatches.length === 1) {
+        matched = nameMatches[0]
+        matchSource = 'name'
+      } else if (nameMatches.length > 1) {
+        skippedAmbiguous += 1
+        continue
+      }
+    }
+
+    if (!matched) {
+      skippedUnmatched += 1
+      continue
+    }
+
+    const matchedMeta = matched.metadata && typeof matched.metadata === 'object' && !Array.isArray(matched.metadata)
+      ? (matched.metadata as Record<string, unknown>)
+      : {}
+    const matchedSpaceId = parseStoredSpaceId(matchedMeta.space_id) || parseStoredSpaceId(matched.channel_chat_id)
+    const canonicalSiteName = matched.project_name?.trim() || meta.canonicalSiteName || row.site_name?.trim() || meta.spaceDisplayName
+    const externalDisplayName = buildExternalDisplayName({
+      requestDate: matched.request_date,
+      startDate: matched.start_date,
+      createdAt: matched.created_at,
+      region: row.location?.trim() || null,
+      industry: row.business_type?.trim() || null,
+      customerPhone: matched.customer_phone,
+    })
+    const currentSiteName = row.site_name?.trim() || null
+    const nextMetadata: Record<string, unknown> = { ...meta.raw }
+    let changed = false
+
+    if (matched.id && nextMetadata.consultation_id !== matched.id) {
+      nextMetadata.consultation_id = matched.id
+      changed = true
+    }
+    if (matchedSpaceId && parseStoredSpaceId(nextMetadata.space_id) !== matchedSpaceId) {
+      nextMetadata.space_id = matchedSpaceId
+      changed = true
+    }
+    if (canonicalSiteName && nextMetadata.canonical_site_name !== canonicalSiteName) {
+      nextMetadata.canonical_site_name = canonicalSiteName
+      changed = true
+    }
+    if (currentSiteName && canonicalSiteName && currentSiteName !== canonicalSiteName && !nextMetadata.legacy_site_name) {
+      nextMetadata.legacy_site_name = currentSiteName
+      changed = true
+    }
+    if (canonicalSiteName && nextMetadata.space_display_name !== canonicalSiteName) {
+      nextMetadata.space_display_name = canonicalSiteName
+      changed = true
+    }
+    if (externalDisplayName && nextMetadata.external_display_name !== externalDisplayName) {
+      nextMetadata.external_display_name = externalDisplayName
+      changed = true
+    }
+
+    const nextSiteName = canonicalSiteName || currentSiteName
+    if (!changed && nextSiteName === currentSiteName) continue
+
+    const { error } = await supabase
+      .from('image_assets')
+      .update({
+        site_name: nextSiteName ?? null,
+        metadata: nextMetadata as Json,
+      })
+      .eq('id', row.id)
+    if (error) throw new Error(error.message)
+
+    updated += 1
+    if (matchSource === 'consultation') matchedByConsultationId += 1
+    else if (matchSource === 'space') matchedBySpaceId += 1
+    else if (matchSource === 'name') matchedByName += 1
+  }
+
+  return {
+    updated,
+    matchedByConsultationId,
+    matchedBySpaceId,
+    matchedByName,
+    skippedUnmatched,
+    skippedAmbiguous,
   }
 }
 
@@ -444,12 +760,38 @@ function rowImageAssetToProjectAsset(row: {
 export async function fetchAllProjectAssets(): Promise<ProjectImageAsset[]> {
   const [projResult, assetResult] = await Promise.all([
     supabase.from('project_images').select('*').order('created_at', { ascending: false }),
-    supabase.from('image_assets').select('id, created_at, cloudinary_url, thumbnail_url, site_name, is_main, product_name, color_name, location, business_type, category, ai_score, view_count, internal_score, share_count, is_consultation').order('created_at', { ascending: false }),
+    supabase.from('image_assets').select(IMAGE_ASSET_MANAGEMENT_SELECT).in('category', [...IMAGE_ASSET_MANAGEMENT_CATEGORIES]).order('created_at', { ascending: false }),
   ])
   const fromProject = (projResult.data ?? []).map((r: Parameters<typeof rowToProjectAsset>[0]) => rowToProjectAsset(r))
   const fromAssets = (assetResult.data ?? []).map((r: Parameters<typeof rowImageAssetToProjectAsset>[0]) => rowImageAssetToProjectAsset(r))
   const merged = [...fromProject, ...fromAssets].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
   return merged
+}
+
+/** 이미지 자산 관리 전용: 특정 업종 image_assets를 페이지 단위로 끝까지 조회 */
+export async function fetchImageAssetsByBusinessType(businessType: string): Promise<ProjectImageAsset[]> {
+  const sector = businessType.trim()
+  if (!sector) return []
+
+  const rows: Parameters<typeof rowImageAssetToProjectAsset>[0][] = []
+  let from = 0
+
+  while (true) {
+    const { data, error } = await supabase
+      .from('image_assets')
+      .select(IMAGE_ASSET_MANAGEMENT_SELECT)
+      .eq('business_type', sector)
+      .in('category', [...IMAGE_ASSET_MANAGEMENT_CATEGORIES])
+      .order('created_at', { ascending: false })
+      .range(from, from + IMAGE_ASSET_PAGE_SIZE - 1)
+
+    if (error || !data?.length) break
+    rows.push(...(data as Parameters<typeof rowImageAssetToProjectAsset>[0][]))
+    if (data.length < IMAGE_ASSET_PAGE_SIZE) break
+    from += IMAGE_ASSET_PAGE_SIZE
+  }
+
+  return rows.map((row) => rowImageAssetToProjectAsset(row))
 }
 
 /** image_assets 테이블 기반 [연도 > 지역 > 현장명] + 업종 + 제품명 트리 데이터. */
@@ -537,21 +879,66 @@ export interface ShowroomImageAsset {
   cloudinary_url: string
   thumbnail_url: string | null
   site_name: string | null
+  canonical_site_name?: string | null
+  external_display_name?: string | null
+  space_id?: string | null
   location: string | null
   business_type: string | null
   color_name: string | null
   product_name: string | null
   is_main: boolean
   created_at: string | null
+  view_count: number
+  share_count: number
+  internal_score: number | null
+  before_after_role?: 'before' | 'after' | null
+  before_after_group_id?: string | null
 }
 
+export interface ShowroomSiteOverride {
+  id: string
+  site_name: string
+  industry_label: string
+  section_key: 'industry' | 'before_after'
+  manual_priority: number | null
+  note: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type ShowroomSiteOverrideSectionKey = ShowroomSiteOverride['section_key']
+
 export async function fetchShowroomImageAssets(): Promise<ShowroomImageAsset[]> {
-  const { data, error } = await supabase
-    .from('image_assets')
-    .select('id, cloudinary_url, thumbnail_url, site_name, location, business_type, color_name, product_name, is_main, created_at')
-    .order('created_at', { ascending: false })
-  if (error) return []
-  return (data ?? []).map((r: Record<string, unknown>) => ({
+  const rows: Record<string, unknown>[] = []
+  let from = 0
+
+  while (true) {
+    const { data, error } = await supabase
+      .from('image_assets')
+      .select('id, cloudinary_url, thumbnail_url, site_name, location, business_type, color_name, product_name, is_main, created_at, view_count, share_count, internal_score, category, metadata')
+      .eq('is_consultation', true)
+      .not('category', 'in', '("purchase_order","floor_plan")')
+      .order('created_at', { ascending: false })
+      .range(from, from + IMAGE_ASSET_PAGE_SIZE - 1)
+
+    if (error || !data?.length) break
+    rows.push(...(data as Record<string, unknown>[]))
+    if (data.length < IMAGE_ASSET_PAGE_SIZE) break
+    from += IMAGE_ASSET_PAGE_SIZE
+  }
+
+  return rows.map((r: Record<string, unknown>) => ({
+    ...(() => {
+      const beforeAfter = parseBeforeAfterMeta(r.metadata)
+      const meta = parseImageAssetMeta(r.metadata)
+      return {
+        before_after_role: beforeAfter.role,
+        before_after_group_id: beforeAfter.groupId,
+        canonical_site_name: meta.canonicalSiteName,
+        external_display_name: meta.externalDisplayName,
+        space_id: meta.spaceId,
+      }
+    })(),
     id: String(r.id),
     cloudinary_url: String(r.cloudinary_url ?? ''),
     thumbnail_url: r.thumbnail_url != null ? String(r.thumbnail_url) : null,
@@ -562,12 +949,128 @@ export async function fetchShowroomImageAssets(): Promise<ShowroomImageAsset[]> 
     product_name: r.product_name != null ? String(r.product_name) : null,
     is_main: Boolean(r.is_main),
     created_at: r.created_at != null ? String(r.created_at) : null,
+    view_count: Number(r.view_count ?? 0),
+    share_count: Number(r.share_count ?? 0),
+    internal_score: typeof r.internal_score === 'number' ? r.internal_score : null,
   }))
+}
+
+export async function fetchShowroomSiteOverrides(): Promise<ShowroomSiteOverride[]> {
+  const { data, error } = await supabase
+    .from('showroom_site_overrides')
+    .select('*')
+    .order('manual_priority', { ascending: true, nullsFirst: false })
+    .order('updated_at', { ascending: false })
+
+  if (error) return []
+
+  const rows = (data ?? []) as unknown as Record<string, unknown>[]
+
+  return rows.map((row) => ({
+    id: String(row.id),
+    site_name: String(row.site_name),
+    industry_label: String(row.industry_label),
+    section_key: row.section_key === 'before_after' ? 'before_after' : 'industry',
+    manual_priority: typeof row.manual_priority === 'number' ? row.manual_priority : null,
+    note: row.note != null ? String(row.note) : null,
+    created_at: String(row.created_at),
+    updated_at: String(row.updated_at),
+  }))
+}
+
+export async function saveShowroomSiteOverride(
+  siteName: string,
+  industryLabel: string,
+  manualPriority: number | null,
+  sectionKey: ShowroomSiteOverrideSectionKey = 'industry'
+): Promise<{ error: Error | null }> {
+  const normalizedSiteName = siteName.trim()
+  const normalizedIndustryLabel = industryLabel.trim()
+
+  if (!normalizedSiteName || !normalizedIndustryLabel) {
+    return { error: new Error('현장명 또는 업종이 비어 있어 우선순위를 저장할 수 없습니다.') }
+  }
+
+  if (manualPriority == null) {
+    const { error } = await supabase
+      .from('showroom_site_overrides')
+      .delete()
+      .eq('site_name', normalizedSiteName)
+      .eq('industry_label', normalizedIndustryLabel)
+      .eq('section_key', sectionKey)
+    return { error: error ?? null }
+  }
+
+  const { error } = await supabase
+    .from('showroom_site_overrides')
+    .upsert(
+      {
+        site_name: normalizedSiteName,
+        industry_label: normalizedIndustryLabel,
+        section_key: sectionKey,
+        manual_priority: manualPriority,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'site_name,industry_label,section_key', ignoreDuplicates: false }
+    )
+
+  return { error: error ?? null }
 }
 
 /** image_assets is_consultation 토글 — 상담용 전용 필터·공유 바구니 정렬용 */
 export async function updateImageAssetConsultation(assetId: string, isConsultation: boolean): Promise<{ error: Error | null }> {
   const { error } = await supabase.from('image_assets').update({ is_consultation: isConsultation }).eq('id', assetId)
+  return { error: error ?? null }
+}
+
+export async function updateImageAssetBeforeAfter(
+  assetId: string,
+  currentMetadata: Record<string, unknown> | null | undefined,
+  patch: { role: 'before' | 'after' | null; groupId: string | null }
+): Promise<{ error: Error | null }> {
+  const nextMetadata: Record<string, unknown> = { ...(currentMetadata ?? {}) }
+  if (patch.role) nextMetadata.before_after_role = patch.role
+  else delete nextMetadata.before_after_role
+  if (patch.groupId) nextMetadata.before_after_group_id = patch.groupId
+  else delete nextMetadata.before_after_group_id
+  const { error } = await supabase.from('image_assets').update({ metadata: nextMetadata as Json }).eq('id', assetId)
+  return { error: error ?? null }
+}
+
+/** image_assets 업종 수정 — 잘못 분류된 업종만 최소 수정 */
+export async function updateImageAssetIndustry(
+  assetId: string,
+  industry: string | null
+): Promise<{ error: Error | null }> {
+  const { error } = await supabase
+    .from('image_assets')
+    .update({ business_type: industry?.trim() || null })
+    .eq('id', assetId)
+  return { error: error ?? null }
+}
+
+/** image_assets 지역 수정 — 업로드 시 누락된 location만 최소 수정 */
+export async function updateImageAssetLocation(
+  assetId: string,
+  location: string | null
+): Promise<{ error: Error | null }> {
+  const { error } = await supabase
+    .from('image_assets')
+    .update({ location: location?.trim() || null })
+    .eq('id', assetId)
+  return { error: error ?? null }
+}
+
+/** image_assets 제품명·색상 수정 — 기존 업로드 사진의 인라인 편집 저장용 */
+export async function updateImageAssetTagColor(
+  assetId: string,
+  patch: { productName?: string | null; colorName?: string | null }
+): Promise<{ error: Error | null }> {
+  const dbPayload: Record<string, unknown> = {}
+  if (patch.productName !== undefined) dbPayload.product_name = patch.productName?.trim() || null
+  if (patch.colorName !== undefined) dbPayload.color_name = patch.colorName?.trim() || null
+  if (Object.keys(dbPayload).length === 0) return { error: null }
+  const { error } = await supabase.from('image_assets').update(dbPayload).eq('id', assetId)
   return { error: error ?? null }
 }
 

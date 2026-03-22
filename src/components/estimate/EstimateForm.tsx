@@ -1,7 +1,7 @@
 /**
  * 견적서 표준 양식 — 예산 기획(PROPOSAL) / 확정 견적(FINAL) 듀얼 모드
  * - PROPOSAL: 예산 기획안, 범위 단가·패키지·면책 문구
- * - FINAL: 표준 견적서, 승인 시 저장·상담 상태 견적발송
+ * - FINAL: 표준 견적서, 승인 시 저장·상담 상태 견적
  */
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
@@ -1196,7 +1196,7 @@ export const EstimateForm = forwardRef<EstimateFormHandle, EstimateFormProps>(fu
             onClick={() => setMode('FINAL')}
             className={cn('px-3 py-1.5 text-sm font-medium transition-colors', mode === 'FINAL' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:bg-muted')}
           >
-            확정 견적(FINAL)
+            견적서
           </button>
         </div>
       </div>

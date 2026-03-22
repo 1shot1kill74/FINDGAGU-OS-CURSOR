@@ -1,19 +1,24 @@
 /**
  * 실측 탭 — 발주서·배치도 분리 업로드
- * - [발주서 업로드]: PPT/PDF → order_documents (Supabase Storage)
- * - [배치도 업로드]: 이미지 → image_assets (Cloudinary), PDF → order_documents
+ * - [발주서 업로드]: 새 order_assets 전용 테이블에 저장
+ * - [배치도 업로드]: 이미지/PDF 모두 새 order_assets 전용 테이블에 저장
  * - OrderDocumentsGallery: 발주서 PDF/PPT 갤러리
  */
 import { useState, useEffect, useCallback } from 'react'
 import { FileText, LayoutGrid, Plus, Loader2, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { uploadEngine, deleteCloudinaryImage } from '@/lib/uploadEngine'
-import { insertImageAsset } from '@/lib/imageAssetUploadService'
+import { uploadEngine } from '@/lib/uploadEngine'
 import { validateMetadataForConsultation } from '@/lib/uploadEngine'
 import { supabase } from '@/lib/supabase'
 import { toast } from 'sonner'
 import { OrderDocumentsGallery } from '@/components/order/OrderDocumentsGallery'
 import type { OrderDocument } from '@/types/orderDocument'
+import type { OrderAsset, OrderAssetFileType } from '@/types/orderAsset'
+import {
+  deleteOrderAsset as deleteOrderAssetRecord,
+  fetchOrderAssetsByConsultation,
+  insertOrderAsset,
+} from '@/lib/orderAssetService'
 
 const CATEGORY_PURCHASE_ORDER = 'purchase_order'
 const CATEGORY_FLOOR_PLAN = 'floor_plan'
@@ -21,21 +26,11 @@ const CATEGORY_FLOOR_PLAN = 'floor_plan'
 const ACCEPT_PURCHASE_ORDER = '.pdf,.ppt,.pptx,application/pdf,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation'
 const ACCEPT_FLOOR_PLAN = 'image/*,.pdf,application/pdf'
 
-interface OrderAssetItem {
-  id: string
-  cloudinary_url: string
-  thumbnail_url: string | null
-  category: string | null
-  site_name: string | null
-  storage_type?: string | null
-  storage_path?: string | null
-  created_at: string | null
-  metadata?: { project_id?: string; public_id?: string; file_type?: string; file_name?: string; storage_path?: string }
-}
-
 const hasThumbnail = (a: OrderAssetItem) => !!(a.thumbnail_url && a.thumbnail_url.trim())
 const isDocWithoutThumb = (a: OrderAssetItem) =>
-  (a.metadata?.file_type === 'pdf' || /\.(pdf|ppt|pptx)$/i.test(a.storage_path ?? '')) && !hasThumbnail(a)
+  (a.file_type === 'pdf' || a.file_type === 'ppt' || a.file_type === 'pptx' || /\.(pdf|ppt|pptx)$/i.test(a.storage_path ?? '')) && !hasThumbnail(a)
+
+type OrderAssetItem = OrderAsset
 
 interface MeasurementSectionProps {
   consultationId: string
@@ -63,17 +58,8 @@ export function MeasurementSection({
   const [uploadingPurchase, setUploadingPurchase] = useState(false)
   const [uploadingFloor, setUploadingFloor] = useState(false)
   const fetchOrderAssets = useCallback(async () => {
-    const { data } = await supabase
-      .from('image_assets')
-      .select('id, cloudinary_url, thumbnail_url, category, site_name, storage_type, storage_path, created_at, metadata')
-      .or(`category.eq.${CATEGORY_FLOOR_PLAN},category.eq.${CATEGORY_PURCHASE_ORDER}`)
-      .order('created_at', { ascending: false })
-    if (!data) return
-    const filtered = data.filter((row) => {
-      const meta = (row as { metadata?: { project_id?: string } }).metadata
-      return meta?.project_id === consultationId
-    })
-    setOrderAssets(filtered as OrderAssetItem[])
+    const data = await fetchOrderAssetsByConsultation(consultationId)
+    setOrderAssets(data)
   }, [consultationId])
 
   useEffect(() => {
@@ -109,15 +95,18 @@ export function MeasurementSection({
     setUploadingPurchase(true)
     try {
       const result = await uploadEngine(file, { ...meta, category: CATEGORY_PURCHASE_ORDER })
-      const res = await insertImageAsset({
-        cloudinary_url: result.cloudinary_url,
-        thumbnail_url: result.thumbnail_url,
-        site_name: projectName?.trim() || null,
-        category: CATEGORY_PURCHASE_ORDER,
+      const res = await insertOrderAsset({
+        consultation_id: consultationId,
+        asset_type: CATEGORY_PURCHASE_ORDER,
         storage_type: result.storage_type,
+        file_url: result.cloudinary_url,
+        thumbnail_url: result.thumbnail_url,
         storage_path: result.storage_path ?? null,
+        public_id: result.public_id ?? null,
+        file_name: file.name,
+        file_type: getOrderDocFileType(file) as OrderAssetFileType,
+        site_name: projectName?.trim() || null,
         metadata: {
-          project_id: consultationId,
           storage_path: result.storage_path,
           file_name: file.name,
           file_type: getOrderDocFileType(file),
@@ -149,16 +138,18 @@ export function MeasurementSection({
     try {
       if (isImage) {
         const result = await uploadEngine(file, { ...meta, category: CATEGORY_FLOOR_PLAN })
-        const res = await insertImageAsset({
-          cloudinary_url: result.cloudinary_url,
-          thumbnail_url: result.thumbnail_url,
-          site_name: projectName?.trim() || null,
-          category: CATEGORY_FLOOR_PLAN,
+        const res = await insertOrderAsset({
+          consultation_id: consultationId,
+          asset_type: CATEGORY_FLOOR_PLAN,
           storage_type: result.storage_type,
+          file_url: result.cloudinary_url,
+          thumbnail_url: result.thumbnail_url,
           storage_path: result.storage_path ?? null,
+          public_id: result.public_id ?? null,
+          file_name: file.name,
+          file_type: 'image',
+          site_name: projectName?.trim() || null,
           metadata: {
-            project_id: consultationId,
-            public_id: result.public_id,
             storage_path: result.storage_path,
             space_info: {}, // AI 참조용: 평수(pyeong), 구조(structure) 등
           },
@@ -168,15 +159,18 @@ export function MeasurementSection({
         fetchOrderAssets()
       } else {
         const result = await uploadEngine(file, { ...meta, category: CATEGORY_FLOOR_PLAN })
-        const res = await insertImageAsset({
-          cloudinary_url: result.cloudinary_url,
-          thumbnail_url: result.thumbnail_url,
-          site_name: projectName?.trim() || null,
-          category: CATEGORY_FLOOR_PLAN,
+        const res = await insertOrderAsset({
+          consultation_id: consultationId,
+          asset_type: CATEGORY_FLOOR_PLAN,
           storage_type: result.storage_type,
+          file_url: result.cloudinary_url,
+          thumbnail_url: result.thumbnail_url,
           storage_path: result.storage_path ?? null,
+          public_id: result.public_id ?? null,
+          file_name: file.name,
+          file_type: 'pdf',
+          site_name: projectName?.trim() || null,
           metadata: {
-            project_id: consultationId,
             storage_path: result.storage_path,
             file_name: file.name,
             file_type: 'pdf',
@@ -209,21 +203,8 @@ export function MeasurementSection({
   const handleDeleteAsset = async (asset: OrderAssetItem) => {
     if (!confirm('이 항목을 삭제할까요?')) return
     try {
-      const { error } = await supabase.from('image_assets').delete().eq('id', asset.id)
+      const { error } = await deleteOrderAssetRecord(asset)
       if (error) throw error
-      if (asset.storage_type === 'supabase' && asset.storage_path) {
-        const { deleteSupabaseDocument } = await import('@/lib/uploadEngine')
-        const ok = await deleteSupabaseDocument(asset.storage_path)
-        if (!ok) toast.warning('DB는 삭제되었으나 Storage 원본 삭제에 실패했습니다.')
-      } else {
-        const publicId =
-          asset.metadata?.public_id ??
-          (asset.cloudinary_url?.match(/\/upload\/(?:[^/]+\/)?(.+)$/)?.[1] ?? null)
-        if (publicId) {
-          const ok = await deleteCloudinaryImage(publicId)
-          if (!ok) toast.warning('DB는 삭제되었으나 Cloudinary 원본 삭제에 실패했습니다.')
-        }
-      }
       toast.success('삭제되었습니다.')
       fetchOrderAssets()
     } catch (e) {
@@ -231,8 +212,8 @@ export function MeasurementSection({
     }
   }
 
-  const purchaseOrderAssets = orderAssets.filter((a) => a.category === CATEGORY_PURCHASE_ORDER)
-  const floorPlanAssets = orderAssets.filter((a) => a.category === CATEGORY_FLOOR_PLAN)
+  const purchaseOrderAssets = orderAssets.filter((a) => a.asset_type === CATEGORY_PURCHASE_ORDER)
+  const floorPlanAssets = orderAssets.filter((a) => a.asset_type === CATEGORY_FLOOR_PLAN)
 
   return (
     <div className="space-y-6">
@@ -288,14 +269,14 @@ export function MeasurementSection({
               isDocWithoutThumb(a) ? (
                 <div key={a.id} className="relative group">
                   <a
-                    href={a.cloudinary_url}
+                    href={a.file_url}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="block aspect-[4/3] rounded-lg border border-border bg-muted/40 hover:bg-muted/70 flex flex-col items-center justify-center gap-1 p-2 transition-colors"
                   >
                     <FileText className="h-8 w-8 text-muted-foreground shrink-0" />
                     <span className="text-xs font-medium text-foreground truncate w-full text-center">
-                      {a.metadata?.file_name || '배치도 PDF'}
+                      {a.file_name || '배치도 PDF'}
                     </span>
                   </a>
                   <Button
@@ -312,14 +293,14 @@ export function MeasurementSection({
               ) : (
                 <div key={a.id} className="relative group">
                   <a
-                    href={a.cloudinary_url}
+                    href={a.file_url}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="block aspect-[4/3] rounded-lg border border-border bg-muted/40 overflow-hidden hover:bg-muted/70 transition-colors"
                   >
                     <img
-                      src={a.thumbnail_url || a.cloudinary_url}
-                      alt={a.site_name || a.category || ''}
+                      src={a.thumbnail_url || a.file_url}
+                      alt={a.site_name || a.asset_type || ''}
                       className="w-full h-full object-cover"
                     />
                   </a>
@@ -340,14 +321,14 @@ export function MeasurementSection({
         )}
       </div>
 
-      {/* 발주서 PDF/PPT 갤러리 (image_assets + order_documents 혼합) */}
+      {/* 발주서 갤러리 (order_assets + legacy order_documents 혼합) */}
       <div className="space-y-3">
         {purchaseOrderAssets.length > 0 && (
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
             {purchaseOrderAssets.map((a) => (
               <div key={a.id} className="relative group">
                 <a
-                  href={a.cloudinary_url}
+                  href={a.file_url}
                   target="_blank"
                   rel="noopener noreferrer"
                   className={`block aspect-[4/3] rounded-lg border border-border bg-muted/40 hover:bg-muted/70 transition-colors overflow-hidden ${
@@ -357,14 +338,14 @@ export function MeasurementSection({
                   {hasThumbnail(a) ? (
                     <img
                       src={a.thumbnail_url!}
-                      alt={a.metadata?.file_name || '발주서'}
+                      alt={a.file_name || '발주서'}
                       className="w-full h-full object-cover"
                     />
                   ) : (
                     <>
                       <FileText className="h-8 w-8 text-muted-foreground shrink-0" />
                       <span className="text-xs font-medium text-foreground truncate w-full text-center">
-                        {a.metadata?.file_name || '발주서'}
+                        {a.file_name || '발주서'}
                       </span>
                     </>
                   )}

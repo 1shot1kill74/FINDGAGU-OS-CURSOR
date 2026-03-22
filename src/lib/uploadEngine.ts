@@ -6,6 +6,8 @@
  * - image_assets에 저장 시 storage_type으로 'cloudinary' | 'supabase' 구분
  */
 import { supabase } from '@/lib/supabase'
+import { getCloudinaryCloudName, getCloudinaryUploadPreset, getSupabaseUrl } from '@/lib/config'
+import { CLOUDINARY_UPLOAD_FOLDER } from '@/lib/constants'
 
 /** 업로드 시 메타데이터 (Cloudinary context·tags 또는 Supabase 경로 구성용) */
 export interface UploadEngineMetadata {
@@ -13,6 +15,8 @@ export interface UploadEngineMetadata {
   customer_name?: string
   /** 프로젝트 번호 (상담 ID 또는 표시용 번호) */
   project_id?: string
+  /** 이미지 배치 역할 */
+  before_after_role?: 'before' | 'after'
   /** 분류 (예: '상담/실측', '책상', '의자', 'floor_plan', 'purchase_order') */
   category?: string
   /** 업로드일 (yyyy-MM-dd) */
@@ -33,8 +37,6 @@ export interface UploadEngineResult {
   storage_path?: string | null
 }
 
-/** 이미지 자산 관리와 동일한 Cloudinary 폴더 경로 */
-export const CLOUDINARY_UPLOAD_FOLDER = 'assets/projects'
 
 const DOCUMENTS_BUCKET = 'documents'
 
@@ -65,21 +67,6 @@ export function shouldUseSupabaseStorage(file: File, metadata: UploadEngineMetad
   return false
 }
 
-function getCloudinaryCloudName(): string {
-  const name = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME
-  return typeof name === 'string' && name.trim() ? name.trim() : 'demo'
-}
-
-function getCloudinaryUploadPreset(): string | null {
-  const preset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET
-  return typeof preset === 'string' && preset.trim() ? preset.trim() : null
-}
-
-function getSupabaseUrl(): string {
-  const url = (import.meta.env.VITE_SUPABASE_URL ?? '').toString().trim()
-  if (!url) throw new Error('VITE_SUPABASE_URL이 설정되지 않았습니다.')
-  return url.replace(/\/$/, '')
-}
 
 function safeContextValue(s: string | undefined): string {
   return (s ?? '').replace(/\|/g, ' ').trim()
@@ -89,6 +76,7 @@ function buildContextString(meta: UploadEngineMetadata): string {
   const parts: string[] = []
   if (meta.customer_name != null) parts.push(`custom_name=${safeContextValue(meta.customer_name)}`)
   if (meta.project_id != null) parts.push(`project_id=${safeContextValue(meta.project_id)}`)
+  if (meta.before_after_role != null) parts.push(`before_after_role=${safeContextValue(meta.before_after_role)}`)
   if (meta.category != null) parts.push(`category=${safeContextValue(meta.category)}`)
   if (meta.upload_date != null) parts.push(`upload_date=${safeContextValue(meta.upload_date)}`)
   if (meta.source != null) parts.push(`source=${safeContextValue(meta.source)}`)
@@ -99,6 +87,7 @@ function buildTagsString(meta: UploadEngineMetadata): string {
   const tags: string[] = []
   if (meta.customer_name?.trim()) tags.push(meta.customer_name.trim())
   if (meta.project_id?.trim()) tags.push(meta.project_id.trim())
+  if (meta.before_after_role?.trim()) tags.push(meta.before_after_role.trim())
   if (meta.category?.trim()) tags.push(meta.category.trim())
   if (meta.source?.trim()) tags.push(meta.source.trim())
   return tags.length ? tags.join(',') : ''
@@ -250,38 +239,14 @@ export async function uploadEngine(file: File, metadata: UploadEngineMetadata): 
 }
 
 /**
- * Cloudinary 이미지 삭제 (원본 제거)
- * .env에 VITE_CLOUDINARY_API_KEY, VITE_CLOUDINARY_API_SECRET 필요.
+ * Cloudinary 원본 삭제는 서버사이드에서만 처리해야 한다.
+ * 브라우저에 API secret을 두면 누구나 원본 삭제 서명을 만들 수 있으므로 프론트에서는 막는다.
  */
-export async function deleteCloudinaryImage(publicId: string): Promise<boolean> {
-  const cloudName = getCloudinaryCloudName()
-  const apiKey = (import.meta.env.VITE_CLOUDINARY_API_KEY ?? '').toString().trim()
-  const apiSecret = (import.meta.env.VITE_CLOUDINARY_API_SECRET ?? '').toString().trim()
-  if (!apiKey || !apiSecret || cloudName === 'demo') {
-    console.warn('Cloudinary delete: API_KEY/API_SECRET 미설정. Supabase만 삭제됩니다.')
-    return false
+export async function deleteCloudinaryImage(_publicId: string): Promise<boolean> {
+  if (import.meta.env.DEV) {
+    console.warn('Cloudinary 원본 삭제는 클라이언트에서 비활성화되었습니다. 서버사이드 엔드포인트로 이전이 필요합니다.')
   }
-  const timestamp = Math.floor(Date.now() / 1000).toString()
-  const params: Record<string, string> = { invalidate: 'true', public_id: publicId, timestamp }
-  const sorted = Object.keys(params)
-    .sort()
-    .map((k) => `${k}=${params[k]}`)
-    .join('&')
-  const toSign = sorted + apiSecret
-  const encoder = new TextEncoder()
-  const data = encoder.encode(toSign)
-  const hashBuffer = await crypto.subtle.digest('SHA-1', data)
-  const signature = Array.from(new Uint8Array(hashBuffer))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('')
-  const body = new URLSearchParams({ ...params, signature, api_key: apiKey })
-  const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/destroy`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: body.toString(),
-  })
-  const json = (await res.json()) as { result?: string }
-  return json.result === 'ok'
+  return false
 }
 
 /**

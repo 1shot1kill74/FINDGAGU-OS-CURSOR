@@ -1,4 +1,37 @@
-Context: FindGagu OS Project 1. 페르소나 및 관계 - 대표님: 8년 경력의 가구 전문가. 실무 효율과 데이터 자산화 중시. - 이부장(AI): 대표님의 전담 비서이자 실무 팀장. 핵심 위주 보고와 위트 있는 소통 담당. 2. 프로젝트 배경 - 기존 '주문 관리' 방식의 파편화된 데이터를 '상담 관리' 중심의 체계적 OS로 전환 중. - M4 맥북을 도입하여 고성능 로컬 개발 환경을 구축했으며, **하이브리드 환경**(Cursor 시각적 편집 + Claude Code 터미널 기반 에이전트)을 전제로 개발을 진행합니다. 3. 주요 규칙 (Constraints) - 용어 통일: 반드시 '상담 관리' 사용. - 디자인 원칙: 현장 기사님이 장갑 끼고도 조작 가능한 Mobile-First UI. - 확장성: 한샘 등 대기업이나 다수 대리점이 사용 가능한 SaaS 구조 고려. 4. 현재 상황 - Lovable 크레딧 소진 전 GitHub(1shot1kill74/ivory-os) 이관 성공. - 로컬 맥북 환경에 코드 복제(Clone) 완료.
+Context: FindGagu OS Project
+
+### 1. 페르소나 및 관계
+- **대표님:** 8년 경력의 가구 전문가. 실무 효율과 데이터 자산화 중시.
+- **이부장(AI):** 대표님의 전담 비서이자 실무 팀장. 핵심 위주 보고와 위트 있는 소통 담당.
+
+### 0. 운영 현황 (AI Strategic Mode)
+
+- **Workflow:** [Data Analysis (Anti-gravity)] -> [Prompt Generation (Anti-gravity)] -> [Execution (Claude Code)]
+- **Current Goal:** 현재 운영 기준은 상담카드/견적 관리 중심 흐름을 안정화하는 것이다. Google Chat 견적서 자동 응답 실험은 안전 롤백 후 보류 상태로 유지한다.
+- **Current Priority (2026-03-15):** 당장 1순위는 `이미지 자산관리 마이그레이션 완료`이다. 이 모듈은 쇼룸, 블로그 자동화, 유튜브 자동화, 카카오/채널톡 상담 자료 전송까지 물고 가는 **콘텐츠 허브**로 본다.
+- **1차 임무:** 구글 시트-수파베이스 데이터 동기화 복구 (메이크AI 연동 포함)
+- **2차 임무:** 채널톡 웹훅을 통한 상담카드 자동 생성 시스템 구축
+- **3차 임무:** Google Chat 멘션/이미지 기반 견적서 자동 분석·저장 플로우는 실험 후 안전 롤백되었으며, 재개 여부는 추후 별도 판단
+
+## 1. 프로젝트 개요
+- 기존 '주문 관리' 방식의 파편화된 데이터를 '상담 관리' 중심의 체계적 OS로 전환 중.
+- M4 맥북을 도입하여 고성능 로컬 개발 환경을 구축했으며, **하이브리드 환경**(Cursor 시각적 편집 + Claude Code 터미널 기반 에이전트)을 전제로 개발을 진행합니다.
+
+### 3. 주요 규칙 (Constraints)
+- **용어 통일:** 반드시 '상담 관리' 사용.
+- **디자 원칙:** 현장 기사님이 장갑 끼고도 조작 가능한 Mobile-First UI.
+- **확장성:** 한샘 등 대기업이나 다수 대리점이 사용 가능한 SaaS 구조 고려.
+
+### 4. 현재 상황
+- Lovable 크레딧 소진 전 GitHub(1shot1kill74/ivory-os) 이관 성공.
+- 로컬 맥북 환경에 코드 복제(Clone) 완료.
+
+### 5. 기술 스택 (Technology Stack)
+- **Frontend:** React, Vite, TypeScript, Tailwind CSS
+- **Backend/DB:** Supabase (Auth, Database, Storage, Edge Functions)
+- **AI Engine:** Gemini 3.1 Flash Lite (메인 파싱), GPT-4o (폴백)
+- **Editor/AI:** Cursor, **Antigravity**, Claude Code (동일 프로젝트 폴더 공유 및 협업 환경)
+- **Hardware:** MacBook Air M4 (16GB RAM) - 최적화된 로컬 개발 환경
 
 # 프로젝트 컨텍스트 (CONTEXT) - 가구 비즈니스 통합 솔루션
 
@@ -12,6 +45,8 @@ Context: FindGagu OS Project 1. 페르소나 및 관계 - 대표님: 8년 경력
   상담 타임라인은 **흐름(Context)**에 집중하고, 대용량·기술적 자산은 **독립 모듈(Module)**에서 관리한다. 타임라인 화면에 실측 PDF·대량 메모·견적 이력 전체를 직접 쌓지 않고, 각각 전용 진입점(실측 관리, 견적 이력 팝업 등)으로 분리하여 가독성과 전문성을 확보한다.
 - **[데이터 무결성]**  
   고객 등급 및 고객 정보는 **전역적으로 동기화**되어야 하며, 동일 연락처·동일 고객에 대한 파편화된 정보를 허용하지 않는다. 한 건에서의 등급·정보 변경은 동일 기준(예: 연락처)으로 묶인 모든 카드·이력에 일관되게 반영되어야 한다.
+- **[단계적 론칭]**  
+  백오피스 전체 완성을 기다리기보다, **공개 동선(쇼룸/문의/채널톡)** 과 **내부 동선(상담관리/자산관리/운영)** 을 분리해 먼저 론칭한다. 1차 공개 범위는 고객이 보는 흐름의 정상 작동에 집중하고, 대시보드·임시상담카드·AI 보조는 이후 단계적으로 붙인다.
 
 ## 3. 비즈니스 도메인 이해 (가구업 특화)
 - **B2B/B2G 타겟:** 학원(방학 전), 학교(방학 중), 사무실 등 시즌별 집중 영업이 핵심.
@@ -29,7 +64,8 @@ Context: FindGagu OS Project 1. 페르소나 및 관계 - 대표님: 8년 경력
   · Gemini 2.0 Flash (메인) — PDF/이미지 파싱, 원가표/견적서 AI 추출
   · OpenAI GPT-4o (폴백) — Gemini 장애 시 자동 전환
   · Claude Code (개발 도구) — 터미널 에이전트. AI 퀵 커맨드(estimateAiService) Mock → 추후 연동 예정
-- **자동화 엔진:** n8n / Make — [로드맵] 현재 미구현. Wake-up 알림, 블로그 자동 배포 설계 완료
+- **자동화 엔진:** n8n (운영 중) — GAS AutoAddBot → n8n 웹훅 → 구글 시트 + 수파베이스 동기화. Make.com 대체 완료(2026-03-05). Wake-up 알림, 블로그 자동 배포는 추후 n8n 확장 예정
+- **Google Chat 견적 자동화 (실험 후 보류):** Google Chat 앱 멘션 이벤트 → n8n 웹훅 → GAS 첨부파일 다운로드 → Supabase Edge Function `process-chat-estimate` → Gemini 분석 → 상담/견적 DB 반영 구조까지 구현했으나, Google Chat 응답 포맷/운영 사용성 이슈로 현재 라이브에서는 안전 롤백했다. 관련 코드 자산은 남아 있으나 운영 기본 흐름은 아니다.
 - **AI 콘텐츠 배포:** OpenClaw — [로드맵] 시공 사진 멀티채널 배포. 현재 미구현
 
 ## 5. 사용자 페르소나 및 접근 권한 (이원화 전략)
@@ -59,9 +95,73 @@ Context: FindGagu OS Project 1. 페르소나 및 관계 - 대표님: 8년 경력
 ### 블로그 자동화와 Cloudinary
 - **Named Transformation 사용 원칙:** 이미지 가공(리사이즈·압축 등)은 Cloudinary **Named Transformation**으로 정의하여 블로그·채널별로 재사용. 가변 한글 텍스트(워터마크 등)는 변형 이름이 아닌 별도 옵션으로 전달하는 구조를 유지.
 
+### 상담 상태와 최근 활동일
+- **상태값은 직원 수동 판단:** 상담카드의 `status`(`접수/견적/진행/완료/AS/무효/거절`)는 담당자가 직접 클릭해 변경한다. 상태는 단순 이벤트 로그가 아니라 실무자의 판단값이므로 자동 변경으로 덮어쓰지 않는다.
+- **직원 추가 액션 최소화:** 시스템은 기존 업무 흐름을 빠르게 만드는 것이 목적이다. 직원에게 새로운 입력 절차를 강제하지 않고, 이미 하던 행동 위에서만 자동화한다.
+- **`update_date`는 최근 활동일:** `consultations.update_date`는 "이 프로젝트 채팅방이 최근 살아 있었는가 / 정체되어 있는가"를 보는 운영용 신호다. 정확한 업무 완료일이나 영업 판단값으로 해석하지 않는다.
+- **주 갱신 경로:** `GAS AutoAddBot`의 `lastActiveTime` 기반 PATCH가 주 경로다. `n8n MESSAGE`는 `@멘션`·슬래시 명령·앱 DM interaction이 들어올 때만 동작하는 보조 실시간 경로다.
+- **자동화 원칙:** 시스템은 상태를 자동 변경하지 않고, 최근 활동일·견적 흔적·실측 흔적 등 보조 신호를 제공해 직원 판단을 돕는 방향으로 유지한다.
+- **완료 카드 재활동 해석:** 완료 상태에서 채팅방 활동만 다시 생기면 상태는 유지하고 `종료 후 활동` 신호로만 보여준다. 반면 견적서 저장/확정처럼 실제 업무 재개를 강하게 증명하는 이벤트는 `견적` 상태 복귀를 허용한다.
+- **직원 판단 우선:** 시스템은 "변화가 있었다"를 먼저 보여주고, 직원이 그 신호를 보고 상태를 유지할지 `견적/진행`으로 바꿀지 결정하게 한다. 자동화는 판단을 대체하지 않고 강한 업무 증거가 있을 때만 제한적으로 상태를 움직인다.
+
+### 상담 관리 대시보드 운영 원칙 (2026-03-11)
+- **적용 범위 한정:** 최근 프론트 개선은 **`상담 관리` 페이지에만** 적용한다. 다른 페이지는 업무 성격과 레이아웃이 다르므로 공통 레이아웃·전역 스크롤 정책으로 일반화하지 않는다.
+- **우측은 기준판, 좌측은 탐색판:** 상담 관리는 대시보드 성격이 강하므로, 데스크톱에서는 우측 상세 패널을 비교적 안정적으로 유지하고 좌측 목록 탐색 효율을 높이는 방향이 맞다.
+- **선택 안정성 우선:** 직원이 직접 카드 선택을 바꾸지 않았다면 시스템이 임의로 첫 카드로 되돌리지 않는다. 현재 선택 카드가 필터 결과 안에 남아 있으면 그대로 유지하는 것이 기본 UX다.
+- **"사라진 것처럼 보이지 않기"가 중요:** 상태 변경 후 탭이 바뀌더라도, 해당 카드가 포함된 페이지로 자동 따라가야 한다. 실제 데이터는 존재하지만 페이지네이션 때문에 안 보이는 상황을 운영 리스크로 본다.
+- **상단 제어 3종:** 상담 관리 상단은 `인입일 기간`, `업데이트일 기간`, `정렬 토글(최근업데이트순/인입일순)` 3개를 함께 사용한다. 인입일은 유입 시기 분석, 업데이트일은 최근 활동 관리, 정렬 토글은 작업 우선순위 판단용으로 역할을 분리한다.
+- **페이지당 40개 카드:** 우측 패널이 비교적 고정된 현재 구조에서는 20개보다 40개가 더 작업 친화적이다. 페이지 전환으로 카드가 "튄다"는 느낌을 줄이고, 연속 탐색 흐름을 보존하는 것이 목적이다.
+
+### Takeout 기반 견적 이미지 운영 원칙 (2026-03-10)
+- **현재는 Takeout만 사용:** 구글챗 실시간 첨부파일 수집은 아직 하지 않았다. 현재 견적 이미지 보조 기능은 대표님 PC에 있는 **Google Takeout 이미지**를 기반으로만 동작한다.
+- **수동 선택 우선:** 대표님 판단대로, 초기 버전은 OCR 선별보다 **사람이 이미지를 직접 보고 고르는 방식**이 더 빠르고 안전하다. 따라서 기본 UX는 `스페이스별 이미지 모아보기 → 크게 보기 → 견적 검토로 가져오기`다.
+- **현재 범위 제한:** 지금 구현은 **최신 1개 Takeout 인덱스** 기준이다. PC에 총 10개 Takeout이 있어도 아직 전체 통합은 하지 않았다.
+- **복사본은 캐시:** 앱 화면에 보이는 이미지는 Takeout 원본을 직접 읽는 대신, 앱 내부 `public/assets/takeout-quote-inbox/` 아래에 복사한 캐시를 사용한다. 원본은 유지하고, 캐시는 필요 시 삭제 후 재생성한다.
+- **스페이스 이동 해석:** 같은 스페이스를 여러 프로젝트가 재사용한 레거시 상황 때문에, 스페이스 클릭 시 무조건 카드 강제 이동하는 방식은 신뢰하기 어렵다. 현재는 **displayName을 메인 검색창에 자동 입력해 사람이 결과 카드로 이동하는 방식**을 기본으로 둔다.
+- **카드 스플릿은 후순위:** 같은 스페이스를 여러 상담카드로 분리하는 기능은 아직 구현하지 않았다. 지금 단계에서는 먼저 데이터를 충분히 모으고, 원본 스페이스 연결정보를 보존한 뒤, 나중에 사람 승인형으로 스플릿하는 것이 원칙이다.
+
+### Google Chat 견적서 자동화 운영 원칙 (2026-03-12, 롤백 반영)
+- **이중 경로 인식:** 견적 이미지 유입은 여전히 `Takeout 기반 수동 선택`과 `Google Chat 실시간 자동 처리` 두 축으로 이해할 수 있다. 다만 현재 운영 기준은 전자이며, 후자는 보류 상태다.
+- **실험 결과 해석:** 공식 Chat 앱 웹훅은 `@멘션` 등 앱 호출 맥락에서만 안정적으로 다뤄야 하고, Google Chat은 무거운 후처리보다 **즉시 HTTP 응답**을 먼저 요구한다. 이 조건이 운영 난도를 높였다.
+- **현재 운영 판단:** 라이브 `n8n`에서는 `Respond to Webhook` 기반 Chat 응답 커스터마이징을 제거하고, 다시 기본 응답(`{"message":"Workflow was started"}`) 구조로 복귀했다.
+- **현재 기준 문서:** 라이브 `n8n`과 로컬 `gas/n8n-workflow.json`은 모두 같은 롤백 상태로 동기화되어 있다. 따라서 문서/로컬 정의/운영이 서로 어긋난 상태가 아니다.
+- **재개 원칙:** Google Chat 자동 견적 처리를 다시 시도할 경우, 운영 워크플로우를 직접 수정하지 말고 **복제 워크플로우에서만 재검증**한 뒤 반영한다.
+
+### 쇼룸 운영 원칙 (2026-03-12)
+- **쇼룸 역할 분리:** `/showroom`은 고객이 사례를 탐색하는 **탐색형 랜딩 페이지**로 유지한다. 특정 사진만 골라 보내는 목적은 `/image-assets` 기반 선별 공유 링크가 담당한다.
+- **공감카드와 검색창 분리:** 공감카드는 고객의 문제의식을 빠르게 선택하게 하는 장치이고, 검색창은 실제 데이터 검색 도구다. 따라서 공감카드 선택값을 검색창 입력값에 주입하지 않는다.
+- **Before/After는 특수 섹션으로 격리:** 전후 비교 사례는 일반 현장 탐색과 성격이 다르므로, 기본 갤러리에 섞지 않는다. 현재 운영 기준으로는 `스터디카페를 관리형 스타일로` 카드 아래에서만 **엑시트 전략형 전환 사례**로 노출한다.
+- **쇼룸 문의는 맥락이 남아야 한다:** 쇼룸 문의는 단순히 `source = 쇼룸`만으로는 부족하다. 어떤 카드/문맥을 보고 들어왔는지(`showroom_entry_label`, `showroom_context`)가 상담 카드에 남아야 담당자가 톤과 제안 방향을 맞출 수 있다.
+- **아파트 문구 톤:** 아파트 리뉴얼 메시지는 창업·원장님 문법을 쓰지 않는다. 관리 주체는 `입주자대표회의` 문맥으로 해석하며, 표현도 `입주민 만족`과 `단지 가치` 중심으로 가져간다.
+- **일반 쇼룸 카드 노출 기준 (2026-03-15 세이브 포인트):** 쇼룸 기본 카드 영역에서는 `before_after_role === 'before'`인 자산만 제외한다. 즉 `after` 또는 역할 미지정 자산은 일반 쇼룸 카드 후보에 남긴다. 현재 업로드 기본값이 `after`에 가까운 운영 상황을 반영한 기준이다.
+- **채널톡 연결 방식 (2026-03-15):** 채널톡은 쇼룸보다 먼저 **폼으로 정보 수집**을 담당한다. 쇼룸은 폼 완료 후 `기다리시는 동안 보는 대기/설득 페이지`로 쓰는 것이 기본 원칙이다. 별도 쇼룸을 두 개 만들기보다, 같은 `/showroom`을 유지하되 채널톡 유입은 **접수 후 문맥이 반영된 모드**로 보여주는 방향을 기본안으로 둔다.
+
+### 채널톡 운영 원칙 (2026-03-15)
+- **1차는 폼, AI는 후순위:** 초기 버전은 자연어 AI 상담보다 **폼 기반 정보 수집**이 우선이다. 이유는 허수 리드 필터링, 필수 정보 누락 방지, 운영 통제 때문이다.
+- **질문 구조 고정:** `도움 유형 -> 업종 -> 면적 -> 지역 -> 전화번호` 순으로 받고, 선택지는 다음을 기본값으로 본다.
+  - 도움 유형: 비용 문의 / 제품 추천 / 상세 상담 / 기타
+  - 업종: 관리형 / 학원 / 스터디카페 / 아파트 / 학교 / 기타
+  - 면적: 30평 이하 / 30~40평 / 40~50평 / 50~60평 / 60평 이상 / 기타
+  - 지역: 서울/경기 / 충북/충남 / 경북/경남 / 전북/전남 / 기타
+- **전화번호는 최종 필수 게이트:** 전화번호를 입력해야 상담 접수가 완료된다. 이 단계가 실질적인 허들 역할을 하며, 전화번호 입력 전에는 쇼룸 링크를 메인 CTA로 두지 않는다.
+- **보상형 인트로:** 폼 시작 전에는 `자세히 남길수록 더 빠른 상담과 유사 사례 안내가 가능하다`는 뉘앙스로 안내한다.
+- **임시상담카드 분리:** 채널톡 인입은 기존 정식 상담카드와 생명주기가 다르므로, 향후에는 별도 `채널톡 인입 대시보드` 또는 `임시상담카드`에서 먼저 관리하고, 실제 진행 확정 시에만 기존 상담카드로 전환한다.
+
+### 공개/보안 원칙 (2026-03-15)
+- **로그인 분리:** Vercel 퍼블리시 시 `showroom`, `contact`, 채널톡 연결용 공개 동선만 외부 공개하고, `consultation`, `image-assets`, `order-assets`, 관리자 기능은 로그인 뒤에서만 열어야 한다.
+- **Supabase 보안 경고 대응:** 현재 Supabase Advisor에서 `RLS disabled in public`, `RLS policy always true`, `function_search_path_mutable` 경고가 다수 확인되었다. 특히 `consultations`, `consultation_messages`, `image_assets`, `estimates`, `marketing_contents` 계열은 공개 전 우선 정리 대상으로 본다.
+
+### 이미지 자산 관리 운영 원칙 (2026-03-15)
+- **상단 제어 단순화:** 이미지 자산 관리는 `검색 + 업로드 + 상담용 보기`와 `업종/현장/제품/색상` 조건만 남긴다. 텍스트 라벨이나 보조 제어를 늘려 필터를 복잡하게 만들지 않는다.
+- **조건 결합 방식:** `업종 → 현장 → 제품 → 색상`은 앞 조건이 비어 있어도 뒤 조건만 독립적으로 작동할 수 있어야 한다. 여러 조건이 동시에 선택되면 결과는 AND로 좁혀져야 한다.
+- **좌측은 필터가 아니라 네비게이션:** 좌측 패널은 결과를 묶어 보여주는 텍스트 네비게이션으로 사용한다. 상단 조건 필터와 역할을 겹치지 않는다.
+- **대표 배지 위치:** 대표 지정된 사진은 `After/상담용` 배지 아래에 `대표지정`으로 보여야 하며, 좌상단 선택 체크박스와 겹치면 안 된다.
+- **헤더 우선 레이어:** 카드 위 체크박스나 오버레이는 sticky 상단 필터 영역보다 아래에 깔려야 한다. 스크롤 시 카드 오버레이가 상단 필터 위로 떠 보이면 안 된다.
+- **상담카드 견적 아이콘 실험은 롤백:** 상담 관리 카드에 견적서 아이콘을 붙여 직관성을 높이는 실험을 잠깐 했지만, 현재 세이브 포인트 기준으로는 제거한 상태다. 이 상태를 현재 안정 기준으로 본다.
+
 ## 7. 설계 문서 및 확정 원칙 (2026-02-07 반영)
 - **BLUEPRINT.md**와 **JOURNAL.md**에 시스템 골조 및 비즈니스 로직이 확정되어 있음. **향후 생성되는 모든 컴포넌트·라우트·기능은 이 문서들의 원칙을 따라야 함.**
-- **적용 대상 요약:** (1) 상담 카드 UI: 1행(마켓·실측·고객분류·업체명·AS·골든타임), 2행(지역|업종|전화|인입|필요|대표금액, **2행 우측 끝 고정** 구글챗 버튼·연결 상태별 초록/회색 분기), 3·4행. (2) 고객 등급: 동일 연락처 기반 등급 상향 평준화(한 번 단골은 모든 카드에서 단골). (3) AS: 신청 시 `status=AS_WAITING`, [AS 대기] 탭 필터, [종료] 탭에서 AS 대기 건 미노출. (4) 다중 견적: `metadata.estimate_history[]`, 대표 금액 = 확정 견적 → 최신 견적 → expected_revenue. (5) 실측: 상담 타임라인에서 실측 데이터 직접 렌더링 금지; [실측 자료(PDF)] 버튼 → 모달 → `/measurement/upload`. 실측 PDF·메모는 Supabase Storage `measurement-drawings` 전용, Signed URL만 미리보기. (6) 오픈마켓: source·order_number·is_market_order·마켓별 배지.
+- **적용 대상 요약:** (1) 상담 카드 UI: 1행(마켓·실측·고객분류·업체명·AS·골든타임), 2행(지역|업종|전화|인입|필요|대표금액, **2행 우측 끝 고정** 구글챗 버튼·연결 상태별 초록/회색 분기), 3·4행. (2) 고객 등급: 동일 연락처 기반 등급 상향 평준화(한 번 단골은 모든 카드에서 단골). (3) AS: 신청 시 `status=AS`, [AS 대기] 탭 필터, [종료] 탭에서 AS 대기 건 미노출. (4) 다중 견적: `metadata.estimate_history[]`, 대표 금액 = 확정 견적 → 최신 견적 → expected_revenue. (5) 실측: 상담 타임라인에서 실측 데이터 직접 렌더링 금지; [실측 자료(PDF)] 버튼 → 모달 → `/measurement/upload`. 실측 PDF·메모는 Supabase Storage `measurement-drawings` 전용, Signed URL만 미리보기. (6) 오픈마켓: source·order_number·is_market_order·마켓별 배지.
 - 신규 개발 시 BLUEPRINT 섹션 2(UI/UX 인터랙션 표준) 및 3(비즈니스 로직)을 우선 참조할 것.
 
 ## 8. 성공의 기준 (Success Metrics)
@@ -69,30 +169,20 @@ Context: FindGagu OS Project 1. 페르소나 및 관계 - 대표님: 8년 경력
 - **데이터화:** 모든 고객 문의가 100% 히스토리로 남고, 누락되는 가망 고객 제로화.
 - **자동화:** 시공 사진 업로드 후 5분 이내에 블로그 및 SNS 포스팅 초안 생성 완료.
 
-## 9. 현재 진행 상황 및 이슈 (최신)
-- **현재 진행 상황:** 상담 관리 모듈(Phase 1) 고도화 완료. **시공 사례 뱅크**를 전용 페이지(PortfolioBank)로 분리 완료. 이미지 자산 관리(ImageAssetViewer)는 관리자 창고만 담당. 업체명 자동 식별자(display_name) 도입 성공. 견적 관리(예산 기획안·확정 견적서) 실무 전면 리팩토링 완료. PPT/PDF 발주서 시스템 중심 배치 및 제품별 시공 현장(`/products-sites`) 연동.
-- **2026-02-08 반영:** (1) **역할·컴포넌트 분리:** `/image-assets` → **ImageAssetViewer** (관리자 전용). `/portfolio`, `/assets` → **PortfolioBank** (영업 전용). 두 컴포넌트 역할 혼동 금지. (2) **뱅크 전용:** `fetchApprovedProjectAssets()`·`rowToProjectAsset`(imageAssetService), 현장별/사진별 토글, 업종 필터, 카톡 공유 바, 라이트박스 앞뒤·이 현장 앨범 보기. (3) **검수 프로세스:** 업로드 시 content_hash 중복 차단, status(pending/approved), 뱅크는 approved만. (4) **공유:** `/public/share?ids=...`, ShareCart·공유 링크 복사·카카오 공유.
-- **2026-02-08 완료 (JOURNAL 동기화):** (1) **20행 고정** — 견적서 테이블 20행 고정·패딩, PDF/미리보기 동일 적용. (2) **PDF/이미지 파일명** — `buildEstimateImageFilename`(견적서_YYYY-MM-DD_업체명.png), `buildEstimatePdfFilename`(견적서_업체명.pdf). (3) **상담 카드 금액** — 삭제 시 estimate_history·expected_revenue·final_amount 연동; 확정 시 final_amount·final_estimate_id·계약완료; 카드 3행은 **확정견적** 단일 표시(ReadOnly). (4) **4단계 뱃지** — 텍스트 고정 영역(상담접수·견적중·계약완료·시공완료) 항상 노출. (5) **PDF 모달** — 스크롤 80vh·sticky 상단바·[최종 확정] 버튼. (6) **상담 히스토리** — 시스템 메시지 왼쪽 정렬·수직 가이드라인. (7) **데이터 통합 관리** — `/admin/migration`, 테스트 모드·멀티 업로드·AI 파싱 Mock·검수 테이블·is_test·과거데이터·테스트 삭제.
-- **2026-02-08 선수교체 요약 (상담·타임라인):** 상태 바 6버튼(상담접수~캔슬)·비활성 gray-400·활성만 단계별 색상, 상태 변경 시 setListTab으로 해당 탭 전환. 탭: 전체|미처리|진행중|AS대기|종료|**캔슬**(거절만). 인입채널 9종(채널톡·전화·소개·네이버·쿠팡·유튜브·블로그·SNS·기타)·기본 채널톡·metadata.source. 카드 1행: 등급·업체명·골든·AS·확정견적; 2행: 골든배지(Hot/Active/Warning/진행중)·인입채널·지역·업종·전화·인입/요청일. 골든타임: dateUtils getElapsedDays/getGoldenTimeState, 31일+ 배지 제거·opacity-70, 완료·캔슬·AS 시 미노출. 6단계 프로그레스(접수|견적|계약|완료|AS|캔슬). 조회 기간 **이번달** 추가·기본값. **consultation_messages.is_visible** 마이그레이션; 관리자 시스템 메시지 영구 삭제(Trash2)·모든 메시지 숨기기(EyeOff)·관리자만 다시 보이기(Eye). admin: localStorage findgagu-role 또는 ?admin=1.
-- **시공 뱅크 Lock-in:** (1) **통합 검색** `filterByUnifiedSearch`: 제품명(tags)·색상·현장명을 AND 조건으로 필터. (2) **역방향 견적**: 뱅크에서 제품 태그 클릭 → `location.state`(focusConsultationId, addEstimateProductName)로 상담 관리 진입 → 견적 모달 자동 오픈 및 품명 행 삽입. (3) **이미지 이원화 훅** `useDualSourceGallery`: Supabase 썸네일 + Cloudinary 고화질 분기 호출 확정.
-- **Safety:** 페이지 이동 시 state 전달 방어(Optional Chaining, `state?.focusConsultationId`, `String(state.addEstimateProductName).trim()`). `?focus=` 처리 useEffect는 의존성 `[location.state, location.search]`만 사용하며, `lastLocationKeyRef`로 동일 진입 시 모달 중복 오픈·무한 루프 차단. AddEstimate 초기 데이터는 `Partial<EstimateFormData>` 및 EstimateRow 필수 필드 준수로 타입 무결성 유지.
-- **이미지 이원화 강제:** 모든 시공 사진 업로드는 `uploadConstructionImageDual`로 Cloudinary(고화질) + Supabase(썸네일) 분기. env: `VITE_CLOUDINARY_CLOUD_NAME`, `VITE_CLOUDINARY_UPLOAD_PRESET` 필수.
-- **데이터 매칭·태그:** `productDataMatching.getDataByProductTag`(tag_mappings 1:N 반영), `tagMappingService.getCloudinaryTags`.
-- **역산 로직 전역:** `roundToPriceUnit`, `getMarginSignalClass` 행·수익 분석기 전역 적용. 품명 표준 [품명](사이즈/색상), color·costEstimated·역산됨/(추정) 표시.
-- **AI 견적 도우미 (Mock):** `estimateAiService.parseQuickCommand`, `estimateUtils` 금액·총액·역산.
-- **채팅 UI:** Tailwind 기본 스타일 유지. **빌드:** `npm run build` 성공.
-- **2026-02-09 반영:** (1) **상담 카드 숨기기(Soft Delete):** `consultations.is_visible` (boolean, default true). 상세 히스토리 탭에 관리자 전용 [이 상담 숨기기] → **앱 내 확인 Dialog**(취소/숨기기) 후 리스트·통계에서 제외. (2) **관리자 아카이브:** `/admin/archive`(ArchivePage), 숨긴 상담만 조회, [복구]/[영구 삭제], [TEST] 필터. (3) **useConsultations:** `src/hooks/useConsultations.ts` — visibleOnly true/false로 리스트 vs 아카이브 분리. (4) **데이터 무결성:** 상담 목록·통계·실측·제품별 시공·ConsultationChat 등 모든 select에 `is_visible = true` 필터 강제. (5) **마이그레이션:** 저장 시 created_at = 인입일(quoteDate) 소급, 검수 테이블 인입일(날짜) Date Picker, 저장 후 상담 관리 이동·골든타임 정확 반영. AI 파싱 API: `VITE_MIGRATION_PARSE_API` 환경변수로 연동. (6) **채널톡 FAQ 문법·AS 매칭:** `channelTalkService.ts` — FAQ_DATA 객체 키 중 특수문자(**A/S**)를 `'A/S'` 등 따옴표로 감싸 문법 에러 해결, 모든 키 따옴표 적용. "AS 문의드려요" 등 슬래시 없이 입력해도 A/S 답변이 나오도록 **'AS'** 키 추가(동일 답변). 시뮬레이터(`/admin/test-console`)에서 문의 입력 시 FAQ 매칭·3단계 자동 응답 검증 가능.
-- **2026-02-10 반영:** (1) **MigrationPage 파일명 인코딩:** `toSafeStoragePath(originalName, prefix)` — Mac/한글 파일명 MIME 오류 방지. (2) **저장 = 확정:** 견적 임시저장 시 approved_at 자동 설정. (3) **6개월 견적 통계:** 최대·최소·실제 중간값 + 원가 연동. (4) **견적 이력 UI:** [최대|중간|최소|원가] 4지표, 클릭 시 견적서 팝업. (5) **마이그레이션 섹션 분리:** 판매 견적서 등록(상단)·거래처 원가 등록(하단) 탭 제거, 상·하 별도 섹션으로 분리. (6) **거래처 원가 AI 분석 확장:** 현장명, 품명, 색상, 단가(손글씨 포함), 외경 사이즈, 메모 추출. 업로드 완료 목록(판매 견적서와 동일 구조), 원본보기 버튼. (7) **메모 필드:** vendor_price_book.memo — "상판 모번 23T, 그외 18T 라이트그레이" 등 상세 사양 별도 저장. (8) **AI 퀵 커맨드 비교대상:** 외주업체 원가에 출처(원가표/제품DB)·원본보기 버튼 추가. (9) **수량 필드 제거:** 거래처 원가에서 수량 제거(원가 이상 표시 이슈).
-- **2026-02-10 추가 (세이브 포인트):** (10) **원가표 원본보기:** vendor-assets Signed URL로 팝업 이미지 표시. (11) **참고 견적서 모달:** z-[200]·캡처로 견적 작성창과 분리, 닫기 버튼 삭제(바깥 클릭·Escape). (12) **견적 작성창 유지:** 미리보기 닫을 때 printEstimateId·justClosedPreviewRef(300ms)로 견적 모달 닫힘 방지. (13) **마이그레이션:** DB 조회 빈 결과일 때 업로드 완료 목록 비우지 않음. (14) **AI 퀵 원가표:** 출처 뒤 외경·현장명, 원가만 표시(종전 단가 제거). 올데이C 검색 시 올데이CA 병합·중복 제거.
-- **2026-02-10 반영 (상담 UI·채널톡 웹훅):** (1) **무효 vs 거절:** status '무효' 추가. 무효=통계 제외, 거절=metadata.cancel_reason 보존. KPI: 유효 상담(무효 제외)·성공률. (2) **7탭:** 전체|미처리|견적중|진행중|종료|거절|무효. 상세 [무효 처리] 즉시, [거절 처리] 사유 모달 필수. (3) **식별자·AI 제안:** 웹훅 display_name 고정, 추출값은 ai_suggestions만; 상세 패널 [적용]으로 수동 반영. (4) **채널톡 웹훅:** 모든 이벤트 수용, entity/폼 필드 연락처 추출, 처리 중인 데이터 구조 로그, try-catch·완료 로그, 배포 --no-verify-jwt. (서명 bypass는 테스트 후 복구.)
-- **2026-02-10 반영 (쇼룸·상담 삭제·이미지 자산 상담용):** (1) **쇼룸 전문가 코멘트 통일:** 고교학점제 기준 slate 색상·CTA 스타일로 전체 통일. 관리형·스터디카페에 [상담하기] CTA 추가. (2) **상담 카드 영구 삭제:** 리스트 카드 우측 휴지통 버튼 → 확인 "이 상담 내역을 영구 삭제할까요?" 후 consultations DELETE, 즉시 목록에서 제거. (3) **이미지 자산 상담용 필터:** image_assets.is_consultation 컬럼 추가. 카드 [상담용] 토글, 상단 [상담용 사진만 보기] 스위치, 공유 URL·갤러리에서 상담용 우선 정렬·강조. 카드 우측 배지는 상담용일 때만 "상담용" 표시(스코어링·영업용 제거).
-- **2026-02-12 반영 (견적서 업로드·products 판매단가·AI 퀵 가이드):** (1) **상담별 견적서 업로드(EstimateFilesGallery):** PDF/이미지 업로드 → AI 분석 → [판매 단가표 반영] 또는 [견적서로 저장]. 둘 다 products + estimates 동시 저장. (2) **products.supply_price = 판매단가:** 원가표는 원가→마진 30% 역산 판매단가. 견적서는 unitPrice 그대로. (3) **AI 퀵 가이드:** products를 판매단가로 인식, 원가는 역산(수익률 판단용). EstimateForm `applySellingToRow` 추가. (4) **productsList 새로고침:** 견적 모달 `modalOpen` 시 productsList 재조회 → AI 퀵 가이드 최신 products 반영.
-- **2026-02-13 반영 (구글 시트 ↔ 수파베이스 양방향 동기화):** (1) **시트→DB:** `상담리스트` onEdit 시 해당 행만 `update_single_consultation_from_sheet` RPC 전송. 인자: project_name, link, start_date, update_date, created_at만. **status·estimate_amount는 시트에서 보내지 않음**(앱·DB 전용). (2) **RPC·DB:** consultations.updated_at 컬럼·UPDATE 트리거·REPLICA IDENTITY FULL. (3) **DB→시트:** 앱 [최종 확정] 성공 시 doPost로 웹앱 URL POST → syncAppToSheet(해당 행 E·F·D 갱신). (4) **앱:** Lead.projectName, Realtime INSERT/UPDATE 시 전체 상담 리스트 재조회. visibilitychange → visible 시 fetch로 탭 전환 시 최신 반영. update_date 문자열·Date 모두 YYYY-MM-DD 처리. env: VITE_GOOGLE_SHEET_SYNC_URL, VITE_GOOGLE_SHEET_SYNC_TOKEN.
-- **2026-02-14 반영 (상담 카드 2행 최종 견적가 표시 — 세이브 포인트):** (1) **2행 맨 오른쪽:** "견적 미정" 자리에 최종 견적 금액 표시. 표시 우선순위: pendingEstimateAmountRef(견적서로 저장 직후) → finalAmount → displayAmount → expectedRevenue. (2) **EstimateFilesGallery:** [견적서로 저장] 성공 시 onUploadComplete({ estimateAmount: finalAmount }) 호출. (3) **ConsultationManagement:** onUploadComplete 시 pendingEstimateAmountRef 저장·setLeads 낙관적 업데이트·fetchLeads 호출. fetchLeads 결과 병합 시 서버 estimate_amount 미반영 시 pending 금액 유지. (4) **ConsultationListItem:** getPendingEstimateAmount(consultationId) prop으로 해당 카드만 pending 금액 우선 표시. data-final-estimate·data-consultation-id·title(최종 견적가/견적 미정).
-- **2026-02-14 반영 (구글 시트 갱신일 기준 '오늘 갱신'·미갱신 D-Day — 세이브 포인트):** (1) **Lead.sheetUpdateDate:** metadata.sheet_update_date(YYYY-MM-DD) 매핑. (2) **갱신 표시·정렬:** '오늘 갱신'·미갱신 D+n·최근업데이트순 정렬은 **sheetUpdateDate ?? updateDate** 우선 사용. (3) **Supabase RPC:** update_multiple_consultations_from_sheet에서 row별 sheet_update_date 수신 → metadata.sheet_update_date 저장(INSERT/UPDATE 시 metadata 병합). 마이그레이션 20260214140000_sheet_update_date_in_metadata. (4) **GAS:** syncAllDataBatch 시 각 row에 sheet_update_date(D열 YYYY-MM-DD) 전송. gas/Code.gs rows.push에 sheet_update_date 추가.
-- **2026-02-20 스냅샷:** 구글 시트 ↔ Supabase 양방향 동기화 설계 완료. 단, Code.gs SHEET_NAME('상담리스트')과 실제 탭 이름('시트1') 불일치로 배치 동기화 미작동 상태. onEdit 단건 동기화 시 sheet_update_date 미반영. Gemini 2.0 Flash + GPT-4o 폴백 AI 파싱 운영 중. n8n/Make/OpenClaw는 로드맵 단계.
-- **2026-02-20 반영 (이미지 업로드 단일 엔진·상담 히스토리 통합):** (1) **uploadEngine** (`src/lib/uploadEngine.ts`): 공통 함수 **uploadEngine(file, metadata)**. 폴더 `assets/projects`, context(custom_name|project_id|category|upload_date|source), tags. 상담 입구용 **validateMetadataForConsultation**, **CONSULTATION_UPLOAD_ERROR_MESSAGE**. (2) **입구 A:** ImageAssetUpload 폼에서 uploadEngine 호출(meta: 현장명·category·upload_date·source=image_asset_upload). (3) **입구 B:** ConsultationHistoryLog에서 이미지 자산관리와 **동일한 점선 업로드 영역**(클릭/드래그, 여러 장), uploadEngine(meta: projectName·consultationId·category='상담/실측'·source=consultation_card), 메타 검증 실패 시 "상담 정보가 부족하여 업로드할 수 없습니다". (4) 업로드 후 image_assets + consultation_messages만 반영(구글 시트 행 추가 없음). (5) 상담 히스토리 항목별 휴지통 삭제(consultation_messages·image_assets·Storage 정리). (6) 뷰어: 썸네일 클릭 시 MediaViewer(이미지 자산관리와 동일 확장 뷰) 재사용.
-- **2026-02-21 반영 (세이브 포인트):** (1) **uploadEngine 확장:** 확장자·카테고리별 저장소 분기 — jpg/png/webp→Cloudinary, pdf/ppt/pptx 또는 floor_plan/purchase_order→Supabase `documents` 버킷. image_assets.storage_type('cloudinary'|'supabase'), storage_path. (2) **documents 버킷:** Supabase Storage public, 마이그레이션 20260221000004. (3) **PDF/PPTX 썸네일:** documentThumbnail.ts — pdf.js 첫 페이지, PPTX 내장 썸네일 추출, _thumb.jpg 저장. (4) **발주 자산 관리:** OrderAssets.tsx, /order-assets, [발주 자산 관리] 버튼. (5) **Radix Dialog 접근성:** DialogContent aria-describedby 기본값, DialogTitle 필수(ShowroomPage·ConsultationManagement sr-only 적용). (6) **마이그레이션:** 20260221000002~05 (floor_plan 삭제, document_category, documents 버킷·storage_type, 상담 삭제).
+## 9. 현재 진행 상황 및 히스토리 (요약)
+
+- **2026-03-09 (status 7종 표준화 · DB 중복 정리 · 상담카드 핀 기능):** `status` 값을 **접수/견적/진행/완료/AS/무효/거절** 7종으로 확정. ConsultationManagement.tsx 전면 업데이트(STATUS_TO_STAGE 레거시 호환, Lead.status 타입, stageToStatus 역매핑, 상담접수→접수·견적발송→견적 전체 치환). DB 마이그레이션 SQL 실행(상담중·견적발송 등 레거시 값 → 표준값) 후 `캔슬 → 거절`까지 추가 정리해 라이브 `Supabase`의 비표준 status를 0건으로 맞춤. `channel_chat_id` 기준 중복 레코드(~28건) DELETE SQL 제공 및 정리. 상담카드 상단 고정 기능: `metadata.pinned` 패턴(DB 마이그레이션 없이), 정렬 시 pinned 카드 최상단 부상, Pin 버튼(Lucide) UI 추가.
+- **2026-03-12 (Google Chat 견적서 자동화 디버깅 → 안전 롤백):** `process-chat-estimate` 신규 플로우를 기준으로 Google Chat 첨부 이미지 자동 견적 저장을 구성했고, `company_name` 조회 오류는 `project_name`으로, `401 Invalid JWT` 문제는 Edge Function 내부 Gemini 직접 호출로 각각 정리했다. 이후 Google Chat 응답 포맷과 운영 복잡도 이슈로 라이브에서는 실험을 중단하고, `n8n`의 `responseNode` 구조와 응답 노드를 제거하는 **안전 롤백**을 완료했다. 현재 라이브와 로컬 `gas/n8n-workflow.json`은 모두 동일한 롤백 상태다.
+- **2026-03-12 (쇼룸 정교화 · 공감카드/전후사례/문의문맥 분리):** 쇼룸을 `/showroom` 탐색형 랜딩 페이지로 재정의하고, 공감카드 선택값과 검색어를 분리했다. `image_assets.category = purchase_order | floor_plan`은 쇼룸에서 제외했고, `before_after_role` 지정 자산은 일반 현장/업종/제품 보기에서 빼고 `스터디카페를 관리형 스타일로` 카드 아래 **[엑시트까지 고려한 전환 사례]** 섹션에서만 노출하도록 정리했다. 쇼룸 문의는 `showroom_context`, `showroom_entry_label`을 `consultations.metadata`에 저장하고 상담관리 리스트에서 `쇼룸 문맥` 배지로 노출되게 해, 담당자가 관리형 전환·엑시트 전략 문맥 유입임을 즉시 파악할 수 있게 했다.
+- **2026-03-08 (AutoAddBot.gs 복구 · 연락처 파싱 드라이런):** `gas/AutoAddBot.gs` 실수 삭제 → VSCode 로컬 히스토리로 1714줄 최신버전 복구. `dryRunContactScan()` 실행 — Admin 권한 없어 실행자 소속 스페이스만 스캔. 5.5분 타임리밋, total 375건 중 written 323건 완료. `CONTACT_SCAN_SHEET_ID` 시트 ID 검증 및 `applyContactScanFromSheet()` 실행이 남은 작업.
+- **2026-03-07 (견적서 AI 분석 수정 · 드래그앤드롭 · n8n MESSAGE 이벤트 처리):** analyze-quote Edge Function 수정(`.env` 삭제, `const text` 중복 선언 버그, Gemini 모델 `gemini-3.1-flash-lite-preview` 전환, API 키 갱신). EstimateFilesGallery 드래그앤드롭 업로드 추가(`processFile` 추출, 드롭존 UI). ConsultationManagement `sheetUpdateDate` 전면 제거 → `updateDate` 단일화, 정렬 버튼 토글(최근업데이트순↔인입일순), null update_date 정렬 폴백 수정. n8n 워크플로우에 MESSAGE 이벤트 처리 Switch 노드 추가 — **Google Chat 앱이 전달한 interaction event 기준**으로 `update_date` 실시간 갱신. 공식 MESSAGE 이벤트는 방 전체 모든 메시지가 아니라 `@멘션`·슬래시 명령·앱과의 DM에서 발생. 이후 운영 원칙은 `update_date = 최근 활동일(정체 감지용)`, 주 경로는 `GAS lastActiveTime`, `n8n MESSAGE`는 보조 경로로 정리. bulkAddBotToAllSpaces 2,255건 완료(실패 0건).
+- **2026-03-05 (GAS AutoAddBot 안정화 · n8n 엔드투엔드 완료 · 시스템 구조 정리):** OAuth 스코프·createTime 필터·processed 저장 시점·Invalid Date 가드 버그 수정 후 n8n 실 연동 테스트 성공. `channel_chat_id` 컬럼 추가, Check & Normalize 통합, status `접수` 수정, displayName→project_name 저장. 구글 시트는 레거시 확인(GAS가 시트 읽지 않음, AutoAddBot만 살아있음). 3세대 구조 확정: 채팅방→GAS→n8n→Supabase 직접. displayName 파싱 포기(직원 규칙 미준수 우려). 채널톡은 고객응대/마케팅 자동화 집중. 과거 데이터 start_date null 2,344건 현황 파악(미결).
+- **2026-03-02 (구글챗 전수 마이그레이션 v5):** `user_info.json` 기반 2,344건 1:1 이식 성공. Supabase 1,000건 제한 해결(Recursive Batch) 및 Nuclear Cleanup(반복 삭제) 도입. 인입일(`start_date`) 전수 삭제(`null`) 처리.
+- **2026-03-01 (구조 고도화):** 환경변수·상수 중앙화(`config.ts`, `constants.ts`), 탭 컴포넌트 분리, 자동 견적 엔진(`autoEstimate.ts`) 및 가격 분석 파이프라인(scripts) 구축.
+- **2026-02-21~02-22 (자산 관리·OCR):** `uploadEngine` 확장(Cloudinary/Storage 분기), 발주 자산 관리(`OrderAssets.tsx`), analyze-quote Edge Function 및 로컬 OCR(`migrate-data.ts`) 강화.
+- **2026-02-14~02-20 (동기화·업로드 통합):** 구글 시트 ↔ Supabase 양방향 동기화(sheet_update_date), `uploadEngine` 단일화, 상담 히스토리-이미지 자산 통합.
+- **2026-02-10~02-13 (마이그레이션·AI):** MigrationPage 파일명 인코딩, 6개월 견적 통계, 거래처 원가 AI 분석 섹션 분리, 취소 사유(무효/거절) 정립, 쇼룸 UI 통일.
+- **2026-02-08~02-09 (UI·시스템 기초):** 시공 사례 뱅크(PortfolioBank)와 이미지 자산 관리 분리, 상담 카드 숨기기(Soft Delete), 채널톡 FAQ 문법 오류 해결 및 AS 매칭 로직 보강.
 
 ---
 

@@ -181,7 +181,7 @@ export default function AdminMigration() {
             company_name: recipientName,
             manager_name: recipientName,
             contact: recipientContact || '000-0000-0000',
-            status: '상담중',
+            status: '접수',
             expected_revenue: grandTotal,
             created_at: createdAt,
             metadata: {

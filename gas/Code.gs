@@ -297,9 +297,21 @@ function syncAllDataBatch() {
 // ---------- 실시간 시트 → Supabase (onEdit) ----------
 
 /**
- * '상담리스트' 시트에서 A~D열(project_name, link, start_date, update_date) 편집 시 해당 행만 Supabase로 즉시 전송.
+ * '시트1' 시트에서 A~J열(1~10번째 컬럼) 편집 시 해당 행만 Supabase로 즉시 전송.
+ *
+ * 실시간성 보장 원리:
+ *   - onEdit는 GAS 설치형 트리거(Installable Trigger)로 등록하면 다른 사용자가 편집해도 실행됨.
+ *   - 편집 발생 즉시 update_single_consultation_from_sheet RPC를 호출하여
+ *     Supabase DB를 셀 수정과 거의 동시에 갱신 → 앱이 실시간으로 최신 데이터를 반영.
+ *
+ * 열 범위 확장(A~J, col 1~10):
+ *   - 기존 A~D(project_name, link, start_date, update_date) 외에
+ *     E~J 열에 메모, 담당자, 태그 등 추가 정보가 기입되는 경우에도
+ *     동일한 RPC를 호출해 행 전체를 동기화. K열 이상은 스킵.
+ *   - RPC(update_single_consultation_from_sheet)는 project_name 기준으로
+ *     해당 행 전체(A~F 핵심 필드)를 읽어 전송하므로 어느 열을 편집해도 일관성 유지.
+ *
  * 데이터 일원화: 시트에서 빈 값이 오면 RPC가 DB에도 null로 반영.
- * E·F열(status, estimate_amount) 편집 시에는 동기화하지 않음(앱 전용).
  */
 function onEdit(e) {
   if (!e || !e.range) return;
@@ -312,7 +324,10 @@ function onEdit(e) {
   }
 
   var col = e.range.getColumn();
-  if (col > 4) return; // A=1, B=2, C=3, D=4 만 반응. E·F열 편집 시 스킵
+  // A(1)~J(10)열 편집 시에만 동기화. K열(11) 이상은 DB와 무관한 보조 열로 간주하여 스킵.
+  // ※ E·F열(status, estimate_amount)은 앱 전용이므로 시트에서 편집하지 않는 것을 권장하나,
+  //    만약 편집하더라도 RPC는 project_name 기준으로 행 전체를 재전송하여 데이터 일관성 보장.
+  if (col > 10) return;
 
   var rowIndex = e.range.getRow();
   if (rowIndex < 2) return; // 헤더 행 스킵
@@ -433,6 +448,10 @@ function syncAppToSheet(projectName, status, estimateAmount) {
  * 웹앱 doPost: 앱이 [최종 확정] 후 이 URL로 POST하면 시트 해당 행 갱신.
  * Body: JSON { project_name, status?, estimate_amount?, token? }
  * token이 스크립트 속성 SYNC_WEBAPP_TOKEN과 일치하면 실행 (비어 있으면 토큰 검사 생략).
+ *
+ * action: 'download_attachment' — 구글챗 봇용 이미지 다운로드
+ * Body: { action: 'download_attachment', resource_name: string, file_name?: string, token? }
+ * 반환: { ok, imageBase64, fileName, contentType }
  */
 function doPost(e) {
   const contentType = (e && e.postData && e.postData.type) ? e.postData.type : '';
@@ -452,6 +471,11 @@ function doPost(e) {
       .setMimeType(ContentService.MimeType.JSON);
   }
 
+  // 구글챗 첨부 이미지 다운로드 액션
+  if (params.action === 'download_attachment') {
+    return handleDownloadAttachment_(params);
+  }
+
   const projectName = params.project_name;
   const status = params.status != null ? String(params.status) : null;
   const estimateAmount = params.estimate_amount != null ? Number(params.estimate_amount) : null;
@@ -459,4 +483,58 @@ function doPost(e) {
   const result = syncAppToSheet(projectName, status, estimateAmount);
   return ContentService.createTextOutput(JSON.stringify(result))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+/**
+ * 구글챗 메시지 첨부파일을 Chat API로 다운로드하여 base64 반환.
+ * @param {{ resource_name: string, file_name?: string }} params
+ * - resource_name: Chat API attachment resourceName
+ *   (예: "spaces/XXXXX/messages/YYYYY/attachments/ZZZZZ")
+ */
+function handleDownloadAttachment_(params) {
+  var resourceName = params.resource_name;
+  if (!resourceName || typeof resourceName !== 'string' || !resourceName.trim()) {
+    return ContentService.createTextOutput(JSON.stringify({ ok: false, error: 'resource_name required' }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+  resourceName = resourceName.trim();
+
+  var fileName = (params.file_name && String(params.file_name).trim()) || 'estimate.jpg';
+
+  try {
+    var oauthToken = ScriptApp.getOAuthToken();
+    var mediaUrl = 'https://chat.googleapis.com/v1/' + resourceName + '/media?alt=media';
+    var response = UrlFetchApp.fetch(mediaUrl, {
+      method: 'GET',
+      headers: { 'Authorization': 'Bearer ' + oauthToken },
+      muteHttpExceptions: true
+    });
+
+    var statusCode = response.getResponseCode();
+    if (statusCode !== 200) {
+      Logger.log('handleDownloadAttachment_: HTTP ' + statusCode + ' - ' + response.getContentText().slice(0, 200));
+      return ContentService.createTextOutput(JSON.stringify({
+        ok: false,
+        error: 'Chat API download failed: HTTP ' + statusCode
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    var bytes = response.getContent();
+    var base64 = Utilities.base64Encode(bytes);
+    var respContentType = response.getHeaders()['Content-Type'] || 'image/jpeg';
+
+    return ContentService.createTextOutput(JSON.stringify({
+      ok: true,
+      imageBase64: base64,
+      fileName: fileName,
+      contentType: respContentType
+    })).setMimeType(ContentService.MimeType.JSON);
+
+  } catch (err) {
+    Logger.log('handleDownloadAttachment_ error: ' + (err && err.message));
+    return ContentService.createTextOutput(JSON.stringify({
+      ok: false,
+      error: (err && err.message) || 'Unknown error'
+    })).setMimeType(ContentService.MimeType.JSON);
+  }
 }

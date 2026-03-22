@@ -68,6 +68,9 @@ export interface ProjectImageAsset {
   storagePath: string | null
   consultationId: string | null
   projectTitle: string | null
+  siteName?: string | null
+  externalDisplayName?: string | null
+  location?: string | null
   industry: string | null
   viewCount: number
   createdAt: string
@@ -93,4 +96,12 @@ export interface ProjectImageAsset {
   shareCount?: number
   /** image_assets 전용: 상담용 전용 필터·공유 바구니 상단 노출 */
   isConsultation?: boolean
+  /** image_assets 전용: 비포어/애프터 비교 역할 */
+  beforeAfterRole?: 'before' | 'after' | null
+  /** image_assets 전용: 같은 리뉴얼 묶음 식별자 */
+  beforeAfterGroupId?: string | null
+  /** image_assets 전용: metadata 원본(확장 필드 저장용) */
+  metadata?: Record<string, unknown> | null
+  /** image_assets 전용: Google Chat space_id 기반 묶음 키 */
+  spaceId?: string | null
 }

@@ -3,7 +3,7 @@
  * + 데이터 마이그레이션: AI 분석 → 확인용 미리보기 → products/estimates 저장
  * Storage: estimate-files/{consultation_id}/{timestamp}_{filename}
  */
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { FileText, Image, Plus, Loader2, CheckCircle, AlertCircle, Trash2, Pin } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -46,6 +46,12 @@ interface EstimateFilesGalleryProps {
   projectName: string
   files: ConsultationEstimateFile[]
   onUploadComplete?: (payload?: { estimateAmount: number }) => void
+  externalImportRequest?: {
+    file: File
+    uploadType?: 'estimates' | 'vendor_price'
+    requestId: string
+  } | null
+  onExternalImportHandled?: () => void
 }
 
 function getFileType(ext: string): EstimateFileType | null {
@@ -122,6 +128,8 @@ export function EstimateFilesGallery({
   projectName,
   files,
   onUploadComplete,
+  externalImportRequest,
+  onExternalImportHandled,
 }: EstimateFilesGalleryProps) {
   const [lightboxSource, setLightboxSource] = useState<LightboxSource | null>(null)
   const [uploading, setUploading] = useState(false)
@@ -151,6 +159,7 @@ export function EstimateFilesGallery({
   const [applyConflictKeys, setApplyConflictKeys] = useState<Set<string>>(new Set())
   /** 현재 미리보기 파일의 업로드 입구 (저장 시 upload_type으로 기록) */
   const [uploadTypeForCurrentFile, setUploadTypeForCurrentFile] = useState<'estimates' | 'vendor_price'>('estimates')
+  const [dragOver, setDragOver] = useState<'estimates' | 'vendor_price' | null>(null)
 
   /** 제품 키: 동일 제품 = name+spec+color (빈 값은 ''로 통일) */
   const productKey = (name: string, spec: string | null, color: string | null) =>
@@ -360,16 +369,13 @@ export function EstimateFilesGallery({
   }
 
   /** 입구별 모드: 견적서 입구 → 항상 estimates(공급가), 외주업체 단가표 입구 → 항상 vendor_price(원가) */
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>, uploadType: 'estimates' | 'vendor_price') => {
-    const file = e.target.files?.[0]
-    if (!file) return
+  const processFile = useCallback(async (file: File, uploadType: 'estimates' | 'vendor_price') => {
     const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
     const fileType = getFileType(ext)
     if (!fileType) {
       toast.error('PDF 또는 이미지(png, jpg, webp)만 업로드할 수 있습니다.')
       return
     }
-    e.target.value = ''
     setAnalyzing(true)
     setPreviewOpen(true)
     setPreviewFile(file)
@@ -394,7 +400,29 @@ export function EstimateFilesGallery({
     } finally {
       setAnalyzing(false)
     }
+  }, [])
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>, uploadType: 'estimates' | 'vendor_price') => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    processFile(file, uploadType)
   }
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>, uploadType: 'estimates' | 'vendor_price') => {
+    e.preventDefault()
+    setDragOver(null)
+    if (uploading || analyzing) return
+    const file = e.dataTransfer.files?.[0]
+    if (!file) return
+    processFile(file, uploadType)
+  }
+
+  useEffect(() => {
+    if (!externalImportRequest) return
+    void processFile(externalImportRequest.file, externalImportRequest.uploadType ?? 'estimates')
+    onExternalImportHandled?.()
+  }, [externalImportRequest, onExternalImportHandled, processFile])
 
   /** AI 분석 결과가 바뀌면 편집용 복사본 동기화 */
   useEffect(() => {
@@ -590,7 +618,7 @@ export function EstimateFilesGallery({
       const hasValidPhone = recognizedPhone.length >= 9 && /\d/.test(recognizedPhone)
       const updatePayload: Record<string, unknown> = {
         estimate_amount: finalAmount,
-        status: '견적발송',
+        status: '견적',
         metadata: nextMeta,
         ...(hasValidPhone ? { customer_phone: recognizedPhone } : {}),
       }
@@ -747,9 +775,17 @@ export function EstimateFilesGallery({
         {/* 왼쪽: 견적서 리스트 */}
         <div className="space-y-2">
           <h5 className="text-sm font-medium text-foreground">견적서</h5>
-          <div className="space-y-1.5 rounded-lg border border-border bg-background p-2 min-h-[120px]">
+          <div
+            className={`space-y-1.5 rounded-lg border bg-background p-2 min-h-[120px] transition-colors ${dragOver === 'estimates' ? 'border-primary bg-primary/5' : 'border-border'}`}
+            onDragOver={(e) => { e.preventDefault(); setDragOver('estimates') }}
+            onDragLeave={() => setDragOver(null)}
+            onDrop={(e) => handleDrop(e, 'estimates')}
+          >
             {estimateFiles.length === 0 ? (
-              <p className="text-xs text-muted-foreground py-6 text-center">업로드한 견적서가 없습니다.</p>
+              <label htmlFor="estimate-upload-input" className="flex flex-col items-center justify-center py-6 gap-1 cursor-pointer">
+                <Plus className="h-5 w-5 text-muted-foreground/50" />
+                <p className="text-xs text-muted-foreground text-center">여기에 파일을 드래그하거나 클릭해서 업로드</p>
+              </label>
             ) : (
               estimateFiles.map((f) => (
                 <FileListCard
@@ -766,19 +802,27 @@ export function EstimateFilesGallery({
         {/* 오른쪽: 외주업체 단가표 리스트 */}
         <div className="space-y-2">
           <h5 className="text-sm font-medium text-foreground">외주업체 단가표</h5>
-          <div className="space-y-1.5 rounded-lg border border-border bg-background p-2 min-h-[120px]">
+          <div
+            className={`space-y-1.5 rounded-lg border bg-background p-2 min-h-[120px] transition-colors ${dragOver === 'vendor_price' ? 'border-primary bg-primary/5' : 'border-border'}`}
+            onDragOver={(e) => { e.preventDefault(); setDragOver('vendor_price') }}
+            onDragLeave={() => setDragOver(null)}
+            onDrop={(e) => handleDrop(e, 'vendor_price')}
+          >
             {vendorFiles.length === 0 ? (
-              <p className="text-xs text-muted-foreground py-6 text-center">업로드한 외주업체 단가표가 없습니다.</p>
+              <label htmlFor="vendor-upload-input" className="flex flex-col items-center justify-center py-6 gap-1 cursor-pointer">
+                <FileText className="h-5 w-5 text-muted-foreground/50" />
+                <p className="text-xs text-muted-foreground text-center">여기에 파일을 드래그하거나 클릭해서 업로드</p>
+              </label>
             ) : (
               vendorFiles.map((f) => (
-                  <FileListCard
-                    key={f.id}
-                    file={f}
-                    isDeleting={deletingId === f.id}
-                    onViewOriginal={() => openPreview(f)}
-                    onDelete={(e) => handleDeleteFile(e, f)}
-                  />
-                ))
+                <FileListCard
+                  key={f.id}
+                  file={f}
+                  isDeleting={deletingId === f.id}
+                  onViewOriginal={() => openPreview(f)}
+                  onDelete={(e) => handleDeleteFile(e, f)}
+                />
+              ))
             )}
           </div>
         </div>

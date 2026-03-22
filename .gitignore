@@ -32,3 +32,19 @@ dist-ssr
 .env
 .env.local
 .env.*.local
+
+# Local generated artifacts
+tsconfig.tsbuildinfo
+data_migration.xlsx
+project_image_summary.csv
+시공현장 이미지/
+시공현장 이미지/**
+*이미지*/
+apps/homepage/dist/
+
+# Takeout cache artifacts
+public/assets/takeout-quote-inbox/
+public/data/takeout-quote-inbox.json
+
+# Local chat/image scratch assets
+assets/

@@ -595,7 +595,7 @@ export default function MigrationPage() {
             upsert: true,
           })
           if (uploadErr) throw uploadErr
-          const consultStatus: '계약완료' | '견적발송' | '상담중' = finalAmount > 0 ? '계약완료' : '견적발송'
+          const consultStatus: '진행' | '견적' | '접수' = finalAmount > 0 ? '진행' : '견적'
 
           let consultationId: string
           const existing = matchedConsultation[id]

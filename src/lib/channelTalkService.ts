@@ -244,7 +244,7 @@ export async function processSimulatedIncoming(
         company_name: companyName,
         manager_name: companyName,
         contact: contactNorm,
-        status: '상담중',
+        status: '접수',
         expected_revenue: null,
         is_test: true,
         is_visible: true,
