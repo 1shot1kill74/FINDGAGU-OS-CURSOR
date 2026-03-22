@@ -2194,12 +2194,8 @@ export default function ImageAssetViewer() {
                 <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => { setLightboxAsset(null); setLightboxIndex(null) }}><X className="h-4 w-4" /></Button>
               </DialogHeader>
               <div
-                className="flex-1 min-h-0 flex items-center justify-center p-4 bg-muted/30 relative cursor-grab active:cursor-grabbing"
-                onPointerDown={handleLightboxPointerDown}
-                onPointerUp={handleLightboxPointerUp}
-                onPointerCancel={handleLightboxPointerCancel}
+                className="flex-1 min-h-0 flex items-center justify-center p-4 bg-muted/30 relative"
                 style={{ touchAction: 'pan-y' }}
-                ref={lightboxImageFrameRef}
               >
                 {prevAsset && (
                   <button
@@ -2211,12 +2207,21 @@ export default function ImageAssetViewer() {
                     <ChevronLeft className="h-5 w-5" />
                   </button>
                 )}
-                <img
-                  src={lightboxAsset.url}
-                  alt={getBaseAltText(lightboxAsset)}
-                  className="max-w-full max-h-[70vh] object-contain"
-                  draggable={false}
-                />
+                <div
+                  className="inline-block max-w-full cursor-grab active:cursor-grabbing"
+                  onPointerDown={handleLightboxPointerDown}
+                  onPointerUp={handleLightboxPointerUp}
+                  onPointerCancel={handleLightboxPointerCancel}
+                  style={{ touchAction: 'pan-y' }}
+                  ref={lightboxImageFrameRef}
+                >
+                  <img
+                    src={lightboxAsset.url}
+                    alt={getBaseAltText(lightboxAsset)}
+                    className="max-w-full max-h-[70vh] object-contain"
+                    draggable={false}
+                  />
+                </div>
                 {nextAsset && (
                   <button
                     type="button"
