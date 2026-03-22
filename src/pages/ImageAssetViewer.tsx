@@ -46,6 +46,7 @@ import { USAGE_TYPES, REVIEW_STATUSES, getUsageLabel, getUsageTooltip, type Usag
 
 /** 자주 쓰는 색상 퀵 태깅 */
 const COLOR_QUICK = ['화이트', '오크', '블랙', '그레이', '네이비', '월넛'] as const
+const SWIPE_THRESHOLD_PX = 50
 
 /** 업종 인라인 편집 기본 옵션 */
 const SECTOR_OPTIONS = ['학원', '관리형', '스터디카페', '학교', '아파트', '기타'] as const
@@ -728,6 +729,14 @@ export default function ImageAssetViewer() {
   const bankDisplayPaginated = isBankView ? bankPaginated : paginated
   const bankDisplayHasMore = isBankView ? bankHasMore : hasMore
   const displayHasResults = isBankView ? bankDisplayFlat.length > 0 : flatForPaging.length > 0
+  const lightboxList = useMemo(
+    () => (isBankView ? bankFlatForPaging : flatForPaging),
+    [isBankView, bankFlatForPaging, flatForPaging]
+  )
+  const lightboxImageFrameRef = useRef<HTMLDivElement | null>(null)
+  const lightboxAnimatedImageIdRef = useRef<string | null>(null)
+  const lightboxTransitionDirectionRef = useRef<'next' | 'prev'>('next')
+  const lightboxPointerStartRef = useRef<{ x: number; y: number } | null>(null)
 
   /** 라이트박스에서 "이 현장 앨범 보기" 클릭 후 현장별 모드로 전환되면 해당 섹션으로 스크롤 */
   useEffect(() => {
@@ -743,8 +752,9 @@ export default function ImageAssetViewer() {
   /** 라이트박스 열기 + 현재 보기 목록 기준 인덱스 설정 (앞뒤 넘기기용) */
   const openLightboxAt = useCallback(
     (asset: ProjectImageAsset) => {
-      const list = isBankView ? bankFlatForPaging : flatForPaging
-      const idx = list.findIndex((a) => a.id === asset.id)
+      lightboxAnimatedImageIdRef.current = null
+      lightboxTransitionDirectionRef.current = 'next'
+      const idx = lightboxList.findIndex((a) => a.id === asset.id)
       setLightboxAsset(asset)
       setLightboxIndex(idx >= 0 ? idx : null)
       if (asset.sourceTable === 'image_assets') {
@@ -753,8 +763,82 @@ export default function ImageAssetViewer() {
           .catch(() => {})
       }
     },
-    [isBankView, bankFlatForPaging, flatForPaging]
+    [lightboxList]
   )
+
+  const goToPreviousLightboxAsset = useCallback(() => {
+    if (!lightboxAsset) return
+    const currentIndex = lightboxIndex ?? lightboxList.findIndex((asset) => asset.id === lightboxAsset.id)
+    if (currentIndex <= 0) return
+    const target = lightboxList[currentIndex - 1]
+    if (!target) return
+    lightboxTransitionDirectionRef.current = 'prev'
+    setLightboxAsset(target)
+    setLightboxIndex(currentIndex - 1)
+  }, [lightboxAsset, lightboxIndex, lightboxList])
+
+  const goToNextLightboxAsset = useCallback(() => {
+    if (!lightboxAsset) return
+    const currentIndex = lightboxIndex ?? lightboxList.findIndex((asset) => asset.id === lightboxAsset.id)
+    if (currentIndex < 0 || currentIndex >= lightboxList.length - 1) return
+    const target = lightboxList[currentIndex + 1]
+    if (!target) return
+    lightboxTransitionDirectionRef.current = 'next'
+    setLightboxAsset(target)
+    setLightboxIndex(currentIndex + 1)
+  }, [lightboxAsset, lightboxIndex, lightboxList])
+
+  const handleLightboxPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!event.isPrimary) {
+      lightboxPointerStartRef.current = null
+      return
+    }
+    event.currentTarget.setPointerCapture(event.pointerId)
+    lightboxPointerStartRef.current = { x: event.clientX, y: event.clientY }
+  }, [])
+
+  const handleLightboxPointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const start = lightboxPointerStartRef.current
+    lightboxPointerStartRef.current = null
+    if (!start || lightboxList.length <= 1) return
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    const deltaX = event.clientX - start.x
+    const deltaY = event.clientY - start.y
+    if (Math.abs(deltaX) < SWIPE_THRESHOLD_PX || Math.abs(deltaX) <= Math.abs(deltaY)) return
+    if (deltaX < 0) goToNextLightboxAsset()
+    else goToPreviousLightboxAsset()
+  }, [lightboxList.length, goToNextLightboxAsset, goToPreviousLightboxAsset])
+  const handleLightboxPointerCancel = useCallback(() => {
+    lightboxPointerStartRef.current = null
+  }, [])
+  useEffect(() => {
+    const currentImageId = lightboxAsset?.id ?? null
+    if (!currentImageId) {
+      lightboxAnimatedImageIdRef.current = null
+      return
+    }
+    if (lightboxAnimatedImageIdRef.current === null) {
+      lightboxAnimatedImageIdRef.current = currentImageId
+      return
+    }
+    if (lightboxAnimatedImageIdRef.current === currentImageId) return
+    lightboxAnimatedImageIdRef.current = currentImageId
+    const frame = lightboxImageFrameRef.current
+    if (!frame) return
+    const offset = lightboxTransitionDirectionRef.current === 'next' ? 28 : -28
+    frame.animate(
+      [
+        { opacity: 0.55, transform: `translateX(${offset}px) scale(0.985)` },
+        { opacity: 1, transform: 'translateX(0) scale(1)' },
+      ],
+      {
+        duration: 260,
+        easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+      }
+    )
+  }, [lightboxAsset])
 
   const copyAllMarkdown = useCallback(() => {
     const lines = assets.map((a) => toMarkdownImageLine(a))
@@ -2073,7 +2157,6 @@ export default function ImageAssetViewer() {
       >
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col p-0">
           {lightboxAsset && (() => {
-            const lightboxList = isBankView ? bankFlatForPaging : flatForPaging
             const idx = lightboxIndex ?? (lightboxList.findIndex((a) => a.id === lightboxAsset.id) ?? -1)
             const prevAsset = idx > 0 ? lightboxList[idx - 1] : null
             const nextAsset = idx >= 0 && idx < lightboxList.length - 1 ? lightboxList[idx + 1] : null
@@ -2089,7 +2172,7 @@ export default function ImageAssetViewer() {
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8 shrink-0"
-                      onClick={() => { setLightboxAsset(prevAsset); setLightboxIndex(idx - 1) }}
+                      onClick={goToPreviousLightboxAsset}
                       aria-label="이전 사진"
                     >
                       <ChevronLeft className="h-4 w-4" />
@@ -2101,7 +2184,7 @@ export default function ImageAssetViewer() {
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8 shrink-0"
-                      onClick={() => { setLightboxAsset(nextAsset); setLightboxIndex(idx + 1) }}
+                      onClick={goToNextLightboxAsset}
                       aria-label="다음 사진"
                     >
                       <ChevronRight className="h-4 w-4" />
@@ -2110,12 +2193,40 @@ export default function ImageAssetViewer() {
                 </div>
                 <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => { setLightboxAsset(null); setLightboxIndex(null) }}><X className="h-4 w-4" /></Button>
               </DialogHeader>
-              <div className="flex-1 min-h-0 flex items-center justify-center p-4 bg-muted/30 relative">
+              <div
+                className="flex-1 min-h-0 flex items-center justify-center p-4 bg-muted/30 relative cursor-grab active:cursor-grabbing"
+                onPointerDown={handleLightboxPointerDown}
+                onPointerUp={handleLightboxPointerUp}
+                onPointerCancel={handleLightboxPointerCancel}
+                style={{ touchAction: 'pan-y' }}
+                ref={lightboxImageFrameRef}
+              >
+                {prevAsset && (
+                  <button
+                    type="button"
+                    onClick={goToPreviousLightboxAsset}
+                    className="absolute left-2 top-1/2 z-10 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-black/50 text-white shadow-sm transition-colors hover:bg-black/70"
+                    aria-label="이전 사진"
+                  >
+                    <ChevronLeft className="h-5 w-5" />
+                  </button>
+                )}
                 <img
                   src={lightboxAsset.url}
                   alt={getBaseAltText(lightboxAsset)}
                   className="max-w-full max-h-[70vh] object-contain"
+                  draggable={false}
                 />
+                {nextAsset && (
+                  <button
+                    type="button"
+                    onClick={goToNextLightboxAsset}
+                    className="absolute right-2 top-1/2 z-10 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-black/50 text-white shadow-sm transition-colors hover:bg-black/70"
+                    aria-label="다음 사진"
+                  >
+                    <ChevronRight className="h-5 w-5" />
+                  </button>
+                )}
               </div>
               <div className="px-4 py-3 border-t shrink-0 space-y-3">
                 {/* 공유 최적화: 눈에 띄게 배치 */}

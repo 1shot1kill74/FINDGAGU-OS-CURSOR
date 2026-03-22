@@ -31,6 +31,7 @@ import { createSharedGallery, snapshotShowroomImageAsset } from '@/lib/sharedGal
 const INTERNAL_SHOWROOM = true
 const INDUSTRY_PREFERRED_ORDER = ['관리형', '학원', '스터디카페', '학교', '아파트', '기타'] as const
 const INDUSTRY_PAGE_SIZE = 6
+const SWIPE_THRESHOLD_PX = 50
 
 /** 말풍선 문구에서 하이라이트할 핵심 단어 (주황/브랜드 강조색) */
 const HIGHLIGHT_KEYWORDS = ['실패', '매출', '디테일', '통제력', '점유율', '프리미엄', '원스톱', '품격', '인건비']
@@ -243,6 +244,27 @@ function compareSeriesSuffix(a: string | null, b: string | null): number {
   if (!a && b) return 1
   if (!a && !b) return 0
   return a!.localeCompare(b!, 'en', { numeric: true })
+}
+
+function sortBeforeAfterImages(images: ShowroomImageAsset[]): ShowroomImageAsset[] {
+  return [...images].sort((a, b) => {
+    const order = (role: string | null | undefined) => {
+      if (role === 'before') return 0
+      if (role === 'after') return 1
+      return 2
+    }
+
+    const roleDiff = order(a.before_after_role) - order(b.before_after_role)
+    if (roleDiff !== 0) return roleDiff
+
+    const aMain = a.is_main ? 1 : 0
+    const bMain = b.is_main ? 1 : 0
+    if (aMain !== bMain) return bMain - aMain
+
+    const aTime = a.created_at ? new Date(a.created_at).getTime() : 0
+    const bTime = b.created_at ? new Date(b.created_at).getTime() : 0
+    return aTime - bTime
+  })
 }
 
 function getLatestCreatedAt(images: ShowroomImageAsset[]): string | null {
@@ -752,20 +774,82 @@ export default function ShowroomPage() {
     }
     if (detailOpen === 'beforeAfter') {
       const g = beforeAfterGroups.find((x) => x.siteName === detailKey)
-      return g?.images ?? []
+      return g ? sortBeforeAfterImages(g.images) : []
     }
     const g = productGroups.find((x) => x.productName === detailKey)
     return g?.images ?? []
   }, [detailOpen, detailKey, siteGroups, productGroups, beforeAfterGroups])
+  const detailImageFrameRef = useRef<HTMLDivElement | null>(null)
+  const detailAnimatedImageIdRef = useRef<string | null>(null)
+  const detailTransitionDirectionRef = useRef<'next' | 'prev'>('next')
 
   const openDetail = (mode: 'site' | 'product' | 'beforeAfter', key: string) => {
+    detailAnimatedImageIdRef.current = null
+    detailTransitionDirectionRef.current = 'next'
     setDetailOpen(mode)
     setDetailKey(key)
     setLightboxIndex(0)
   }
 
-  const goPrev = () => setLightboxIndex((i) => (i <= 0 ? detailImages.length - 1 : i - 1))
-  const goNext = () => setLightboxIndex((i) => (i >= detailImages.length - 1 ? 0 : i + 1))
+  const goPrev = useCallback(() => {
+    detailTransitionDirectionRef.current = 'prev'
+    setLightboxIndex((i) => (i <= 0 ? detailImages.length - 1 : i - 1))
+  }, [detailImages.length])
+  const goNext = useCallback(() => {
+    detailTransitionDirectionRef.current = 'next'
+    setLightboxIndex((i) => (i >= detailImages.length - 1 ? 0 : i + 1))
+  }, [detailImages.length])
+  const detailPointerStartRef = useRef<{ x: number; y: number } | null>(null)
+  const handleDetailPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!event.isPrimary) {
+      detailPointerStartRef.current = null
+      return
+    }
+    event.currentTarget.setPointerCapture(event.pointerId)
+    detailPointerStartRef.current = { x: event.clientX, y: event.clientY }
+  }, [])
+  const handleDetailPointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const start = detailPointerStartRef.current
+    detailPointerStartRef.current = null
+    if (!start || detailImages.length <= 1) return
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    const deltaX = event.clientX - start.x
+    const deltaY = event.clientY - start.y
+    if (Math.abs(deltaX) < SWIPE_THRESHOLD_PX || Math.abs(deltaX) <= Math.abs(deltaY)) return
+    if (deltaX < 0) goNext()
+    else goPrev()
+  }, [detailImages.length, goNext, goPrev])
+  const handleDetailPointerCancel = useCallback(() => {
+    detailPointerStartRef.current = null
+  }, [])
+  useEffect(() => {
+    const currentImageId = detailImages[lightboxIndex]?.id ?? null
+    if (!currentImageId) {
+      detailAnimatedImageIdRef.current = null
+      return
+    }
+    if (detailAnimatedImageIdRef.current === null) {
+      detailAnimatedImageIdRef.current = currentImageId
+      return
+    }
+    if (detailAnimatedImageIdRef.current === currentImageId) return
+    detailAnimatedImageIdRef.current = currentImageId
+    const frame = detailImageFrameRef.current
+    if (!frame) return
+    const offset = detailTransitionDirectionRef.current === 'next' ? 28 : -28
+    frame.animate(
+      [
+        { opacity: 0.55, transform: `translateX(${offset}px) scale(0.985)` },
+        { opacity: 1, transform: 'translateX(0) scale(1)' },
+      ],
+      {
+        duration: 260,
+        easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+      }
+    )
+  }, [detailImages, lightboxIndex])
 
   const createShareGalleryUrl = useCallback(async () => {
     if (selectedImageIds.size === 0) return ''
@@ -2040,7 +2124,10 @@ export default function ShowroomPage() {
             {detailImages.length === 0 ? (
               <p className="text-neutral-500 text-center py-8">사진이 없습니다.</p>
             ) : (
-              <div className="relative flex items-center justify-center min-h-[60vh]">
+              <div
+                className="relative flex items-center justify-center min-h-[60vh]"
+                style={{ touchAction: 'pan-y' }}
+              >
                 <button
                   type="button"
                   onClick={goPrev}
@@ -2049,11 +2136,19 @@ export default function ShowroomPage() {
                 >
                   <ChevronLeft className="h-6 w-6" />
                 </button>
-                <div className="relative inline-block max-w-full">
+                <div
+                  className="relative inline-block max-w-full cursor-grab active:cursor-grabbing"
+                  onPointerDown={handleDetailPointerDown}
+                  onPointerUp={handleDetailPointerUp}
+                  onPointerCancel={handleDetailPointerCancel}
+                  style={{ touchAction: 'pan-y' }}
+                  ref={detailImageFrameRef}
+                >
                   <img
                     src={detailImages[lightboxIndex]?.cloudinary_url ?? detailImages[lightboxIndex]?.thumbnail_url ?? ''}
                     alt=""
                     className="max-w-full max-h-[70vh] object-contain rounded-lg block"
+                    draggable={false}
                   />
                   {(() => {
                     const current = detailImages[lightboxIndex]
