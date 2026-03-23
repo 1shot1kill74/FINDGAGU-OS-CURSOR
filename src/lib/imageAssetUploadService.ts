@@ -181,6 +181,39 @@ export interface SpaceDisplayNameOption {
   customer_phone?: string | null
 }
 
+function formatMonthBucket(value?: string | null): string | null {
+  const trimmed = value?.trim()
+  if (!trimmed) return null
+
+  const directMatch = trimmed.match(/^(\d{4})-(\d{2})/)
+  if (directMatch) return `${directMatch[1]!.slice(2)}${directMatch[2]}`
+
+  const parsed = new Date(trimmed)
+  if (Number.isNaN(parsed.getTime())) return null
+  const year = String(parsed.getFullYear()).slice(2)
+  const month = String(parsed.getMonth() + 1).padStart(2, '0')
+  return `${year}${month}`
+}
+
+function getSpaceOptionMonthBucket(option: SpaceDisplayNameOption): string {
+  return (
+    formatMonthBucket(option.request_date) ||
+    formatMonthBucket(option.start_date) ||
+    formatMonthBucket(option.created_at) ||
+    '0000'
+  )
+}
+
+export function compareSpaceDisplayNameOptions(a: SpaceDisplayNameOption, b: SpaceDisplayNameOption): number {
+  const monthDiff = getSpaceOptionMonthBucket(b).localeCompare(getSpaceOptionMonthBucket(a), 'ko')
+  if (monthDiff !== 0) return monthDiff
+
+  const nameDiff = a.display_name.localeCompare(b.display_name, 'ko')
+  if (nameDiff !== 0) return nameDiff
+
+  return (a.space_id ?? '').localeCompare(b.space_id ?? '', 'ko')
+}
+
 function parseGoogleChatSpaceId(value: unknown): string | null {
   if (typeof value !== 'string' || !value.trim()) return null
   const raw = value.trim()
@@ -253,5 +286,5 @@ export async function getExistingSiteNames(): Promise<SpaceDisplayNameOption[]> 
       })
     }
   }
-  return Array.from(map.values()).sort((a, b) => a.display_name.localeCompare(b.display_name, 'ko'))
+  return Array.from(map.values()).sort(compareSpaceDisplayNameOptions)
 }

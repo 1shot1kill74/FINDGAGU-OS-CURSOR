@@ -11,6 +11,7 @@ import { useColorChips } from '@/hooks/useColorChips'
 import { readExifFromFile } from '@/lib/exifUtil'
 import { uploadEngine } from '@/lib/uploadEngine'
 import {
+  compareSpaceDisplayNameOptions,
   getExistingImageFingerprints,
   insertImageAsset,
   getExistingSiteNames,
@@ -149,9 +150,15 @@ export function ImageAssetUploadForm({
   const siteNameInputRef = useRef<HTMLInputElement>(null)
   const [selectedSpaceOption, setSelectedSpaceOption] = useState<SpaceDisplayNameOption | null>(null)
 
-  useEffect(() => {
-    getExistingSiteNames().then(setSiteNameOptions)
+  const refreshSiteNameOptions = useCallback(async () => {
+    const options = await getExistingSiteNames()
+    setSiteNameOptions(options)
+    return options
   }, [])
+
+  useEffect(() => {
+    void refreshSiteNameOptions()
+  }, [refreshSiteNameOptions])
 
   useEffect(() => {
     if (prefill?.site_name) setSite_name(prefill.site_name)
@@ -183,7 +190,7 @@ export function ImageAssetUploadForm({
             .sort((a, b) => {
               const scoreDiff = getSiteOptionSearchScore(b, query) - getSiteOptionSearchScore(a, query)
               if (scoreDiff !== 0) return scoreDiff
-              return a.display_name.localeCompare(b.display_name, 'ko')
+              return compareSpaceDisplayNameOptions(a, b)
             })
         : siteNameOptions
       return filtered.slice(0, 20)
@@ -486,8 +493,20 @@ export function ImageAssetUploadForm({
               setSiteNameOpen(true)
             }}
             onFocus={() => {
-              setSiteNameSuggestions(buildSiteSuggestions(site_name))
               setSiteNameOpen(true)
+              void refreshSiteNameOptions().then((options) => {
+                const next = site_name.trim()
+                  ? options
+                      .filter((option) => matchesSiteOption(option, site_name))
+                      .sort((a, b) => {
+                        const scoreDiff = getSiteOptionSearchScore(b, site_name) - getSiteOptionSearchScore(a, site_name)
+                        if (scoreDiff !== 0) return scoreDiff
+                        return compareSpaceDisplayNameOptions(a, b)
+                      })
+                      .slice(0, 20)
+                  : options.slice(0, 20)
+                setSiteNameSuggestions(next)
+              })
             }}
             onBlur={() => {
               setTimeout(() => setSiteNameOpen(false), 180)
