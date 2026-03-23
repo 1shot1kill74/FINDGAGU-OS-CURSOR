@@ -1,0 +1,11 @@
+{
+  "name": "findgagu-homepage",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "../../node_modules/.bin/vite --config vite.config.ts",
+    "build": "../../node_modules/.bin/vite build --config vite.config.ts",
+    "preview": "../../node_modules/.bin/vite preview --config vite.config.ts --port 4174"
+  }
+}
