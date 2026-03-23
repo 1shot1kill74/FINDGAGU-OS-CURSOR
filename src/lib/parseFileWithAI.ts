@@ -130,37 +130,27 @@ export interface EdgeFunctionError extends Error {
 
 /** Edge Function analyze-quote 호출 */
 async function invokeAnalyzeQuote(input: AnalyzeQuoteInput): Promise<AnalyzeQuoteResponse> {
-  const {
-    data: { session },
-  } = await supabase.auth.getSession()
-  const accessToken = session?.access_token
-
-  if (!accessToken) {
-    const err = new Error('로그인 세션을 확인할 수 없습니다. 다시 로그인 후 시도해 주세요.') as EdgeFunctionError
-    err.context = { error: 'missing_access_token' }
-    throw err
-  }
-
   const { data, error } = await supabase.functions.invoke<AnalyzeQuoteResponse>('analyze-quote', {
     body: input,
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
   })
 
   if (error) {
     const err = new Error(error.message || 'Edge Function 호출 실패') as EdgeFunctionError
-    err.context = { error: error.message }
+    err.context = { error: error.name, detail: error.message }
     throw err
   }
 
-  if (data?.error) {
+  if (!data) {
+    throw new Error('AI 분석 결과가 비어 있습니다.')
+  }
+
+  if (data.error) {
     const err = new Error(data.error) as EdgeFunctionError
-    err.context = { error: data.error, detail: (data as { detail?: string }).detail }
+    err.context = { error: data.error, detail: (data as any).detail }
     throw err
   }
 
-  return data ?? {}
+  return data
 }
 
 export type ParseMode = 'default' | 'estimates' | 'vendor_price'

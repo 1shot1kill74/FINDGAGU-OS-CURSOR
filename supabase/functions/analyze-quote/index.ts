@@ -9,13 +9,14 @@
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { GoogleGenerativeAI } from "npm:@google/generative-ai@0.21.0"
+import { createClient } from "npm:@supabase/supabase-js@2"
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 }
 
-const GEMINI_MODEL = "gemini-3.1-flash-lite-preview"
+const GEMINI_MODEL = "gemini-2.0-flash"
 
 /** 견적서 이미지 분석 프롬프트 */
 const VISION_ESTIMATE_PROMPT = `당신은 가구 견적서 이미지 분석 전문가입니다. **반드시 아래 순서대로 검증 후** 추출을 진행하세요.
@@ -122,6 +123,33 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
+    // 1. 수동 JWT 검증 (Gateway 통과 후 내부 검증)
+    const authHeader = req.headers.get("Authorization")
+    if (!authHeader) {
+      return new Response(
+        JSON.stringify({ error: "Unauthorized", detail: "Missing Authorization header" }),
+        { status: 401, headers: { ...CORS, "Content-Type": "application/json" } }
+      )
+    }
+
+    const token = authHeader.replace("Bearer ", "")
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? ""
+    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? ""
+    
+    const supabaseClient = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: authHeader } }
+    })
+
+    const { data: { user }, error: authError } = await supabaseClient.auth.getUser(token)
+    if (authError || !user) {
+      console.error("[analyze-quote] Auth Error:", authError)
+      return new Response(
+        JSON.stringify({ error: "Unauthorized", detail: "Invalid token" }),
+        { status: 401, headers: { ...CORS, "Content-Type": "application/json" } }
+      )
+    }
+
+    // 2. 환경 변수 확인
     const apiKey = Deno.env.get("GOOGLE_GEMINI_API_KEY")
     if (!apiKey?.trim()) {
       console.error("[analyze-quote] GOOGLE_GEMINI_API_KEY 미설정")
