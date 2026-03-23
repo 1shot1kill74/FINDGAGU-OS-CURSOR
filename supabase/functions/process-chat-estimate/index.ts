@@ -86,6 +86,70 @@ interface EstimateRow {
   note: string
 }
 
+type ConsultationLookupRow = {
+  id: string
+  project_name: string | null
+  metadata: Record<string, unknown> | null
+  status: string | null
+}
+
+async function ensureConsultationForSpace(
+  supabase: ReturnType<typeof createClient>,
+  spaceName: string,
+): Promise<ConsultationLookupRow | null> {
+  const { data: existing, error: existingErr } = await supabase
+    .from("consultations")
+    .select("id, project_name, metadata, status")
+    .eq("channel_chat_id", spaceName)
+    .eq("is_visible", true)
+    .limit(1)
+    .maybeSingle()
+
+  if (existingErr) {
+    console.error("[process-chat-estimate] consultation lookup failed:", spaceName, existingErr.message)
+    return null
+  }
+  if (existing) return existing as unknown as ConsultationLookupRow
+
+  const today = new Date().toISOString().slice(0, 10)
+  const chatLink = `https://chat.google.com/room/${spaceName.replace(/^spaces\//, "")}`
+  const fallbackRow = {
+    project_name: spaceName,
+    link: chatLink,
+    channel_chat_id: spaceName,
+    start_date: today,
+    update_date: today,
+    status: "접수",
+    customer_grade: "신규",
+    is_visible: true,
+    metadata: {
+      source: "google_chat_process_chat_estimate",
+      space_id: spaceName,
+      google_chat_url: chatLink,
+      auto_created_from: "process_chat_estimate",
+    },
+  }
+
+  const { error: insertErr } = await supabase.from("consultations").insert(fallbackRow)
+  if (insertErr) {
+    console.error("[process-chat-estimate] consultation insert failed:", spaceName, insertErr.message)
+  }
+
+  const { data: created, error: createdErr } = await supabase
+    .from("consultations")
+    .select("id, project_name, metadata, status")
+    .eq("channel_chat_id", spaceName)
+    .eq("is_visible", true)
+    .limit(1)
+    .maybeSingle()
+
+  if (createdErr) {
+    console.error("[process-chat-estimate] consultation re-lookup failed:", spaceName, createdErr.message)
+    return null
+  }
+  return (created ?? null) as ConsultationLookupRow | null
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS })
   if (req.method !== "POST") {
@@ -131,23 +195,15 @@ Deno.serve(async (req: Request) => {
     })
   }
 
-  // 1. consultation 조회 (channel_chat_id = spaceName)
-  const { data: rows, error: consultErr } = await supabase
-    .from("consultations")
-    .select("id, project_name, metadata, status")
-    .eq("channel_chat_id", spaceName)
-    .eq("is_visible", true)
-    .limit(1)
-
-  if (consultErr || !rows?.length) {
-    console.error("[process-chat-estimate] consultation not found:", spaceName, consultErr?.message)
+  // 1. consultation 조회/보장 (channel_chat_id = spaceName)
+  const consultation = await ensureConsultationForSpace(supabase, spaceName)
+  if (!consultation) {
+    console.error("[process-chat-estimate] consultation not found after ensure:", spaceName)
     return new Response(
       JSON.stringify({ error: `상담카드를 찾을 수 없습니다. spaceName: ${spaceName}` }),
       { status: 404, headers: { ...CORS, "Content-Type": "application/json" } },
     )
   }
-
-  const consultation = rows[0]
   const consultationId = consultation.id as string
   const projectName = (consultation.project_name as string) ?? ""
 

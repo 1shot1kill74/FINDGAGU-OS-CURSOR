@@ -56,6 +56,12 @@ const AUTO_BOT_CONFIG = {
   PROP_LAST_CHECK: 'autoBot_lastCheckTime',
   PROP_PROCESSED:  'autoBot_processedSpaces',
   PROP_BOT_NAME:   'autoBot_resolvedBotName',
+
+  /**
+   * 신규 스페이스 감지 시 이전 체크 시각과 겹쳐서 다시 볼 버퍼(분)
+   * 감사 로그/Chat API 반영 지연으로 인한 경계 누락 방지용.
+   */
+  DETECTION_OVERLAP_MINUTES: 5,
 };
 
 // ═══════════════════════ 메인 진입점 ═══════════════════════
@@ -83,7 +89,7 @@ function autoAddBotToNewSpaces() {
     return;
   }
 
-  const { newSpaces, processed, props, activeSpaces } = detectNewSpaces_();
+  const { newSpaces, processed, props, activeSpaces, checkpointIso } = detectNewSpaces_();
 
   // 활동 있는 스페이스 update_date 갱신 (새 스페이스 유무와 무관하게 항상 실행)
   if (activeSpaces.length) {
@@ -92,6 +98,7 @@ function autoAddBotToNewSpaces() {
   }
 
   if (!newSpaces.length) {
+    props.setProperty(AUTO_BOT_CONFIG.PROP_LAST_CHECK, checkpointIso);
     console.log('⏭ 새 스페이스 없음 — ' + new Date().toLocaleString('ko-KR'));
     return;
   }
@@ -102,7 +109,8 @@ function autoAddBotToNewSpaces() {
     if (botAdded) {
       // 봇 추가 성공 → processed에 저장 후 Webhook 알림
       processed.add(spaceName);
-      notifyWebhook_(spaceName);
+      const webhookOk = notifyWebhook_(spaceName);
+      ensureConsultationCardForSpace_(spaceName, webhookOk);
     } else {
       // 실패한 스페이스는 processed에 저장하지 않아 다음 사이클에 재시도됨
       console.warn('  ⚠ Webhook 미발송 (봇 추가 실패): ' + spaceName);
@@ -112,6 +120,7 @@ function autoAddBotToNewSpaces() {
   // 봇 추가 성공한 스페이스만 processed에 반영 (최근 100개 유지)
   const trimmed = Array.from(processed).slice(-100);
   props.setProperty(AUTO_BOT_CONFIG.PROP_PROCESSED, JSON.stringify(trimmed));
+  props.setProperty(AUTO_BOT_CONFIG.PROP_LAST_CHECK, checkpointIso);
 }
 
 // ═══════════════════════ 스페이스 감지 ═══════════════════════
@@ -130,16 +139,14 @@ function detectNewSpaces_() {
   const props    = PropertiesService.getScriptProperties();
   const now      = new Date();
   const lastStr  = props.getProperty(AUTO_BOT_CONFIG.PROP_LAST_CHECK);
+  const overlapMs = AUTO_BOT_CONFIG.DETECTION_OVERLAP_MINUTES * 60 * 1000;
 
-  // 첫 실행: 10분 전부터 / 이후: 마지막 체크 시점부터
-  // lastStr이 빈값이거나 파싱 불가한 경우 10분 전으로 폴백
+  // 첫 실행: 10분 + overlap 전부터 / 이후: 마지막 체크 시점보다 overlap만큼 앞에서부터
+  // lastStr이 빈값이거나 파싱 불가한 경우에도 겹침 버퍼를 포함해 넉넉히 조회
   const parsedLast = lastStr ? new Date(lastStr) : null;
   const startTime = (parsedLast && !isNaN(parsedLast))
-    ? parsedLast
-    : new Date(now.getTime() - 10 * 60 * 1000);
-
-  // 다음 체크를 위해 현재 시간 저장
-  props.setProperty(AUTO_BOT_CONFIG.PROP_LAST_CHECK, now.toISOString());
+    ? new Date(parsedLast.getTime() - overlapMs)
+    : new Date(now.getTime() - (10 * 60 * 1000 + overlapMs));
 
   const processedStr = props.getProperty(AUTO_BOT_CONFIG.PROP_PROCESSED) || '[]';
   const processed    = new Set(JSON.parse(processedStr));
@@ -175,7 +182,7 @@ function detectNewSpaces_() {
 
   // processed 갱신은 호출부(autoAddBotToNewSpaces)에서 봇 추가 성공 후 수행.
   // 여기서 저장하면 실패한 스페이스도 processed에 들어가 재시도가 안 됨.
-  return { newSpaces, processed, props, activeSpaces };
+  return { newSpaces, processed, props, activeSpaces, checkpointIso: now.toISOString() };
 }
 
 /**
@@ -264,6 +271,72 @@ function detectViaChatApi_(processed, startTime) {
   } while (pageToken);
 
   return { newSpaces, activeSpaces };
+}
+
+/**
+ * 수동 백필용:
+ * 최근 N일 이내에 생성된 스페이스를 다시 훑어 consultations 누락분을 복구.
+ *
+ * 사용 예:
+ *   backfillConsultationCardsForRecentSpaces();   // 최근 7일
+ *   backfillConsultationCardsForRecentSpaces(3);  // 최근 3일
+ *
+ * 동작:
+ *   1. Chat API로 최근 N일 생성 스페이스 목록 조회
+ *   2. consultations.channel_chat_id 존재 여부 확인
+ *   3. 누락된 스페이스만 직접 insert 보장
+ *
+ * 주의:
+ *   - Admin 권한이 없으면 실행 계정이 볼 수 있는 스페이스만 대상이 됨
+ *   - n8n 웹훅은 호출하지 않고, DB 누락분만 직접 복구함
+ *
+ * @param {number=} days
+ */
+function backfillConsultationCardsForRecentSpaces(days) {
+  const lookbackDays = Number(days) > 0 ? Number(days) : 7;
+  const startTime = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000);
+  const props = PropertiesService.getScriptProperties();
+  const supabaseUrl = props.getProperty('SUPABASE_URL');
+  const supabaseKey = props.getProperty('SUPABASE_SERVICE_KEY');
+
+  if (!supabaseUrl || !supabaseKey) {
+    console.error('❌ SUPABASE_URL 또는 SUPABASE_SERVICE_KEY 미설정 → 백필 중단');
+    return;
+  }
+
+  console.log('🛠 상담카드 백필 시작 — 최근 ' + lookbackDays + '일 스페이스 조회');
+
+  const { newSpaces } = detectViaChatApi_(new Set(), startTime);
+  const targetSpaces = Array.from(new Set(newSpaces));
+
+  if (!targetSpaces.length) {
+    console.log('⏭ 백필 대상 스페이스 없음');
+    return;
+  }
+
+  let existsCount = 0;
+  let createdCount = 0;
+  let failedCount = 0;
+
+  for (const spaceName of targetSpaces) {
+    if (consultationExistsByChannelChatId_(supabaseUrl, supabaseKey, spaceName)) {
+      existsCount++;
+      console.log('  ↩ 이미 존재하여 스킵: ' + spaceName);
+      continue;
+    }
+
+    const ok = ensureConsultationCardForSpace_(spaceName, false);
+    if (ok) {
+      createdCount++;
+    } else {
+      failedCount++;
+    }
+  }
+
+  console.log(
+    '✅ 상담카드 백필 완료 — 대상 ' + targetSpaces.length + '개 / 기존 ' + existsCount +
+    '개 / 생성 ' + createdCount + '개 / 실패 ' + failedCount + '개'
+  );
 }
 
 /**
@@ -398,6 +471,14 @@ function patchUpdateDates_(activeSpaces) {
     // "2025-01-15T09:30:00Z" → "2025-01-15"
     const date = String(space.lastActiveTime).split('T')[0];
     const url  = baseUrl + '?channel_chat_id=eq.' + encodeURIComponent(space.name);
+
+    if (!consultationExistsByChannelChatId_(supabaseUrl, supabaseKey, space.name)) {
+      const ensured = ensureConsultationCardForSpace_(space.name, false);
+      if (!ensured) {
+        console.warn('  ⚠ 활동 스페이스 상담카드 보장 실패: ' + space.name);
+        continue;
+      }
+    }
 
     try {
       const resp = UrlFetchApp.fetch(url, {
@@ -591,6 +672,7 @@ function extractRegion_(text) {
  *   { "spaceName": "spaces/XXXXXX", "timestamp": "2025-01-01T00:00:00.000Z" }
  *
  * @param {string} spaceName - 신규 스페이스 리소스 이름 (예: 'spaces/XXXXXX')
+ * @returns {boolean} Webhook 발송 성공 여부
  */
 function notifyWebhook_(spaceName) {
   // 스크립트 속성에서 n8n Webhook URL 읽기
@@ -603,7 +685,7 @@ function notifyWebhook_(spaceName) {
       '  ⚠ MAKE_SYNC_WEBHOOK_URL 미설정 → Webhook 미발송.\n' +
       '    스크립트 속성에 MAKE_SYNC_WEBHOOK_URL을 추가하세요.'
     );
-    return;
+    return false;
   }
 
   // n8n Webhook으로 전송할 페이로드
@@ -637,16 +719,126 @@ function notifyWebhook_(spaceName) {
     if (code >= 200 && code < 300) {
       // n8n Webhook 수신 성공 → 워크플로우가 즉시 실행되어 DB를 갱신함
       console.log('  📡 n8n Webhook 발송 성공: ' + spaceName + ' (HTTP ' + code + ')');
+      return true;
     } else {
       // n8n 서버 오류 또는 URL 오류 → 봇은 추가됐으나 DB 동기화는 수동 확인 필요
       console.error(
         '  ❌ n8n Webhook 발송 실패: ' + spaceName +
         ' — HTTP ' + code + ' / ' + response.getContentText()
       );
+      return false;
     }
   } catch (e) {
     // 네트워크 오류 등 예외 발생 → 전체 플로우에 영향 없이 오류만 기록
     console.error('  ❌ n8n Webhook 예외: ' + spaceName + ' — ' + (e.message || e));
+    return false;
+  }
+}
+
+/**
+ * 신규 스페이스에 대한 상담카드 존재를 보장.
+ *
+ * 동작:
+ *   1. channel_chat_id = spaceName 상담카드가 이미 있으면 종료
+ *   2. Webhook 성공 시 짧게 대기 후 n8n INSERT 결과 재확인
+ *   3. 여전히 없으면 GAS가 직접 consultations에 INSERT
+ *
+ * @param {string}  spaceName
+ * @param {boolean} webhookOk
+ * @returns {boolean} 최종적으로 카드가 존재하는지 여부
+ */
+function ensureConsultationCardForSpace_(spaceName, webhookOk) {
+  const props       = PropertiesService.getScriptProperties();
+  const supabaseUrl = props.getProperty('SUPABASE_URL');
+  const supabaseKey = props.getProperty('SUPABASE_SERVICE_KEY');
+
+  if (!supabaseUrl || !supabaseKey) {
+    console.warn('  ⚠ SUPABASE_URL 또는 SUPABASE_SERVICE_KEY 미설정 → 상담카드 보장 스킵: ' + spaceName);
+    return false;
+  }
+
+  if (consultationExistsByChannelChatId_(supabaseUrl, supabaseKey, spaceName)) {
+    console.log('  🧾 상담카드 이미 존재: ' + spaceName);
+    return true;
+  }
+
+  if (webhookOk) {
+    Utilities.sleep(2500);
+    if (consultationExistsByChannelChatId_(supabaseUrl, supabaseKey, spaceName)) {
+      console.log('  ✅ n8n 신규 카드 생성 확인: ' + spaceName);
+      return true;
+    }
+  }
+
+  let displayName = '';
+  let startDate   = null;
+  try {
+    const spaceInfo = Chat.Spaces.get(spaceName);
+    displayName = spaceInfo.displayName || '';
+    if (spaceInfo.createTime) {
+      const m = String(spaceInfo.createTime).match(/^(\d{4}-\d{2}-\d{2})/);
+      if (m) startDate = m[1];
+    }
+  } catch (e) {
+    console.warn('  ⚠ 스페이스 정보 조회 실패(직접 insert 계속 진행): ' + spaceName + ' — ' + e.message);
+  }
+
+  const today    = Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy-MM-dd');
+  const chatLink = 'https://chat.google.com/room/' + spaceName.replace('spaces/', '');
+  const row = {
+    project_name:    displayName || spaceName,
+    link:            chatLink,
+    channel_chat_id: spaceName,
+    start_date:      startDate || today,
+    update_date:     today,
+    status:          '접수',
+    customer_grade:  '신규',
+    is_visible:      true,
+    metadata: {
+      source:              'google_chat_auto_add_bot',
+      space_id:            spaceName,
+      google_chat_url:     chatLink,
+      auto_add_bot_fallback: true
+    }
+  };
+
+  const inserted = insertToSupabase_(supabaseUrl, supabaseKey, row);
+  if (!inserted) {
+    console.error('  ❌ 상담카드 직접 insert 실패: ' + spaceName);
+    return false;
+  }
+
+  console.log('  🛟 상담카드 직접 insert 성공: ' + row.project_name + ' (' + spaceName + ')');
+  return true;
+}
+
+/**
+ * channel_chat_id 기준 상담카드 존재 여부 확인
+ * @returns {boolean}
+ */
+function consultationExistsByChannelChatId_(supabaseUrl, supabaseKey, spaceName) {
+  const url = supabaseUrl.replace(/\/$/, '')
+    + '/rest/v1/consultations?select=id&channel_chat_id=eq.' + encodeURIComponent(spaceName)
+    + '&limit=1';
+  try {
+    const resp = UrlFetchApp.fetch(url, {
+      method: 'get',
+      headers: {
+        'apikey': supabaseKey,
+        'Authorization': 'Bearer ' + supabaseKey
+      },
+      muteHttpExceptions: true
+    });
+    const code = resp.getResponseCode();
+    if (code < 200 || code >= 300) {
+      console.warn('  ⚠ 상담카드 존재 확인 실패 (' + code + '): ' + spaceName);
+      return false;
+    }
+    const rows = JSON.parse(resp.getContentText());
+    return Array.isArray(rows) && rows.length > 0;
+  } catch (e) {
+    console.warn('  ⚠ 상담카드 존재 확인 예외: ' + spaceName + ' — ' + e.message);
+    return false;
   }
 }
 
