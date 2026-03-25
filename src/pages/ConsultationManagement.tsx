@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { ChevronLeft } from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
-import { RefreshCw, Zap, Phone, Copy, User, Images, MessageCircle, Pencil, Loader2, Search, FileText, CheckCircle, Ruler, Trash2, EyeOff, Star, Pin } from 'lucide-react'
+import { RefreshCw, Zap, Phone, Copy, User, Images, MessageCircle, Pencil, Loader2, Search, FileText, CheckCircle, Ruler, Trash2, EyeOff, Star, Pin, LayoutDashboard } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { supabase } from '@/lib/supabase'
@@ -978,7 +978,8 @@ function ConsultationListItem({
   const elapsedDays = item.goldenTimeElapsedDays ?? (item.inboundDate ? getElapsedDays(new Date(item.inboundDate + 'T12:00:00.000Z')) : -1)
   const isD7OrMore = elapsedDays >= 7
   /** 방치 방지: update_date 기준 D-Day */
-  const neglectD = getNeglectDDisplay(item.updateDate)
+  const showNeglectIndicator = item.status !== '거절' && item.status !== '무효'
+  const neglectD = showNeglectIndicator ? getNeglectDDisplay(item.updateDate) : null
   const reactivationSignal = getReactivationSignal(item.status, item.workflowStage, item.updateDate)
   /** 2행 맨 오른쪽: 최종 견적가. 실제 소스 1개만 — DB(consultations.estimate_amount → expectedRevenue). pending은 견적서로 저장 직후 낙관적 표시용 */
   const pendingAmount = getPendingEstimateAmount?.(item.id)
@@ -1161,31 +1162,35 @@ function ConsultationListItem({
             </>
           )}
           <span className="shrink-0">{item.inboundDate ? `인입 ${item.inboundDate}` : '인입 —'}</span>
-          <span className="text-border shrink-0 mx-0.5">|</span>
-          {neglectD ? (
+          {showNeglectIndicator && (
             <>
-              <span
-                title={neglectD.days === 0 ? '오늘 갱신됨' : `마지막 업데이트 ${(item.updateDate)?.toString().slice(0, 10) ?? '—'}로부터 ${neglectD.days}일 경과 — 방치 주의`}
-                className={cn(
-                  'font-medium shrink-0 text-[11px] inline-flex items-center gap-0.5',
-                  reactivationSignal && 'rounded-md px-1.5 py-0.5 bg-amber-500/10 text-amber-800 dark:text-amber-200 ring-1 ring-amber-500/20'
-                )}
-              >
-                <span className={cn(reactivationSignal ? 'text-current' : 'text-muted-foreground')}>
-                  마지막 업데이트 {(item.updateDate)?.toString().slice(0, 10) ?? '—'}
-                </span>
-                <span className={cn(
-                  neglectD.days === 0 && (reactivationSignal ? 'text-current' : 'text-muted-foreground'),
-                  neglectD.days >= 3 && neglectD.days < 7 && 'text-orange-600 dark:text-orange-400 font-semibold',
-                  neglectD.days >= 7 && 'text-red-600 dark:text-red-400 font-semibold'
-                )}>+{neglectD.days}일</span>
-              </span>
               <span className="text-border shrink-0 mx-0.5">|</span>
-            </>
-          ) : (
-            <>
-              <span className="shrink-0 text-muted-foreground/80">미갱신 —</span>
-              <span className="text-border shrink-0 mx-0.5">|</span>
+              {neglectD ? (
+                <>
+                  <span
+                    title={neglectD.days === 0 ? '오늘 갱신됨' : `마지막 업데이트 ${(item.updateDate)?.toString().slice(0, 10) ?? '—'}로부터 ${neglectD.days}일 경과 — 방치 주의`}
+                    className={cn(
+                      'font-medium shrink-0 text-[11px] inline-flex items-center gap-0.5',
+                      reactivationSignal && 'rounded-md px-1.5 py-0.5 bg-amber-500/10 text-amber-800 dark:text-amber-200 ring-1 ring-amber-500/20'
+                    )}
+                  >
+                    <span className={cn(reactivationSignal ? 'text-current' : 'text-muted-foreground')}>
+                      마지막 업데이트 {(item.updateDate)?.toString().slice(0, 10) ?? '—'}
+                    </span>
+                    <span className={cn(
+                      neglectD.days === 0 && (reactivationSignal ? 'text-current' : 'text-muted-foreground'),
+                      neglectD.days >= 3 && neglectD.days < 7 && 'text-orange-600 dark:text-orange-400 font-semibold',
+                      neglectD.days >= 7 && 'text-red-600 dark:text-red-400 font-semibold'
+                    )}>+{neglectD.days}일</span>
+                  </span>
+                  <span className="text-border shrink-0 mx-0.5">|</span>
+                </>
+              ) : (
+                <>
+                  <span className="shrink-0 text-muted-foreground/80">미갱신 —</span>
+                  <span className="text-border shrink-0 mx-0.5">|</span>
+                </>
+              )}
             </>
           )}
         </div>
@@ -3535,6 +3540,16 @@ export default function ConsultationManagement() {
               </DialogContent>
             </Dialog>
 
+            <Link to="/">
+              <Button
+                type="button"
+                variant="outline"
+                className="h-9 gap-1.5 px-4 text-sm"
+              >
+                <LayoutDashboard className="h-4 w-4" />
+                대시보드
+              </Button>
+            </Link>
             <Link to="/showroom">
               <Button
                 type="button"

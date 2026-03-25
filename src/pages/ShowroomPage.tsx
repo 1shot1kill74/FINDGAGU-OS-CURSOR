@@ -23,10 +23,12 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Search, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Package, Images, Sparkles, FileText, MousePointerClick, MessageCircle, FileCheck, Users, Wrench, ClipboardCheck, ArrowRight, Copy, Check } from 'lucide-react'
+import { useColorChips } from '@/hooks/useColorChips'
+import { Search, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Package, Images, Sparkles, FileText, MousePointerClick, MessageCircle, FileCheck, Users, Wrench, ClipboardCheck, ArrowRight, Copy, Check, Link2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { shareGalleryKakao } from '@/lib/kakaoShare'
 import { createSharedGallery, snapshotShowroomImageAsset } from '@/lib/sharedGalleryService'
+import { createShowroomShareLink, getShowroomShareExpiryIso, SHOWROOM_SHARE_EXPIRY_DAYS } from '@/lib/showroomShareService'
 
 const INTERNAL_SHOWROOM = true
 const INDUSTRY_PREFERRED_ORDER = ['관리형', '학원', '스터디카페', '학교', '아파트', '기타'] as const
@@ -76,7 +78,7 @@ const CONCERN_CARDS: { tag: string; industryFilter: string; emoji: string; messa
   { tag: '아파트 독서실 리뉴얼', industryFilter: '아파트', emoji: '🏠', message: '입주민들이 찾지 않는 무늬만 독서실인가요? 우리 아파트 가치를 높이고 아이들이 먼저 찾는 \'성공적인 커뮤니티\'의 디테일을 담았습니다. ✨', imageSrc: '/showroom-concern-apartment-reading.png' },
 ]
 
-type ViewMode = 'product' | 'industry'
+type ViewMode = 'product' | 'industry' | 'color'
 
 /** 현장별 그룹: 대표 이미지(is_main), 현장명, 지역, 업종, 제품명, 색상 */
 interface SiteGroup {
@@ -104,6 +106,17 @@ interface ProductGroup {
   locations: string[]
   businessTypes: string[]
   colors: string[]
+  images: ShowroomImageAsset[]
+  mainImage: ShowroomImageAsset | null
+}
+
+interface ColorGroup {
+  colorName: string
+  siteNames: string[]
+  externalDisplayNames: string[]
+  locations: string[]
+  businessTypes: string[]
+  products: string[]
   images: ShowroomImageAsset[]
   mainImage: ShowroomImageAsset | null
 }
@@ -326,6 +339,17 @@ function getRepresentativeScore(
   ) / 10
 }
 
+function getSiteYearMonthSortValue(siteName: string): number {
+  const matches = siteName.match(/\d{4}/g) ?? []
+
+  for (const token of matches) {
+    const month = Number(token.slice(2, 4))
+    if (month >= 1 && month <= 12) return Number(token)
+  }
+
+  return 0
+}
+
 function compareSiteGroups(a: SiteGroup, b: SiteGroup): number {
   const aHasManual = a.manualPriority != null
   const bHasManual = b.manualPriority != null
@@ -334,11 +358,9 @@ function compareSiteGroups(a: SiteGroup, b: SiteGroup): number {
   if (aHasManual && bHasManual && a.manualPriority !== b.manualPriority) {
     return (a.manualPriority ?? Number.MAX_SAFE_INTEGER) - (b.manualPriority ?? Number.MAX_SAFE_INTEGER)
   }
-  if (a.representativeScore !== b.representativeScore) return b.representativeScore - a.representativeScore
-
-  const aTime = a.latestCreatedAt ? new Date(a.latestCreatedAt).getTime() : 0
-  const bTime = b.latestCreatedAt ? new Date(b.latestCreatedAt).getTime() : 0
-  if (aTime !== bTime) return bTime - aTime
+  const aYearMonth = getSiteYearMonthSortValue(a.siteName)
+  const bYearMonth = getSiteYearMonthSortValue(b.siteName)
+  if (aYearMonth !== bYearMonth) return bYearMonth - aYearMonth
 
   return a.siteName.localeCompare(b.siteName, 'ko')
 }
@@ -448,6 +470,45 @@ function buildProductGroups(assets: ShowroomImageAsset[]): ProductGroup[] {
     })
 }
 
+function buildColorGroups(assets: ShowroomImageAsset[]): ColorGroup[] {
+  const byColor = new Map<string, ShowroomImageAsset[]>()
+  for (const asset of assets) {
+    const color = (asset.color_name ?? '').trim() || '미지정'
+    const list = byColor.get(color) ?? []
+    list.push(asset)
+    byColor.set(color, list)
+  }
+
+  return Array.from(byColor.entries())
+    .map(([colorName, images]) => {
+      const sortedImages = [...images].sort((a, b) => {
+        const aMain = a.is_main ? 1 : 0
+        const bMain = b.is_main ? 1 : 0
+        if (aMain !== bMain) return bMain - aMain
+
+        const aTime = a.created_at ? new Date(a.created_at).getTime() : 0
+        const bTime = b.created_at ? new Date(b.created_at).getTime() : 0
+        return bTime - aTime
+      })
+
+      return {
+        colorName,
+        siteNames: Array.from(new Set(images.map((image) => image.site_name?.trim()).filter(Boolean) as string[])),
+        externalDisplayNames: Array.from(new Set(images.map((image) => image.external_display_name?.trim()).filter(Boolean) as string[])),
+        locations: Array.from(new Set(images.map((image) => image.location?.trim()).filter(Boolean) as string[])),
+        businessTypes: Array.from(new Set(images.map((image) => image.business_type?.trim()).filter(Boolean) as string[])),
+        products: Array.from(new Set(images.map((image) => image.product_name?.trim()).filter(Boolean) as string[])),
+        images: sortedImages,
+        mainImage: sortedImages[0] ?? null,
+      }
+    })
+    .sort((a, b) => {
+      if (a.siteNames.length !== b.siteNames.length) return b.siteNames.length - a.siteNames.length
+      if (a.images.length !== b.images.length) return b.images.length - a.images.length
+      return a.colorName.localeCompare(b.colorName, 'ko')
+    })
+}
+
 function buildShowroomContactUrl(params: {
   siteName?: string | null
   category?: string | null
@@ -472,6 +533,7 @@ function isConcernTag(value: string | null | undefined): value is string {
 export default function ShowroomPage() {
   const headerRef = useRef<HTMLElement | null>(null)
   const selectionBarRef = useRef<HTMLDivElement | null>(null)
+  const { chips: colorChips, isLoading: colorLoading } = useColorChips()
   const [searchParams, setSearchParams] = useSearchParams()
   const [assets, setAssets] = useState<ShowroomImageAsset[]>([])
   const [siteOverrides, setSiteOverrides] = useState<ShowroomSiteOverride[]>([])
@@ -479,6 +541,7 @@ export default function ShowroomPage() {
   const [viewMode, setViewMode] = useState<ViewMode>('industry')
   const [selectedProductSeries, setSelectedProductSeries] = useState<string | null>(null)
   const [selectedProductFilter, setSelectedProductFilter] = useState<string | null>(null)
+  const [selectedColorFilter, setSelectedColorFilter] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState(() => searchParams.get('q') ?? '')
   const [selectedConcernTag, setSelectedConcernTag] = useState<string | null>(() => {
     const concern = searchParams.get('concern')
@@ -486,7 +549,7 @@ export default function ShowroomPage() {
     const legacyTag = searchParams.get('tag')
     return isConcernTag(legacyTag) ? legacyTag : null
   })
-  const [detailOpen, setDetailOpen] = useState<'site' | 'product' | 'beforeAfter' | null>(null)
+  const [detailOpen, setDetailOpen] = useState<'site' | 'product' | 'color' | 'beforeAfter' | null>(null)
   const [detailKey, setDetailKey] = useState<string | null>(null)
   const [lightboxIndex, setLightboxIndex] = useState(0)
   const [selectedImageIds, setSelectedImageIds] = useState<Set<string>>(new Set())
@@ -495,6 +558,13 @@ export default function ShowroomPage() {
   const [priorityInputByKey, setPriorityInputByKey] = useState<Record<string, string>>({})
   const [savingPriorityByKey, setSavingPriorityByKey] = useState<Record<string, boolean>>({})
   const [priorityEditorOpenByKey, setPriorityEditorOpenByKey] = useState<Record<string, boolean>>({})
+  const [creatingShowroomShareLink, setCreatingShowroomShareLink] = useState(false)
+  const mountedRef = useRef(true)
+  const refreshInFlightRef = useRef(false)
+  const lastAutoRefreshAtRef = useRef(0)
+  const priorityEditorOpenByKeyRef = useRef(priorityEditorOpenByKey)
+
+  priorityEditorOpenByKeyRef.current = priorityEditorOpenByKey
 
   // 딥링크: URL ?q, ?concern 변경 시(뒤로가기 등) 상태 동기화. 레거시 ?tag도 지원.
   useEffect(() => {
@@ -527,25 +597,69 @@ export default function ShowroomPage() {
     updateShowroomParams({ concern: value })
   }
 
-  useEffect(() => {
-    let cancelled = false
-    Promise.all([fetchShowroomImageAssets(), fetchShowroomSiteOverrides()]).then(([list, overrides]) => {
-      if (!cancelled) {
-        setAssets(list)
-        setSiteOverrides(overrides)
-        setPriorityInputByKey(
-          overrides.reduce<Record<string, string>>((acc, override) => {
-            if (override.manual_priority != null) {
-              acc[buildShowroomSiteKey(override.section_key, override.industry_label, override.site_name)] = String(override.manual_priority)
-            }
-            return acc
-          }, {})
-        )
-        setLoading(false)
+  const loadShowroomData = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
+    if (refreshInFlightRef.current) return
+
+    refreshInFlightRef.current = true
+    if (!background) setLoading(true)
+
+    try {
+      const [list, overrides] = await Promise.all([fetchShowroomImageAssets(), fetchShowroomSiteOverrides()])
+      if (!mountedRef.current) return
+
+      setAssets(list)
+      setSiteOverrides(overrides)
+      setPriorityInputByKey((prev) => {
+        const next = background ? { ...prev } : {}
+        overrides.forEach((override) => {
+          const key = buildShowroomSiteKey(override.section_key, override.industry_label, override.site_name)
+          const nextValue = override.manual_priority != null ? String(override.manual_priority) : ''
+          if (!background || priorityEditorOpenByKeyRef.current[key] !== true || !(key in next)) {
+            next[key] = nextValue
+          }
+        })
+        return next
+      })
+    } catch (error) {
+      if (!background) {
+        toast.error(error instanceof Error ? error.message : '쇼룸 데이터를 불러오지 못했습니다.')
       }
-    })
-    return () => { cancelled = true }
+    } finally {
+      if (mountedRef.current) setLoading(false)
+      refreshInFlightRef.current = false
+    }
   }, [])
+
+  const refreshShowroomOnReturn = useCallback(() => {
+    if (document.visibilityState === 'hidden') return
+
+    const now = Date.now()
+    if (now - lastAutoRefreshAtRef.current < 1500) return
+
+    lastAutoRefreshAtRef.current = now
+    void loadShowroomData({ background: true })
+  }, [loadShowroomData])
+
+  useEffect(() => {
+    mountedRef.current = true
+    void loadShowroomData()
+
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') refreshShowroomOnReturn()
+    }
+    const onFocus = () => {
+      refreshShowroomOnReturn()
+    }
+
+    document.addEventListener('visibilitychange', onVisibility)
+    window.addEventListener('focus', onFocus)
+
+    return () => {
+      mountedRef.current = false
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('focus', onFocus)
+    }
+  }, [loadShowroomData, refreshShowroomOnReturn])
 
   const siteOverrideMap = useMemo(
     () =>
@@ -568,6 +682,7 @@ export default function ShowroomPage() {
   )
   const siteGroups = useMemo(() => buildSiteGroups(showroomAssets, siteOverrideMap, 'industry'), [showroomAssets, siteOverrideMap])
   const productGroups = useMemo(() => buildProductGroups(showroomAssets), [showroomAssets])
+  const colorGroups = useMemo(() => buildColorGroups(showroomAssets), [showroomAssets])
   const beforeAfterGroups = useMemo(
     () => buildSiteGroups(beforeAfterAssets, siteOverrideMap, 'before_after').filter((group) => group.hasBeforeAfter),
     [beforeAfterAssets, siteOverrideMap]
@@ -576,6 +691,37 @@ export default function ShowroomPage() {
     () => productGroups.map((group) => group.productName),
     [productGroups]
   )
+  const colorOptions = useMemo(
+    () => colorGroups.map((group) => group.colorName),
+    [colorGroups]
+  )
+  const colorOptionsByGroup = useMemo(() => {
+    const grouped: Record<'Standard' | 'Special' | 'Other', string[]> = {
+      Standard: [],
+      Special: [],
+      Other: [],
+    }
+    const availableColors = new Set(colorOptions)
+    const seen = new Set<string>()
+
+    colorChips.forEach((chip) => {
+      if (!availableColors.has(chip.color_name)) return
+      const group = chip.color_type === 'Standard' || chip.color_type === 'Special' || chip.color_type === 'Other'
+        ? chip.color_type
+        : 'Other'
+      if (seen.has(chip.color_name)) return
+      grouped[group].push(chip.color_name)
+      seen.add(chip.color_name)
+    })
+
+    colorOptions.forEach((colorName) => {
+      if (seen.has(colorName)) return
+      grouped.Other.push(colorName)
+      seen.add(colorName)
+    })
+
+    return grouped
+  }, [colorChips, colorOptions])
   const productSeriesOptions = useMemo(() => {
     const grouped = new Map<string, string[]>()
     productOptions.forEach((productName) => {
@@ -653,6 +799,25 @@ export default function ShowroomPage() {
     )
   }, [productGroups, searchTrim, searchLower, industryFilterForTag])
 
+  const filteredColorGroups = useMemo(() => {
+    if (!searchTrim) return colorGroups
+    if (industryFilterForTag) {
+      const kw = industryFilterForTag.toLowerCase()
+      return colorGroups.filter((g) =>
+        g.businessTypes.some((b) => (b || '').toLowerCase().includes(kw))
+      )
+    }
+    return colorGroups.filter(
+      (g) =>
+        g.colorName.toLowerCase().includes(searchLower) ||
+        g.siteNames.some((s) => s.toLowerCase().includes(searchLower)) ||
+        g.externalDisplayNames.some((name) => name.toLowerCase().includes(searchLower)) ||
+        g.locations.some((l) => l.toLowerCase().includes(searchLower)) ||
+        g.businessTypes.some((b) => b.toLowerCase().includes(searchLower)) ||
+        g.products.some((p) => p.toLowerCase().includes(searchLower))
+    )
+  }, [colorGroups, searchTrim, searchLower, industryFilterForTag])
+
   const productFilteredGroups = useMemo(() => {
     if (selectedProductSeries) {
       const seriesGroups = selectedProductSeries === '기타'
@@ -664,6 +829,11 @@ export default function ShowroomPage() {
     if (!selectedProductFilter) return filteredProductGroups
     return filteredProductGroups.filter((g) => g.productName === selectedProductFilter)
   }, [filteredProductGroups, selectedProductSeries, selectedProductFilter])
+
+  const colorFilteredGroups = useMemo(() => {
+    if (!selectedColorFilter) return filteredColorGroups
+    return filteredColorGroups.filter((group) => group.colorName === selectedColorFilter)
+  }, [filteredColorGroups, selectedColorFilter])
 
   useEffect(() => {
     if (selectedProductSeries && !productSeriesOptions.some((option) => option.seriesName === selectedProductSeries)) {
@@ -683,6 +853,13 @@ export default function ShowroomPage() {
       setSelectedProductFilter(null)
     }
   }, [selectedProductFilter, selectedProductSeries, currentSeriesProducts, productOptions])
+
+  useEffect(() => {
+    if (!selectedColorFilter) return
+    if (!colorOptions.includes(selectedColorFilter)) {
+      setSelectedColorFilter(null)
+    }
+  }, [selectedColorFilter, colorOptions])
 
   const industrySections = useMemo<IndustrySection[]>(() => {
     const grouped = new Map<string, SiteGroup[]>()
@@ -776,14 +953,18 @@ export default function ShowroomPage() {
       const g = beforeAfterGroups.find((x) => x.siteName === detailKey)
       return g ? sortBeforeAfterImages(g.images) : []
     }
-    const g = productGroups.find((x) => x.productName === detailKey)
+    if (detailOpen === 'product') {
+      const g = productGroups.find((x) => x.productName === detailKey)
+      return g?.images ?? []
+    }
+    const g = colorGroups.find((x) => x.colorName === detailKey)
     return g?.images ?? []
-  }, [detailOpen, detailKey, siteGroups, productGroups, beforeAfterGroups])
+  }, [detailOpen, detailKey, siteGroups, productGroups, colorGroups, beforeAfterGroups])
   const detailImageFrameRef = useRef<HTMLDivElement | null>(null)
   const detailAnimatedImageIdRef = useRef<string | null>(null)
   const detailTransitionDirectionRef = useRef<'next' | 'prev'>('next')
 
-  const openDetail = (mode: 'site' | 'product' | 'beforeAfter', key: string) => {
+  const openDetail = (mode: 'site' | 'product' | 'color' | 'beforeAfter', key: string) => {
     detailAnimatedImageIdRef.current = null
     detailTransitionDirectionRef.current = 'next'
     setDetailOpen(mode)
@@ -919,6 +1100,23 @@ export default function ShowroomPage() {
       toast.error(error instanceof Error ? error.message : '공유 링크 생성에 실패했습니다.')
     }
   }, [selectedImageIds.size, createShareGalleryUrl, markSelectedImagesShared])
+
+  const copyShowroomShareLink = useCallback(async () => {
+    try {
+      setCreatingShowroomShareLink(true)
+      const result = await createShowroomShareLink({
+        title: '시공사례 쇼룸',
+        description: `외부 쇼룸 전체 링크 (${SHOWROOM_SHARE_EXPIRY_DAYS}일 만료)`,
+        expiresAt: getShowroomShareExpiryIso(),
+      })
+      await navigator.clipboard.writeText(result.url)
+      toast.success(`쇼룸 링크를 복사했습니다. ${SHOWROOM_SHARE_EXPIRY_DAYS}일 뒤에 만료됩니다.`)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '쇼룸 링크 생성에 실패했습니다.')
+    } finally {
+      setCreatingShowroomShareLink(false)
+    }
+  }, [])
 
   const reloadSiteOverrides = useCallback(async () => {
     const overrides = await fetchShowroomSiteOverrides()
@@ -1369,6 +1567,32 @@ export default function ShowroomPage() {
               </Link>
             </div>
           </div>
+          {INTERNAL_SHOWROOM && (
+            <div className="flex flex-col gap-2 rounded-2xl border border-amber-200 bg-amber-50/70 px-4 py-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-2 text-sm font-medium text-amber-900">
+                  <Link2 className="h-4 w-4" />
+                  외부 쇼룸 3일 링크 발급
+                </span>
+                <span className="text-xs text-amber-800/80">
+                  채널톡 인입 고객용으로 전체 쇼룸 링크를 발급하고, 3일 뒤 자동 만료되도록 설정합니다.
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="gap-2 border-amber-300 bg-white text-amber-900 hover:bg-amber-100"
+                  disabled={creatingShowroomShareLink}
+                  onClick={() => void copyShowroomShareLink()}
+                >
+                  <Copy className="h-4 w-4" />
+                  3일 링크 복사
+                </Button>
+              </div>
+            </div>
+          )}
           <div className="flex flex-col sm:flex-row sm:items-center gap-3">
             <div className="flex rounded-lg border border-neutral-200 p-0.5 bg-neutral-100/80">
               <button
@@ -1390,13 +1614,24 @@ export default function ShowroomPage() {
                 <Package className="h-4 w-4" />
                 제품별로 보기
               </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('color')}
+                className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors ${
+                  viewMode === 'color' ? 'bg-white text-neutral-900 shadow-sm' : 'text-neutral-600 hover:text-neutral-900'
+                }`}
+              >
+                색상별로 보기
+              </button>
             </div>
             <div className="relative flex-1 max-w-md">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-400" />
               <Input
                 placeholder={
                   viewMode === 'product'
-                      ? '제품명 검색 (예: 아카시아, 원목)'
+                    ? '제품명 검색 (예: 아카시아, 원목)'
+                    : viewMode === 'color'
+                      ? '색상명 검색 (예: 백색, 모번)'
                       : '업종, 현장명, 지역, 제품명 검색'
                 }
                 value={searchQuery}
@@ -1438,6 +1673,48 @@ export default function ShowroomPage() {
                       {product}
                     </option>
                   ))}
+                </select>
+              </div>
+            </div>
+          )}
+          {viewMode === 'color' && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-neutral-500 shrink-0">색상 선택</span>
+              <div className="w-full sm:w-80">
+                <select
+                  value={selectedColorFilter ?? ''}
+                  onChange={(e) => setSelectedColorFilter(e.target.value || null)}
+                  disabled={colorLoading}
+                  className="h-10 w-full rounded-lg border border-neutral-200 bg-white px-3 text-sm text-neutral-700 outline-none transition-colors focus:border-neutral-400"
+                >
+                  <option value="">전체 색상</option>
+                  {colorOptionsByGroup.Standard.length > 0 ? (
+                    <optgroup label="기본 컬러 (Standard)">
+                      {colorOptionsByGroup.Standard.map((color) => (
+                        <option key={color} value={color}>
+                          {color}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ) : null}
+                  {colorOptionsByGroup.Special.length > 0 ? (
+                    <optgroup label="스페셜 컬러 (Special)">
+                      {colorOptionsByGroup.Special.map((color) => (
+                        <option key={color} value={color}>
+                          {color}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ) : null}
+                  {colorOptionsByGroup.Other.length > 0 ? (
+                    <optgroup label="기타">
+                      {colorOptionsByGroup.Other.map((color) => (
+                        <option key={color} value={color}>
+                          {color}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ) : null}
                 </select>
               </div>
             </div>
@@ -1949,6 +2226,123 @@ export default function ShowroomPage() {
           </div>
         )}
 
+        {viewMode === 'color' && (
+          <div id="showroom-gallery" className="grid grid-cols-2 lg:grid-cols-3 gap-6 items-stretch">
+            {colorFilteredGroups.map((group) => {
+              const mainImg = group.mainImage
+              const imageUrl = mainImg?.thumbnail_url || mainImg?.cloudinary_url || ''
+              return (
+                <div
+                  key={group.colorName}
+                  className="flex flex-col h-full rounded-2xl overflow-hidden bg-white border border-neutral-200 shadow-sm hover:shadow-md hover:border-neutral-300 transition-all"
+                >
+                  <button
+                    type="button"
+                    onClick={() => openDetail('color', group.colorName)}
+                    className="flex flex-col flex-1 min-h-0 text-left group"
+                  >
+                    <div className="aspect-[4/3] relative bg-neutral-100 overflow-hidden shrink-0 rounded-t-2xl">
+                      <img
+                        src={imageUrl}
+                        alt={group.colorName}
+                        className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-300"
+                      />
+                      {group.businessTypes.length > 0 && (
+                        <span className="absolute top-2 left-2 rounded-full bg-black/70 px-2.5 py-1 text-[11px] font-medium text-white backdrop-blur-sm">
+                          {group.businessTypes[0]}
+                        </span>
+                      )}
+                      {group.images.length > 1 && (
+                        <div className="absolute bottom-2 right-2 flex gap-0.5" aria-hidden>
+                          {group.images.slice(1, 4).map((img, i) => (
+                            <div
+                              key={img.id}
+                              className="w-10 h-10 rounded-md border-2 border-white shadow-md overflow-hidden bg-neutral-200"
+                              style={{ transform: `translateY(${i * 2}px) rotate(${i * 3 - 2}deg)` }}
+                            >
+                              <img
+                                src={img.thumbnail_url || img.cloudinary_url}
+                                alt=""
+                                className="w-full h-full object-cover"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <div className="p-4 flex-1 flex flex-col min-h-0">
+                      <h3 className="font-semibold text-neutral-900 leading-snug">{group.colorName}</h3>
+                      <dl className="text-xs text-neutral-500 mt-1.5 space-y-0.5">
+                        {group.products.length > 0 && (
+                          <div className="flex gap-1.5 items-start">
+                            <span className="text-neutral-400 shrink-0">제품</span>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap gap-1">
+                                {group.products.slice(0, 3).map((product) => (
+                                  <span
+                                    key={`${group.colorName}-${product}`}
+                                    className="inline-flex rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] text-neutral-700"
+                                  >
+                                    {product}
+                                  </span>
+                                ))}
+                              </div>
+                              {group.products.length > 3 && (
+                                <p className="mt-1 text-[11px] text-neutral-400">외 {group.products.length - 3}개 제품</p>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                        {group.siteNames.length > 0 && (
+                          <div className="flex gap-1.5 items-start">
+                            <span className="text-neutral-400 shrink-0">현장명</span>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap gap-1">
+                                {group.siteNames.slice(0, 3).map((siteName) => (
+                                  <span
+                                    key={`${group.colorName}-${siteName}`}
+                                    className="inline-flex rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] text-neutral-700"
+                                  >
+                                    {siteName}
+                                  </span>
+                                ))}
+                              </div>
+                              {group.siteNames.length > 3 && (
+                                <p className="mt-1 text-[11px] text-neutral-400">외 {group.siteNames.length - 3}개 현장</p>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                        {group.locations.length > 0 && (
+                          <div className="flex gap-1.5">
+                            <span className="text-neutral-400 shrink-0">지역</span>
+                            <span>{group.locations.slice(0, 3).join(', ')}</span>
+                          </div>
+                        )}
+                        {group.businessTypes.length > 0 && (
+                          <div className="flex gap-1.5">
+                            <span className="text-neutral-400 shrink-0">업종</span>
+                            <span>{group.businessTypes.slice(0, 3).join(', ')}</span>
+                          </div>
+                        )}
+                      </dl>
+                      <p className="mt-2 pt-2 border-t border-neutral-100 flex items-center gap-1.5 text-xs text-neutral-500">
+                        <Images className="h-3.5 w-3.5 shrink-0" />
+                        <span>사진 {group.images.length}장</span>
+                      </p>
+                    </div>
+                  </button>
+                  {INTERNAL_SHOWROOM && (
+                    <div className="p-3 border-t border-neutral-100 bg-neutral-50/50 text-xs text-neutral-500">
+                      같은 색상 계열의 사례를 모아 비교하고 필요한 컷을 선별하세요.
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+
         {viewMode === 'industry' && (
           <>
             <div id="showroom-gallery" className="space-y-10">
@@ -2097,6 +2491,9 @@ export default function ShowroomPage() {
         {viewMode === 'product' && productFilteredGroups.length === 0 && (
           <p className="text-center text-neutral-500 py-12">검색 결과가 없습니다.</p>
         )}
+        {viewMode === 'color' && colorFilteredGroups.length === 0 && (
+          <p className="text-center text-neutral-500 py-12">검색 결과가 없습니다.</p>
+        )}
         {viewMode === 'industry' && paginatedIndustrySections.length === 0 && (
           <p className="text-center text-neutral-500 py-12">검색 결과가 없습니다.</p>
         )}
@@ -2109,6 +2506,7 @@ export default function ShowroomPage() {
             <DialogTitle className="text-white font-semibold truncate">
               {detailOpen === 'site' && detailKey}
               {detailOpen === 'product' && detailKey}
+              {detailOpen === 'color' && detailKey}
               {detailOpen === 'beforeAfter' && detailKey}
             </DialogTitle>
             <Button
