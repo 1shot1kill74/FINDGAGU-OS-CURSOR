@@ -51,6 +51,19 @@ function assetLabel(asset: ShowroomImageAsset): string {
   )
 }
 
+function findPreferredImageIndex(
+  images: ShowroomImageAsset[],
+  role: ShowroomImageAsset['before_after_role'] | 'main',
+): number {
+  if (images.length === 0) return 0
+  if (role === 'main') {
+    const mainIndex = images.findIndex((image) => image.is_main)
+    return mainIndex >= 0 ? mainIndex : 0
+  }
+  const roleIndex = images.findIndex((image) => image.before_after_role === role)
+  return roleIndex >= 0 ? roleIndex : 0
+}
+
 function buildSiteGroups(
   assets: ShowroomImageAsset[],
   options?: { excludeBefore?: boolean },
@@ -140,11 +153,15 @@ export default function PublicShowroomPage() {
   const canShowMore =
     !showAll && shareMeta != null && siteGroups.length >= shareMeta.preview_site_limit
 
-  const openSiteDetail = useCallback((key: string) => {
-    setSelectedSiteKey(key)
-    setSelectedImageIndex(0)
-    window.scrollTo({ top: 0, behavior: 'smooth' })
-  }, [])
+  const openSiteDetail = useCallback(
+    (key: string, startFrom: ShowroomImageAsset['before_after_role'] | 'main' = 'main') => {
+      const targetGroup = allSiteGroups.find((group) => group.key === key)
+      setSelectedSiteKey(key)
+      setSelectedImageIndex(findPreferredImageIndex(targetGroup?.images ?? [], startFrom))
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    },
+    [allSiteGroups],
+  )
 
   const closeSiteDetail = useCallback(() => {
     setSelectedSiteKey(null)
@@ -323,7 +340,7 @@ export default function PublicShowroomPage() {
                 >
                   <button
                     type="button"
-                    onClick={() => openSiteDetail(key)}
+                    onClick={() => openSiteDetail(key, 'after')}
                     className="block w-full text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
                   >
                     <div className="aspect-[4/3] bg-stone-200 relative overflow-hidden">
@@ -376,39 +393,57 @@ export default function PublicShowroomPage() {
             <ul className="grid gap-5 sm:grid-cols-2">
               {beforeAfterGroups.map(({ key, hero, images }) => {
                 if (!hero) return null
-                const thumb = hero.thumbnail_url || hero.cloudinary_url
                 const label = assetLabel(hero)
-                const beforeCount = images.filter((image) => image.before_after_role === 'before').length
-                const afterCount = images.filter((image) => image.before_after_role === 'after').length
+                const beforeImages = images.filter((image) => image.before_after_role === 'before')
+                const afterImages = images.filter((image) => image.before_after_role === 'after')
+                const beforeImage = beforeImages[0] ?? null
+                const afterImage = afterImages.find((image) => image.is_main) ?? afterImages[0] ?? null
+                if (!beforeImage || !afterImage) return null
                 const subtitle = [hero.location, hero.business_type].filter(Boolean).join(' · ')
                 return (
                   <li
                     key={`before-after-${key}`}
-                    className="group rounded-2xl border border-amber-200 bg-white shadow-sm overflow-hidden transition hover:border-amber-300 hover:shadow-md"
+                    className="group overflow-hidden rounded-2xl border border-emerald-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-300 hover:shadow-md"
                   >
                     <button
                       type="button"
-                      onClick={() => openSiteDetail(key)}
+                      onClick={() => openSiteDetail(key, 'before')}
                       className="block w-full text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
                     >
-                      <div className="aspect-[4/3] bg-stone-200 relative overflow-hidden">
-                        <img
-                          src={thumb}
-                          alt={label}
-                          className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.02]"
-                        />
-                        <div className="absolute left-3 top-3 rounded-full bg-white/90 px-3 py-1 text-[11px] font-semibold text-amber-900 shadow-sm">
-                          Before / After
+                      <div className="grid grid-cols-2">
+                        <div className="relative aspect-[4/3] bg-stone-100">
+                          <img
+                            src={beforeImage.thumbnail_url || beforeImage.cloudinary_url}
+                            alt={`${label} before`}
+                            className="h-full w-full object-cover"
+                          />
+                          <span className="absolute left-2 top-2 rounded-full bg-black/75 px-2 py-1 text-[11px] font-semibold text-white">
+                            Before
+                          </span>
                         </div>
-                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/55 to-transparent p-3 pt-10">
-                          <p className="text-white text-sm font-medium drop-shadow-sm">{label}</p>
-                          {subtitle ? <p className="text-white/85 text-xs mt-0.5 drop-shadow-sm">{subtitle}</p> : null}
+                        <div className="relative aspect-[4/3] bg-stone-100">
+                          <img
+                            src={afterImage.thumbnail_url || afterImage.cloudinary_url}
+                            alt={`${label} after`}
+                            className="h-full w-full object-cover"
+                          />
+                          <span className="absolute left-2 top-2 rounded-full bg-emerald-600/90 px-2 py-1 text-[11px] font-semibold text-white">
+                            After
+                          </span>
                         </div>
                       </div>
                     </button>
-                    <div className="px-4 py-3 flex items-center justify-between gap-2 border-t border-stone-100">
-                      <span className="text-xs text-stone-500">Before {beforeCount}장 · After {afterCount}장</span>
-                      <ChevronRight className="h-4 w-4 text-stone-400 shrink-0" aria-hidden />
+                    <div className="border-t border-stone-100 p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="font-semibold text-stone-900">{label}</p>
+                          {subtitle ? <p className="mt-1 text-xs text-stone-500">{subtitle}</p> : null}
+                          <p className="mt-2 text-sm text-stone-600">
+                            전후 비교가 가능한 리뉴얼 사례입니다. 눌러서 Before부터 전체 사진을 확인해 보세요.
+                          </p>
+                        </div>
+                        <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-stone-400" aria-hidden />
+                      </div>
                     </div>
                   </li>
                 )
