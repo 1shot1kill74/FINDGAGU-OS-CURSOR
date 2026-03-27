@@ -13,7 +13,7 @@ import {
   type ResolvedShowroomShare,
 } from '@/lib/showroomShareService'
 import type { ShowroomImageAsset } from '@/lib/imageAssetService'
-import { ChevronRight, Images, MessageCircle } from 'lucide-react'
+import { ArrowLeft, ChevronLeft, ChevronRight, Images, MessageCircle } from 'lucide-react'
 
 function siteKey(asset: ShowroomImageAsset): string {
   return (asset.site_name?.trim() || asset.id).trim()
@@ -23,6 +23,15 @@ function pickHeroImage(images: ShowroomImageAsset[]): ShowroomImageAsset | null 
   if (images.length === 0) return null
   const main = images.find((i) => i.is_main)
   return main ?? images[0]
+}
+
+function assetLabel(asset: ShowroomImageAsset): string {
+  return (
+    asset.external_display_name?.trim() ||
+    asset.canonical_site_name?.trim() ||
+    asset.site_name?.trim() ||
+    '시공 사례'
+  )
 }
 
 function buildSiteGroups(assets: ShowroomImageAsset[]): Array<{ key: string; images: ShowroomImageAsset[]; hero: ShowroomImageAsset | null }> {
@@ -50,6 +59,8 @@ export default function PublicShowroomPage() {
   const [showAll, setShowAll] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [selectedSiteKey, setSelectedSiteKey] = useState<string | null>(null)
+  const [selectedImageIndex, setSelectedImageIndex] = useState(0)
 
   const load = useCallback(
     async (includeAll: boolean) => {
@@ -74,6 +85,8 @@ export default function PublicShowroomPage() {
         const list = await fetchPublicShowroomAssetsByShareToken(token, { includeAll })
         setAssets(list)
         setShowAll(includeAll)
+        setSelectedSiteKey(null)
+        setSelectedImageIndex(0)
       } catch (e) {
         setError(e instanceof Error ? e.message : '불러오기에 실패했습니다.')
         setShareMeta(null)
@@ -90,9 +103,40 @@ export default function PublicShowroomPage() {
   }, [load])
 
   const siteGroups = useMemo(() => buildSiteGroups(assets), [assets])
+  const selectedSite = useMemo(
+    () => siteGroups.find((group) => group.key === selectedSiteKey) ?? null,
+    [selectedSiteKey, siteGroups],
+  )
+  const selectedImage = selectedSite?.images[selectedImageIndex] ?? null
 
   const canShowMore =
     !showAll && shareMeta != null && siteGroups.length >= shareMeta.preview_site_limit
+
+  const openSiteDetail = useCallback((key: string) => {
+    setSelectedSiteKey(key)
+    setSelectedImageIndex(0)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [])
+
+  const closeSiteDetail = useCallback(() => {
+    setSelectedSiteKey(null)
+    setSelectedImageIndex(0)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [])
+
+  const showPrevImage = useCallback(() => {
+    setSelectedImageIndex((prev) => {
+      if (!selectedSite || selectedSite.images.length === 0) return 0
+      return prev === 0 ? selectedSite.images.length - 1 : prev - 1
+    })
+  }, [selectedSite])
+
+  const showNextImage = useCallback(() => {
+    setSelectedImageIndex((prev) => {
+      if (!selectedSite || selectedSite.images.length === 0) return 0
+      return prev === selectedSite.images.length - 1 ? 0 : prev + 1
+    })
+  }, [selectedSite])
 
   if (!token) {
     return (
@@ -143,7 +187,97 @@ export default function PublicShowroomPage() {
       </header>
 
       <main className="max-w-3xl mx-auto px-4 py-8 md:px-8 md:pb-14">
-        {siteGroups.length === 0 ? (
+        {selectedSite && selectedImage ? (
+          <section className="space-y-6">
+            <div className="flex items-center justify-between gap-3">
+              <Button
+                type="button"
+                variant="ghost"
+                className="px-0 text-stone-700 hover:text-stone-950"
+                onClick={closeSiteDetail}
+              >
+                <ArrowLeft className="mr-2 h-4 w-4" aria-hidden />
+                사례 목록으로
+              </Button>
+              <p className="text-xs text-stone-500">
+                {selectedImageIndex + 1} / {selectedSite.images.length}
+              </p>
+            </div>
+
+            <div className="rounded-3xl border border-stone-200 bg-white shadow-sm overflow-hidden">
+              <div className="aspect-[4/3] bg-stone-100">
+                <img
+                  src={selectedImage.cloudinary_url}
+                  alt={assetLabel(selectedImage)}
+                  className="h-full w-full object-contain bg-stone-100"
+                />
+              </div>
+              <div className="border-t border-stone-100 px-5 py-4">
+                <p className="text-lg font-semibold text-stone-900">{assetLabel(selectedImage)}</p>
+                <p className="mt-1 text-sm text-stone-600">
+                  {[selectedImage.location, selectedImage.business_type, selectedImage.product_name]
+                    .filter(Boolean)
+                    .join(' · ') || '현장 사진'}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                className="border-stone-300 bg-white"
+                onClick={showPrevImage}
+              >
+                <ChevronLeft className="mr-2 h-4 w-4" aria-hidden />
+                이전 사진
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="border-stone-300 bg-white"
+                onClick={showNextImage}
+              >
+                다음 사진
+                <ChevronRight className="ml-2 h-4 w-4" aria-hidden />
+              </Button>
+            </div>
+
+            <section>
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <h2 className="text-sm font-medium text-stone-900">전체 사진</h2>
+                <span className="text-xs text-stone-500">썸네일을 눌러 크게 볼 수 있습니다.</span>
+              </div>
+              <ul className="grid grid-cols-3 gap-3 sm:grid-cols-4">
+                {selectedSite.images.map((image, index) => {
+                  const thumb = image.thumbnail_url || image.cloudinary_url
+                  const active = index === selectedImageIndex
+                  return (
+                    <li key={`${selectedSite.key}-${image.id}`}>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedImageIndex(index)}
+                        className={`w-full overflow-hidden rounded-2xl border bg-white text-left transition ${
+                          active
+                            ? 'border-amber-500 ring-2 ring-amber-200'
+                            : 'border-stone-200 hover:border-stone-300'
+                        }`}
+                      >
+                        <div className="aspect-square bg-stone-100">
+                          <img
+                            src={thumb}
+                            alt={assetLabel(image)}
+                            className="h-full w-full object-cover"
+                          />
+                        </div>
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+            </section>
+          </section>
+        ) : siteGroups.length === 0 ? (
           <div className="rounded-2xl border border-stone-200 bg-white/80 p-8 text-center text-sm text-stone-600">
             이 조건에 맞는 공개 사례가 아직 없습니다. 채팅으로 말씀해 주시면 담당자가 안내해 드립니다.
           </div>
@@ -152,22 +286,22 @@ export default function PublicShowroomPage() {
             {siteGroups.map(({ key, hero, images }) => {
               if (!hero) return null
               const thumb = hero.thumbnail_url || hero.cloudinary_url
-              const label =
-                hero.external_display_name?.trim() ||
-                hero.canonical_site_name?.trim() ||
-                hero.site_name?.trim() ||
-                '시공 사례'
+              const label = assetLabel(hero)
               const subtitle = [hero.location, hero.business_type].filter(Boolean).join(' · ')
               return (
                 <li
                   key={key}
                   className="group rounded-2xl border border-stone-200 bg-white shadow-sm overflow-hidden transition hover:border-amber-200/90 hover:shadow-md"
                 >
-                  <a href={hero.cloudinary_url} target="_blank" rel="noreferrer" className="block focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500">
+                  <button
+                    type="button"
+                    onClick={() => openSiteDetail(key)}
+                    className="block w-full text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                  >
                     <div className="aspect-[4/3] bg-stone-200 relative overflow-hidden">
                       <img
                         src={thumb}
-                        alt=""
+                        alt={label}
                         className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.02]"
                       />
                       <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/55 to-transparent p-3 pt-10">
@@ -175,9 +309,9 @@ export default function PublicShowroomPage() {
                         {subtitle ? <p className="text-white/85 text-xs mt-0.5 drop-shadow-sm">{subtitle}</p> : null}
                       </div>
                     </div>
-                  </a>
+                  </button>
                   <div className="px-4 py-3 flex items-center justify-between gap-2 border-t border-stone-100">
-                    <span className="text-xs text-stone-500">사진 {images.length}장</span>
+                    <span className="text-xs text-stone-500">사진 {images.length}장 보기</span>
                     <ChevronRight className="h-4 w-4 text-stone-400 shrink-0" aria-hidden />
                   </div>
                 </li>
