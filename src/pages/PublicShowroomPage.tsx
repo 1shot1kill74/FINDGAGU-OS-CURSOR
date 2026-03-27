@@ -5,7 +5,7 @@
  * - "전체 현장 보기"로 같은 토큰 범위 내 전체 노출
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useSearchParams, Link } from 'react-router-dom'
+import { useSearchParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import {
   fetchPublicShowroomAssetsByShareToken,
@@ -17,6 +17,23 @@ import { ArrowLeft, ChevronLeft, ChevronRight, Images, MessageCircle } from 'luc
 
 function siteKey(asset: ShowroomImageAsset): string {
   return (asset.site_name?.trim() || asset.id).trim()
+}
+
+function sortDetailImages(images: ShowroomImageAsset[]): ShowroomImageAsset[] {
+  return [...images].sort((a, b) => {
+    const order = (role: ShowroomImageAsset['before_after_role']) => {
+      if (role === 'before') return 0
+      if (role === 'after') return 1
+      return 2
+    }
+
+    const roleDiff = order(a.before_after_role) - order(b.before_after_role)
+    if (roleDiff !== 0) return roleDiff
+    if (a.is_main !== b.is_main) return a.is_main ? -1 : 1
+    const aTime = a.created_at ? new Date(a.created_at).getTime() : 0
+    const bTime = b.created_at ? new Date(b.created_at).getTime() : 0
+    return aTime - bTime
+  })
 }
 
 function pickHeroImage(images: ShowroomImageAsset[]): ShowroomImageAsset | null {
@@ -34,8 +51,11 @@ function assetLabel(asset: ShowroomImageAsset): string {
   )
 }
 
-function buildSiteGroups(assets: ShowroomImageAsset[]): Array<{ key: string; images: ShowroomImageAsset[]; hero: ShowroomImageAsset | null }> {
-  const visible = assets.filter((a) => a.before_after_role !== 'before')
+function buildSiteGroups(
+  assets: ShowroomImageAsset[],
+  options?: { excludeBefore?: boolean },
+): Array<{ key: string; images: ShowroomImageAsset[]; hero: ShowroomImageAsset | null; hasBeforeAfter: boolean }> {
+  const visible = options?.excludeBefore ? assets.filter((a) => a.before_after_role !== 'before') : assets
   const map = new Map<string, ShowroomImageAsset[]>()
   for (const a of visible) {
     const key = siteKey(a)
@@ -45,8 +65,11 @@ function buildSiteGroups(assets: ShowroomImageAsset[]): Array<{ key: string; ima
   }
   return Array.from(map.entries()).map(([key, images]) => ({
     key,
-    images,
+    images: sortDetailImages(images),
     hero: pickHeroImage(images),
+    hasBeforeAfter:
+      images.some((image) => image.before_after_role === 'before') &&
+      images.some((image) => image.before_after_role === 'after'),
   }))
 }
 
@@ -102,10 +125,15 @@ export default function PublicShowroomPage() {
     void load(false)
   }, [load])
 
-  const siteGroups = useMemo(() => buildSiteGroups(assets), [assets])
+  const allSiteGroups = useMemo(() => buildSiteGroups(assets), [assets])
+  const siteGroups = useMemo(() => buildSiteGroups(assets, { excludeBefore: true }), [assets])
+  const beforeAfterGroups = useMemo(
+    () => allSiteGroups.filter((group) => group.hasBeforeAfter),
+    [allSiteGroups],
+  )
   const selectedSite = useMemo(
-    () => siteGroups.find((group) => group.key === selectedSiteKey) ?? null,
-    [selectedSiteKey, siteGroups],
+    () => allSiteGroups.find((group) => group.key === selectedSiteKey) ?? null,
+    [selectedSiteKey, allSiteGroups],
   )
   const selectedImage = selectedSite?.images[selectedImageIndex] ?? null
 
@@ -336,17 +364,71 @@ export default function PublicShowroomPage() {
           </div>
         ) : null}
 
-        <div className="mt-14 rounded-2xl border border-stone-200 bg-white p-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        {beforeAfterGroups.length > 0 && !selectedSite ? (
+          <section className="mt-14 space-y-4">
+            <div>
+              <p className="text-xs font-medium uppercase tracking-widest text-amber-800/90 mb-2">전후 변화로 보는 사례</p>
+              <h2 className="text-xl font-semibold tracking-tight text-stone-900">비포어/애프터 시공 사례</h2>
+              <p className="mt-2 text-sm text-stone-600">
+                업종에 맞는 사례를 먼저 보셨다면, 아래 전후 비교 사례에서 실제 변화 폭을 확인해 보세요.
+              </p>
+            </div>
+            <ul className="grid gap-5 sm:grid-cols-2">
+              {beforeAfterGroups.map(({ key, hero, images }) => {
+                if (!hero) return null
+                const thumb = hero.thumbnail_url || hero.cloudinary_url
+                const label = assetLabel(hero)
+                const beforeCount = images.filter((image) => image.before_after_role === 'before').length
+                const afterCount = images.filter((image) => image.before_after_role === 'after').length
+                const subtitle = [hero.location, hero.business_type].filter(Boolean).join(' · ')
+                return (
+                  <li
+                    key={`before-after-${key}`}
+                    className="group rounded-2xl border border-amber-200 bg-white shadow-sm overflow-hidden transition hover:border-amber-300 hover:shadow-md"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => openSiteDetail(key)}
+                      className="block w-full text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                    >
+                      <div className="aspect-[4/3] bg-stone-200 relative overflow-hidden">
+                        <img
+                          src={thumb}
+                          alt={label}
+                          className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.02]"
+                        />
+                        <div className="absolute left-3 top-3 rounded-full bg-white/90 px-3 py-1 text-[11px] font-semibold text-amber-900 shadow-sm">
+                          Before / After
+                        </div>
+                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/55 to-transparent p-3 pt-10">
+                          <p className="text-white text-sm font-medium drop-shadow-sm">{label}</p>
+                          {subtitle ? <p className="text-white/85 text-xs mt-0.5 drop-shadow-sm">{subtitle}</p> : null}
+                        </div>
+                      </div>
+                    </button>
+                    <div className="px-4 py-3 flex items-center justify-between gap-2 border-t border-stone-100">
+                      <span className="text-xs text-stone-500">Before {beforeCount}장 · After {afterCount}장</span>
+                      <ChevronRight className="h-4 w-4 text-stone-400 shrink-0" aria-hidden />
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+          </section>
+        ) : null}
+
+        <div className="mt-14 rounded-2xl border border-stone-200 bg-white p-6 flex flex-col gap-4">
           <div className="flex gap-3">
             <MessageCircle className="h-5 w-5 text-amber-700 shrink-0 mt-0.5" aria-hidden />
             <div>
-              <p className="text-sm font-medium text-stone-900">추가로 궁금하신 점이 있나요?</p>
-              <p className="text-sm text-stone-600 mt-1">받으신 채널(채팅·문자 등)로 편하게 회신해 주세요.</p>
+              <p className="text-sm font-medium text-stone-900">마음에 드는 사례가 있으면 이 채팅에 바로 회신해 주세요.</p>
+              <p className="text-sm text-stone-600 mt-1">
+                사례명 예시: <span className="font-medium text-stone-800">2512 서울 목동 관리형 9242</span> 또는{' '}
+                <span className="font-medium text-stone-800">관리형 9242</span> 처럼 남겨 주시면, 비슷한 방향으로
+                이어서 상담 도와드리겠습니다.
+              </p>
             </div>
           </div>
-          <Button asChild variant="secondary" className="shrink-0">
-            <Link to="/contact">문의 페이지</Link>
-          </Button>
         </div>
       </main>
     </div>
