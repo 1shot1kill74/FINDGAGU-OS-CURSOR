@@ -908,6 +908,32 @@ export interface ShowroomSiteOverride {
 
 export type ShowroomSiteOverrideSectionKey = ShowroomSiteOverride['section_key']
 
+/** RPC `get_public_showroom_assets_by_share_token` 한 행 → 쇼룸 카드용 자산 */
+export function mapPublicShowroomRpcRowToShowroomAsset(r: Record<string, unknown>): ShowroomImageAsset {
+  const beforeAfter = parseBeforeAfterMeta(r.metadata)
+  const meta = parseImageAssetMeta(r.metadata)
+  return {
+    before_after_role: beforeAfter.role,
+    before_after_group_id: beforeAfter.groupId,
+    canonical_site_name: meta.canonicalSiteName,
+    external_display_name: meta.externalDisplayName,
+    space_id: meta.spaceId,
+    id: String(r.id),
+    cloudinary_url: String(r.cloudinary_url ?? ''),
+    thumbnail_url: r.thumbnail_url != null ? String(r.thumbnail_url) : null,
+    site_name: r.site_name != null ? String(r.site_name) : null,
+    location: r.location != null ? String(r.location) : null,
+    business_type: r.business_type != null ? String(r.business_type) : null,
+    color_name: r.color_name != null ? String(r.color_name) : null,
+    product_name: r.product_name != null ? String(r.product_name) : null,
+    is_main: Boolean(r.is_main),
+    created_at: r.created_at != null ? String(r.created_at) : null,
+    view_count: Number(r.view_count ?? 0),
+    share_count: Number(r.share_count ?? 0),
+    internal_score: typeof r.internal_score === 'number' ? r.internal_score : null,
+  }
+}
+
 export async function fetchShowroomImageAssets(): Promise<ShowroomImageAsset[]> {
   const rows: Record<string, unknown>[] = []
   let from = 0
