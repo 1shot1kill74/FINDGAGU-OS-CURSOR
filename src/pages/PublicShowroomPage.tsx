@@ -64,6 +64,12 @@ function findPreferredImageIndex(
   return roleIndex >= 0 ? roleIndex : 0
 }
 
+function renderBeforeAfterBadge(role: ShowroomImageAsset['before_after_role']): string | null {
+  if (role === 'before') return 'Before'
+  if (role === 'after') return 'After'
+  return null
+}
+
 function buildSiteGroups(
   assets: ShowroomImageAsset[],
   options?: { excludeBefore?: boolean },
@@ -140,10 +146,6 @@ export default function PublicShowroomPage() {
 
   const allSiteGroups = useMemo(() => buildSiteGroups(assets), [assets])
   const siteGroups = useMemo(() => buildSiteGroups(assets, { excludeBefore: true }), [assets])
-  const beforeAfterGroups = useMemo(
-    () => allSiteGroups.filter((group) => group.hasBeforeAfter),
-    [allSiteGroups],
-  )
   const selectedSite = useMemo(
     () => allSiteGroups.find((group) => group.key === selectedSiteKey) ?? null,
     [selectedSiteKey, allSiteGroups],
@@ -250,12 +252,21 @@ export default function PublicShowroomPage() {
             </div>
 
             <div className="rounded-3xl border border-stone-200 bg-white shadow-sm overflow-hidden">
-              <div className="aspect-[4/3] bg-stone-100">
+              <div className="relative aspect-[4/3] bg-stone-100">
                 <img
                   src={selectedImage.cloudinary_url}
                   alt={assetLabel(selectedImage)}
                   className="h-full w-full object-contain bg-stone-100"
                 />
+                {renderBeforeAfterBadge(selectedImage.before_after_role) ? (
+                  <span
+                    className={`absolute left-3 top-3 rounded-full px-3 py-1 text-xs font-semibold text-white shadow-sm ${
+                      selectedImage.before_after_role === 'before' ? 'bg-black/80' : 'bg-emerald-600/90'
+                    }`}
+                  >
+                    {renderBeforeAfterBadge(selectedImage.before_after_role)}
+                  </span>
+                ) : null}
               </div>
               <div className="border-t border-stone-100 px-5 py-4">
                 <p className="text-lg font-semibold text-stone-900">{assetLabel(selectedImage)}</p>
@@ -308,12 +319,21 @@ export default function PublicShowroomPage() {
                             : 'border-stone-200 hover:border-stone-300'
                         }`}
                       >
-                        <div className="aspect-square bg-stone-100">
+                        <div className="relative aspect-square bg-stone-100">
                           <img
                             src={thumb}
                             alt={assetLabel(image)}
                             className="h-full w-full object-cover"
                           />
+                          {renderBeforeAfterBadge(image.before_after_role) ? (
+                            <span
+                              className={`absolute left-2 top-2 rounded-full px-2 py-1 text-[11px] font-semibold text-white shadow-sm ${
+                                image.before_after_role === 'before' ? 'bg-black/75' : 'bg-emerald-600/90'
+                              }`}
+                            >
+                              {renderBeforeAfterBadge(image.before_after_role)}
+                            </span>
+                          ) : null}
                         </div>
                       </button>
                     </li>
@@ -333,6 +353,8 @@ export default function PublicShowroomPage() {
               const thumb = hero.thumbnail_url || hero.cloudinary_url
               const label = assetLabel(hero)
               const subtitle = [hero.location, hero.business_type].filter(Boolean).join(' · ')
+              const hasBeforeAfter = images.some((image) => image.before_after_role === 'after')
+                && allSiteGroups.find((group) => group.key === key)?.hasBeforeAfter
               return (
                 <li
                   key={key}
@@ -349,6 +371,16 @@ export default function PublicShowroomPage() {
                         alt={label}
                         className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.02]"
                       />
+                      {hasBeforeAfter ? (
+                        <div className="absolute left-3 top-3 flex gap-2">
+                          <span className="rounded-full bg-black/75 px-2 py-1 text-[11px] font-semibold text-white shadow-sm">
+                            Before
+                          </span>
+                          <span className="rounded-full bg-emerald-600/90 px-2 py-1 text-[11px] font-semibold text-white shadow-sm">
+                            After
+                          </span>
+                        </div>
+                      ) : null}
                       <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/55 to-transparent p-3 pt-10">
                         <p className="text-white text-sm font-medium drop-shadow-sm">{label}</p>
                         {subtitle ? <p className="text-white/85 text-xs mt-0.5 drop-shadow-sm">{subtitle}</p> : null}
@@ -379,77 +411,6 @@ export default function PublicShowroomPage() {
               처음에는 선택이 쉽도록 일부만 보여 드립니다. 더 보기에서 같은 조건의 나머지 현장을 확인할 수 있어요.
             </p>
           </div>
-        ) : null}
-
-        {beforeAfterGroups.length > 0 && !selectedSite ? (
-          <section className="mt-14 space-y-4">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-widest text-amber-800/90 mb-2">전후 변화로 보는 사례</p>
-              <h2 className="text-xl font-semibold tracking-tight text-stone-900">비포어/애프터 시공 사례</h2>
-              <p className="mt-2 text-sm text-stone-600">
-                업종에 맞는 사례를 먼저 보셨다면, 아래 전후 비교 사례에서 실제 변화 폭을 확인해 보세요.
-              </p>
-            </div>
-            <ul className="grid gap-5 sm:grid-cols-2">
-              {beforeAfterGroups.map(({ key, hero, images }) => {
-                if (!hero) return null
-                const label = assetLabel(hero)
-                const beforeImages = images.filter((image) => image.before_after_role === 'before')
-                const afterImages = images.filter((image) => image.before_after_role === 'after')
-                const beforeImage = beforeImages[0] ?? null
-                const afterImage = afterImages.find((image) => image.is_main) ?? afterImages[0] ?? null
-                if (!beforeImage || !afterImage) return null
-                const subtitle = [hero.location, hero.business_type].filter(Boolean).join(' · ')
-                return (
-                  <li
-                    key={`before-after-${key}`}
-                    className="group overflow-hidden rounded-2xl border border-emerald-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-300 hover:shadow-md"
-                  >
-                    <button
-                      type="button"
-                      onClick={() => openSiteDetail(key, 'before')}
-                      className="block w-full text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
-                    >
-                      <div className="grid grid-cols-2">
-                        <div className="relative aspect-[4/3] bg-stone-100">
-                          <img
-                            src={beforeImage.thumbnail_url || beforeImage.cloudinary_url}
-                            alt={`${label} before`}
-                            className="h-full w-full object-cover"
-                          />
-                          <span className="absolute left-2 top-2 rounded-full bg-black/75 px-2 py-1 text-[11px] font-semibold text-white">
-                            Before
-                          </span>
-                        </div>
-                        <div className="relative aspect-[4/3] bg-stone-100">
-                          <img
-                            src={afterImage.thumbnail_url || afterImage.cloudinary_url}
-                            alt={`${label} after`}
-                            className="h-full w-full object-cover"
-                          />
-                          <span className="absolute left-2 top-2 rounded-full bg-emerald-600/90 px-2 py-1 text-[11px] font-semibold text-white">
-                            After
-                          </span>
-                        </div>
-                      </div>
-                    </button>
-                    <div className="border-t border-stone-100 p-4">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="font-semibold text-stone-900">{label}</p>
-                          {subtitle ? <p className="mt-1 text-xs text-stone-500">{subtitle}</p> : null}
-                          <p className="mt-2 text-sm text-stone-600">
-                            전후 비교가 가능한 리뉴얼 사례입니다. 눌러서 Before부터 전체 사진을 확인해 보세요.
-                          </p>
-                        </div>
-                        <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-stone-400" aria-hidden />
-                      </div>
-                    </div>
-                  </li>
-                )
-              })}
-            </ul>
-          </section>
         ) : null}
 
         <div className="mt-14 rounded-2xl border border-stone-200 bg-white p-6 flex flex-col gap-4">
