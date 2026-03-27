@@ -10,6 +10,7 @@ import PublicProposalView from '@/pages/PublicProposalView'
 import ShareGalleryPage from '@/pages/ShareGalleryPage'
 import PublicGalleryView from '@/pages/PublicGalleryView'
 import ShareRedirect from '@/pages/ShareRedirect'
+import PublicShowroomPage from '@/pages/PublicShowroomPage'
 import ShowroomPage from '@/pages/ShowroomPage'
 import ContactPage from '@/pages/ContactPage'
 import HomepageConceptPage from '@/pages/HomepageConceptPage'
@@ -30,6 +31,7 @@ function App() {
         <Route path="/share" element={<ShareRedirect />} />
         <Route path="/share/gallery" element={<ShareGalleryPage />} />
         <Route path="/public/share" element={<PublicGalleryView />} />
+        <Route path="/public/showroom" element={<PublicShowroomPage />} />
         <Route path="/contact" element={<ContactPage />} />
         <Route element={<ProtectedRoute />}>
           <Route path="/" element={<DashboardPage />} />
