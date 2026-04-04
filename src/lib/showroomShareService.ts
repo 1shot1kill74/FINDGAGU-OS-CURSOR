@@ -2,6 +2,7 @@ import { supabase } from '@/lib/supabase'
 import { mapPublicShowroomRpcRowToShowroomAsset, type ShowroomImageAsset } from '@/lib/imageAssetService'
 
 export const SHOWROOM_SHARE_EXPIRY_DAYS = 3
+const PUBLIC_SHOWROOM_RPC_PAGE_SIZE = 1000
 
 export const DEFAULT_PUBLIC_SHOWROOM_PATH = '/public/showroom'
 export const DEFAULT_PUBLIC_SHOWROOM_ORIGIN = 'https://findgagu-os-cursor.vercel.app'
@@ -127,6 +128,37 @@ export async function resolveShowroomShare(token: string): Promise<ResolvedShowr
   }
 }
 
+async function fetchAllPublicShowroomRpcRows(
+  rpcName: string,
+  args?: Record<string, unknown>,
+): Promise<Record<string, unknown>[]> {
+  const rows: Record<string, unknown>[] = []
+  let from = 0
+
+  while (true) {
+    const query = (supabase as any)
+      .rpc(rpcName, args ?? {})
+      .range(from, from + PUBLIC_SHOWROOM_RPC_PAGE_SIZE - 1)
+
+    const { data, error } = await query
+    if (error) throw new Error(error.message)
+
+    const page = (data ?? []) as Record<string, unknown>[]
+    if (page.length === 0) break
+
+    rows.push(...page)
+    if (page.length < PUBLIC_SHOWROOM_RPC_PAGE_SIZE) break
+    from += PUBLIC_SHOWROOM_RPC_PAGE_SIZE
+  }
+
+  return rows
+}
+
+export async function fetchPublicShowroomAssets(): Promise<ShowroomImageAsset[]> {
+  const rows = await fetchAllPublicShowroomRpcRows('get_public_showroom_assets')
+  return rows.map((r) => mapPublicShowroomRpcRowToShowroomAsset(r))
+}
+
 export async function fetchPublicShowroomAssetsByShareToken(
   token: string,
   options?: { includeAll?: boolean },
@@ -134,11 +166,9 @@ export async function fetchPublicShowroomAssetsByShareToken(
   const trimmed = token.trim()
   if (!trimmed) return []
 
-  const { data, error } = await (supabase as any).rpc('get_public_showroom_assets_by_share_token', {
+  const rows = await fetchAllPublicShowroomRpcRows('get_public_showroom_assets_by_share_token', {
     share_token: trimmed,
     include_all: Boolean(options?.includeAll),
   })
-  if (error) throw new Error(error.message)
-  const rows = (data ?? []) as Record<string, unknown>[]
   return rows.map((r) => mapPublicShowroomRpcRowToShowroomAsset(r))
 }

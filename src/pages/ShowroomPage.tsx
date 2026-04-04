@@ -24,13 +24,17 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useColorChips } from '@/hooks/useColorChips'
-import { Search, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Package, Images, Sparkles, FileText, MousePointerClick, MessageCircle, FileCheck, Users, Wrench, ClipboardCheck, ArrowRight, Copy, Check, Link2 } from 'lucide-react'
+import { Search, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Package, Images, Sparkles, FileText, MousePointerClick, MessageCircle, FileCheck, Users, Wrench, ClipboardCheck, ArrowRight, Copy, Check } from 'lucide-react'
 import { toast } from 'sonner'
 import { shareGalleryKakao } from '@/lib/kakaoShare'
 import { createSharedGallery, snapshotShowroomImageAsset } from '@/lib/sharedGalleryService'
-import { createShowroomShareLink, getShowroomShareExpiryIso, SHOWROOM_SHARE_EXPIRY_DAYS } from '@/lib/showroomShareService'
+import { fetchPublicShowroomAssets } from '@/lib/showroomShareService'
+import {
+  fetchShowroomCaseProfileDrafts,
+  resolveShowroomCaseProfile,
+  saveShowroomCaseProfileDraft,
+} from '@/lib/showroomCaseProfileService'
 
-const INTERNAL_SHOWROOM = true
 const INDUSTRY_PREFERRED_ORDER = ['관리형', '학원', '스터디카페', '학교', '아파트', '기타'] as const
 const INDUSTRY_PAGE_SIZE = 6
 const SWIPE_THRESHOLD_PX = 50
@@ -95,6 +99,7 @@ interface SiteGroup {
   hasBeforeAfter: boolean
   latestCreatedAt: string | null
   representativeScore: number
+  displayOrder: number | null
   manualPriority: number | null
 }
 
@@ -134,6 +139,11 @@ interface PaginatedIndustrySection extends IndustrySection {
   pagedGroups: SiteGroup[]
 }
 
+interface ShowroomCaseProfileDraftState {
+  painPoint: string
+  solutionPoint: string
+}
+
 function getPrimaryIndustryLabel(businessTypes: string[]): string {
   const normalized = businessTypes.map((type) => type.trim()).filter(Boolean)
   if (normalized.length === 0) return '기타'
@@ -144,7 +154,7 @@ function getPrimaryIndustryLabel(businessTypes: string[]): string {
     }
   }
 
-  return normalized[0]
+  return '기타'
 }
 
 function buildShowroomSiteKey(
@@ -156,6 +166,8 @@ function buildShowroomSiteKey(
 }
 
 function getShowroomGroupKey(asset: ShowroomImageAsset): string {
+  const publicGroupKey = asset.public_group_key?.trim()
+  if (publicGroupKey) return publicGroupKey
   const spaceId = asset.space_id?.trim()
   if (spaceId) return `space:${spaceId}`
   const beforeAfterGroupId = asset.before_after_group_id?.trim()
@@ -351,6 +363,14 @@ function getSiteYearMonthSortValue(siteName: string): number {
 }
 
 function compareSiteGroups(a: SiteGroup, b: SiteGroup): number {
+  const aHasDisplayOrder = a.displayOrder != null
+  const bHasDisplayOrder = b.displayOrder != null
+  if (aHasDisplayOrder && !bHasDisplayOrder) return -1
+  if (!aHasDisplayOrder && bHasDisplayOrder) return 1
+  if (aHasDisplayOrder && bHasDisplayOrder && a.displayOrder !== b.displayOrder) {
+    return (a.displayOrder ?? Number.MAX_SAFE_INTEGER) - (b.displayOrder ?? Number.MAX_SAFE_INTEGER)
+  }
+
   const aHasManual = a.manualPriority != null
   const bHasManual = b.manualPriority != null
   if (aHasManual && !bHasManual) return -1
@@ -363,6 +383,18 @@ function compareSiteGroups(a: SiteGroup, b: SiteGroup): number {
   if (aYearMonth !== bYearMonth) return bYearMonth - aYearMonth
 
   return a.siteName.localeCompare(b.siteName, 'ko')
+}
+
+function getPublicSectionDisplayOrder(
+  images: ShowroomImageAsset[],
+  sectionKey: ShowroomSiteOverrideSectionKey
+): number | null {
+  const orders = images
+    .map((image) => sectionKey === 'before_after' ? image.before_after_site_order : image.industry_site_order)
+    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
+
+  if (orders.length === 0) return null
+  return Math.min(...orders)
 }
 
 function buildSiteGroups(
@@ -405,6 +437,7 @@ function buildSiteGroups(
       hasBeforeAfter: hasBefore && hasAfter,
       latestCreatedAt,
       representativeScore: getRepresentativeScore(images, products, colors, hasBefore && hasAfter, latestCreatedAt),
+      displayOrder: getPublicSectionDisplayOrder(images, sectionKey),
       manualPriority: override?.manual_priority ?? null,
     })
   }
@@ -530,7 +563,12 @@ function isConcernTag(value: string | null | undefined): value is string {
   return CONCERN_CARDS.some((card) => card.tag === value)
 }
 
-export default function ShowroomPage() {
+type ShowroomPageProps = {
+  mode?: 'internal' | 'public'
+}
+
+export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
+  const showInternalControls = mode === 'internal'
   const headerRef = useRef<HTMLElement | null>(null)
   const selectionBarRef = useRef<HTMLDivElement | null>(null)
   const { chips: colorChips, isLoading: colorLoading } = useColorChips()
@@ -558,7 +596,9 @@ export default function ShowroomPage() {
   const [priorityInputByKey, setPriorityInputByKey] = useState<Record<string, string>>({})
   const [savingPriorityByKey, setSavingPriorityByKey] = useState<Record<string, boolean>>({})
   const [priorityEditorOpenByKey, setPriorityEditorOpenByKey] = useState<Record<string, boolean>>({})
-  const [creatingShowroomShareLink, setCreatingShowroomShareLink] = useState(false)
+  const [caseProfileDraftBySite, setCaseProfileDraftBySite] = useState<Record<string, ShowroomCaseProfileDraftState>>({})
+  const [caseProfileEditorOpenBySite, setCaseProfileEditorOpenBySite] = useState<Record<string, boolean>>({})
+  const [savingCaseProfileBySite, setSavingCaseProfileBySite] = useState<Record<string, boolean>>({})
   const mountedRef = useRef(true)
   const refreshInFlightRef = useRef(false)
   const lastAutoRefreshAtRef = useRef(0)
@@ -604,7 +644,11 @@ export default function ShowroomPage() {
     if (!background) setLoading(true)
 
     try {
-      const [list, overrides] = await Promise.all([fetchShowroomImageAssets(), fetchShowroomSiteOverrides()])
+      const [list, overrides] = await Promise.all(
+        showInternalControls
+          ? [fetchShowroomImageAssets(), fetchShowroomSiteOverrides()]
+          : [fetchPublicShowroomAssets(), Promise.resolve([] as ShowroomSiteOverride[])]
+      )
       if (!mountedRef.current) return
 
       setAssets(list)
@@ -628,7 +672,7 @@ export default function ShowroomPage() {
       if (mountedRef.current) setLoading(false)
       refreshInFlightRef.current = false
     }
-  }, [])
+  }, [showInternalControls])
 
   const refreshShowroomOnReturn = useCallback(() => {
     if (document.visibilityState === 'hidden') return
@@ -754,12 +798,7 @@ export default function ShowroomPage() {
   )
   const searchTrim = searchQuery.trim()
   const searchLower = searchTrim.toLowerCase()
-  /** 카드 태그와 일치할 때 해당 카드의 업종 키워드로만 필터 (업종 기준) */
-  const industryFilterForTag = useMemo(() => {
-    if (INTERNAL_SHOWROOM) return null
-    const card = CONCERN_CARDS.find((c) => c.tag === selectedConcernTag)
-    return card?.industryFilter ?? null
-  }, [selectedConcernTag])
+  const industryFilterForTag = useMemo<string | null>(() => null, [])
 
   const filteredSiteGroups = useMemo(() => {
     if (!searchTrim) return siteGroups
@@ -906,19 +945,7 @@ export default function ShowroomPage() {
     })
   }, [industrySections, industryPageBySection])
 
-  const beforeAfterShowcaseGroups = useMemo(() => {
-    if (INTERNAL_SHOWROOM) return []
-    if (selectedConcernTag === '스터디카페를 관리형 스타일로') {
-      return beforeAfterGroups.filter((group) =>
-        group.businessTypes.some((type) => type.includes('스터디카페') || type.includes('관리형'))
-      )
-    }
-    return []
-  }, [beforeAfterGroups, selectedConcernTag])
-  const visibleBeforeAfterGroups = useMemo(
-    () => (INTERNAL_SHOWROOM ? beforeAfterGroups : beforeAfterShowcaseGroups),
-    [beforeAfterGroups, beforeAfterShowcaseGroups]
-  )
+  const visibleBeforeAfterGroups = useMemo(() => beforeAfterGroups, [beforeAfterGroups])
   const featuredBeforeAfterGroups = useMemo(
     () => visibleBeforeAfterGroups.slice(0, 3),
     [visibleBeforeAfterGroups]
@@ -932,17 +959,6 @@ export default function ShowroomPage() {
     const startIndex = (currentBeforeAfterPage - 1) * INDUSTRY_PAGE_SIZE
     return visibleBeforeAfterGroups.slice(startIndex, startIndex + INDUSTRY_PAGE_SIZE)
   }, [visibleBeforeAfterGroups, currentBeforeAfterPage])
-  const showroomContactContext = useMemo(() => {
-    if (INTERNAL_SHOWROOM) return null
-    if (selectedConcernTag === '스터디카페를 관리형 스타일로') {
-      return {
-        showroomContext: '관리형 스타일 전환과 엑시트 전략을 염두에 두고 문의한 고객',
-        showroomEntryLabel: '스터디카페를 관리형 스타일로',
-      }
-    }
-    return null
-  }, [selectedConcernTag])
-
   const detailImages = useMemo(() => {
     if (!detailKey || detailOpen === null) return []
     if (detailOpen === 'site') {
@@ -960,6 +976,35 @@ export default function ShowroomPage() {
     const g = colorGroups.find((x) => x.colorName === detailKey)
     return g?.images ?? []
   }, [detailOpen, detailKey, siteGroups, productGroups, colorGroups, beforeAfterGroups])
+
+  useEffect(() => {
+    if (!showInternalControls) return
+    const siteNames = beforeAfterGroups.map((group) => group.siteName)
+    if (siteNames.length === 0) return
+
+    let cancelled = false
+    void fetchShowroomCaseProfileDrafts(siteNames)
+      .then((rows) => {
+        if (cancelled) return
+        setCaseProfileDraftBySite((prev) => {
+          const next = { ...prev }
+          rows.forEach((row) => {
+            const existing = next[row.siteName]
+            if (caseProfileEditorOpenBySite[row.siteName]) return
+            next[row.siteName] = {
+              painPoint: existing?.painPoint ?? row.painPoint ?? '',
+              solutionPoint: existing?.solutionPoint ?? row.solutionPoint ?? '',
+            }
+          })
+          return next
+        })
+      })
+      .catch(() => {})
+
+    return () => {
+      cancelled = true
+    }
+  }, [beforeAfterGroups, caseProfileEditorOpenBySite, showInternalControls])
   const detailImageFrameRef = useRef<HTMLDivElement | null>(null)
   const detailAnimatedImageIdRef = useRef<string | null>(null)
   const detailTransitionDirectionRef = useRef<'next' | 'prev'>('next')
@@ -1101,23 +1146,6 @@ export default function ShowroomPage() {
     }
   }, [selectedImageIds.size, createShareGalleryUrl, markSelectedImagesShared])
 
-  const copyShowroomShareLink = useCallback(async () => {
-    try {
-      setCreatingShowroomShareLink(true)
-      const result = await createShowroomShareLink({
-        title: '시공사례 쇼룸',
-        description: `외부 쇼룸 전체 링크 (${SHOWROOM_SHARE_EXPIRY_DAYS}일 만료)`,
-        expiresAt: getShowroomShareExpiryIso(),
-      })
-      await navigator.clipboard.writeText(result.url)
-      toast.success(`쇼룸 링크를 복사했습니다. ${SHOWROOM_SHARE_EXPIRY_DAYS}일 뒤에 만료됩니다.`)
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : '쇼룸 링크 생성에 실패했습니다.')
-    } finally {
-      setCreatingShowroomShareLink(false)
-    }
-  }, [])
-
   const reloadSiteOverrides = useCallback(async () => {
     const overrides = await fetchShowroomSiteOverrides()
     setSiteOverrides(overrides)
@@ -1193,6 +1221,84 @@ export default function ShowroomPage() {
       [key]: !prev[key],
     }))
   }, [])
+
+  const getBeforeAfterProfileDraft = useCallback((group: SiteGroup): ShowroomCaseProfileDraftState => {
+    const saved = caseProfileDraftBySite[group.siteName]
+    if (saved) return saved
+    const profile = resolveShowroomCaseProfile({
+      siteName: group.siteName,
+      businessTypes: group.businessTypes,
+      products: group.products,
+      hasBeforeAfter: group.hasBeforeAfter,
+    })
+    return {
+      painPoint: profile.painPoint,
+      solutionPoint: profile.solutionPoint,
+    }
+  }, [caseProfileDraftBySite])
+
+  const updateCaseProfileDraft = useCallback((
+    siteName: string,
+    field: keyof ShowroomCaseProfileDraftState,
+    value: string
+  ) => {
+    setCaseProfileDraftBySite((prev) => ({
+      ...prev,
+      [siteName]: {
+        painPoint: prev[siteName]?.painPoint ?? '',
+        solutionPoint: prev[siteName]?.solutionPoint ?? '',
+        [field]: value,
+      },
+    }))
+  }, [])
+
+  const toggleCaseProfileEditor = useCallback((group: SiteGroup) => {
+    const defaults = getBeforeAfterProfileDraft(group)
+    setCaseProfileDraftBySite((prev) => ({
+      ...prev,
+      [group.siteName]: prev[group.siteName] ?? defaults,
+    }))
+    setCaseProfileEditorOpenBySite((prev) => ({
+      ...prev,
+      [group.siteName]: !prev[group.siteName],
+    }))
+  }, [getBeforeAfterProfileDraft])
+
+  const resetCaseProfileDraft = useCallback((group: SiteGroup) => {
+    const defaults = getBeforeAfterProfileDraft(group)
+    setCaseProfileDraftBySite((prev) => ({
+      ...prev,
+      [group.siteName]: defaults,
+    }))
+    setCaseProfileEditorOpenBySite((prev) => ({
+      ...prev,
+      [group.siteName]: false,
+    }))
+  }, [getBeforeAfterProfileDraft])
+
+  const saveCaseProfileForGroup = useCallback(async (group: SiteGroup) => {
+    const draft = getBeforeAfterProfileDraft(group)
+    setSavingCaseProfileBySite((prev) => ({ ...prev, [group.siteName]: true }))
+    const { error } = await saveShowroomCaseProfileDraft({
+      siteName: group.siteName,
+      canonicalSiteName: group.externalDisplayName !== group.siteName ? group.externalDisplayName : null,
+      industry: group.businessTypes[0] ?? group.industryLabel,
+      painPoint: draft.painPoint,
+      solutionPoint: draft.solutionPoint,
+    })
+    setSavingCaseProfileBySite((prev) => ({ ...prev, [group.siteName]: false }))
+
+    if (error) {
+      toast.error('사례 설명 저장에 실패했습니다.')
+      return
+    }
+
+    setCaseProfileEditorOpenBySite((prev) => ({
+      ...prev,
+      [group.siteName]: false,
+    }))
+    toast.success(`${group.siteName} 사례 설명을 저장했습니다.`)
+  }, [getBeforeAfterProfileDraft])
 
   const moveIndustryPage = useCallback((industry: string, nextPage: number) => {
     setIndustryPageBySection((prev) => ({
@@ -1391,7 +1497,7 @@ export default function ShowroomPage() {
             </p>
           </div>
         </button>
-        {INTERNAL_SHOWROOM && (
+        {showInternalControls && (
           <div className="p-3 border-t border-neutral-100 bg-neutral-50/50 space-y-3">
             <p className="text-xs text-neutral-500">{helperText}</p>
             {renderPriorityEditor()}
@@ -1410,6 +1516,9 @@ export default function ShowroomPage() {
     const priorityValue = priorityInputByKey[priorityKey] ?? (group.manualPriority != null ? String(group.manualPriority) : '')
     const isSavingPriority = savingPriorityByKey[priorityKey] === true
     const isPriorityEditorOpen = priorityEditorOpenByKey[priorityKey] === true
+    const caseProfileDraft = getBeforeAfterProfileDraft(group)
+    const isCaseProfileEditorOpen = caseProfileEditorOpenBySite[group.siteName] === true
+    const isSavingCaseProfile = savingCaseProfileBySite[group.siteName] === true
     if (!beforeImage || !afterImage) return null
 
     return (
@@ -1456,16 +1565,92 @@ export default function ShowroomPage() {
                 <p className="min-w-0 truncate text-[12px] leading-tight text-amber-600">{group.externalDisplayName}</p>
               </div>
             )}
-            <p className="mt-1 text-sm text-neutral-600">
-              전후 비교가 가능한 리뉴얼 사례입니다. 눌러서 전체 사진을 확인해 보세요.
-            </p>
+            <div className="mt-2 space-y-1.5 text-sm text-neutral-600">
+              <p>
+                <span className="font-medium text-neutral-800">문제</span>{' '}
+                {caseProfileDraft.painPoint || '전후 비교가 가능한 리뉴얼 사례입니다.'}
+              </p>
+              <p>
+                <span className="font-medium text-neutral-800">해결</span>{' '}
+                {caseProfileDraft.solutionPoint || '눌러서 전체 사진을 확인해 보세요.'}
+              </p>
+            </div>
           </div>
         </button>
-        {INTERNAL_SHOWROOM && (
+        {showInternalControls && (
           <div className="space-y-3 border-t border-neutral-100 bg-neutral-50/50 p-3">
             <p className="text-xs text-neutral-500">
               전후 비교 사례 안에서도 노출 순서를 조정해 필요한 현장을 먼저 보여줄 수 있습니다.
             </p>
+            <div className="rounded-xl border border-neutral-200 bg-white px-3 py-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-medium text-neutral-800">전후 비교 설명</p>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-[11px] text-neutral-600"
+                  onClick={() => toggleCaseProfileEditor(group)}
+                >
+                  {isCaseProfileEditorOpen ? '접기' : '편집'}
+                </Button>
+              </div>
+              {isCaseProfileEditorOpen ? (
+                <div className="mt-3 space-y-3">
+                  <label className="block">
+                    <span className="mb-1 block text-[11px] font-medium text-neutral-700">페인포인트</span>
+                    <textarea
+                      value={caseProfileDraft.painPoint}
+                      onChange={(event) => updateCaseProfileDraft(group.siteName, 'painPoint', event.target.value)}
+                      rows={3}
+                      className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none transition-colors focus:border-neutral-400"
+                      placeholder="예: 기존 자습실이 노후돼 보이고 이용 장면이 잘 상상되지 않았습니다."
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1 block text-[11px] font-medium text-neutral-700">해결포인트</span>
+                    <textarea
+                      value={caseProfileDraft.solutionPoint}
+                      onChange={(event) => updateCaseProfileDraft(group.siteName, 'solutionPoint', event.target.value)}
+                      rows={3}
+                      className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none transition-colors focus:border-neutral-400"
+                      placeholder="예: 전후 사진으로 변화 폭을 먼저 보여주고, 동선과 분위기 개선 포인트를 함께 설명합니다."
+                    />
+                  </label>
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-[11px] text-neutral-400">
+                      저장하면 이 카드의 문제/해결 문구가 바로 바뀝니다.
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 px-2 text-[11px] text-neutral-500"
+                        disabled={isSavingCaseProfile}
+                        onClick={() => resetCaseProfileDraft(group)}
+                      >
+                        취소
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="h-8 px-3 text-[11px]"
+                        disabled={isSavingCaseProfile}
+                        onClick={() => void saveCaseProfileForGroup(group)}
+                      >
+                        {isSavingCaseProfile ? '저장 중…' : '저장'}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-2 space-y-1 text-[11px] leading-5 text-neutral-500">
+                  <p><span className="font-medium text-neutral-700">문제</span> {caseProfileDraft.painPoint}</p>
+                  <p><span className="font-medium text-neutral-700">해결</span> {caseProfileDraft.solutionPoint}</p>
+                </div>
+              )}
+            </div>
             <div className="rounded-xl border border-neutral-200 bg-white px-3 py-2.5">
               <div className="flex items-center justify-between gap-2">
                 <p className="text-xs font-medium text-neutral-800">현장 노출 순서</p>
@@ -1551,48 +1736,24 @@ export default function ShowroomPage() {
         <div className="max-w-6xl mx-auto flex flex-col gap-4">
           <div className="flex items-center justify-between gap-3">
             <h1 className="text-xl md:text-2xl font-semibold text-neutral-900 tracking-tight">
-              {INTERNAL_SHOWROOM ? '내부용 시공사례 쇼룸' : '시공사례 쇼룸'}
+              {showInternalControls ? '내부용 시공사례 쇼룸' : '시공사례 쇼룸'}
             </h1>
-            <div className="flex items-center gap-2">
-              <Link to="/consultation">
-                <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
-                  <Users className="h-4 w-4" />
-                  상담 관리
-                </Button>
-              </Link>
-              <Link to="/image-assets">
-                <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
-                  이미지 자산 관리
-                </Button>
-              </Link>
-            </div>
+            {showInternalControls && (
+              <div className="flex items-center gap-2">
+                <Link to="/consultation">
+                  <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
+                    <Users className="h-4 w-4" />
+                    상담 관리
+                  </Button>
+                </Link>
+                <Link to="/image-assets">
+                  <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
+                    이미지 자산 관리
+                  </Button>
+                </Link>
+              </div>
+            )}
           </div>
-          {INTERNAL_SHOWROOM && (
-            <div className="flex flex-col gap-2 rounded-2xl border border-amber-200 bg-amber-50/70 px-4 py-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="inline-flex items-center gap-2 text-sm font-medium text-amber-900">
-                  <Link2 className="h-4 w-4" />
-                  외부 쇼룸 3일 링크 발급
-                </span>
-                <span className="text-xs text-amber-800/80">
-                  채널톡 인입 고객용으로 전체 쇼룸 링크를 발급하고, 3일 뒤 자동 만료되도록 설정합니다.
-                </span>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="gap-2 border-amber-300 bg-white text-amber-900 hover:bg-amber-100"
-                  disabled={creatingShowroomShareLink}
-                  onClick={() => void copyShowroomShareLink()}
-                >
-                  <Copy className="h-4 w-4" />
-                  3일 링크 복사
-                </Button>
-              </div>
-            </div>
-          )}
           <div className="flex flex-col sm:flex-row sm:items-center gap-3">
             <div className="flex rounded-lg border border-neutral-200 p-0.5 bg-neutral-100/80">
               <button
@@ -1720,8 +1881,8 @@ export default function ShowroomPage() {
             </div>
           )}
           {viewMode === 'industry' && paginatedIndustrySections.length > 0 && (
-            <div className="overflow-x-auto">
-              <div className="flex min-w-max items-center gap-2">
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
                 {paginatedIndustrySections.map((section) => (
                   <Button
                     key={`industry-nav-${section.industry}`}
@@ -1734,7 +1895,9 @@ export default function ShowroomPage() {
                     {section.industry}
                   </Button>
                 ))}
-                {visibleBeforeAfterGroups.length > 0 && (
+              </div>
+              {visibleBeforeAfterGroups.length > 0 && (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
                   <Button
                     type="button"
                     variant="outline"
@@ -1745,14 +1908,14 @@ export default function ShowroomPage() {
                     <FileCheck className="h-4 w-4" />
                     Before/After
                   </Button>
-                )}
-              </div>
+                </div>
+              )}
             </div>
           )}
         </div>
       </header>
 
-      {INTERNAL_SHOWROOM && selectedImageIds.size > 0 && (
+      {showInternalControls && selectedImageIds.size > 0 && (
         <div ref={selectionBarRef} className="sticky top-[88px] z-10 border-b border-neutral-200 bg-white/95 backdrop-blur px-4 py-3 md:px-8">
           <div className="max-w-6xl mx-auto flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -1780,7 +1943,7 @@ export default function ShowroomPage() {
         {/* 메인 카피: 강렬한 헤드라인 */}
         <section className="mb-8" aria-labelledby="showroom-main-heading">
           <h1 id="showroom-main-heading" className="text-2xl md:text-3xl font-bold text-neutral-900 leading-tight mb-1">
-            {INTERNAL_SHOWROOM ? (
+            {showInternalControls ? (
               <>
                 고객과 함께 보며 <span className="text-amber-600">설명하고 전송하는</span> 내부용 쇼룸
               </>
@@ -1790,7 +1953,7 @@ export default function ShowroomPage() {
               </>
             )}
           </h1>
-          {INTERNAL_SHOWROOM ? (
+          {showInternalControls ? (
             <>
               <p className="text-neutral-600 text-base md:text-lg">현장에서 사례를 탐색하고, 필요한 이미지를 바로 선별해 공유하세요.</p>
               <p className="text-xs md:text-sm text-neutral-500 mt-2">
@@ -1801,7 +1964,7 @@ export default function ShowroomPage() {
             <>
               <p className="text-neutral-600 text-base md:text-lg">대표님의 공간, 어떤 변화가 필요하신가요?</p>
               <p className="text-xs md:text-sm text-neutral-500 mt-2">
-                이 페이지는 다양한 사례를 탐색하는 쇼룸입니다. 상담 중 특정 사진을 따로 안내받으셨다면 전달받은 선별 공유 링크를 확인해 주세요.
+                내부 직원과 같은 흐름으로 시공사례를 탐색할 수 있는 공통 쇼룸입니다. 필요한 정보는 하단 채널톡이나 문의 흐름으로 이어서 안내받으실 수 있습니다.
               </p>
             </>
           )}
@@ -1828,7 +1991,7 @@ export default function ShowroomPage() {
         )}
 
         {/* 전문가가 먼저 질문하는 공감 카드: 말풍선 + 핵심어 하이라이트 + 성공 사례 보기 CTA */}
-        {!INTERNAL_SHOWROOM && (
+        {false && (
         <section className="mb-8" aria-labelledby="showroom-concern-heading">
           <h2 id="showroom-concern-heading" className="sr-only">고민별 시공사례 보기</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -1888,7 +2051,7 @@ export default function ShowroomPage() {
         )}
         <div id="showroom-concern-result-anchor" className="h-px scroll-mt-28 md:scroll-mt-32" aria-hidden />
         {/* 전문가 코멘트: 해당 카드 클릭 시에만 표시 — 왼쪽 코멘트, 오른쪽 전문가 이미지(답하는 느낌) */}
-        {!INTERNAL_SHOWROOM && selectedConcernTag === '관리형 창업 또는 전환' && (
+        {false && selectedConcernTag === '관리형 창업 또는 전환' && (
           <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
             <div className="flex-1 min-w-0 py-5 px-5">
               <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
@@ -1923,7 +2086,7 @@ export default function ShowroomPage() {
             </div>
           </section>
         )}
-        {!INTERNAL_SHOWROOM && selectedConcernTag === '매출 향상 스터디카페 리뉴얼' && (
+        {false && selectedConcernTag === '매출 향상 스터디카페 리뉴얼' && (
           <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
             <div className="flex-1 min-w-0 py-5 px-5">
               <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
@@ -1959,7 +2122,7 @@ export default function ShowroomPage() {
             </div>
           </section>
         )}
-        {!INTERNAL_SHOWROOM && selectedConcernTag === '스터디카페를 관리형 스타일로' && (
+        {false && selectedConcernTag === '스터디카페를 관리형 스타일로' && (
           <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
             <div className="flex-1 min-w-0 py-5 px-5">
               <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
@@ -1999,7 +2162,7 @@ export default function ShowroomPage() {
             </div>
           </section>
         )}
-        {!INTERNAL_SHOWROOM && selectedConcernTag === '스터디카페 같은 학원 자습실' && (
+        {false && selectedConcernTag === '스터디카페 같은 학원 자습실' && (
           <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
             <div className="flex-1 min-w-0 py-5 px-5">
               <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
@@ -2036,7 +2199,7 @@ export default function ShowroomPage() {
           </section>
         )}
 
-        {!INTERNAL_SHOWROOM && selectedConcernTag === '고교학점제 자습공간 구축' && (
+        {false && selectedConcernTag === '고교학점제 자습공간 구축' && (
           <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
             <div className="flex-1 min-w-0 py-5 px-5">
               <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
@@ -2075,7 +2238,7 @@ export default function ShowroomPage() {
           </section>
         )}
 
-        {!INTERNAL_SHOWROOM && selectedConcernTag === '아파트 독서실 리뉴얼' && (
+        {false && selectedConcernTag === '아파트 독서실 리뉴얼' && (
           <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
             <div className="flex-1 min-w-0 py-5 px-5">
               <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
@@ -2215,7 +2378,7 @@ export default function ShowroomPage() {
                       </p>
                     </div>
                   </button>
-                  {INTERNAL_SHOWROOM && (
+                  {showInternalControls && (
                     <div className="p-3 border-t border-neutral-100 bg-neutral-50/50 text-xs text-neutral-500">
                       관련 제품 이미지를 열어 필요한 컷을 선별하세요.
                     </div>
@@ -2332,7 +2495,7 @@ export default function ShowroomPage() {
                       </p>
                     </div>
                   </button>
-                  {INTERNAL_SHOWROOM && (
+                  {showInternalControls && (
                     <div className="p-3 border-t border-neutral-100 bg-neutral-50/50 text-xs text-neutral-500">
                       같은 색상 계열의 사례를 모아 비교하고 필요한 컷을 선별하세요.
                     </div>
@@ -2426,12 +2589,10 @@ export default function ShowroomPage() {
                 <div className="flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
                   <div>
                     <h3 className="text-base font-semibold text-neutral-900">
-                      {INTERNAL_SHOWROOM ? '전후 비교 사례' : '엑시트까지 고려한 전환 사례'}
+                      전후 비교 사례
                     </h3>
                     <p className="text-sm text-neutral-600">
-                      {INTERNAL_SHOWROOM
-                        ? '리뉴얼 전후 변화를 한눈에 비교할 수 있는 현장들입니다. 관심 있는 고객은 상단 버튼으로 바로 이동해 설명을 이어갈 수 있습니다.'
-                        : '기존 스터디카페를 관리형 스타일로 바꿨을 때, 공간의 인상과 매각 경쟁력이 어떻게 달라지는지 전후 사례로 보여드립니다.'}
+                      리뉴얼 전후 변화를 한눈에 비교할 수 있는 현장들입니다. 관심 있는 고객은 상단 버튼으로 바로 이동해 설명을 이어갈 수 있습니다.
                     </p>
                   </div>
                   <p className="text-xs text-neutral-500">{visibleBeforeAfterGroups.length}개 현장</p>
@@ -2586,7 +2747,7 @@ export default function ShowroomPage() {
             </div>
           )}
           <div className="px-4 pb-4 pt-3 border-t border-neutral-700 space-y-2">
-            {detailImages[lightboxIndex] && (
+            {showInternalControls && detailImages[lightboxIndex] && (
               <Button
                 type="button"
                 variant={selectedImageIds.has(detailImages[lightboxIndex].id) ? 'secondary' : 'default'}
@@ -2597,7 +2758,7 @@ export default function ShowroomPage() {
                 {selectedImageIds.has(detailImages[lightboxIndex].id) ? '선택 해제' : '이 이미지 선택'}
               </Button>
             )}
-            {INTERNAL_SHOWROOM ? (
+            {showInternalControls ? (
               <div className="flex gap-2">
                 <Button type="button" variant="outline" className="flex-1 gap-2 border-neutral-600 text-white hover:bg-neutral-800" onClick={copyShareLink}>
                   <Copy className="h-4 w-4" />
@@ -2610,7 +2771,7 @@ export default function ShowroomPage() {
               </div>
             ) : (
               <Link
-                to="/consultation"
+                to={buildShowroomContactUrl({ category: '시공사례 쇼룸 문의' })}
                 className="flex items-center justify-center gap-2 w-full rounded-xl py-3.5 bg-amber-500 hover:bg-amber-600 text-neutral-900 font-semibold text-sm transition-colors shadow-md"
               >
                 <Sparkles className="h-4 w-4" />

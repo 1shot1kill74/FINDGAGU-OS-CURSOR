@@ -879,6 +879,9 @@ export interface ShowroomImageAsset {
   cloudinary_url: string
   thumbnail_url: string | null
   site_name: string | null
+  public_group_key?: string | null
+  industry_site_order?: number | null
+  before_after_site_order?: number | null
   canonical_site_name?: string | null
   external_display_name?: string | null
   space_id?: string | null
@@ -910,18 +913,33 @@ export type ShowroomSiteOverrideSectionKey = ShowroomSiteOverride['section_key']
 
 /** RPC `get_public_showroom_assets_by_share_token` 한 행 → 쇼룸 카드용 자산 */
 export function mapPublicShowroomRpcRowToShowroomAsset(r: Record<string, unknown>): ShowroomImageAsset {
-  const beforeAfter = parseBeforeAfterMeta(r.metadata)
-  const meta = parseImageAssetMeta(r.metadata)
+  const beforeAfterRole =
+    r.before_after_role === 'before' || r.before_after_role === 'after'
+      ? r.before_after_role
+      : null
+  const industrySiteOrder = typeof r.industry_site_order === 'number'
+    ? r.industry_site_order
+    : typeof r.industry_site_order === 'string' && /^\d+$/.test(r.industry_site_order)
+      ? Number(r.industry_site_order)
+      : null
+  const beforeAfterSiteOrder = typeof r.before_after_site_order === 'number'
+    ? r.before_after_site_order
+    : typeof r.before_after_site_order === 'string' && /^\d+$/.test(r.before_after_site_order)
+      ? Number(r.before_after_site_order)
+      : null
   return {
-    before_after_role: beforeAfter.role,
-    before_after_group_id: beforeAfter.groupId,
-    canonical_site_name: meta.canonicalSiteName,
-    external_display_name: meta.externalDisplayName,
-    space_id: meta.spaceId,
+    before_after_role: beforeAfterRole,
+    before_after_group_id: null,
+    before_after_site_order: beforeAfterSiteOrder,
+    canonical_site_name: null,
+    external_display_name: null,
+    space_id: null,
     id: String(r.id),
     cloudinary_url: String(r.cloudinary_url ?? ''),
+    industry_site_order: industrySiteOrder,
     thumbnail_url: r.thumbnail_url != null ? String(r.thumbnail_url) : null,
     site_name: r.site_name != null ? String(r.site_name) : null,
+    public_group_key: r.public_group_key != null ? String(r.public_group_key) : null,
     location: r.location != null ? String(r.location) : null,
     business_type: r.business_type != null ? String(r.business_type) : null,
     color_name: r.color_name != null ? String(r.color_name) : null,

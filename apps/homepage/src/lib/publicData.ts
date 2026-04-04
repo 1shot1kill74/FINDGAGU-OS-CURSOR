@@ -43,6 +43,7 @@ export type ResolvedPublicShowroomShare = {
   description: string
   industry_scope: string | null
   source: string | null
+  preview_site_limit: number
   created_at: string | null
   expires_at: string | null
 }
@@ -143,11 +144,14 @@ export async function fetchShowroomImageAssets(): Promise<ShowroomImageAsset[]> 
   return (data as PublicShowroomAssetRow[]).map(mapShowroomImageAsset)
 }
 
-export async function fetchShowroomImageAssetsByToken(token: string): Promise<ShowroomImageAsset[]> {
+export async function fetchShowroomImageAssetsByToken(token: string, includeAll = false): Promise<ShowroomImageAsset[]> {
   const trimmed = token.trim()
   if (!trimmed) return []
 
-  const { data, error } = await supabase.rpc('get_public_showroom_assets_by_share_token', { share_token: trimmed })
+  const { data, error } = await supabase.rpc('get_public_showroom_assets_by_share_token', {
+    share_token: trimmed,
+    include_all: includeAll,
+  })
   if (error || !data) return []
 
   return (data as PublicShowroomAssetRow[]).map(mapShowroomImageAsset)
@@ -162,12 +166,21 @@ export async function resolvePublicShowroomShare(token: string): Promise<Resolve
   if (!data || typeof data !== 'object' || Array.isArray(data)) return null
 
   const record = data as Record<string, unknown>
+  const rawLimit = record.preview_site_limit
+  let preview_site_limit = 6
+  if (typeof rawLimit === 'number' && Number.isFinite(rawLimit)) {
+    preview_site_limit = Math.min(50, Math.max(1, Math.floor(rawLimit)))
+  } else if (typeof rawLimit === 'string' && /^\d+$/.test(rawLimit)) {
+    preview_site_limit = Math.min(50, Math.max(1, parseInt(rawLimit, 10)))
+  }
+
   return {
     token: String(record.token ?? trimmed),
     title: typeof record.title === 'string' && record.title.trim() ? record.title.trim() : '시공사례 쇼룸',
     description: typeof record.description === 'string' && record.description.trim() ? record.description.trim() : '담당자가 전달한 외부 쇼룸 링크입니다.',
     industry_scope: typeof record.industry_scope === 'string' && record.industry_scope.trim() ? record.industry_scope.trim() : null,
     source: typeof record.source === 'string' && record.source.trim() ? record.source.trim() : null,
+    preview_site_limit,
     created_at: typeof record.created_at === 'string' ? record.created_at : null,
     expires_at: typeof record.expires_at === 'string' ? record.expires_at : null,
   }

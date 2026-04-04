@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { ChevronLeft, ChevronRight, FileCheck, Images, Package, Search, X } from 'lucide-react'
-import { fetchShowroomImageAssetsByToken, resolvePublicShowroomShare, type ResolvedPublicShowroomShare, type ShowroomImageAsset } from '@/lib/publicData'
+import { fetchShowroomImageAssets, type ShowroomImageAsset } from '@/lib/publicData'
 
 const INDUSTRY_PREFERRED_ORDER = ['관리형', '학원', '스터디카페', '학교', '아파트', '기타'] as const
 const INDUSTRY_PAGE_SIZE = 6
 
-type ViewMode = 'product' | 'industry'
-type DetailMode = 'site' | 'product' | 'beforeAfter'
+type ViewMode = 'product' | 'industry' | 'color'
+type DetailMode = 'site' | 'product' | 'color' | 'beforeAfter'
 
 interface SiteGroup {
   siteName: string
@@ -38,6 +38,17 @@ interface ProductGroup {
   mainImage: ShowroomImageAsset | null
 }
 
+interface ColorGroup {
+  colorName: string
+  siteNames: string[]
+  externalDisplayNames: string[]
+  locations: string[]
+  businessTypes: string[]
+  products: string[]
+  images: ShowroomImageAsset[]
+  mainImage: ShowroomImageAsset | null
+}
+
 interface IndustrySection {
   industry: string
   groups: SiteGroup[]
@@ -61,7 +72,7 @@ function getPrimaryIndustryLabel(businessTypes: string[]): string {
     }
   }
 
-  return normalized[0]
+  return '기타'
 }
 
 function getShowroomGroupKey(asset: ShowroomImageAsset): string {
@@ -347,12 +358,6 @@ function buildProductGroups(assets: ShowroomImageAsset[]): ProductGroup[] {
       }
     })
     .sort((a, b) => {
-      if (a.displayYearMonthSort !== b.displayYearMonthSort) return b.displayYearMonthSort - a.displayYearMonthSort
-
-      const aTime = a.latestCreatedAt ? new Date(a.latestCreatedAt).getTime() : 0
-      const bTime = b.latestCreatedAt ? new Date(b.latestCreatedAt).getTime() : 0
-      if (aTime !== bTime) return bTime - aTime
-
       const aSeries = parseProductSeries(a.productName)
       const bSeries = parseProductSeries(b.productName)
 
@@ -365,6 +370,12 @@ function buildProductGroups(assets: ShowroomImageAsset[]): ProductGroup[] {
 
       const seriesCompare = compareSeriesSuffix(aSeries.seriesSuffix, bSeries.seriesSuffix)
       if (seriesCompare !== 0) return seriesCompare
+
+      if (a.displayYearMonthSort !== b.displayYearMonthSort) return b.displayYearMonthSort - a.displayYearMonthSort
+
+      const aTime = a.latestCreatedAt ? new Date(a.latestCreatedAt).getTime() : 0
+      const bTime = b.latestCreatedAt ? new Date(b.latestCreatedAt).getTime() : 0
+      if (aTime !== bTime) return bTime - aTime
 
       if (a.siteNames.length !== b.siteNames.length) return b.siteNames.length - a.siteNames.length
       if (a.images.length !== b.images.length) return b.images.length - a.images.length
@@ -403,6 +414,46 @@ function buildIndustrySections(groups: SiteGroup[]): IndustrySection[] {
   })
 }
 
+function buildColorGroups(assets: ShowroomImageAsset[]): ColorGroup[] {
+  const byColor = new Map<string, ShowroomImageAsset[]>()
+
+  for (const asset of assets) {
+    const colorName = (asset.color_name ?? '').trim() || '미지정'
+    const list = byColor.get(colorName) ?? []
+    list.push(asset)
+    byColor.set(colorName, list)
+  }
+
+  return Array.from(byColor.entries())
+    .map(([colorName, images]) => {
+      const sortedImages = [...images].sort((a, b) => {
+        const aMain = a.is_main ? 1 : 0
+        const bMain = b.is_main ? 1 : 0
+        if (aMain !== bMain) return bMain - aMain
+
+        const aTime = a.created_at ? new Date(a.created_at).getTime() : 0
+        const bTime = b.created_at ? new Date(b.created_at).getTime() : 0
+        return bTime - aTime
+      })
+
+      return {
+        colorName,
+        siteNames: Array.from(new Set(images.map((image) => image.site_name?.trim()).filter(Boolean) as string[])),
+        externalDisplayNames: Array.from(new Set(images.map((image) => image.external_display_name?.trim()).filter(Boolean) as string[])),
+        locations: Array.from(new Set(images.map((image) => image.location?.trim()).filter(Boolean) as string[])),
+        businessTypes: Array.from(new Set(images.map((image) => image.business_type?.trim()).filter(Boolean) as string[])),
+        products: Array.from(new Set(images.map((image) => image.product_name?.trim()).filter(Boolean) as string[])),
+        images: sortedImages,
+        mainImage: sortedImages[0] ?? null,
+      }
+    })
+    .sort((a, b) => {
+      if (a.siteNames.length !== b.siteNames.length) return b.siteNames.length - a.siteNames.length
+      if (a.images.length !== b.images.length) return b.images.length - a.images.length
+      return a.colorName.localeCompare(b.colorName, 'ko')
+    })
+}
+
 function WatermarkBadge({ className = '' }: { className?: string }) {
   return (
     <div
@@ -430,11 +481,10 @@ export default function ShowroomPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [assets, setAssets] = useState<ShowroomImageAsset[]>([])
   const [loading, setLoading] = useState(true)
-  const [shareAccessStatus, setShareAccessStatus] = useState<'checking' | 'valid' | 'missing' | 'invalid'>('checking')
-  const [shareInfo, setShareInfo] = useState<ResolvedPublicShowroomShare | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>('industry')
   const [selectedProductSeries, setSelectedProductSeries] = useState<string | null>(null)
   const [selectedProductFilter, setSelectedProductFilter] = useState<string | null>(null)
+  const [selectedColorFilter, setSelectedColorFilter] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState(() => searchParams.get('q') ?? '')
   const [detailOpen, setDetailOpen] = useState<DetailMode | null>(null)
   const [detailKey, setDetailKey] = useState<string | null>(null)
@@ -442,49 +492,22 @@ export default function ShowroomPage() {
   const [lightboxIndex, setLightboxIndex] = useState(0)
   const [industryPageBySection, setIndustryPageBySection] = useState<Record<string, number>>({})
   const [beforeAfterPage, setBeforeAfterPage] = useState(1)
-  const shareToken = useMemo(() => searchParams.get('t')?.trim() ?? '', [searchParams])
 
   useEffect(() => {
     let cancelled = false
 
-    if (!shareToken) {
-      setAssets([])
-      setShareInfo(null)
-      setShareAccessStatus('missing')
-      setLoading(false)
-      return () => {
-        cancelled = true
-      }
-    }
-
     setLoading(true)
-    setShareAccessStatus('checking')
 
     ;(async () => {
       try {
-        const resolved = await resolvePublicShowroomShare(shareToken)
-        if (!resolved) {
-          if (!cancelled) {
-            setAssets([])
-            setShareInfo(null)
-            setShareAccessStatus('invalid')
-            setLoading(false)
-          }
-          return
-        }
-
-        const list = await fetchShowroomImageAssetsByToken(shareToken)
+        const list = await fetchShowroomImageAssets()
         if (!cancelled) {
           setAssets(list)
-          setShareInfo(resolved)
-          setShareAccessStatus('valid')
           setLoading(false)
         }
       } catch {
         if (!cancelled) {
           setAssets([])
-          setShareInfo(null)
-          setShareAccessStatus('invalid')
           setLoading(false)
         }
       }
@@ -493,7 +516,7 @@ export default function ShowroomPage() {
     return () => {
       cancelled = true
     }
-  }, [shareToken])
+  }, [])
 
   useEffect(() => {
     setSearchQuery(searchParams.get('q') ?? '')
@@ -519,6 +542,7 @@ export default function ShowroomPage() {
 
   const siteGroups = useMemo(() => buildSiteGroups(showroomAssets), [showroomAssets])
   const productGroups = useMemo(() => buildProductGroups(showroomAssets), [showroomAssets])
+  const colorGroups = useMemo(() => buildColorGroups(showroomAssets), [showroomAssets])
   const beforeAfterGroups = useMemo(
     () => buildSiteGroups(beforeAfterAssets).filter((group) => group.hasBeforeAfter),
     [beforeAfterAssets]
@@ -527,6 +551,10 @@ export default function ShowroomPage() {
   const productOptions = useMemo(
     () => productGroups.map((group) => group.productName),
     [productGroups]
+  )
+  const colorOptions = useMemo(
+    () => colorGroups.map((group) => group.colorName),
+    [colorGroups]
   )
 
   const productSeriesOptions = useMemo(() => {
@@ -594,6 +622,20 @@ export default function ShowroomPage() {
     )
   }, [productGroups, searchLower, searchTrim])
 
+  const filteredColorGroups = useMemo(() => {
+    if (!searchTrim) return colorGroups
+
+    return colorGroups.filter(
+      (group) =>
+        group.colorName.toLowerCase().includes(searchLower) ||
+        group.siteNames.some((value) => value.toLowerCase().includes(searchLower)) ||
+        group.externalDisplayNames.some((value) => value.toLowerCase().includes(searchLower)) ||
+        group.locations.some((value) => value.toLowerCase().includes(searchLower)) ||
+        group.businessTypes.some((value) => value.toLowerCase().includes(searchLower)) ||
+        group.products.some((value) => value.toLowerCase().includes(searchLower))
+    )
+  }, [colorGroups, searchLower, searchTrim])
+
   const productFilteredGroups = useMemo(() => {
     if (selectedProductSeries) {
       const seriesGroups = selectedProductSeries === '기타'
@@ -607,6 +649,11 @@ export default function ShowroomPage() {
     if (!selectedProductFilter) return filteredProductGroups
     return filteredProductGroups.filter((group) => group.productName === selectedProductFilter)
   }, [filteredProductGroups, selectedProductFilter, selectedProductSeries])
+
+  const colorFilteredGroups = useMemo(() => {
+    if (!selectedColorFilter) return filteredColorGroups
+    return filteredColorGroups.filter((group) => group.colorName === selectedColorFilter)
+  }, [filteredColorGroups, selectedColorFilter])
 
   useEffect(() => {
     if (selectedProductSeries && !productSeriesOptions.some((option) => option.seriesName === selectedProductSeries)) {
@@ -628,6 +675,13 @@ export default function ShowroomPage() {
       setSelectedProductFilter(null)
     }
   }, [currentSeriesProducts, productOptions, selectedProductFilter, selectedProductSeries])
+
+  useEffect(() => {
+    if (!selectedColorFilter) return
+    if (!colorOptions.includes(selectedColorFilter)) {
+      setSelectedColorFilter(null)
+    }
+  }, [colorOptions, selectedColorFilter])
 
   const industrySections = useMemo(() => buildIndustrySections(filteredSiteGroups), [filteredSiteGroups])
   const paginatedIndustrySections = useMemo<PaginatedIndustrySection[]>(() => {
@@ -673,8 +727,9 @@ export default function ShowroomPage() {
       const group = beforeAfterGroups.find((item) => item.siteName === detailKey)
       return group ? sortBeforeAfterImages(group.images) : []
     }
+    if (detailOpen === 'color') return colorGroups.find((group) => group.colorName === detailKey)?.images ?? []
     return productGroups.find((group) => group.productName === detailKey)?.images ?? []
-  }, [beforeAfterGroups, detailKey, detailOpen, productGroups, siteGroups])
+  }, [beforeAfterGroups, colorGroups, detailKey, detailOpen, productGroups, siteGroups])
 
   const openDetail = (mode: DetailMode, key: string, title?: string) => {
     setDetailOpen(mode)
@@ -856,29 +911,90 @@ export default function ShowroomPage() {
     )
   }
 
-  if (loading) {
+  const renderColorGroupCard = (group: ColorGroup) => {
+    const imageUrl = group.mainImage?.thumbnail_url || group.mainImage?.cloudinary_url || ''
+
     return (
-      <div className="flex min-h-screen items-center justify-center bg-neutral-50">
-        <p className="text-sm text-neutral-500">불러오는 중…</p>
+      <div
+        key={group.colorName}
+        className="flex h-full flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm transition-all hover:border-neutral-300 hover:shadow-md"
+      >
+        <button
+          type="button"
+          onClick={() => openDetail('color', group.colorName)}
+          className="group flex h-full w-full flex-col text-left"
+        >
+          <div className="relative aspect-[4/3] overflow-hidden bg-neutral-100">
+            {imageUrl ? (
+              <img
+                src={imageUrl}
+                alt={group.colorName}
+                className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+              />
+            ) : (
+              <div className="flex h-full items-center justify-center text-sm text-neutral-400">대표 이미지 없음</div>
+            )}
+            <WatermarkBadge />
+            {group.images.length > 1 && (
+              <div className="absolute bottom-2 right-2 flex gap-0.5" aria-hidden>
+                {group.images.slice(1, 4).map((image, index) => (
+                  <div
+                    key={image.id}
+                    className="h-10 w-10 overflow-hidden rounded-md border-2 border-white bg-neutral-200 shadow-md"
+                    style={{ transform: `translateY(${index * 2}px) rotate(${index * 3 - 2}deg)` }}
+                  >
+                    <img
+                      src={image.thumbnail_url || image.cloudinary_url}
+                      alt=""
+                      className="h-full w-full object-cover"
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="flex min-h-0 flex-1 flex-col p-4">
+            <h3 className="leading-snug font-semibold text-neutral-900">{group.colorName}</h3>
+            <dl className="mt-1.5 space-y-0.5 text-xs text-neutral-500">
+              {group.products.length > 0 && (
+                <div className="flex gap-1.5">
+                  <span className="shrink-0 text-neutral-400">제품명</span>
+                  <span className="truncate">{group.products.slice(0, 3).join(', ')}</span>
+                </div>
+              )}
+              {group.siteNames.length > 0 && (
+                <div className="flex items-start gap-1.5">
+                  <span className="shrink-0 text-neutral-400">현장명</span>
+                  <span>{group.siteNames.slice(0, 3).join(', ')}</span>
+                </div>
+              )}
+              {group.businessTypes.length > 0 && (
+                <div className="flex gap-1.5">
+                  <span className="shrink-0 text-neutral-400">업종</span>
+                  <span>{group.businessTypes.slice(0, 3).join(', ')}</span>
+                </div>
+              )}
+              {group.locations.length > 0 && (
+                <div className="flex gap-1.5">
+                  <span className="shrink-0 text-neutral-400">지역</span>
+                  <span>{group.locations.slice(0, 3).join(', ')}</span>
+                </div>
+              )}
+            </dl>
+            <p className="mt-2 flex items-center gap-1.5 border-t border-neutral-100 pt-2 text-xs text-neutral-500">
+              <Images className="h-3.5 w-3.5 shrink-0" />
+              <span>사진 {group.images.length}장</span>
+            </p>
+          </div>
+        </button>
       </div>
     )
   }
 
-  if (shareAccessStatus !== 'valid') {
-    const isMissing = shareAccessStatus === 'missing'
+  if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-neutral-50 px-4">
-        <div className="w-full max-w-md rounded-3xl border border-neutral-200 bg-white p-8 text-center shadow-sm">
-          <p className="text-xs font-semibold tracking-[0.18em] text-neutral-400">FINDGAGU SHOWROOM</p>
-          <h1 className="mt-3 text-2xl font-semibold tracking-tight text-neutral-900">
-            {isMissing ? '유효한 쇼룸 링크가 필요합니다.' : '이 쇼룸 링크는 사용할 수 없습니다.'}
-          </h1>
-          <p className="mt-3 text-sm leading-6 text-neutral-600">
-            {isMissing
-              ? '외부 쇼룸은 고객별 만료 링크로만 열립니다. 담당자에게 전달받은 링크를 다시 확인해 주세요.'
-              : '링크가 만료되었거나 비활성화되었습니다. 담당자에게 새 쇼룸 링크를 요청해 주세요.'}
-          </p>
-        </div>
+      <div className="flex min-h-screen items-center justify-center bg-neutral-50">
+        <p className="text-sm text-neutral-500">불러오는 중…</p>
       </div>
     )
   }
@@ -891,18 +1007,8 @@ export default function ShowroomPage() {
             <h1 className="text-xl font-semibold tracking-tight text-neutral-900 md:text-2xl">시공사례 쇼룸</h1>
             <p className="text-base text-neutral-600 md:text-lg">업종별, 제품별로 사례를 탐색하고 전체 사진을 확인하세요.</p>
             <p className="text-xs text-neutral-500 md:text-sm">
-              내부 쇼룸과 동일한 흐름으로 정리한 외부용 쇼룸입니다.
+              내부 직원과 고객이 같은 구조로 보고 대화할 수 있도록 정리한 공통 시공사례 쇼룸입니다.
             </p>
-            {shareInfo?.industry_scope && (
-              <p className="text-xs font-medium text-neutral-700 md:text-sm">
-                이 링크는 {shareInfo.industry_scope} 업종 사례만 볼 수 있도록 제한되어 있습니다.
-              </p>
-            )}
-            {shareInfo?.expires_at && (
-              <p className="text-xs font-medium text-amber-700 md:text-sm">
-                이 링크는 {formatExpiryLabel(shareInfo.expires_at) ?? shareInfo.expires_at}까지 유효합니다.
-              </p>
-            )}
           </div>
 
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -926,11 +1032,26 @@ export default function ShowroomPage() {
                 <Package className="h-4 w-4" />
                 제품별로 보기
               </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('color')}
+                className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors ${
+                  viewMode === 'color' ? 'bg-white text-neutral-900 shadow-sm' : 'text-neutral-600 hover:text-neutral-900'
+                }`}
+              >
+                색상별로 보기
+              </button>
             </div>
             <div className="relative max-w-md flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
               <input
-                placeholder={viewMode === 'product' ? '제품명 검색 (예: 아카시아, 원목)' : '업종, 현장명, 지역, 제품명 검색'}
+                placeholder={
+                  viewMode === 'product'
+                    ? '제품명 검색 (예: 아카시아, 원목)'
+                    : viewMode === 'color'
+                      ? '색상명, 제품명, 현장명 검색'
+                      : '업종, 현장명, 지역, 제품명 검색'
+                }
                 value={searchQuery}
                 onChange={(event) => setSearchQueryAndUrl(event.target.value)}
                 className="h-10 w-full rounded-lg border border-neutral-200 bg-white pl-9 pr-4 text-sm text-neutral-900 outline-none transition-colors focus:border-neutral-400"
@@ -976,9 +1097,29 @@ export default function ShowroomPage() {
             </div>
           )}
 
+          {viewMode === 'color' && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="shrink-0 text-xs text-neutral-500">색상 선택</span>
+              <div className="w-full sm:w-80">
+                <select
+                  value={selectedColorFilter ?? ''}
+                  onChange={(event) => setSelectedColorFilter(event.target.value || null)}
+                  className="h-10 w-full rounded-lg border border-neutral-200 bg-white px-3 text-sm text-neutral-700 outline-none transition-colors focus:border-neutral-400"
+                >
+                  <option value="">전체 색상</option>
+                  {colorOptions.map((color) => (
+                    <option key={color} value={color}>
+                      {color}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
+
           {viewMode === 'industry' && paginatedIndustrySections.length > 0 && (
-            <div className="overflow-x-auto">
-              <div className="flex min-w-max items-center gap-2">
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
                 {paginatedIndustrySections.map((section) => (
                   <button
                     key={`industry-nav-${section.industry}`}
@@ -989,7 +1130,9 @@ export default function ShowroomPage() {
                     {section.industry}
                   </button>
                 ))}
-                {visibleBeforeAfterGroups.length > 0 && (
+              </div>
+              {visibleBeforeAfterGroups.length > 0 && (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
                   <button
                     type="button"
                     className="inline-flex shrink-0 items-center gap-2 rounded-full border border-neutral-200 bg-white px-4 py-2 text-sm text-neutral-700 transition hover:border-neutral-300 hover:text-neutral-900"
@@ -998,8 +1141,8 @@ export default function ShowroomPage() {
                     <FileCheck className="h-4 w-4" />
                     Before/After
                   </button>
-                )}
-              </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -1031,6 +1174,9 @@ export default function ShowroomPage() {
         )}
 
         {viewMode === 'product' && productFilteredGroups.length === 0 && (
+          <p className="py-12 text-center text-neutral-500">검색 결과가 없습니다.</p>
+        )}
+        {viewMode === 'color' && colorFilteredGroups.length === 0 && (
           <p className="py-12 text-center text-neutral-500">검색 결과가 없습니다.</p>
         )}
         {viewMode === 'industry' && paginatedIndustrySections.length === 0 && (
@@ -1132,6 +1278,12 @@ export default function ShowroomPage() {
                 </div>
               )
             })}
+          </div>
+        )}
+
+        {viewMode === 'color' && colorFilteredGroups.length > 0 && (
+          <div className="grid grid-cols-2 items-stretch gap-6 lg:grid-cols-3">
+            {colorFilteredGroups.map((group) => renderColorGroupCard(group))}
           </div>
         )}
 
