@@ -18,3 +18,8 @@ export function getSupabaseUrl(): string {
   if (!url) throw new Error('VITE_SUPABASE_URL이 설정되지 않았습니다.')
   return url.replace(/\/$/, '')
 }
+
+export function getChannelTalkPluginKey(): string | null {
+  const key = import.meta.env.VITE_CHANNEL_TALK_PLUGIN_KEY
+  return typeof key === 'string' && key.trim() ? key.trim() : null
+}
