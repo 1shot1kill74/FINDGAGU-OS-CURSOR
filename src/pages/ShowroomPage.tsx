@@ -25,16 +25,18 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useColorChips } from '@/hooks/useColorChips'
 import { cn } from '@/lib/utils'
-import { Search, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Package, Images, Sparkles, FileText, MousePointerClick, MessageCircle, FileCheck, Users, Wrench, ClipboardCheck, ArrowRight, ArrowLeft, Copy, Check } from 'lucide-react'
+import { Search, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Package, Images, Sparkles, FileText, MousePointerClick, MessageCircle, FileCheck, Users, Wrench, ClipboardCheck, ArrowRight, ArrowLeft, Copy, Check, Video } from 'lucide-react'
 import { toast } from 'sonner'
 import { shareGalleryKakao } from '@/lib/kakaoShare'
 import { createSharedGallery, snapshotShowroomImageAsset } from '@/lib/sharedGalleryService'
 import { fetchPublicShowroomAssets } from '@/lib/showroomShareService'
+import ShowroomShortsCreateDialog from '@/components/showroom/ShowroomShortsCreateDialog'
 import {
   fetchShowroomCaseProfileDrafts,
   saveShowroomCaseProfileDraft,
 } from '@/lib/showroomCaseProfileService'
 import { resolveShowroomCaseProfile } from '@/features/지능형쇼룸홈페이지/showroomCaseProfileService'
+import { validateBeforeAfterSelection } from '@/lib/showroomShorts'
 
 const INDUSTRY_PREFERRED_ORDER = ['관리형', '학원', '스터디카페', '학교', '아파트', '기타'] as const
 const INDUSTRY_PAGE_SIZE = 6
@@ -600,6 +602,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
   const [priorityEditorOpenByKey, setPriorityEditorOpenByKey] = useState<Record<string, boolean>>({})
   const [caseProfileDraftBySite, setCaseProfileDraftBySite] = useState<Record<string, ShowroomCaseProfileDraftState>>({})
   const [savingCaseProfileBySite, setSavingCaseProfileBySite] = useState<Record<string, boolean>>({})
+  const [shortsDialogOpen, setShortsDialogOpen] = useState(false)
   const mountedRef = useRef(true)
   const refreshInFlightRef = useRef(false)
   const lastAutoRefreshAtRef = useRef(0)
@@ -1161,6 +1164,18 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
       toast.error(error instanceof Error ? error.message : '공유 링크 생성에 실패했습니다.')
     }
   }, [selectedImageIds.size, createShareGalleryUrl, markSelectedImagesShared])
+
+  const selectedImages = useMemo(
+    () => Array.from(selectedImageIds)
+      .map((id) => assets.find((asset) => asset.id === id))
+      .filter((asset): asset is ShowroomImageAsset => asset != null),
+    [selectedImageIds, assets]
+  )
+
+  const shortsSelection = useMemo(
+    () => validateBeforeAfterSelection(selectedImages),
+    [selectedImages]
+  )
 
   const reloadSiteOverrides = useCallback(async () => {
     const overrides = await fetchShowroomSiteOverrides()
@@ -1898,9 +1913,20 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                 <Copy className="h-4 w-4" />
                 링크 복사
               </Button>
-              <Button variant="outline" size="sm" className="gap-1.5" onClick={shareSelectedImagesKakao}>
-                <MessageCircle className="h-4 w-4" />
-                카톡 공유
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5"
+                onClick={() => {
+                  if (!shortsSelection.ok) {
+                    toast.error(shortsSelection.message)
+                    return
+                  }
+                  setShortsDialogOpen(true)
+                }}
+              >
+                <Video className="h-4 w-4" />
+                숏츠 만들기
               </Button>
               <Button variant="ghost" size="sm" onClick={() => setSelectedImageIds(new Set())}>
                 선택 해제
@@ -2816,7 +2842,10 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
             {showInternalControls && internalDetailViewMode === 'grid' ? (
               <>
                 <div className="flex items-center justify-between gap-3 text-sm">
-                  <p className="text-neutral-300">{selectedImageIds.size}장 선택됨</p>
+                  <div>
+                    <p className="text-neutral-300">{selectedImageIds.size}장 선택됨</p>
+                    <p className="mt-1 text-xs text-neutral-500">{shortsSelection.message}</p>
+                  </div>
                   {selectedImageIds.size > 0 ? (
                     <Button variant="ghost" size="sm" className="h-8 px-2 text-neutral-400 hover:text-white hover:bg-neutral-800" onClick={() => setSelectedImageIds(new Set())}>
                       선택 비우기
@@ -2828,9 +2857,20 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                     <Copy className="h-4 w-4" />
                     링크 복사
                   </Button>
-                  <Button type="button" variant="outline" className="flex-1 gap-2 border-neutral-600 text-white hover:bg-neutral-800" onClick={shareSelectedImagesKakao}>
-                    <MessageCircle className="h-4 w-4" />
-                    카톡 공유
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="flex-1 gap-2 border-neutral-600 text-white hover:bg-neutral-800"
+                    onClick={() => {
+                      if (!shortsSelection.ok) {
+                        toast.error(shortsSelection.message)
+                        return
+                      }
+                      setShortsDialogOpen(true)
+                    }}
+                  >
+                    <Video className="h-4 w-4" />
+                    숏츠 만들기
                   </Button>
                 </div>
               </>
@@ -2846,6 +2886,11 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
           </div>
         </DialogContent>
       </Dialog>
+      <ShowroomShortsCreateDialog
+        open={shortsDialogOpen}
+        onOpenChange={setShortsDialogOpen}
+        selectedImages={selectedImages}
+      />
     </div>
   )
 }

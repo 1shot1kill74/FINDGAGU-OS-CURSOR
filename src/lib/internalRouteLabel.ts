@@ -16,6 +16,7 @@ export function describeInternalRoute(path: string) {
   if (normalized.startsWith('/homepage-concept')) return '홈페이지 컨셉'
   if (normalized.startsWith('/admin/migration')) return '마이그레이션 관리'
   if (normalized.startsWith('/admin/archive')) return '아카이브 관리'
+  if (normalized.startsWith('/admin/showroom-shorts')) return '쇼룸 숏츠 검수'
   if (normalized.startsWith('/admin/test-console')) return '테스트 콘솔'
   if (normalized.startsWith('/login')) return '로그인'
   return '내부 운영 화면'

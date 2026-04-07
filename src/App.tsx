@@ -23,6 +23,7 @@ const HomepageConceptPage = lazy(() => import('@/pages/HomepageConceptPage'))
 const ShowroomHomepagePage = lazy(() => import('@/pages/ShowroomHomepagePage'))
 const MigrationPage = lazy(() => import('@/pages/admin/MigrationPage'))
 const ArchivePage = lazy(() => import('@/pages/admin/ArchivePage'))
+const ShowroomShortsPage = lazy(() => import('@/pages/admin/ShowroomShortsPage'))
 const TestConsole = lazy(() => import('@/pages/admin/TestConsole'))
 
 function RouteFallback() {
@@ -68,6 +69,7 @@ function App() {
             <Route path="/homepage-concept" element={<HomepageConceptPage />} />
             <Route path="/admin/migration" element={<MigrationPage />} />
             <Route path="/admin/archive" element={<ArchivePage />} />
+            <Route path="/admin/showroom-shorts" element={<ShowroomShortsPage />} />
             <Route path="/admin/test-console" element={<TestConsole />} />
           </Route>
         </Routes>
