@@ -1726,6 +1726,12 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
             </h1>
             {showInternalControls && (
               <div className="flex items-center gap-2">
+                <Link to="/admin/showroom-shorts">
+                  <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
+                    <Video className="h-4 w-4" />
+                    검수 대기
+                  </Button>
+                </Link>
                 <Link to="/consultation">
                   <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
                     <Users className="h-4 w-4" />

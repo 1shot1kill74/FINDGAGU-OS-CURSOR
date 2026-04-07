@@ -20,11 +20,9 @@ type Props = {
   selectedImages: ShowroomImageAsset[]
 }
 
-const DEFAULT_PROMPT = [
-  'Create a clean, realistic interior transformation timelapse from the provided before and after images.',
-  'Keep the camera stable, emphasize the spatial transition, maintain photorealistic furniture and lighting continuity, and avoid adding people.',
-  'The output must feel like a real renovation progress timelapse.',
-].join(' ')
+const DEFAULT_PROMPT = `Create a realistic 10-second renovation timelapse video using the first image as the before scene and the second image as the final after scene.The location is a managed study cafe / educational learning space. Start from the exact layout and furniture arrangement of the before image. End with the exact finished interior shown in the after image.Show a believable renovation process:workers enter the space, dismantle and remove the old desks, partitions, shelves, and furniture by hand, carry materials out, install new furniture, adjust the layout, assemble study booths and desks, and complete the final interior step by step.Important:all visible changes must happen only while workers are present and actively working.Do not let furniture, walls, desks, partitions, or fixtures morph, transform, slide, disappear, or appear on their own in an empty room.No magical transition, no instant replacement, no floating objects, no warping.The transformation must be driven by visible human labor: lifting, carrying, drilling, assembling, installing, and cleaning.Use a fixed wide camera angle, realistic indoor lighting, photorealistic construction details, smooth timelapse pacing, natural worker motion, and a clean final reveal of the completed study cafe.Keep the room structure consistent with the source images unless workers are visibly modifying it.The final frame should match the after image as closely as possible.
+furniture morphing, empty room transformation, magical remodeling, floating furniture, disappearing objects, surreal motion, warped walls, unstable geometry, random layout change, melting objects, ghost workers, duplicated workers, broken hands, distorted tools, flickering furniture, unrealistic construction, sudden scene jump
+Workers must always be visible when major furniture changes happen.No change should occur in an empty room.The before image and after image must be connected through realistic demolition and installation actions.`
 
 function channelLabel(channel: ShowroomShortsChannel) {
   if (channel === 'youtube') return 'YouTube Shorts'
@@ -174,6 +172,9 @@ export default function ShowroomShortsCreateDialog({ open, onOpenChange, selecte
                 placeholder="Kling에 전달할 프롬프트를 입력하세요."
               />
             </label>
+            <p className="mt-2 text-xs text-muted-foreground">
+              기본값은 현재 확정된 managed study cafe Before/After renovation timelapse 프롬프트입니다.
+            </p>
           </div>
 
           <div className="rounded-xl border border-border bg-card p-4">

@@ -95,6 +95,11 @@ function getCanonicalSiteName(image: ShowroomImageAsset): string | null {
   return trimOrNull(image.canonical_site_name) || trimOrNull(image.site_name)
 }
 
+function normalizeComparableText(value: string | null | undefined): string | null {
+  const normalized = trimOrNull(value)?.replace(/\s+/g, ' ').trim().toLowerCase()
+  return normalized || null
+}
+
 export function buildShowroomShortsGroupKey(image: ShowroomImageAsset): string | null {
   const beforeAfterGroupId = trimOrNull(image.before_after_group_id)
   if (beforeAfterGroupId) return `before-after:${beforeAfterGroupId}`
@@ -125,21 +130,35 @@ export function validateBeforeAfterSelection(images: ShowroomImageAsset[]): Show
 
   const beforeGroupKey = buildShowroomShortsGroupKey(beforeImage)
   const afterGroupKey = buildShowroomShortsGroupKey(afterImage)
+  const beforeSpaceId = trimOrNull(beforeImage.space_id)
+  const afterSpaceId = trimOrNull(afterImage.space_id)
+  const beforeSiteName = normalizeComparableText(getCanonicalSiteName(beforeImage))
+  const afterSiteName = normalizeComparableText(getCanonicalSiteName(afterImage))
 
-  if (!beforeGroupKey || !afterGroupKey || beforeGroupKey !== afterGroupKey) {
+  const sameGroup = !!beforeGroupKey && !!afterGroupKey && beforeGroupKey === afterGroupKey
+  const sameSpace = !!beforeSpaceId && !!afterSpaceId && beforeSpaceId === afterSpaceId
+  const sameSite = !!beforeSiteName && !!afterSiteName && beforeSiteName === afterSiteName
+
+  if (!sameGroup && !sameSpace && !sameSite) {
     return {
       ok: false,
       code: 'group_mismatch',
-      message: '같은 현장/같은 Before·After 묶음의 이미지 2장을 선택해야 합니다.',
+      message: '같은 현장의 Before 1장과 After 1장을 선택해야 합니다.',
     }
   }
 
   const siteName = getCanonicalSiteName(beforeImage) || getCanonicalSiteName(afterImage) || '선택 현장'
+  const resolvedGroupKey =
+    beforeGroupKey ||
+    afterGroupKey ||
+    (sameSpace ? `space:${beforeSpaceId}` : null) ||
+    (sameSite ? `site:${beforeSiteName}` : null)
+
   return {
     ok: true,
     beforeImage,
     afterImage,
-    groupKey: beforeGroupKey,
+    groupKey: resolvedGroupKey ?? 'site:unknown',
     message: `${siteName} Before/After 숏츠를 만들 준비가 되었습니다.`,
   }
 }
