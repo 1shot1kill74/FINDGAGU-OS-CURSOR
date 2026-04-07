@@ -1014,7 +1014,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
     setDetailOpen(mode)
     setDetailKey(key)
     setLightboxIndex(0)
-    setInternalDetailViewMode(showInternalControls ? 'grid' : 'image')
+    setInternalDetailViewMode('grid')
   }
 
   const closeDetail = useCallback(() => {
@@ -2636,7 +2636,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
         <DialogContent
           className={cn(
             'max-h-[90vh] overflow-hidden flex flex-col p-0 bg-neutral-900 border-0',
-            showInternalControls && internalDetailViewMode === 'grid' ? 'max-w-6xl' : 'max-w-4xl'
+            internalDetailViewMode === 'grid' ? 'max-w-6xl' : 'max-w-4xl'
           )}
         >
           <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-700">
@@ -2658,11 +2658,13 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
           <div className="flex-1 overflow-auto p-4">
             {detailImages.length === 0 ? (
               <p className="text-neutral-500 text-center py-8">사진이 없습니다.</p>
-            ) : showInternalControls && internalDetailViewMode === 'grid' ? (
+            ) : internalDetailViewMode === 'grid' ? (
               <div className="space-y-4">
                 <div className="flex items-center justify-between gap-3 rounded-xl border border-neutral-700 bg-neutral-800/70 px-4 py-3">
                   <div>
-                    <p className="text-sm font-medium text-white">전체 사진을 먼저 보고 선택하세요.</p>
+                    <p className="text-sm font-medium text-white">
+                      {showInternalControls ? '전체 사진을 먼저 보고 선택하세요.' : '전체 사진을 둘러보세요.'}
+                    </p>
                     <p className="mt-1 text-xs text-neutral-400">
                       썸네일을 누르면 확대해서 확인할 수 있고, 닫으면 다시 전체 목록으로 돌아옵니다.
                     </p>
@@ -2697,14 +2699,14 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                                 {image.before_after_role === 'before' ? 'Before' : 'After'}
                               </span>
                             )}
-                            {isSelected && (
+                            {showInternalControls && isSelected && (
                               <span className="absolute right-2 top-2 rounded-full bg-emerald-500 px-2 py-1 text-[11px] font-semibold text-white">
                                 선택됨
                               </span>
                             )}
                           </div>
                         </button>
-                        <div className="space-y-2 p-3">
+                        <div className="p-3">
                           <div className="space-y-1">
                             <p className="truncate text-sm font-medium text-white">
                               {image.product_name?.trim() || `사진 ${index + 1}`}
@@ -2713,15 +2715,17 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                               {image.color_name?.trim() || image.site_name?.trim() || detailKey}
                             </p>
                           </div>
-                          <label className="flex items-center gap-2 text-xs text-neutral-300">
-                            <input
-                              type="checkbox"
-                              checked={isSelected}
-                              onChange={() => toggleSelectedImage(image.id)}
-                              className="rounded border-neutral-500 bg-neutral-900"
-                            />
-                            이 사진 선택
-                          </label>
+                          {showInternalControls && (
+                            <label className="mt-2 flex items-center gap-2 text-xs text-neutral-300">
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => toggleSelectedImage(image.id)}
+                                className="rounded border-neutral-500 bg-neutral-900"
+                              />
+                              이 사진 선택
+                            </label>
+                          )}
                         </div>
                       </div>
                     )
@@ -2730,36 +2734,32 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
               </div>
             ) : (
               <>
-                {showInternalControls && (
-                  <div className="mb-3 flex items-center justify-end gap-3">
-                    <span className="text-xs text-neutral-400">
-                      {lightboxIndex + 1} / {detailImages.length}
-                    </span>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="gap-2 border-neutral-700 text-white hover:bg-neutral-800"
-                      onClick={() => setInternalDetailViewMode('grid')}
-                    >
-                      <ArrowLeft className="h-4 w-4" />
-                      전체 사진으로 돌아가기
-                    </Button>
-                  </div>
-                )}
+                <div className="mb-3 flex items-center justify-end gap-3">
+                  <span className="text-xs text-neutral-400">
+                    {lightboxIndex + 1} / {detailImages.length}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="gap-2 border-neutral-700 text-white hover:bg-neutral-800"
+                    onClick={() => setInternalDetailViewMode('grid')}
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                    전체 사진으로 돌아가기
+                  </Button>
+                </div>
                 <div
                   className="relative flex items-center justify-center min-h-[60vh]"
                   style={{ touchAction: 'pan-y' }}
                 >
-                  {!showInternalControls && (
-                    <button
-                      type="button"
-                      onClick={goPrev}
-                      className="absolute left-2 top-1/2 -translate-y-1/2 z-10 w-10 h-10 rounded-full bg-black/50 text-white flex items-center justify-center hover:bg-black/70"
-                      aria-label="이전"
-                    >
-                      <ChevronLeft className="h-6 w-6" />
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={goPrev}
+                    className="absolute left-2 top-1/2 -translate-y-1/2 z-10 w-10 h-10 rounded-full bg-black/50 text-white flex items-center justify-center hover:bg-black/70"
+                    aria-label="이전"
+                  >
+                    <ChevronLeft className="h-6 w-6" />
+                  </button>
                   <div
                     className="relative inline-block max-w-full cursor-grab active:cursor-grabbing"
                     onPointerDown={handleDetailPointerDown}
@@ -2795,21 +2795,19 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                       )
                     })()}
                   </div>
-                  {!showInternalControls && (
-                    <button
-                      type="button"
-                      onClick={goNext}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 z-10 w-10 h-10 rounded-full bg-black/50 text-white flex items-center justify-center hover:bg-black/70"
-                      aria-label="다음"
-                    >
-                      <ChevronRight className="h-6 w-6" />
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={goNext}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 z-10 w-10 h-10 rounded-full bg-black/50 text-white flex items-center justify-center hover:bg-black/70"
+                    aria-label="다음"
+                  >
+                    <ChevronRight className="h-6 w-6" />
+                  </button>
                 </div>
               </>
             )}
           </div>
-          {detailImages.length > 0 && (!showInternalControls || internalDetailViewMode === 'image') && (
+          {detailImages.length > 0 && internalDetailViewMode === 'image' && (
             <div className="px-4 py-2 border-t border-neutral-700 text-center text-neutral-500 text-sm">
               {lightboxIndex + 1} / {detailImages.length}
             </div>
