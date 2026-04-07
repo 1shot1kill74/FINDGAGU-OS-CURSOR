@@ -48,3 +48,5 @@ public/data/takeout-quote-inbox.json
 
 # Local chat/image scratch assets
 assets/
+assets/takeout-backups/
+.vercel

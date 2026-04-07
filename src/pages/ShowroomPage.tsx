@@ -24,16 +24,17 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useColorChips } from '@/hooks/useColorChips'
-import { Search, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Package, Images, Sparkles, FileText, MousePointerClick, MessageCircle, FileCheck, Users, Wrench, ClipboardCheck, ArrowRight, Copy, Check } from 'lucide-react'
+import { cn } from '@/lib/utils'
+import { Search, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Package, Images, Sparkles, FileText, MousePointerClick, MessageCircle, FileCheck, Users, Wrench, ClipboardCheck, ArrowRight, ArrowLeft, Copy, Check } from 'lucide-react'
 import { toast } from 'sonner'
 import { shareGalleryKakao } from '@/lib/kakaoShare'
 import { createSharedGallery, snapshotShowroomImageAsset } from '@/lib/sharedGalleryService'
 import { fetchPublicShowroomAssets } from '@/lib/showroomShareService'
 import {
   fetchShowroomCaseProfileDrafts,
-  resolveShowroomCaseProfile,
   saveShowroomCaseProfileDraft,
 } from '@/lib/showroomCaseProfileService'
+import { resolveShowroomCaseProfile } from '@/features/지능형쇼룸홈페이지/showroomCaseProfileService'
 
 const INDUSTRY_PREFERRED_ORDER = ['관리형', '학원', '스터디카페', '학교', '아파트', '기타'] as const
 const INDUSTRY_PAGE_SIZE = 6
@@ -590,6 +591,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
   const [detailOpen, setDetailOpen] = useState<'site' | 'product' | 'color' | 'beforeAfter' | null>(null)
   const [detailKey, setDetailKey] = useState<string | null>(null)
   const [lightboxIndex, setLightboxIndex] = useState(0)
+  const [internalDetailViewMode, setInternalDetailViewMode] = useState<'grid' | 'image'>('grid')
   const [selectedImageIds, setSelectedImageIds] = useState<Set<string>>(new Set())
   const [industryPageBySection, setIndustryPageBySection] = useState<Record<string, number>>({})
   const [beforeAfterPage, setBeforeAfterPage] = useState(1)
@@ -597,7 +599,6 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
   const [savingPriorityByKey, setSavingPriorityByKey] = useState<Record<string, boolean>>({})
   const [priorityEditorOpenByKey, setPriorityEditorOpenByKey] = useState<Record<string, boolean>>({})
   const [caseProfileDraftBySite, setCaseProfileDraftBySite] = useState<Record<string, ShowroomCaseProfileDraftState>>({})
-  const [caseProfileEditorOpenBySite, setCaseProfileEditorOpenBySite] = useState<Record<string, boolean>>({})
   const [savingCaseProfileBySite, setSavingCaseProfileBySite] = useState<Record<string, boolean>>({})
   const mountedRef = useRef(true)
   const refreshInFlightRef = useRef(false)
@@ -978,7 +979,6 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
   }, [detailOpen, detailKey, siteGroups, productGroups, colorGroups, beforeAfterGroups])
 
   useEffect(() => {
-    if (!showInternalControls) return
     const siteNames = beforeAfterGroups.map((group) => group.siteName)
     if (siteNames.length === 0) return
 
@@ -990,7 +990,6 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
           const next = { ...prev }
           rows.forEach((row) => {
             const existing = next[row.siteName]
-            if (caseProfileEditorOpenBySite[row.siteName]) return
             next[row.siteName] = {
               painPoint: existing?.painPoint ?? row.painPoint ?? '',
               solutionPoint: existing?.solutionPoint ?? row.solutionPoint ?? '',
@@ -1004,7 +1003,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
     return () => {
       cancelled = true
     }
-  }, [beforeAfterGroups, caseProfileEditorOpenBySite, showInternalControls])
+  }, [beforeAfterGroups])
   const detailImageFrameRef = useRef<HTMLDivElement | null>(null)
   const detailAnimatedImageIdRef = useRef<string | null>(null)
   const detailTransitionDirectionRef = useRef<'next' | 'prev'>('next')
@@ -1015,7 +1014,18 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
     setDetailOpen(mode)
     setDetailKey(key)
     setLightboxIndex(0)
+    setInternalDetailViewMode(showInternalControls ? 'grid' : 'image')
   }
+
+  const closeDetail = useCallback(() => {
+    setDetailOpen(null)
+    setInternalDetailViewMode('grid')
+  }, [])
+
+  const openInternalDetailImage = useCallback((index: number) => {
+    setLightboxIndex(index)
+    setInternalDetailViewMode('image')
+  }, [])
 
   const goPrev = useCallback(() => {
     detailTransitionDirectionRef.current = 'prev'
@@ -1076,6 +1086,12 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
       }
     )
   }, [detailImages, lightboxIndex])
+
+  useEffect(() => {
+    if (detailOpen === null) {
+      setInternalDetailViewMode('grid')
+    }
+  }, [detailOpen])
 
   const createShareGalleryUrl = useCallback(async () => {
     if (selectedImageIds.size === 0) return ''
@@ -1225,15 +1241,15 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
   const getBeforeAfterProfileDraft = useCallback((group: SiteGroup): ShowroomCaseProfileDraftState => {
     const saved = caseProfileDraftBySite[group.siteName]
     if (saved) return saved
-    const profile = resolveShowroomCaseProfile({
+    const fallback = resolveShowroomCaseProfile({
       siteName: group.siteName,
       businessTypes: group.businessTypes,
       products: group.products,
       hasBeforeAfter: group.hasBeforeAfter,
     })
     return {
-      painPoint: profile.painPoint,
-      solutionPoint: profile.solutionPoint,
+      painPoint: fallback.painPoint,
+      solutionPoint: fallback.solutionPoint,
     }
   }, [caseProfileDraftBySite])
 
@@ -1252,29 +1268,15 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
     }))
   }, [])
 
-  const toggleCaseProfileEditor = useCallback((group: SiteGroup) => {
-    const defaults = getBeforeAfterProfileDraft(group)
-    setCaseProfileDraftBySite((prev) => ({
-      ...prev,
-      [group.siteName]: prev[group.siteName] ?? defaults,
-    }))
-    setCaseProfileEditorOpenBySite((prev) => ({
-      ...prev,
-      [group.siteName]: !prev[group.siteName],
-    }))
-  }, [getBeforeAfterProfileDraft])
-
   const resetCaseProfileDraft = useCallback((group: SiteGroup) => {
-    const defaults = getBeforeAfterProfileDraft(group)
     setCaseProfileDraftBySite((prev) => ({
       ...prev,
-      [group.siteName]: defaults,
+      [group.siteName]: {
+        painPoint: '',
+        solutionPoint: '',
+      },
     }))
-    setCaseProfileEditorOpenBySite((prev) => ({
-      ...prev,
-      [group.siteName]: false,
-    }))
-  }, [getBeforeAfterProfileDraft])
+  }, [])
 
   const saveCaseProfileForGroup = useCallback(async (group: SiteGroup) => {
     const draft = getBeforeAfterProfileDraft(group)
@@ -1284,7 +1286,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
       canonicalSiteName: group.externalDisplayName !== group.siteName ? group.externalDisplayName : null,
       industry: group.businessTypes[0] ?? group.industryLabel,
       painPoint: draft.painPoint,
-      solutionPoint: draft.solutionPoint,
+      solutionPoint: null,
     })
     setSavingCaseProfileBySite((prev) => ({ ...prev, [group.siteName]: false }))
 
@@ -1293,10 +1295,6 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
       return
     }
 
-    setCaseProfileEditorOpenBySite((prev) => ({
-      ...prev,
-      [group.siteName]: false,
-    }))
     toast.success(`${group.siteName} 사례 설명을 저장했습니다.`)
   }, [getBeforeAfterProfileDraft])
 
@@ -1517,7 +1515,6 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
     const isSavingPriority = savingPriorityByKey[priorityKey] === true
     const isPriorityEditorOpen = priorityEditorOpenByKey[priorityKey] === true
     const caseProfileDraft = getBeforeAfterProfileDraft(group)
-    const isCaseProfileEditorOpen = caseProfileEditorOpenBySite[group.siteName] === true
     const isSavingCaseProfile = savingCaseProfileBySite[group.siteName] === true
     if (!beforeImage || !afterImage) return null
 
@@ -1565,91 +1562,65 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                 <p className="min-w-0 truncate text-[12px] leading-tight text-amber-600">{group.externalDisplayName}</p>
               </div>
             )}
-            <div className="mt-2 space-y-1.5 text-sm text-neutral-600">
-              <p>
-                <span className="font-medium text-neutral-800">문제</span>{' '}
-                {caseProfileDraft.painPoint || '전후 비교가 가능한 리뉴얼 사례입니다.'}
-              </p>
-              <p>
-                <span className="font-medium text-neutral-800">해결</span>{' '}
-                {caseProfileDraft.solutionPoint || '눌러서 전체 사진을 확인해 보세요.'}
-              </p>
-            </div>
+            {caseProfileDraft.painPoint.trim() && (
+              <div className="mt-2 space-y-1.5 text-sm text-neutral-600">
+                <p>{caseProfileDraft.painPoint}</p>
+              </div>
+            )}
           </div>
         </button>
+        {caseProfileDraft.painPoint.trim() && (
+          <div className="border-t border-neutral-100 bg-white p-3">
+            <div className="rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2.5">
+              <p className="text-xs font-medium text-neutral-800">전후 비교 설명</p>
+              <div className="mt-3 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm leading-6 text-neutral-700 whitespace-pre-wrap">
+                {caseProfileDraft.painPoint}
+              </div>
+            </div>
+          </div>
+        )}
         {showInternalControls && (
           <div className="space-y-3 border-t border-neutral-100 bg-neutral-50/50 p-3">
             <p className="text-xs text-neutral-500">
               전후 비교 사례 안에서도 노출 순서를 조정해 필요한 현장을 먼저 보여줄 수 있습니다.
             </p>
             <div className="rounded-xl border border-neutral-200 bg-white px-3 py-2.5">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-xs font-medium text-neutral-800">전후 비교 설명</p>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 px-2 text-[11px] text-neutral-600"
-                  onClick={() => toggleCaseProfileEditor(group)}
-                >
-                  {isCaseProfileEditorOpen ? '접기' : '편집'}
-                </Button>
-              </div>
-              {isCaseProfileEditorOpen ? (
-                <div className="mt-3 space-y-3">
-                  <label className="block">
-                    <span className="mb-1 block text-[11px] font-medium text-neutral-700">페인포인트</span>
-                    <textarea
-                      value={caseProfileDraft.painPoint}
-                      onChange={(event) => updateCaseProfileDraft(group.siteName, 'painPoint', event.target.value)}
-                      rows={3}
-                      className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none transition-colors focus:border-neutral-400"
-                      placeholder="예: 기존 자습실이 노후돼 보이고 이용 장면이 잘 상상되지 않았습니다."
-                    />
-                  </label>
-                  <label className="block">
-                    <span className="mb-1 block text-[11px] font-medium text-neutral-700">해결포인트</span>
-                    <textarea
-                      value={caseProfileDraft.solutionPoint}
-                      onChange={(event) => updateCaseProfileDraft(group.siteName, 'solutionPoint', event.target.value)}
-                      rows={3}
-                      className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none transition-colors focus:border-neutral-400"
-                      placeholder="예: 전후 사진으로 변화 폭을 먼저 보여주고, 동선과 분위기 개선 포인트를 함께 설명합니다."
-                    />
-                  </label>
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-[11px] text-neutral-400">
-                      저장하면 이 카드의 문제/해결 문구가 바로 바뀝니다.
-                    </p>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 px-2 text-[11px] text-neutral-500"
-                        disabled={isSavingCaseProfile}
-                        onClick={() => resetCaseProfileDraft(group)}
-                      >
-                        취소
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        className="h-8 px-3 text-[11px]"
-                        disabled={isSavingCaseProfile}
-                        onClick={() => void saveCaseProfileForGroup(group)}
-                      >
-                        {isSavingCaseProfile ? '저장 중…' : '저장'}
-                      </Button>
-                    </div>
+              <p className="text-xs font-medium text-neutral-800">전후 비교 설명</p>
+              <div className="mt-3 space-y-3">
+                <textarea
+                  value={caseProfileDraft.painPoint}
+                  onChange={(event) => updateCaseProfileDraft(group.siteName, 'painPoint', event.target.value)}
+                  rows={3}
+                  aria-label="전후 비교 설명"
+                  className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 outline-none transition-colors focus:border-neutral-400"
+                />
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[11px] text-neutral-400">
+                    필요한 문구만 직접 입력하고 저장하세요.
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 px-2 text-[11px] text-neutral-500"
+                      disabled={isSavingCaseProfile}
+                      onClick={() => resetCaseProfileDraft(group)}
+                    >
+                      비우기
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="h-8 px-3 text-[11px]"
+                      disabled={isSavingCaseProfile}
+                      onClick={() => void saveCaseProfileForGroup(group)}
+                    >
+                      {isSavingCaseProfile ? '저장 중…' : '저장'}
+                    </Button>
                   </div>
                 </div>
-              ) : (
-                <div className="mt-2 space-y-1 text-[11px] leading-5 text-neutral-500">
-                  <p><span className="font-medium text-neutral-700">문제</span> {caseProfileDraft.painPoint}</p>
-                  <p><span className="font-medium text-neutral-700">해결</span> {caseProfileDraft.solutionPoint}</p>
-                </div>
-              )}
+              </div>
             </div>
             <div className="rounded-xl border border-neutral-200 bg-white px-3 py-2.5">
               <div className="flex items-center justify-between gap-2">
@@ -2661,8 +2632,13 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
       </main>
 
       {/* 상세 갤러리 모달 */}
-      <Dialog open={detailOpen !== null} onOpenChange={(open) => !open && setDetailOpen(null)}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col p-0 bg-neutral-900 border-0">
+      <Dialog open={detailOpen !== null} onOpenChange={(open) => !open && closeDetail()}>
+        <DialogContent
+          className={cn(
+            'max-h-[90vh] overflow-hidden flex flex-col p-0 bg-neutral-900 border-0',
+            showInternalControls && internalDetailViewMode === 'grid' ? 'max-w-6xl' : 'max-w-4xl'
+          )}
+        >
           <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-700">
             <DialogTitle className="text-white font-semibold truncate">
               {detailOpen === 'site' && detailKey}
@@ -2674,7 +2650,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
               variant="ghost"
               size="icon"
               className="text-neutral-400 hover:text-white hover:bg-neutral-800"
-              onClick={() => setDetailOpen(null)}
+              onClick={closeDetail}
             >
               <X className="h-5 w-5" />
             </Button>
@@ -2682,94 +2658,185 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
           <div className="flex-1 overflow-auto p-4">
             {detailImages.length === 0 ? (
               <p className="text-neutral-500 text-center py-8">사진이 없습니다.</p>
-            ) : (
-              <div
-                className="relative flex items-center justify-center min-h-[60vh]"
-                style={{ touchAction: 'pan-y' }}
-              >
-                <button
-                  type="button"
-                  onClick={goPrev}
-                  className="absolute left-2 top-1/2 -translate-y-1/2 z-10 w-10 h-10 rounded-full bg-black/50 text-white flex items-center justify-center hover:bg-black/70"
-                  aria-label="이전"
-                >
-                  <ChevronLeft className="h-6 w-6" />
-                </button>
-                <div
-                  className="relative inline-block max-w-full cursor-grab active:cursor-grabbing"
-                  onPointerDown={handleDetailPointerDown}
-                  onPointerUp={handleDetailPointerUp}
-                  onPointerCancel={handleDetailPointerCancel}
-                  style={{ touchAction: 'pan-y' }}
-                  ref={detailImageFrameRef}
-                >
-                  <img
-                    src={detailImages[lightboxIndex]?.cloudinary_url ?? detailImages[lightboxIndex]?.thumbnail_url ?? ''}
-                    alt=""
-                    className="max-w-full max-h-[70vh] object-contain rounded-lg block"
-                    draggable={false}
-                  />
-                  {(() => {
-                    const current = detailImages[lightboxIndex]
-                    const productName = current?.product_name?.trim()
-                    const colorName = current?.color_name?.trim()
-                    const beforeAfterRole = current?.before_after_role
-                    if (!productName && !colorName && !beforeAfterRole) return null
+            ) : showInternalControls && internalDetailViewMode === 'grid' ? (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between gap-3 rounded-xl border border-neutral-700 bg-neutral-800/70 px-4 py-3">
+                  <div>
+                    <p className="text-sm font-medium text-white">전체 사진을 먼저 보고 선택하세요.</p>
+                    <p className="mt-1 text-xs text-neutral-400">
+                      썸네일을 누르면 확대해서 확인할 수 있고, 닫으면 다시 전체 목록으로 돌아옵니다.
+                    </p>
+                  </div>
+                  <span className="shrink-0 rounded-full bg-neutral-700 px-2.5 py-1 text-xs font-medium text-neutral-200">
+                    {detailImages.length}장
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
+                  {detailImages.map((image, index) => {
+                    const imageUrl = image.thumbnail_url || image.cloudinary_url || ''
+                    const isSelected = selectedImageIds.has(image.id)
                     return (
-                      <div className="absolute top-2 right-2 z-10 px-3 py-2 rounded-lg bg-black/70 text-white text-sm shadow-lg backdrop-blur-sm">
-                        {beforeAfterRole && (
-                          <div className="mb-1">
-                            <span className="inline-flex rounded-full bg-white/15 px-2 py-0.5 text-[11px] font-semibold text-white">
-                              {beforeAfterRole === 'before' ? 'Before' : 'After'}
-                            </span>
+                      <div
+                        key={image.id}
+                        className="overflow-hidden rounded-2xl border border-neutral-700 bg-neutral-800 text-left transition hover:-translate-y-0.5 hover:border-neutral-500 hover:shadow-lg"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => openInternalDetailImage(index)}
+                          className="block w-full text-left"
+                        >
+                          <div className="relative aspect-[4/3] bg-neutral-900">
+                            <img
+                              src={imageUrl}
+                              alt=""
+                              className="h-full w-full object-cover"
+                              loading="lazy"
+                            />
+                            {image.before_after_role && (
+                              <span className="absolute left-2 top-2 rounded-full bg-black/75 px-2 py-1 text-[11px] font-semibold text-white">
+                                {image.before_after_role === 'before' ? 'Before' : 'After'}
+                              </span>
+                            )}
+                            {isSelected && (
+                              <span className="absolute right-2 top-2 rounded-full bg-emerald-500 px-2 py-1 text-[11px] font-semibold text-white">
+                                선택됨
+                              </span>
+                            )}
                           </div>
-                        )}
-                        {productName && <div className="font-medium">제품명 {productName}</div>}
-                        {colorName && <div className="text-neutral-200 text-xs mt-0.5">색상 {colorName}</div>}
+                        </button>
+                        <div className="space-y-2 p-3">
+                          <div className="space-y-1">
+                            <p className="truncate text-sm font-medium text-white">
+                              {image.product_name?.trim() || `사진 ${index + 1}`}
+                            </p>
+                            <p className="truncate text-xs text-neutral-400">
+                              {image.color_name?.trim() || image.site_name?.trim() || detailKey}
+                            </p>
+                          </div>
+                          <label className="flex items-center gap-2 text-xs text-neutral-300">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => toggleSelectedImage(image.id)}
+                              className="rounded border-neutral-500 bg-neutral-900"
+                            />
+                            이 사진 선택
+                          </label>
+                        </div>
                       </div>
                     )
-                  })()}
+                  })}
                 </div>
-                <button
-                  type="button"
-                  onClick={goNext}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 z-10 w-10 h-10 rounded-full bg-black/50 text-white flex items-center justify-center hover:bg-black/70"
-                  aria-label="다음"
-                >
-                  <ChevronRight className="h-6 w-6" />
-                </button>
               </div>
+            ) : (
+              <>
+                {showInternalControls && (
+                  <div className="mb-3 flex items-center justify-end gap-3">
+                    <span className="text-xs text-neutral-400">
+                      {lightboxIndex + 1} / {detailImages.length}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="gap-2 border-neutral-700 text-white hover:bg-neutral-800"
+                      onClick={() => setInternalDetailViewMode('grid')}
+                    >
+                      <ArrowLeft className="h-4 w-4" />
+                      전체 사진으로 돌아가기
+                    </Button>
+                  </div>
+                )}
+                <div
+                  className="relative flex items-center justify-center min-h-[60vh]"
+                  style={{ touchAction: 'pan-y' }}
+                >
+                  {!showInternalControls && (
+                    <button
+                      type="button"
+                      onClick={goPrev}
+                      className="absolute left-2 top-1/2 -translate-y-1/2 z-10 w-10 h-10 rounded-full bg-black/50 text-white flex items-center justify-center hover:bg-black/70"
+                      aria-label="이전"
+                    >
+                      <ChevronLeft className="h-6 w-6" />
+                    </button>
+                  )}
+                  <div
+                    className="relative inline-block max-w-full cursor-grab active:cursor-grabbing"
+                    onPointerDown={handleDetailPointerDown}
+                    onPointerUp={handleDetailPointerUp}
+                    onPointerCancel={handleDetailPointerCancel}
+                    style={{ touchAction: 'pan-y' }}
+                    ref={detailImageFrameRef}
+                  >
+                    <img
+                      src={detailImages[lightboxIndex]?.cloudinary_url ?? detailImages[lightboxIndex]?.thumbnail_url ?? ''}
+                      alt=""
+                      className="max-w-full max-h-[70vh] object-contain rounded-lg block"
+                      draggable={false}
+                    />
+                    {(() => {
+                      const current = detailImages[lightboxIndex]
+                      const productName = current?.product_name?.trim()
+                      const colorName = current?.color_name?.trim()
+                      const beforeAfterRole = current?.before_after_role
+                      if (!productName && !colorName && !beforeAfterRole) return null
+                      return (
+                        <div className="absolute top-2 right-2 z-10 px-3 py-2 rounded-lg bg-black/70 text-white text-sm shadow-lg backdrop-blur-sm">
+                          {beforeAfterRole && (
+                            <div className="mb-1">
+                              <span className="inline-flex rounded-full bg-white/15 px-2 py-0.5 text-[11px] font-semibold text-white">
+                                {beforeAfterRole === 'before' ? 'Before' : 'After'}
+                              </span>
+                            </div>
+                          )}
+                          {productName && <div className="font-medium">제품명 {productName}</div>}
+                          {colorName && <div className="text-neutral-200 text-xs mt-0.5">색상 {colorName}</div>}
+                        </div>
+                      )
+                    })()}
+                  </div>
+                  {!showInternalControls && (
+                    <button
+                      type="button"
+                      onClick={goNext}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 z-10 w-10 h-10 rounded-full bg-black/50 text-white flex items-center justify-center hover:bg-black/70"
+                      aria-label="다음"
+                    >
+                      <ChevronRight className="h-6 w-6" />
+                    </button>
+                  )}
+                </div>
+              </>
             )}
           </div>
-          {detailImages.length > 0 && (
+          {detailImages.length > 0 && (!showInternalControls || internalDetailViewMode === 'image') && (
             <div className="px-4 py-2 border-t border-neutral-700 text-center text-neutral-500 text-sm">
               {lightboxIndex + 1} / {detailImages.length}
             </div>
           )}
           <div className="px-4 pb-4 pt-3 border-t border-neutral-700 space-y-2">
-            {showInternalControls && detailImages[lightboxIndex] && (
-              <Button
-                type="button"
-                variant={selectedImageIds.has(detailImages[lightboxIndex].id) ? 'secondary' : 'default'}
-                className="w-full gap-2"
-                onClick={() => toggleSelectedImage(detailImages[lightboxIndex].id)}
-              >
-                {selectedImageIds.has(detailImages[lightboxIndex].id) ? <Check className="h-4 w-4" /> : <Images className="h-4 w-4" />}
-                {selectedImageIds.has(detailImages[lightboxIndex].id) ? '선택 해제' : '이 이미지 선택'}
-              </Button>
-            )}
-            {showInternalControls ? (
-              <div className="flex gap-2">
-                <Button type="button" variant="outline" className="flex-1 gap-2 border-neutral-600 text-white hover:bg-neutral-800" onClick={copyShareLink}>
-                  <Copy className="h-4 w-4" />
-                  링크 복사
-                </Button>
-                <Button type="button" variant="outline" className="flex-1 gap-2 border-neutral-600 text-white hover:bg-neutral-800" onClick={shareSelectedImagesKakao}>
-                  <MessageCircle className="h-4 w-4" />
-                  카톡 공유
-                </Button>
-              </div>
-            ) : (
+            {showInternalControls && internalDetailViewMode === 'grid' ? (
+              <>
+                <div className="flex items-center justify-between gap-3 text-sm">
+                  <p className="text-neutral-300">{selectedImageIds.size}장 선택됨</p>
+                  {selectedImageIds.size > 0 ? (
+                    <Button variant="ghost" size="sm" className="h-8 px-2 text-neutral-400 hover:text-white hover:bg-neutral-800" onClick={() => setSelectedImageIds(new Set())}>
+                      선택 비우기
+                    </Button>
+                  ) : null}
+                </div>
+                <div className="flex gap-2">
+                  <Button type="button" variant="outline" className="flex-1 gap-2 border-neutral-600 text-white hover:bg-neutral-800" onClick={copyShareLink}>
+                    <Copy className="h-4 w-4" />
+                    링크 복사
+                  </Button>
+                  <Button type="button" variant="outline" className="flex-1 gap-2 border-neutral-600 text-white hover:bg-neutral-800" onClick={shareSelectedImagesKakao}>
+                    <MessageCircle className="h-4 w-4" />
+                    카톡 공유
+                  </Button>
+                </div>
+              </>
+            ) : !showInternalControls ? (
               <Link
                 to={buildShowroomContactUrl({ category: '시공사례 쇼룸 문의' })}
                 className="flex items-center justify-center gap-2 w-full rounded-xl py-3.5 bg-amber-500 hover:bg-amber-600 text-neutral-900 font-semibold text-sm transition-colors shadow-md"
@@ -2777,7 +2844,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                 <Sparkles className="h-4 w-4" />
                 무료 레이아웃 컨설팅 신청
               </Link>
-            )}
+            ) : null}
           </div>
         </DialogContent>
       </Dialog>

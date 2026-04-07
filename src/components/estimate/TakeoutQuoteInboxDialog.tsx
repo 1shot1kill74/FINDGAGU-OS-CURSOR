@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Loader2, Search, ImagePlus, ExternalLink, ArrowLeft } from 'lucide-react'
+import { isTakeoutInboxEnabled } from '@/lib/config'
 
 type TakeoutQuoteCandidate = {
   id: string
@@ -104,6 +105,7 @@ export function TakeoutQuoteInboxDialog({
   onApplySearch,
   onImportCandidate,
 }: TakeoutQuoteInboxDialogProps) {
+  const takeoutInboxEnabled = isTakeoutInboxEnabled()
   const [manifest, setManifest] = useState<TakeoutQuoteManifest | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -143,6 +145,7 @@ export function TakeoutQuoteInboxDialog({
 
   useEffect(() => {
     if (!open) return
+    if (!takeoutInboxEnabled) return
     let cancelled = false
     setLoading(true)
     setError(null)
@@ -151,7 +154,7 @@ export function TakeoutQuoteInboxDialog({
     setSelectedTakeoutVersion(null)
     fetch(`/data/takeout-quote-inbox.json?t=${Date.now()}`)
       .then(async (res) => {
-        if (!res.ok) throw new Error('테이크아웃 인덱스를 찾지 못했습니다. 먼저 buildTakeoutQuoteInbox 스크립트를 실행해 주세요.')
+        if (!res.ok) throw new Error('테이크아웃 공개 인덱스를 찾지 못했습니다. 로컬 백업 데이터를 다시 공개용으로 생성해야 합니다.')
         return res.json() as Promise<TakeoutQuoteManifest>
       })
       .then((data) => {
@@ -174,7 +177,7 @@ export function TakeoutQuoteInboxDialog({
     return () => {
       cancelled = true
     }
-  }, [open])
+  }, [open, takeoutInboxEnabled])
 
   useEffect(() => {
     if (!open) setPreviewCandidate(null)
