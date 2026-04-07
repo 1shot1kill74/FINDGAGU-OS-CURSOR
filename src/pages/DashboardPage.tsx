@@ -250,12 +250,6 @@ export default function DashboardPage() {
       icon: ClipboardList,
     },
     {
-      title: '콘텐츠 워크스페이스',
-      description: 'Google Blog 원본과 카드뉴스·숏츠 파생 생성은 여기서 제어합니다.',
-      to: '/content',
-      icon: Sparkles,
-    },
-    {
       title: '이미지 자산 관리',
       description: '상담용 사진, 태그, 색상, 외부 표시명을 관리합니다.',
       to: '/image-assets',
@@ -302,11 +296,6 @@ export default function DashboardPage() {
                 <Button className="gap-1.5">
                   상담 관리 열기
                   <ArrowRight className="h-4 w-4" />
-                </Button>
-              </Link>
-              <Link to="/content/automation">
-                <Button type="button" variant="outline" className="gap-1.5">
-                  콘텐츠 시스템
                 </Button>
               </Link>
               <Link to="/showroom">

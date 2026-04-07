@@ -24,11 +24,6 @@ const ShowroomHomepagePage = lazy(() => import('@/pages/ShowroomHomepagePage'))
 const MigrationPage = lazy(() => import('@/pages/admin/MigrationPage'))
 const ArchivePage = lazy(() => import('@/pages/admin/ArchivePage'))
 const TestConsole = lazy(() => import('@/pages/admin/TestConsole'))
-const ContentQueuePage = lazy(() => import('@/pages/content/ContentQueuePage'))
-const ContentDetailPage = lazy(() => import('@/pages/content/ContentDetailPage'))
-const ContentDistributionPage = lazy(() => import('@/pages/content/ContentDistributionPage'))
-const ContentAutomationPage = lazy(() => import('@/pages/content/ContentAutomationPage'))
-const ContentTemplatesPage = lazy(() => import('@/pages/content/ContentTemplatesPage'))
 
 function RouteFallback() {
   const location = useLocation()
@@ -70,11 +65,6 @@ function App() {
             <Route path="/image-assets" element={<ImageAssetViewer />} />
             <Route path="/image-assets/upload" element={<ImageAssetUpload />} />
             <Route path="/showroom" element={<ShowroomPage />} />
-            <Route path="/content" element={<ContentQueuePage />} />
-            <Route path="/content/distribution" element={<ContentDistributionPage />} />
-            <Route path="/content/automation" element={<ContentAutomationPage />} />
-            <Route path="/content/templates" element={<ContentTemplatesPage />} />
-            <Route path="/content/:id" element={<ContentDetailPage />} />
             <Route path="/homepage-concept" element={<HomepageConceptPage />} />
             <Route path="/admin/migration" element={<MigrationPage />} />
             <Route path="/admin/archive" element={<ArchivePage />} />
