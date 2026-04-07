@@ -12,7 +12,11 @@
     "migrate:upload": "tsx scripts/migrate-data.ts --mode upload",
     "detect:quote": "tsx scripts/detectQuoteLocal.ts",
     "collect:quotes": "tsx scripts/collectQuoteImages.ts",
-    "build:price": "tsx scripts/buildPriceTable.ts && tsx scripts/updatePriceTable.ts"
+    "build:price": "tsx scripts/buildPriceTable.ts && tsx scripts/updatePriceTable.ts",
+    "handout:products": "node scripts/generate-product-handout.mjs",
+    "handout:oldei": "node scripts/generate-oldei-handout-from-metadata.mjs",
+    "handout:oldei:folders": "node scripts/generate-product-handout.mjs --올데이",
+    "handout:oldei:all-assets": "node scripts/generate-oldei-handout-from-metadata.mjs --all-assets"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

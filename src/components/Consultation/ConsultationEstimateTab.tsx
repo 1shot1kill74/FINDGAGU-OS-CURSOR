@@ -4,7 +4,6 @@ import { Button } from '@/components/ui/button'
 import { EstimateFilesGallery } from '@/components/estimate/EstimateFilesGallery'
 import { TakeoutQuoteInboxDialog } from '@/components/estimate/TakeoutQuoteInboxDialog'
 import { toast } from 'sonner'
-import { isTakeoutInboxEnabled } from '@/lib/config'
 import { cn } from '@/lib/utils'
 import type { ConsultationEstimateFile } from '@/types/consultationEstimateFile'
 import type { EstimateFormData } from '@/components/estimate/EstimateForm'
@@ -104,7 +103,6 @@ export function ConsultationEstimateTab({
   setEstimateModalInitialData,
   setEstimateModalOpen,
 }: ConsultationEstimateTabProps) {
-  const takeoutInboxEnabled = isTakeoutInboxEnabled()
   const [autoEstimateOpen, setAutoEstimateOpen] = useState(false)
   const [takeoutDialogOpen, setTakeoutDialogOpen] = useState(false)
 
@@ -182,16 +180,14 @@ export function ConsultationEstimateTab({
           <Calculator className="h-4 w-4" />
           자동 견적 작성
         </Button>
-        {takeoutInboxEnabled ? (
-          <Button
-            type="button"
-            variant="outline"
-            className="gap-2 shrink-0"
-            onClick={() => setTakeoutDialogOpen(true)}
-          >
-            테이크아웃 이미지 가져오기
-          </Button>
-        ) : null}
+        <Button
+          type="button"
+          variant="outline"
+          className="gap-2 shrink-0"
+          onClick={() => setTakeoutDialogOpen(true)}
+        >
+          테이크아웃 이미지 가져오기
+        </Button>
       </div>
       {/* 필터: 전체 / 임시 저장만 */}
       <div className="flex gap-1 mb-2">
@@ -391,17 +387,15 @@ export function ConsultationEstimateTab({
         onOpenChange={setAutoEstimateOpen}
         filteredEstimateList={filteredEstimateList}
       />
-      {takeoutInboxEnabled ? (
-        <TakeoutQuoteInboxDialog
-          open={takeoutDialogOpen}
-          onOpenChange={setTakeoutDialogOpen}
-          currentSpaceId={currentSpaceId}
-          currentDisplayName={selectedLeadData.displayName}
-          spaceLinks={takeoutSpaceLinks}
-          onApplySearch={onApplyTakeoutSearch}
-          onImportCandidate={handleImportTakeoutCandidate}
-        />
-      ) : null}
+      <TakeoutQuoteInboxDialog
+        open={takeoutDialogOpen}
+        onOpenChange={setTakeoutDialogOpen}
+        currentSpaceId={currentSpaceId}
+        currentDisplayName={selectedLeadData.displayName}
+        spaceLinks={takeoutSpaceLinks}
+        onApplySearch={onApplyTakeoutSearch}
+        onImportCandidate={handleImportTakeoutCandidate}
+      />
     </>
   )
 }

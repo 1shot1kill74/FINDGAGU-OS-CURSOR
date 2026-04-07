@@ -1,15 +1,17 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Navigate, useSearchParams } from 'react-router-dom'
-import { Chrome, LockKeyhole, ShieldCheck } from 'lucide-react'
+import { Chrome, LoaderCircle, LockKeyhole, ShieldCheck } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/auth/AuthProvider'
+import { describeInternalRoute } from '@/lib/internalRouteLabel'
 
 export default function LoginPage() {
   const [searchParams] = useSearchParams()
   const { user, loading, signInWithGoogle } = useAuth()
   const [submitting, setSubmitting] = useState(false)
-  const nextPath = useMemo(() => searchParams.get('next')?.trim() || '/', [searchParams])
+  const nextPath = useMemo(() => searchParams.get('next')?.trim() || '/dashboard', [searchParams])
+  const nextLabel = useMemo(() => describeInternalRoute(nextPath), [nextPath])
 
   useEffect(() => {
     const authError = searchParams.get('error_description') || searchParams.get('error')
@@ -35,6 +37,10 @@ export default function LoginPage() {
             <p className="mt-2 text-sm leading-6 text-neutral-600">
               내부 운영 화면은 로그인 후에만 접근할 수 있습니다. 구글 계정으로 계속 진행하세요.
             </p>
+            <p className="mt-3 rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-xs leading-6 text-neutral-500">
+              로그인 후 이동 대상 <span className="font-semibold text-neutral-800">{nextLabel}</span>
+              {' '}· <span className="font-mono text-[11px]">{nextPath}</span>
+            </p>
           </div>
         </div>
 
@@ -54,8 +60,8 @@ export default function LoginPage() {
               }
             }}
           >
-            <Chrome className="h-4 w-4" />
-            {submitting ? '구글 로그인으로 이동 중…' : 'Google로 로그인'}
+            {loading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Chrome className="h-4 w-4" />}
+            {loading ? '로그인 상태 확인 중…' : submitting ? '구글 로그인으로 이동 중…' : 'Google로 로그인'}
           </Button>
 
           <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4 text-sm text-neutral-600">

@@ -355,7 +355,6 @@ export function EstimateFilesGallery({
     if (!confirm(`'${f.file_name}' 파일을 삭제하시겠습니까?`)) return
     setDeletingId(f.id)
     try {
-      // @ts-expect-error consultation_estimate_files 신규 테이블
       const { error: deleteErr } = await supabase.from('consultation_estimate_files').delete().eq('id', f.id)
       if (deleteErr) throw deleteErr
       await supabase.storage.from(ESTIMATE_FILES_BUCKET).remove([f.storage_path]).catch(() => {})
@@ -680,7 +679,6 @@ export function EstimateFilesGallery({
     if (uploadError) throw uploadError
 
     const quoteDateVal = uploadType === 'estimates' && quoteDate && /^\d{4}-\d{2}-\d{2}$/.test(quoteDate) ? quoteDate : null
-    // @ts-expect-error consultation_estimate_files 신규 테이블
     const { error: insertError } = await supabase.from('consultation_estimate_files').insert({
       consultation_id: consultationId,
       project_name: projectName || null,
@@ -692,7 +690,6 @@ export function EstimateFilesGallery({
     })
     if (insertError) throw insertError
 
-    // @ts-expect-error estimate_pdf_url 신규 컬럼
     await supabase.from('consultations').update({ estimate_pdf_url: storagePath }).eq('id', consultationId)
   }
 

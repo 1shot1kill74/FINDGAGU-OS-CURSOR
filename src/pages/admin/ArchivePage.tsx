@@ -65,7 +65,7 @@ export default function ArchivePage() {
       <div className="max-w-4xl mx-auto space-y-6">
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-4">
-            <Link to="/" className="text-muted-foreground hover:text-foreground text-sm">← 홈</Link>
+            <Link to="/dashboard" className="text-muted-foreground hover:text-foreground text-sm">← 홈</Link>
             <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
               <Archive className="h-6 w-6" />
               숨긴 상담 아카이브

@@ -3,7 +3,6 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Loader2, Search, ImagePlus, ExternalLink, ArrowLeft } from 'lucide-react'
-import { isTakeoutInboxEnabled } from '@/lib/config'
 
 type TakeoutQuoteCandidate = {
   id: string
@@ -105,7 +104,6 @@ export function TakeoutQuoteInboxDialog({
   onApplySearch,
   onImportCandidate,
 }: TakeoutQuoteInboxDialogProps) {
-  const takeoutInboxEnabled = isTakeoutInboxEnabled()
   const [manifest, setManifest] = useState<TakeoutQuoteManifest | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -145,7 +143,6 @@ export function TakeoutQuoteInboxDialog({
 
   useEffect(() => {
     if (!open) return
-    if (!takeoutInboxEnabled) return
     let cancelled = false
     setLoading(true)
     setError(null)
@@ -177,7 +174,7 @@ export function TakeoutQuoteInboxDialog({
     return () => {
       cancelled = true
     }
-  }, [open, takeoutInboxEnabled])
+  }, [open])
 
   useEffect(() => {
     if (!open) setPreviewCandidate(null)

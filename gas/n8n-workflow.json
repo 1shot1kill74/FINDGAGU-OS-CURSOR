@@ -67,7 +67,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "REPLACE_ME_GAS_WEBAPP_URL",
+        "url": "https://script.google.com/a/macros/findgagu.com/s/AKfycbxKCjXr-1Z8dhmuhFaV-nJBQUn-OzSj-xYbs5wUcW7k4mDtkg8hvfp2ceT90h9cQ_Iy/exec",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [

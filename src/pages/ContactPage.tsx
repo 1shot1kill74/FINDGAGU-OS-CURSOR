@@ -20,6 +20,12 @@ export default function ContactPage() {
   const imageUrl = searchParams.get('image_url') ?? ''
   const showroomContext = searchParams.get('showroom_context') ?? ''
   const showroomEntryLabel = searchParams.get('showroom_entry_label') ?? ''
+  const showroomSource = searchParams.get('showroom_source') ?? ''
+  const showroomInterestSite = searchParams.get('showroom_interest_site') ?? ''
+  const showroomSessionKey = searchParams.get('showroom_session_key') ?? ''
+  const showroomLastCases = searchParams.get('showroom_last_cases') ?? ''
+  const showroomFollowupSummary = searchParams.get('showroom_followup_summary') ?? ''
+  const showroomBackTo = searchParams.get('showroom_back_to') ?? ''
 
   const [companyName, setCompanyName] = useState('')
   const [managerName, setManagerName] = useState('')
@@ -72,7 +78,7 @@ export default function ContactPage() {
       const displayName = company ? `${company} ${displayNameForSubmit}` : displayNameForSubmit
       const isApartmentRenewal = (category || '').trim() === '아파트 리뉴얼 제안서'
       const metadata: Record<string, unknown> = {
-        source: '쇼룸',
+        source: showroomSource === 'homepage' ? '쇼룸형 홈페이지' : '쇼룸',
         pain_point: (message || '').trim() || null,
         customer_tier: '신규',
         display_name: displayName,
@@ -81,6 +87,12 @@ export default function ContactPage() {
         showroom_image_url: imageUrl || null,
         showroom_context: showroomContext || null,
         showroom_entry_label: showroomEntryLabel || null,
+        showroom_source: showroomSource || null,
+        showroom_interest_site: showroomInterestSite || null,
+        showroom_session_key: showroomSessionKey || null,
+        showroom_last_cases: showroomLastCases || null,
+        showroom_followup_summary: showroomFollowupSummary || null,
+        showroom_back_to: showroomBackTo || null,
         ...(isApartmentRenewal && {
           apartment_complex_name: company || null,
           facility_condition: (facilityCondition || '').trim() || null,
@@ -114,8 +126,8 @@ export default function ContactPage() {
     <div className="min-h-screen bg-neutral-50 flex flex-col">
       <header className="bg-white border-b border-neutral-200 px-4 py-3">
         <div className="max-w-xl mx-auto flex items-center justify-between">
-          <Link to="/showroom" className="text-sm text-neutral-500 hover:text-neutral-900">
-            ← 쇼룸으로
+          <Link to={showroomBackTo || (showroomSource === 'homepage' ? '/' : '/')} className="text-sm text-neutral-500 hover:text-neutral-900">
+            ← {showroomSource === 'homepage' ? '홈페이지로' : '이전 페이지로'}
           </Link>
           <h1 className="text-lg font-semibold text-neutral-900">무료 레이아웃 컨설팅</h1>
           <span className="w-14" aria-hidden />
@@ -187,6 +199,15 @@ export default function ContactPage() {
               className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-3 text-sm leading-relaxed placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-400 focus:ring-offset-1 resize-y"
             />
           </div>
+          {showroomFollowupSummary ? (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+              <p className="text-xs font-medium text-amber-800">선택한 사례 기준 요약</p>
+              <p className="mt-1 text-sm leading-6 text-amber-950">{showroomFollowupSummary}</p>
+              {showroomLastCases ? (
+                <p className="mt-2 text-xs text-amber-800/80">최근 확인한 사례: {showroomLastCases}</p>
+              ) : null}
+            </div>
+          ) : null}
           <Button type="submit" className="w-full h-12 font-semibold" disabled={submitting}>
             {submitting
               ? '접수 중…'

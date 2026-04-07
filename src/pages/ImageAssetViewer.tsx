@@ -257,14 +257,31 @@ export default function ImageAssetViewer() {
   const focusHandledRef = useRef<string | null>(null)
   useEffect(() => {
     if (!isBankView && location.pathname === '/image-assets' && assets.length > 0) {
-      const focusId = (location.state as { focusAssetId?: string } | null)?.focusAssetId
+      const queryFocusId = new URLSearchParams(location.search).get('assetId')
+      const stateFocusId = (location.state as { focusAssetId?: string } | null)?.focusAssetId
+      const focusId = queryFocusId || stateFocusId
       if (focusId && typeof focusId === 'string' && focusHandledRef.current !== focusId) {
         focusHandledRef.current = focusId
         const asset = assets.find((a) => a.id === focusId)
         if (asset) {
+          setConsultationOnlyFilter(false)
+          setReviewFilter('all')
+          setUnmatchedOnlyFilter(false)
+          setSearchQuery('')
+          setSectorFilter((asset.industry ?? '').trim() || null)
+          setSiteFilter(getAssetSiteFilterValue(asset))
+          setProductFilter(null)
+          setColorFilter(null)
+          setPage(0)
           setEditingAssetId(focusId)
           setEditingTagsText((asset.productTags ?? []).join(', '))
           setEditingColor(asset.color ?? '')
+        } else {
+          setConsultationOnlyFilter(false)
+          setReviewFilter('all')
+          setUnmatchedOnlyFilter(false)
+          setSearchQuery(focusId)
+          setPage(0)
         }
         setTimeout(() => {
           const el = document.querySelector(`[data-asset-id="${focusId}"]`)
@@ -272,7 +289,7 @@ export default function ImageAssetViewer() {
         }, 400)
       }
     }
-  }, [isBankView, location.pathname, location.state, assets])
+  }, [isBankView, location.pathname, location.search, location.state, assets])
 
   const saveInlineTag = useCallback(
     async (

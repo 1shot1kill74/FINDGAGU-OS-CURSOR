@@ -1,8 +1,8 @@
 /**
- * 채널톡 웹훅 — 임시 리드 저장 + 업종 제한 쇼룸 링크 자동 발송
+ * 채널톡 웹훅 — 임시 리드 저장 + 후속 정보 메시지 처리
  * - 채널톡 이벤트를 channel_talk_leads에 저장
- * - 전화번호가 처음 확보되면 3일 만료 쇼룸 링크 생성
- * - 업종 커스텀 필드가 있으면 해당 업종 사례로 서버 범위 제한
+ * - 쇼룸 링크 자동 발송은 현재 비활성화
+ * - 홈페이지/쇼룸 문맥이 있으면 후속 정보 메시지로 이어간다
  *
  * 배포: npx supabase functions deploy channel-talk-webhook --no-verify-jwt
  */
@@ -368,6 +368,118 @@ function extractMessageText(payload: JsonRecord): string {
   )
 }
 
+function getStringArrayValue(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((item) => (typeof item === "string" ? item.trim() : ""))
+    .filter(Boolean)
+}
+
+function readContextString(payload: JsonRecord, keys: string[]): string | null {
+  const entity = asRecord(payload.entity)
+  const profile = asRecord(asRecord(asRecord(payload.refers)?.user)?.profile)
+  const candidates = [payload, entity, profile]
+  for (const candidate of candidates) {
+    if (!candidate) continue
+    for (const key of keys) {
+      const value = getStringValue(candidate[key])
+      if (value) return value
+    }
+  }
+  return null
+}
+
+function readContextStringArray(payload: JsonRecord, keys: string[]): string[] {
+  const entity = asRecord(payload.entity)
+  const profile = asRecord(asRecord(asRecord(payload.refers)?.user)?.profile)
+  const candidates = [payload, entity, profile]
+  for (const candidate of candidates) {
+    if (!candidate) continue
+    for (const key of keys) {
+      const value = getStringArrayValue(candidate[key])
+      if (value.length > 0) return value
+      const fallback = getStringValue(candidate[key])
+      if (fallback) {
+        return fallback.split("|").map((item) => item.trim()).filter(Boolean)
+      }
+    }
+  }
+  return []
+}
+
+function extractHomepageContext(payload: JsonRecord): {
+  source: string | null
+  interestSites: string[]
+  followupSummary: string | null
+  seenAt: string | null
+  replyIntent: boolean
+} {
+  const source = readContextString(payload, ["homepage_context_source", "showroom_source"])
+  const interestSites = readContextStringArray(payload, [
+    "homepage_interest_sites",
+    "showroom_interest_sites",
+    "showroom_last_cases",
+  ])
+  const followupSummary = readContextString(payload, [
+    "homepage_followup_summary",
+    "showroom_followup_summary",
+  ])
+  const seenAt = readContextString(payload, ["homepage_seen_at"])
+  const replyIntent = readContextString(payload, ["homepage_reply_intent", "showroom_reply_intent"]) === "true"
+  return { source, interestSites, followupSummary, seenAt, replyIntent }
+}
+
+function getElapsedMinutes(value: string | null): number | null {
+  if (!value) return null
+  const time = new Date(value).getTime()
+  if (!Number.isFinite(time)) return null
+  return (Date.now() - time) / (1000 * 60)
+}
+
+function shouldSilenceHomepageFollowup(params: {
+  homepageSeenAt: string | null
+  lastFollowupSentAt: string | null
+  hasReplyIntent: boolean
+  interestSites: string[]
+}): string | null {
+  const followupMinutes = getElapsedMinutes(params.lastFollowupSentAt)
+  if (followupMinutes != null && followupMinutes < 60 * 24) {
+    return "최근 24시간 내 후속 메시지를 이미 보냈습니다."
+  }
+
+  const homepageSeenMinutes = getElapsedMinutes(params.homepageSeenAt)
+  if (!params.hasReplyIntent && homepageSeenMinutes != null && homepageSeenMinutes < 10) {
+    return "홈페이지에서 아직 충분한 침묵 시간이 지나지 않았습니다."
+  }
+
+  if (!params.hasReplyIntent && params.interestSites.length < 1) {
+    return "단일 또는 약한 홈페이지 신호만 있어 후속 메시지를 보내지 않습니다."
+  }
+
+  return null
+}
+
+function buildHomepageFollowupMessage(params: {
+  industry: string | null
+  interestSites: string[]
+  followupSummary: string | null
+}): string {
+  const interestLine =
+    params.interestSites.length > 0
+      ? `관심 있게 보신 사례는 ${params.interestSites.slice(0, 2).join(", ")} 입니다.`
+      : params.industry
+        ? `${params.industry} 업종 기준으로 비슷한 사례를 보고 계신 것으로 이해했습니다.`
+        : "관심 있게 보고 계신 사례 흐름을 기준으로 이어서 설명드리겠습니다."
+
+  return [
+    "쇼룸형 홈페이지에서 보신 흐름을 기준으로 이어서 안내드립니다.",
+    interestLine,
+    params.followupSummary || "이 사례는 좌석 수, 예산대, 해결 포인트 기준으로 비교해 보시면 판단이 빨라집니다.",
+    "비슷한 방향인지 사례명을 답장해 주시면 필요한 정보만 이어서 설명드리겠습니다.",
+    "원하실 때만 안내드리기 위해 같은 내용을 여러 번 먼저 보내드리지는 않습니다.",
+  ].join("\n")
+}
+
 async function createScopedShowroomShare(
   supabase: ReturnType<typeof createClient>,
   userChatId: string,
@@ -395,7 +507,11 @@ async function createScopedShowroomShare(
   throw new Error("쇼룸 공유 토큰 생성에 실패했습니다.")
 }
 
-async function sendChannelTalkMessage(userChatId: string, content: string): Promise<{ ok: boolean; error?: string }> {
+async function sendChannelTalkMessage(
+  userChatId: string,
+  content: string,
+  linkUrl?: string,
+): Promise<{ ok: boolean; error?: string }> {
   const accessKey = Deno.env.get("CHANNELTALK_ACCESS_KEY")?.trim() || ""
   const accessSecret = Deno.env.get("CHANNELTALK_ACCESS_SECRET")?.trim() || ""
   const botName = Deno.env.get("CHANNELTALK_BOT_NAME")?.trim() || ""
@@ -407,42 +523,75 @@ async function sendChannelTalkMessage(userChatId: string, content: string): Prom
   const url = new URL(`https://api.channel.io/open/v5/user-chats/${encodeURIComponent(userChatId)}/messages`)
   if (botName) url.searchParams.set("botName", botName)
 
+  const headers = {
+    "Content-Type": "application/json",
+    "x-access-key": accessKey,
+    "x-access-secret": accessSecret,
+  }
+
+  const basePayload = {
+    blocks: [
+      {
+        type: "text",
+        value: content,
+      },
+    ],
+  }
+
+  const payloadWithButton = linkUrl
+    ? {
+        ...basePayload,
+        buttons: [
+          {
+            title: "지금 쇼룸/사례 보기",
+            url: linkUrl,
+            colorVariant: "cobalt",
+          },
+        ],
+      }
+    : basePayload
+
   const response = await fetch(url.toString(), {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-access-key": accessKey,
-      "x-access-secret": accessSecret,
-    },
-    body: JSON.stringify({
-      blocks: [
-        {
-          type: "text",
-          value: content,
-        },
-      ],
-    }),
+    headers,
+    body: JSON.stringify(payloadWithButton),
   })
 
   if (response.ok) return { ok: true }
 
   const errorText = await response.text()
+
+  if (linkUrl && response.status === 422) {
+    const fallbackResponse = await fetch(url.toString(), {
+      method: "POST",
+      headers,
+      body: JSON.stringify(basePayload),
+    })
+
+    if (fallbackResponse.ok) return { ok: true }
+
+    const fallbackErrorText = await fallbackResponse.text()
+    return {
+      ok: false,
+      error: `ChannelTalk API ${fallbackResponse.status}: ${fallbackErrorText || "메시지 전송 실패"}`,
+    }
+  }
+
   return {
     ok: false,
     error: `ChannelTalk API ${response.status}: ${errorText || "메시지 전송 실패"}`,
   }
 }
 
-function buildShowroomMessage(url: string, industry: string | null): string {
+function buildShowroomMessage(_url: string, industry: string | null): string {
   const industryLine = industry
     ? `${industry} 업종에 맞춰 먼저 볼 만한 사례만 모았습니다.`
     : "먼저 볼 만한 핵심 사례만 모았습니다."
   return [
     "문의 남겨주셔서 감사합니다.",
     industryLine,
-    "아래 링크를 누르시면 휴대폰에서 바로 열립니다.",
-    url,
-    "(링크는 설정된 기간 후 만료될 수 있습니다.)",
+    "아래 버튼을 누르시면 휴대폰에서 바로 열립니다.",
+    "링크는 3일 후 만료되며, 필요하시면 다시 보내드릴 수 있습니다.",
     "궁금하신 점은 이 채팅창에 그대로 남겨 주세요.",
   ].join("\n")
 }
@@ -495,6 +644,7 @@ Deno.serve(async (req: Request) => {
     const workflowCompletionPhone = extractProfileMobile(payload)
     const isWorkflowCompletion = isWorkflowCompletionEvent(payload, eventType)
     const industry = extractIndustry(payload, plainText)
+    const homepageContext = extractHomepageContext(payload)
 
     console.log(
       `추출 결과 - 이름: ${userName}, 번호(리드): ${phone ?? "미확인"}, 번호(쇼룸트리거): ${phoneForShowroomThisEvent ?? "미확인"}, 번호(워크플로종료): ${workflowCompletionPhone ?? "미확인"}, 워크플로종료이벤트: ${isWorkflowCompletion}, 업종: ${industry ?? "미확인"}`,
@@ -515,7 +665,7 @@ Deno.serve(async (req: Request) => {
 
     const { data: existingLead, error: leadSelectError } = await supabase
       .from("channel_talk_leads")
-      .select("id, phone, industry, showroom_share_token, showroom_link_sent_at")
+      .select("id, phone, industry, showroom_share_token, showroom_link_sent_at, homepage_context_source, homepage_interest_sites, homepage_followup_summary, homepage_seen_at, followup_message_sent_at")
       .eq("channel_user_chat_id", userChatId)
       .maybeSingle()
 
@@ -527,6 +677,21 @@ Deno.serve(async (req: Request) => {
     const mergedIndustry =
       industry ??
       normalizeIndustry(typeof existingLead?.industry === "string" ? existingLead.industry : null)
+    const mergedHomepageContextSource =
+      homepageContext.source ||
+      (typeof existingLead?.homepage_context_source === "string" ? existingLead.homepage_context_source : null)
+    const mergedHomepageInterestSites = Array.from(
+      new Set([
+        ...homepageContext.interestSites,
+        ...getStringArrayValue(existingLead?.homepage_interest_sites),
+      ]),
+    ).slice(0, 5)
+    const mergedHomepageFollowupSummary =
+      homepageContext.followupSummary ||
+      (typeof existingLead?.homepage_followup_summary === "string" ? existingLead.homepage_followup_summary : null)
+    const mergedHomepageSeenAt =
+      homepageContext.seenAt ||
+      (typeof existingLead?.homepage_seen_at === "string" ? existingLead.homepage_seen_at : null)
 
     const leadPayload = {
       channel_user_chat_id: userChatId,
@@ -537,6 +702,10 @@ Deno.serve(async (req: Request) => {
       last_message: plainText || null,
       raw_payload: payload,
       source_event_type: eventType,
+      homepage_context_source: mergedHomepageContextSource,
+      homepage_interest_sites: mergedHomepageInterestSites,
+      homepage_followup_summary: mergedHomepageFollowupSummary,
+      homepage_seen_at: mergedHomepageSeenAt,
       last_event_at: nowIso,
       updated_at: nowIso,
     }
@@ -544,7 +713,7 @@ Deno.serve(async (req: Request) => {
     const { data: savedLead, error: leadUpsertError } = await supabase
       .from("channel_talk_leads")
       .upsert(leadPayload, { onConflict: "channel_user_chat_id" })
-      .select("id, showroom_share_token, showroom_link_sent_at")
+      .select("id, showroom_share_token, showroom_link_sent_at, followup_message_sent_at")
       .single()
 
     if (leadUpsertError || !savedLead?.id) {
@@ -553,11 +722,12 @@ Deno.serve(async (req: Request) => {
 
     const { data: gateRow } = await supabase
       .from("channel_talk_leads")
-      .select("showroom_link_sent_at, showroom_share_token")
+      .select("showroom_link_sent_at, showroom_share_token, followup_message_sent_at")
       .eq("id", savedLead.id)
       .maybeSingle()
 
     let sentShowroomLink = false
+    let sentFollowupMessage = false
     let showroomShareToken =
       typeof gateRow?.showroom_share_token === "string"
         ? gateRow.showroom_share_token
@@ -565,10 +735,35 @@ Deno.serve(async (req: Request) => {
           ? savedLead.showroom_share_token
           : null
     let showroomSendError: string | null = null
+    let followupMessageError: string | null = null
+    const hasHomepageContext =
+      mergedHomepageContextSource === "homepage" ||
+      mergedHomepageInterestSites.length > 0 ||
+      Boolean(mergedHomepageFollowupSummary)
 
-    const shouldAttemptShowroomSend =
-      (Boolean(phoneForShowroomThisEvent) && SHOWROOM_LINK_EVENT_TYPES.has(eventType ?? "")) ||
-      (isWorkflowCompletion && Boolean(workflowCompletionPhone))
+    // 공통 시공사례 쇼룸을 기준으로 운영하면서 토큰 기반 맞춤 쇼룸 발송은 잠시 중단한다.
+    const shouldAttemptShowroomSend = false
+    const shouldAttemptHomepageFollowup =
+      hasHomepageContext &&
+      (
+        (Boolean(phoneForShowroomThisEvent) && SHOWROOM_LINK_EVENT_TYPES.has(eventType ?? "")) ||
+        (isWorkflowCompletion && Boolean(workflowCompletionPhone))
+      )
+    const homepageFollowupSilenceReason = shouldAttemptHomepageFollowup
+      ? shouldSilenceHomepageFollowup({
+          homepageSeenAt: mergedHomepageSeenAt,
+          lastFollowupSentAt:
+            typeof gateRow?.followup_message_sent_at === "string"
+              ? gateRow.followup_message_sent_at
+              : typeof savedLead.followup_message_sent_at === "string"
+                ? savedLead.followup_message_sent_at
+                : typeof existingLead?.followup_message_sent_at === "string"
+                  ? existingLead.followup_message_sent_at
+                  : null,
+          hasReplyIntent: homepageContext.replyIntent,
+          interestSites: mergedHomepageInterestSites,
+        })
+      : null
 
     async function revertShowroomClaim(reason: string): Promise<void> {
       showroomSendError = reason
@@ -578,7 +773,19 @@ Deno.serve(async (req: Request) => {
         .eq("id", savedLead.id)
     }
 
-    if (shouldAttemptShowroomSend) {
+    if (shouldAttemptHomepageFollowup && !homepageFollowupSilenceReason) {
+      const followupContent = buildHomepageFollowupMessage({
+        industry: mergedIndustry,
+        interestSites: mergedHomepageInterestSites,
+        followupSummary: mergedHomepageFollowupSummary,
+      })
+      const sendResult = await sendChannelTalkMessage(userChatId, followupContent)
+      if (sendResult.ok) {
+        sentFollowupMessage = true
+      } else {
+        followupMessageError = sendResult.error ?? "후속 정보 메시지 발송 실패"
+      }
+    } else if (shouldAttemptShowroomSend && !hasHomepageContext) {
       const { data: claimedRow, error: claimErr } = await supabase
         .from("channel_talk_leads")
         .update({ showroom_link_sent_at: nowIso, updated_at: nowIso })
@@ -603,7 +810,11 @@ Deno.serve(async (req: Request) => {
             shareUrl = createdShare.url
           }
 
-          const sendResult = await sendChannelTalkMessage(userChatId, buildShowroomMessage(shareUrl, mergedIndustry))
+          const sendResult = await sendChannelTalkMessage(
+            userChatId,
+            buildShowroomMessage(shareUrl, mergedIndustry),
+            shareUrl,
+          )
           if (!sendResult.ok) {
             await revertShowroomClaim(sendResult.error ?? "쇼룸 링크 자동 발송 실패")
           } else {
@@ -619,6 +830,12 @@ Deno.serve(async (req: Request) => {
     const leadStatusPatch: Record<string, unknown> = {
       showroom_share_token: showroomShareToken,
       showroom_send_error: showroomSendError,
+      homepage_context_source: mergedHomepageContextSource,
+      homepage_interest_sites: mergedHomepageInterestSites,
+      homepage_followup_summary: mergedHomepageFollowupSummary,
+      homepage_seen_at: mergedHomepageSeenAt,
+      ...(sentFollowupMessage ? { followup_message_sent_at: nowIso } : {}),
+      followup_message_error: followupMessageError || homepageFollowupSilenceReason || null,
       updated_at: nowIso,
     }
 
@@ -638,11 +855,15 @@ Deno.serve(async (req: Request) => {
         leadId: savedLead.id,
         userChatId,
         sentShowroomLink,
+        sentFollowupMessage,
         industry: mergedIndustry,
         hasPhone: Boolean(mergedPhone),
         hasShowroomTriggerPhone: Boolean(phoneForShowroomThisEvent),
         workflowCompletionTriggered: isWorkflowCompletion && Boolean(workflowCompletionPhone),
         showroomSendError,
+        homepageContextDetected: hasHomepageContext,
+        homepageFollowupSilenceReason,
+        followupMessageError,
       }),
       { status: 200, headers: { ...CORS, "Content-Type": "application/json" } },
     )

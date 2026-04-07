@@ -32,9 +32,7 @@ type Manifest = {
 const DATA_ROOT = '/Users/findgagu/findgagu-os-data'
 const STAGING_ROOT = path.join(DATA_ROOT, 'staging')
 const WORKSPACE_ROOT = '/Users/findgagu/Desktop/FINDGAGU-OS-CURSOR'
-// Keep generated takeout assets out of `public/` by default so they never
-// get copied into production builds accidentally.
-const PUBLIC_ASSET_ROOT = path.join(WORKSPACE_ROOT, 'assets', 'takeout-backups', 'takeout-quote-inbox')
+const PUBLIC_ASSET_ROOT = path.join(WORKSPACE_ROOT, 'public', 'assets', 'takeout-quote-inbox')
 const PUBLIC_DATA_PATH = path.join(WORKSPACE_ROOT, 'public', 'data', 'takeout-quote-inbox.json')
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp'])
 

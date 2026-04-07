@@ -16,22 +16,15 @@ interface ConsultationOption {
   managerName: string
 }
 
-/** 실측 완료 시 구글챗 스페이스로 PDF·요약 전송 (Webhook) */
+/** 실측 완료 알림은 서버사이드에서만 전송해야 한다. */
 function notifyMeasurementComplete(
-  companyName: string,
-  pdfPath: string | null,
-  summaryMemo: string
+  _companyName: string,
+  _pdfPath: string | null,
+  _summaryMemo: string
 ): void {
-  const text = `[실측 완료] ${companyName}\n${pdfPath ? 'PDF 도면 업로드됨.\n' : ''}${summaryMemo ? `요약: ${summaryMemo.slice(0, 200)}${summaryMemo.length > 200 ? '…' : ''}` : ''}`
-  const webhookUrl =
-    (import.meta.env.VITE_GOOGLE_CHAT_WEBHOOK_MEASUREMENT_REMINDER as string | undefined) ||
-    (import.meta.env.VITE_GOOGLE_CHAT_WEBHOOK_ANNOUNCEMENT as string | undefined)
-  if (!webhookUrl || typeof webhookUrl !== 'string' || !webhookUrl.startsWith('http')) return
-  void fetch(webhookUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text }),
-  }).catch((err) => console.warn('구글챗 실측 완료 전송 실패:', err))
+  if (import.meta.env.DEV) {
+    console.warn('실측 완료 알림은 클라이언트에서 비활성화되었습니다. 서버사이드 웹훅 릴레이가 필요합니다.')
+  }
 }
 
 export default function MeasurementUpload() {

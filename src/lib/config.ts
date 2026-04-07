@@ -23,8 +23,3 @@ export function getChannelTalkPluginKey(): string | null {
   const key = import.meta.env.VITE_CHANNEL_TALK_PLUGIN_KEY
   return typeof key === 'string' && key.trim() ? key.trim() : null
 }
-
-export function isTakeoutInboxEnabled(): boolean {
-  const raw = String(import.meta.env.VITE_ENABLE_TAKEOUT_INBOX ?? '').trim().toLowerCase()
-  return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on'
-}

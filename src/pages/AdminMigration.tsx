@@ -11,8 +11,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { supabase } from '@/lib/supabase'
 import { toast } from 'sonner'
-import type { EstimateFormData, EstimateRow } from '@/components/estimate/EstimateForm'
-import { computeFinalTotals } from '@/components/estimate/EstimateForm'
+import type { EstimateFormData, EstimateRow } from '@/components/estimate/estimateFormShared'
+import { computeFinalTotals } from '@/components/estimate/estimateFormShared'
 import type { Json } from '@/types/database'
 import { parseEstimateFromFile, type ParsedEstimate } from '@/lib/migrationParseService'
 
@@ -243,7 +243,7 @@ export default function AdminMigration() {
       <div className="max-w-4xl mx-auto space-y-6">
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-4">
-            <Link to="/" className="text-muted-foreground hover:text-foreground text-sm">← 홈</Link>
+            <Link to="/dashboard" className="text-muted-foreground hover:text-foreground text-sm">← 홈</Link>
             <h1 className="text-2xl font-bold text-foreground">데이터 통합 관리</h1>
           </div>
           <label className="flex items-center gap-2 cursor-pointer">

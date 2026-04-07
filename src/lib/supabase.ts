@@ -1,5 +1,4 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
-import type { Database } from '@/types/database'
 
 function getSupabaseConfig() {
   const url = import.meta.env.VITE_SUPABASE_URL
@@ -12,16 +11,16 @@ function getSupabaseConfig() {
   return { url, key }
 }
 
-let _client: SupabaseClient<Database> | null = null
+let _client: SupabaseClient | null = null
 
 /**
  * 브라우저용 Supabase 클라이언트 (Auth, DB, Storage).
  * BLUEPRINT: RBAC는 RLS로 제어. 권한별로 admin / sales / technician 분리.
  */
-export function getSupabase(): SupabaseClient<Database> {
+export function getSupabase(): SupabaseClient {
   if (!_client) {
     const { url, key } = getSupabaseConfig()
-    _client = createClient<Database>(url, key)
+    _client = createClient(url, key)
   }
   return _client
 }

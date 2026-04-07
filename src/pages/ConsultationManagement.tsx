@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
+import React, { Suspense, lazy, useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { ChevronLeft } from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
 import { RefreshCw, Zap, Phone, Copy, User, Images, MessageCircle, Pencil, Loader2, Search, FileText, CheckCircle, Ruler, Trash2, EyeOff, Star, Pin, LayoutDashboard } from 'lucide-react'
@@ -20,27 +20,35 @@ import {
 import { CONSULTATION_INDUSTRY_OPTIONS } from '@/data/referenceCases'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { subMonths, startOfMonth, startOfDay } from 'date-fns'
-import { EstimateForm, type EstimateFormData, type EstimateFormHandle, ProposalPreviewContent, FinalEstimatePreviewContent, computeProposalTotals, computeFinalTotals, createEmptyRow } from '@/components/estimate/EstimateForm'
-import { ConsultationHistoryLog } from '@/components/chat/ConsultationHistoryLog'
-import { MeasurementSection } from '@/components/Consultation/MeasurementSection'
-import { ConsultationHistoryTab } from '@/components/Consultation/ConsultationHistoryTab'
-import { ConsultationMeasurementTab } from '@/components/Consultation/ConsultationMeasurementTab'
-import { ConsultationEstimateTab } from '@/components/Consultation/ConsultationEstimateTab'
-import { EstimateFilesGallery } from '@/components/estimate/EstimateFilesGallery'
+import type { EstimateFormProps } from '@/components/estimate/EstimateForm'
+import { computeProposalTotals, computeFinalTotals, createEmptyRow, type EstimateFormData, type EstimateFormHandle } from '@/components/estimate/estimateFormShared'
 import { insertSystemLog } from '@/lib/activityLog'
-import { getVendorPriceRecommendation } from '@/lib/estimateRecommendationService'
-import { getDataByProductTags } from '@/lib/productDataMatching'
-import { exportEstimateToPdf, exportEstimateToImage, buildEstimateImageFilename, buildEstimatePdfFilename } from '@/lib/estimatePdfExport'
 import { isValidUUID } from '@/lib/uuid'
 import type { OrderDocument } from '@/types/orderDocument'
 import type { ConsultationEstimateFile } from '@/types/consultationEstimateFile'
 import { cn } from '@/lib/utils'
-import { createSharedGallery } from '@/lib/sharedGalleryService'
 import type { Json } from '@/types/database'
+
+const EstimateForm = lazy(async () => ({ default: (await import('@/components/estimate/EstimateForm')).EstimateForm })) as unknown as React.ForwardRefExoticComponent<
+  EstimateFormProps & React.RefAttributes<EstimateFormHandle>
+>
+const ProposalPreviewContent = lazy(async () => ({ default: (await import('@/components/estimate/EstimateForm')).ProposalPreviewContent as React.ComponentType<any> }))
+const FinalEstimatePreviewContent = lazy(async () => ({ default: (await import('@/components/estimate/EstimateForm')).FinalEstimatePreviewContent as React.ComponentType<any> }))
+const ConsultationHistoryTab = lazy(async () => ({ default: (await import('@/components/Consultation/ConsultationHistoryTab')).ConsultationHistoryTab as React.ComponentType<any> }))
+const ConsultationMeasurementTab = lazy(async () => ({ default: (await import('@/components/Consultation/ConsultationMeasurementTab')).ConsultationMeasurementTab as React.ComponentType<any> }))
+const ConsultationEstimateTab = lazy(async () => ({ default: (await import('@/components/Consultation/ConsultationEstimateTab')).ConsultationEstimateTab as React.ComponentType<any> }))
 
 // PC 사무용: 컴팩트 (48px 규칙 미적용)
 const INPUT_CLASS = 'h-10 text-sm'
 const BUTTON_SUBMIT_CLASS = 'h-9 w-full text-sm font-semibold'
+
+function LazySectionFallback({ label = '화면을 불러오는 중...' }: { label?: string }) {
+  return (
+    <div className="flex min-h-[160px] items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500">
+      {label}
+    </div>
+  )
+}
 
 /** 인입채널 옵션(9종) — consultations.metadata.source에 저장. 기본값 채널톡으로 오입력 방지 */
 const CONSULT_SOURCES = [
@@ -3540,7 +3548,7 @@ export default function ConsultationManagement() {
               </DialogContent>
             </Dialog>
 
-            <Link to="/">
+            <Link to="/dashboard">
               <Button
                 type="button"
                 variant="outline"
@@ -4082,88 +4090,94 @@ export default function ConsultationManagement() {
                 <div className="flex-1 overflow-y-auto min-h-0">
                   {/* 탭 1: 상담 히스토리 */}
                   <div className={detailPanelTab === 'history' ? 'p-4 flex flex-col min-h-0 h-full overflow-hidden' : 'hidden'}>
-                    <ConsultationHistoryTab
-                      selectedLeadData={selectedLeadData}
-                      samePhoneConsultations={samePhoneConsultations}
-                      estimateCountByConsultationId={estimateCountByConsultationId}
-                      validatedDisplayAmount={validatedDisplayAmount}
-                      isAdmin={isAdmin}
-                      onOpenEstimateModal={() => { setEstimateModalLeadId(selectedLeadData.id); setNewEstimateForm({ amount: '', summary: '' }) }}
-                      handleSetPartnerGrade={handleSetPartnerGrade}
-                      handleSelectLead={handleSelectLead}
-                      setHideConfirmLeadId={setHideConfirmLeadId}
-                      refetchImageCountForConsultation={refetchImageCountForConsultation}
-                    />
+                    <Suspense fallback={<LazySectionFallback label="상담 히스토리를 불러오는 중..." />}>
+                      <ConsultationHistoryTab
+                        selectedLeadData={selectedLeadData}
+                        samePhoneConsultations={samePhoneConsultations}
+                        estimateCountByConsultationId={estimateCountByConsultationId}
+                        validatedDisplayAmount={validatedDisplayAmount}
+                        isAdmin={isAdmin}
+                        onOpenEstimateModal={() => { setEstimateModalLeadId(selectedLeadData.id); setNewEstimateForm({ amount: '', summary: '' }) }}
+                        handleSetPartnerGrade={handleSetPartnerGrade}
+                        handleSelectLead={handleSelectLead}
+                        setHideConfirmLeadId={setHideConfirmLeadId}
+                        refetchImageCountForConsultation={refetchImageCountForConsultation}
+                      />
+                    </Suspense>
                   </div>
                   {/* 탭 2: 견적 관리 */}
                   <div className={detailPanelTab === 'estimate' ? 'p-4 flex flex-col min-h-0' : 'hidden'}>
-                    <ConsultationEstimateTab
-                      selectedLeadData={selectedLeadData}
-                      takeoutSpaceLinks={leads
-                        .map((lead) => ({
-                          spaceId: lead.channelChatId || lead.google_chat_url || '',
-                          displayName: lead.displayName || lead.company || '',
-                          consultationId: lead.id,
-                          inboundDate: lead.inboundDate ?? null,
-                          updateDate: lead.updateDate ?? null,
-                        }))
-                        .filter((item) => item.spaceId)}
-                      onApplyTakeoutSearch={({ query, consultationId }) => {
-                        const targetLead = consultationId ? leads.find((lead) => lead.id === consultationId) : null
-                        let nextTab: ListTab = '전체'
-                        if (targetLead?.status === '거절') nextTab = '거절'
-                        else if (targetLead?.status === '무효') nextTab = '무효'
-                        else if (targetLead?.workflowStage === '시공완료') nextTab = '종료'
-                        else if (targetLead?.workflowStage === '상담접수') nextTab = '미처리'
-                        else if (targetLead?.workflowStage === '견적중') nextTab = '견적중'
-                        else if (targetLead?.workflowStage === '계약완료') nextTab = '진행중'
+                    <Suspense fallback={<LazySectionFallback label="견적 관리를 불러오는 중..." />}>
+                      <ConsultationEstimateTab
+                        selectedLeadData={selectedLeadData}
+                        takeoutSpaceLinks={leads
+                          .map((lead) => ({
+                            spaceId: lead.channelChatId || lead.google_chat_url || '',
+                            displayName: lead.displayName || lead.company || '',
+                            consultationId: lead.id,
+                            inboundDate: lead.inboundDate ?? null,
+                            updateDate: lead.updateDate ?? null,
+                          }))
+                          .filter((item) => item.spaceId)}
+                        onApplyTakeoutSearch={({ query, consultationId }: { query: string; consultationId?: string }) => {
+                          const targetLead = consultationId ? leads.find((lead) => lead.id === consultationId) : null
+                          let nextTab: ListTab = '전체'
+                          if (targetLead?.status === '거절') nextTab = '거절'
+                          else if (targetLead?.status === '무효') nextTab = '무효'
+                          else if (targetLead?.workflowStage === '시공완료') nextTab = '종료'
+                          else if (targetLead?.workflowStage === '상담접수') nextTab = '미처리'
+                          else if (targetLead?.workflowStage === '견적중') nextTab = '견적중'
+                          else if (targetLead?.workflowStage === '계약완료') nextTab = '진행중'
 
-                        setSelectedLead(null)
-                        setListPage(0)
-                        setListTab(nextTab)
-                        setSearchQuery(query)
-                      }}
-                      onImportTakeoutCandidate={handleTakeoutImportToConsultation}
-                      estimateFilesList={estimateFilesList}
-                      takeoutImportRequest={
-                        pendingTakeoutImport?.consultationId === selectedLeadData.id
-                          ? {
-                            file: pendingTakeoutImport.file,
-                            requestId: pendingTakeoutImport.requestId,
-                          }
-                          : null
-                      }
-                      onTakeoutImportHandled={() => {
-                        setPendingTakeoutImport((current) =>
-                          current?.consultationId === selectedLeadData.id ? null : current
-                        )
-                      }}
-                      onFileUploadComplete={handleEstimateFileUploadComplete}
-                      estimateListFilter={estimateListFilter}
-                      setEstimateListFilter={setEstimateListFilter}
-                      selectedEstimateIds={selectedEstimateIds}
-                      setSelectedEstimateIds={setSelectedEstimateIds}
-                      filteredEstimateList={filteredEstimateList}
-                      setEstimateDeleteConfirmOpen={setEstimateDeleteConfirmOpen}
-                      estimatesLoading={estimatesLoading}
-                      estimateListByYear={estimateListByYear}
-                      archiveCutoff={archiveCutoff}
-                      handleSetFinalEstimate={handleSetFinalEstimate}
-                      setPrintEstimateId={setPrintEstimateId}
-                      setEstimateModalEditId={setEstimateModalEditId}
-                      setEstimateModalInitialData={setEstimateModalInitialData}
-                      setEstimateModalOpen={setEstimateModalOpen}
-                    />
+                          setSelectedLead(null)
+                          setListPage(0)
+                          setListTab(nextTab)
+                          setSearchQuery(query)
+                        }}
+                        onImportTakeoutCandidate={handleTakeoutImportToConsultation}
+                        estimateFilesList={estimateFilesList}
+                        takeoutImportRequest={
+                          pendingTakeoutImport?.consultationId === selectedLeadData.id
+                            ? {
+                              file: pendingTakeoutImport.file,
+                              requestId: pendingTakeoutImport.requestId,
+                            }
+                            : null
+                        }
+                        onTakeoutImportHandled={() => {
+                          setPendingTakeoutImport((current) =>
+                            current?.consultationId === selectedLeadData.id ? null : current
+                          )
+                        }}
+                        onFileUploadComplete={handleEstimateFileUploadComplete}
+                        estimateListFilter={estimateListFilter}
+                        setEstimateListFilter={setEstimateListFilter}
+                        selectedEstimateIds={selectedEstimateIds}
+                        setSelectedEstimateIds={setSelectedEstimateIds}
+                        filteredEstimateList={filteredEstimateList}
+                        setEstimateDeleteConfirmOpen={setEstimateDeleteConfirmOpen}
+                        estimatesLoading={estimatesLoading}
+                        estimateListByYear={estimateListByYear}
+                        archiveCutoff={archiveCutoff}
+                        handleSetFinalEstimate={handleSetFinalEstimate}
+                        setPrintEstimateId={setPrintEstimateId}
+                        setEstimateModalEditId={setEstimateModalEditId}
+                        setEstimateModalInitialData={setEstimateModalInitialData}
+                        setEstimateModalOpen={setEstimateModalOpen}
+                      />
+                    </Suspense>
                   </div>
                   {/* 탭 3: 실측·발주서 — BLUEPRINT Supabase Storage 기반 비주얼 갤러리(파일 리스트 아님), 퀵뷰 라이트박스 */}
                   <div className={detailPanelTab === 'measurement' ? 'p-4 space-y-4' : 'hidden'}>
-                    <ConsultationMeasurementTab
-                      consultationId={selectedLeadData.id}
-                      projectName={selectedLeadData.company || selectedLeadData.displayName || ''}
-                      orderDocuments={orderDocumentsList}
-                      measurementDrawingPath={selectedLeadData.measurementDrawingPath}
-                      onOrderDocumentsChange={(data) => setOrderDocumentsList(data ?? [])}
-                    />
+                    <Suspense fallback={<LazySectionFallback label="배치도와 발주서를 불러오는 중..." />}>
+                      <ConsultationMeasurementTab
+                        consultationId={selectedLeadData.id}
+                        projectName={selectedLeadData.company || selectedLeadData.displayName || ''}
+                        orderDocuments={orderDocumentsList}
+                        measurementDrawingPath={selectedLeadData.measurementDrawingPath}
+                        onOrderDocumentsChange={(data: OrderDocument[] | null) => setOrderDocumentsList(data ?? [])}
+                      />
+                    </Suspense>
                   </div>
                 </div>
               </Tabs>
@@ -4211,8 +4225,16 @@ export default function ConsultationManagement() {
                   const paddedRows = rawRows.length >= 20 ? rawRows.slice(0, 20) : [...rawRows, ...Array.from({ length: 20 - rawRows.length }, (_, i) => createEmptyRow(rawRows.length + i))]
                   const data = { ...adminPreviewData, rows: paddedRows }
                   return data.mode === 'PROPOSAL'
-                    ? <ProposalPreviewContent data={data} totals={computeProposalTotals(data)} />
-                    : <FinalEstimatePreviewContent data={data} totals={computeFinalTotals(data)} />
+                    ? (
+                      <Suspense fallback={<LazySectionFallback label="예산 기획안 미리보기를 불러오는 중..." />}>
+                        <ProposalPreviewContent data={data} totals={computeProposalTotals(data)} />
+                      </Suspense>
+                    )
+                    : (
+                      <Suspense fallback={<LazySectionFallback label="확정 견적서 미리보기를 불러오는 중..." />}>
+                        <FinalEstimatePreviewContent data={data} totals={computeFinalTotals(data)} />
+                      </Suspense>
+                    )
                 })()}
               </div>
               <div className="shrink-0 flex items-center justify-end gap-2 px-4 py-3 border-t border-border bg-muted/30">
@@ -4274,8 +4296,9 @@ export default function ConsultationManagement() {
                         return
                       }
                       const rawData = (est.approved_at && est.final_proposal_data ? est.final_proposal_data : est.payload) as unknown as EstimateFormData | undefined
-                      const filename = buildEstimateImageFilename(rawData?.quoteDate, rawData?.recipientName)
                       try {
+                        const { exportEstimateToImage, buildEstimateImageFilename } = await import('@/lib/estimatePdfExport')
+                        const filename = buildEstimateImageFilename(rawData?.quoteDate, rawData?.recipientName)
                         await exportEstimateToImage(el, filename)
                         toast.success('이미지가 저장되었습니다.')
                       } catch (err) {
@@ -4303,8 +4326,9 @@ export default function ConsultationManagement() {
                         return
                       }
                       const rawData = (est.approved_at && est.final_proposal_data ? est.final_proposal_data : est.payload) as unknown as EstimateFormData | undefined
-                      const filename = buildEstimatePdfFilename(rawData?.recipientName)
                       try {
+                        const { exportEstimateToPdf, buildEstimatePdfFilename } = await import('@/lib/estimatePdfExport')
+                        const filename = buildEstimatePdfFilename(rawData?.recipientName)
                         await exportEstimateToPdf(el, filename)
                         toast.success('PDF가 저장되었습니다.')
                         setPrintEstimateId(null)
@@ -4456,8 +4480,16 @@ export default function ConsultationManagement() {
                   const fallbackQuoteDate = (est.created_at ?? est.approved_at ?? '').toString().slice(0, 16).replace('T', ' ')
                   const data = { ...rawData, rows: paddedRows, quoteDate: rawData?.quoteDate || fallbackQuoteDate }
                   return data.mode === 'PROPOSAL'
-                    ? <ProposalPreviewContent data={data} totals={computeProposalTotals(data)} />
-                    : <FinalEstimatePreviewContent data={data} totals={computeFinalTotals(data)} />
+                    ? (
+                      <Suspense fallback={<LazySectionFallback label="예산 기획안 미리보기를 불러오는 중..." />}>
+                        <ProposalPreviewContent data={data} totals={computeProposalTotals(data)} />
+                      </Suspense>
+                    )
+                    : (
+                      <Suspense fallback={<LazySectionFallback label="확정 견적서 미리보기를 불러오는 중..." />}>
+                        <FinalEstimatePreviewContent data={data} totals={computeFinalTotals(data)} />
+                      </Suspense>
+                    )
                 })()}
               </div>
             </DialogContent>
@@ -4516,6 +4548,10 @@ export default function ConsultationManagement() {
                       return
                     }
                     try {
+                      const [{ getDataByProductTags }, { createSharedGallery }] = await Promise.all([
+                        import('@/lib/productDataMatching'),
+                        import('@/lib/sharedGalleryService'),
+                      ])
                       const map = await getDataByProductTags(names)
                       const ids = new Set<string>()
                       map.forEach((res) => res.images.forEach((img) => ids.add(img.id)))
@@ -4622,38 +4658,40 @@ export default function ConsultationManagement() {
               </div>
               <div className="flex-1 overflow-auto min-h-0 p-4">
                 {(selectedLeadData || (estimateModalInitialData?.rows?.length ?? 0) > 0) && (
-                  <EstimateForm
-                    key={estimateModalEditId ?? 'new'}
-                    ref={estimateFormRef}
-                    initialData={
-                      estimateModalInitialData
-                        ? {
-                          ...(selectedLeadData && {
-                            recipientName: selectedLeadData.contact?.trim() || '',
-                            recipientContact: selectedLeadData.contact ?? '',
-                          }),
-                          ...estimateModalInitialData,
-                        }
-                        : {
-                          recipientName: selectedLeadData?.contact?.trim() || '',
-                          recipientContact: selectedLeadData?.contact ?? '',
-                        }
-                    }
-                    pastEstimates={selectedLeadData ? mergedPastEstimatesForGuide : []}
-                    onApproved={selectedLeadData ? (data) => void handleEstimateApproved(selectedLeadData.id, data) : undefined}
-                    onRequestEstimatePreview={(consultationId, estimateId) => {
-                      if (selectedLead !== consultationId) {
-                        setSelectedLead(consultationId)
-                        setDetailPanelTab('estimate')
+                  <Suspense fallback={<LazySectionFallback label="견적 폼을 불러오는 중..." />}>
+                    <EstimateForm
+                      key={estimateModalEditId ?? 'new'}
+                      ref={estimateFormRef}
+                      initialData={
+                        estimateModalInitialData
+                          ? {
+                            ...(selectedLeadData && {
+                              recipientName: selectedLeadData.contact?.trim() || '',
+                              recipientContact: selectedLeadData.contact ?? '',
+                            }),
+                            ...estimateModalInitialData,
+                          }
+                          : {
+                            recipientName: selectedLeadData?.contact?.trim() || '',
+                            recipientContact: selectedLeadData?.contact ?? '',
+                          }
                       }
-                      setPrintEstimateId(estimateId)
-                    }}
-                    onRequestPriceBookImage={(url) => setPriceBookImageUrl(url)}
-                    modalOpen={estimateModalOpen}
-                    hideInternalActions
-                    showProfitabilityPanel
-                    className="max-w-5xl mx-auto"
-                  />
+                      pastEstimates={selectedLeadData ? mergedPastEstimatesForGuide : []}
+                      onApproved={selectedLeadData ? (data) => void handleEstimateApproved(selectedLeadData.id, data) : undefined}
+                      onRequestEstimatePreview={(consultationId, estimateId) => {
+                        if (selectedLead !== consultationId) {
+                          setSelectedLead(consultationId)
+                          setDetailPanelTab('estimate')
+                        }
+                        setPrintEstimateId(estimateId)
+                      }}
+                      onRequestPriceBookImage={(url) => setPriceBookImageUrl(url)}
+                      modalOpen={estimateModalOpen}
+                      hideInternalActions
+                      showProfitabilityPanel
+                      className="max-w-5xl mx-auto"
+                    />
+                  </Suspense>
                 )}
               </div>
             </DialogContent>

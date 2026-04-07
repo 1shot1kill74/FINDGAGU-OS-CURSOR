@@ -43,14 +43,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const redirectUrl = new URL('/login', window.location.origin)
     if (nextPath) redirectUrl.searchParams.set('next', nextPath)
 
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: redirectUrl.toString(),
-      },
-    })
+    const authorizeUrl = `${import.meta.env.VITE_SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(
+      redirectUrl.toString()
+    )}`
 
-    if (error) throw error
+    // Force navigation from the current origin so OAuth starts from the local app we are actually using.
+    window.location.assign(authorizeUrl)
   }, [])
 
   const signOut = useCallback(async () => {
