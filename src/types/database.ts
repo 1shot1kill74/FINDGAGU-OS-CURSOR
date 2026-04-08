@@ -82,6 +82,7 @@ export type Database = {
           first_comment: string
           publish_status: string
           external_post_id: string | null
+          external_post_url: string | null
           approved_at: string | null
           published_at: string | null
           created_at: string
@@ -97,6 +98,7 @@ export type Database = {
           first_comment?: string
           publish_status?: string
           external_post_id?: string | null
+          external_post_url?: string | null
           approved_at?: string | null
           published_at?: string | null
           created_at?: string
@@ -112,6 +114,7 @@ export type Database = {
           first_comment?: string
           publish_status?: string
           external_post_id?: string | null
+          external_post_url?: string | null
           approved_at?: string | null
           published_at?: string | null
           created_at?: string

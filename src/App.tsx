@@ -47,7 +47,7 @@ function RouteFallback() {
 function App() {
   return (
     <BrowserRouter>
-      <Toaster position="top-center" richColors />
+      <Toaster position="top-center" richColors closeButton />
       <Suspense fallback={<RouteFallback />}>
         <Routes>
           <Route path="/" element={<ShowroomHomepagePage />} />

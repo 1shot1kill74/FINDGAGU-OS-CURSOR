@@ -20,9 +20,40 @@ type Props = {
   selectedImages: ShowroomImageAsset[]
 }
 
-const DEFAULT_PROMPT = `Create a realistic 10-second renovation timelapse video using the first image as the before scene and the second image as the final after scene.The location is a managed study cafe / educational learning space. Start from the exact layout and furniture arrangement of the before image. End with the exact finished interior shown in the after image.Show a believable renovation process:workers enter the space, dismantle and remove the old desks, partitions, shelves, and furniture by hand, carry materials out, install new furniture, adjust the layout, assemble study booths and desks, and complete the final interior step by step.Important:all visible changes must happen only while workers are present and actively working.Do not let furniture, walls, desks, partitions, or fixtures morph, transform, slide, disappear, or appear on their own in an empty room.No magical transition, no instant replacement, no floating objects, no warping.The transformation must be driven by visible human labor: lifting, carrying, drilling, assembling, installing, and cleaning.Use a fixed wide camera angle, realistic indoor lighting, photorealistic construction details, smooth timelapse pacing, natural worker motion, and a clean final reveal of the completed study cafe.Keep the room structure consistent with the source images unless workers are visibly modifying it.The final frame should match the after image as closely as possible.
-furniture morphing, empty room transformation, magical remodeling, floating furniture, disappearing objects, surreal motion, warped walls, unstable geometry, random layout change, melting objects, ghost workers, duplicated workers, broken hands, distorted tools, flickering furniture, unrealistic construction, sudden scene jump
-Workers must always be visible when major furniture changes happen.No change should occur in an empty room.The before image and after image must be connected through realistic demolition and installation actions.`
+const DEFAULT_PROMPT = `Create a realistic 10-second renovation timelapse video using exactly two reference images.
+The first image is the BEFORE state of the space.
+The second image is the final AFTER state of the same space.
+You must clearly preserve this order: start from the first image, end at the second image, and never treat the second image as the starting point.
+
+The location is a managed study cafe / educational learning space.
+Start from the exact layout, furniture arrangement, wall condition, lighting direction, and camera framing of the first image.
+End with the exact completed interior, furniture arrangement, and final styling shown in the second image.
+
+Show a believable renovation timeline in this order:
+1. the original before space,
+2. workers entering,
+3. dismantling and demolition of the old desks, partitions, shelves, and furniture,
+4. removal and cleaning,
+5. installation and assembly of the new furniture and layout,
+6. final cleanup,
+7. reveal of the completed after space matching the second image.
+
+Important:
+- major visual changes must happen only while workers are visibly present and actively working
+- do not skip directly from before to after
+- do not blend the two images together
+- do not start from the after image
+- do not use only one image as the basis for the whole video
+- do not let furniture, walls, partitions, fixtures, desks, or shelves morph, teleport, slide, disappear, or appear on their own
+- no magical transition, no instant replacement, no floating objects, no warped geometry
+- the transformation must be driven by visible human labor: lifting, carrying, drilling, assembling, installing, dismantling, and cleaning
+
+Use a fixed wide camera angle, realistic indoor lighting, photorealistic construction details, smooth timelapse pacing, natural worker motion, and a clean final reveal.
+Keep the room structure consistent with the source images unless workers are visibly modifying it.
+The final frame must match the second image as closely as possible.
+
+Negative prompt:
+furniture morphing, empty room transformation, magical remodeling, floating furniture, disappearing objects, surreal motion, warped walls, unstable geometry, random layout change, melting objects, ghost workers, duplicated workers, broken hands, distorted tools, flickering furniture, unrealistic construction, sudden scene jump, after image used as start frame, before and after blended together, single-image interpretation`
 
 function channelLabel(channel: ShowroomShortsChannel) {
   if (channel === 'youtube') return 'YouTube Shorts'
@@ -72,7 +103,7 @@ export default function ShowroomShortsCreateDialog({ open, onOpenChange, selecte
         images: selectedImages,
       })
       setCreatedJobId(result.job.id)
-      toast.success('숏츠 작업을 저장했습니다. Kling 생성 요청은 서버 함수 배포 후 바로 동작합니다.')
+      toast.success('숏츠 작업을 저장했습니다. 원본 생성 요청은 서버 함수 배포 후 바로 동작합니다.')
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '숏츠 작업 저장에 실패했습니다.')
     } finally {
@@ -92,7 +123,7 @@ export default function ShowroomShortsCreateDialog({ open, onOpenChange, selecte
             내부 쇼룸 숏츠 만들기
           </DialogTitle>
           <DialogDescription>
-            Before 1장 + After 1장을 기준으로 Kling 원본(16:9, 10초, 무음)을 만들고, 최종 YouTube Shorts용 9:16 템플릿 합성본을 준비합니다.
+            Before 1장 + After 1장을 기준으로 원본 영상(16:9, 10초, 무음)을 만들고, 최종 YouTube Shorts용 9:16 템플릿 합성본을 준비합니다.
           </DialogDescription>
         </DialogHeader>
 
@@ -136,7 +167,7 @@ export default function ShowroomShortsCreateDialog({ open, onOpenChange, selecte
             <div className="rounded-xl border border-border bg-card p-4">
               <p className="text-sm font-medium">고정 생성 옵션</p>
               <ul className="mt-3 space-y-2 text-sm text-muted-foreground">
-                <li>Kling</li>
+                <li>내부 생성 엔진</li>
                 <li>길이 10초</li>
                 <li>원본 비율 16:9</li>
                 <li>최종본 비율 9:16</li>
@@ -163,13 +194,13 @@ export default function ShowroomShortsCreateDialog({ open, onOpenChange, selecte
 
           <div className="rounded-xl border border-border bg-card p-4">
             <label className="block text-sm font-medium">
-              Kling 프롬프트
+              생성 프롬프트
               <textarea
                 value={promptText}
                 onChange={(event) => setPromptText(event.target.value)}
                 rows={6}
                 className="mt-2 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                placeholder="Kling에 전달할 프롬프트를 입력하세요."
+                placeholder="생성 엔진에 전달할 프롬프트를 입력하세요."
               />
             </label>
             <p className="mt-2 text-xs text-muted-foreground">
@@ -216,7 +247,7 @@ export default function ShowroomShortsCreateDialog({ open, onOpenChange, selecte
                 <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
                 <div>
                   <p className="font-medium">숏츠 작업 초안이 생성되었습니다.</p>
-                  <p className="mt-1">현재 DB 저장과 Kling 호출 구조까지 준비되었습니다. 서버 함수 배포 후 원본 생성과 상태 조회가 연결됩니다.</p>
+                  <p className="mt-1">현재 DB 저장과 원본 생성 호출 구조까지 준비되었습니다. 서버 함수 배포 후 원본 생성과 상태 조회가 연결됩니다.</p>
                   <Link to="/admin/showroom-shorts" className="mt-2 inline-block font-medium underline underline-offset-4">
                     검수 대기 화면 열기
                   </Link>

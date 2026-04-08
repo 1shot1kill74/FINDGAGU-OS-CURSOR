@@ -1,5 +1,5 @@
 import { supabase } from '@/lib/supabase'
-import type { ShowroomImageAsset } from '@/lib/imageAssetService'
+import { fetchShowroomImageAssets, type ShowroomImageAsset } from '@/lib/imageAssetService'
 
 export const SHOWROOM_SHORTS_CHANNELS = ['youtube', 'facebook', 'instagram'] as const
 
@@ -38,10 +38,20 @@ export interface ShowroomShortsTargetRecord {
   first_comment: string
   publish_status: ShowroomShortsPublishStatus
   external_post_id: string | null
+  external_post_url: string | null
   approved_at: string | null
   published_at: string | null
   created_at: string
   updated_at: string
+}
+
+export interface ShowroomShortsLogRecord {
+  id: string
+  shorts_job_id: string
+  target_id: string | null
+  stage: string
+  message: string
+  created_at: string
 }
 
 export interface ShowroomShortsJobRecord {
@@ -66,6 +76,7 @@ export interface ShowroomShortsJobRecord {
   created_at: string
   updated_at: string
   targets?: ShowroomShortsTargetRecord[]
+  recent_logs?: ShowroomShortsLogRecord[]
 }
 
 export type ShowroomShortsSelectionValidation =
@@ -91,8 +102,18 @@ function trimOrNull(value: string | null | undefined): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null
 }
 
+function stripShowroomStagePrefix(value: string | null | undefined): string | null {
+  const normalized = trimOrNull(value)?.replace(/\s+/g, ' ').trim()
+  if (!normalized) return null
+  const stripped = normalized.replace(/^(견적|완료)\s+/u, '').trim()
+  return stripped || normalized
+}
+
 function getCanonicalSiteName(image: ShowroomImageAsset): string | null {
-  return trimOrNull(image.canonical_site_name) || trimOrNull(image.site_name)
+  return (
+    stripShowroomStagePrefix(image.canonical_site_name) ||
+    stripShowroomStagePrefix(image.site_name)
+  )
 }
 
 function normalizeComparableText(value: string | null | undefined): string | null {
@@ -178,13 +199,18 @@ export function buildShowroomShortsDraft(images: ShowroomImageAsset[]) {
     throw new Error(selection.message)
   }
 
+  const openShowroomTitle =
+    trimOrNull(selection.afterImage.external_display_name) ||
+    trimOrNull(selection.beforeImage.external_display_name) ||
+    null
+
   const siteName =
     getCanonicalSiteName(selection.afterImage) ||
     getCanonicalSiteName(selection.beforeImage) ||
     '시공 사례'
 
   return {
-    title: `${siteName} Before & After | 10초 숏츠`,
+    title: `${openShowroomTitle ?? siteName} Before & After | 10초 숏츠`,
     description: [
       '잠시 후, 이 공간은 완전히 달라집니다.',
       '',
@@ -206,7 +232,7 @@ export async function createShowroomShortsJob(payload: {
     throw new Error(selection.message)
   }
   if (!payload.promptText.trim()) {
-    throw new Error('Kling 프롬프트를 입력하세요.')
+    throw new Error('생성 프롬프트를 입력하세요.')
   }
   if (payload.channels.length === 0) {
     throw new Error('최소 1개 이상의 배포 채널을 선택하세요.')
@@ -286,10 +312,22 @@ function mapShortsTargetRow(row: Record<string, unknown>): ShowroomShortsTargetR
     first_comment: String(row.first_comment ?? ''),
     publish_status: normalizePublishStatus(row.publish_status),
     external_post_id: trimOrNull(typeof row.external_post_id === 'string' ? row.external_post_id : null),
+    external_post_url: trimOrNull(typeof row.external_post_url === 'string' ? row.external_post_url : null),
     approved_at: trimOrNull(typeof row.approved_at === 'string' ? row.approved_at : null),
     published_at: trimOrNull(typeof row.published_at === 'string' ? row.published_at : null),
     created_at: String(row.created_at ?? ''),
     updated_at: String(row.updated_at ?? ''),
+  }
+}
+
+function mapShortsLogRow(row: Record<string, unknown>): ShowroomShortsLogRecord {
+  return {
+    id: String(row.id ?? ''),
+    shorts_job_id: String(row.shorts_job_id ?? ''),
+    target_id: trimOrNull(typeof row.target_id === 'string' ? row.target_id : null),
+    stage: String(row.stage ?? ''),
+    message: String(row.message ?? ''),
+    created_at: String(row.created_at ?? ''),
   }
 }
 
@@ -337,7 +375,11 @@ function normalizePublishStatus(value: unknown): ShowroomShortsPublishStatus {
 }
 
 export async function listShowroomShortsJobs() {
-  const [{ data: jobs, error: jobsError }, { data: targets, error: targetsError }] = await Promise.all([
+  const [
+    { data: jobs, error: jobsError },
+    { data: targets, error: targetsError },
+    { data: logs, error: logsError },
+  ] = await Promise.all([
     supabase
       .from('showroom_shorts_jobs')
       .select('*')
@@ -346,10 +388,16 @@ export async function listShowroomShortsJobs() {
       .from('showroom_shorts_targets')
       .select('*')
       .order('created_at', { ascending: false }),
+    supabase
+      .from('showroom_shorts_logs')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(200),
   ])
 
   if (jobsError) throw new Error(jobsError.message)
   if (targetsError) throw new Error(targetsError.message)
+  if (logsError) throw new Error(logsError.message)
 
   const targetsByJobId = new Map<string, ShowroomShortsTargetRecord[]>()
   for (const row of targets ?? []) {
@@ -359,11 +407,20 @@ export async function listShowroomShortsJobs() {
     targetsByJobId.set(mapped.shorts_job_id, bucket)
   }
 
+  const logsByJobId = new Map<string, ShowroomShortsLogRecord[]>()
+  for (const row of logs ?? []) {
+    const mapped = mapShortsLogRow(row as Record<string, unknown>)
+    const bucket = logsByJobId.get(mapped.shorts_job_id) ?? []
+    if (bucket.length < 5) bucket.push(mapped)
+    logsByJobId.set(mapped.shorts_job_id, bucket)
+  }
+
   return (jobs ?? []).map((row) => {
     const mapped = mapShortsJobRow(row as Record<string, unknown>)
     return {
       ...mapped,
       targets: targetsByJobId.get(mapped.id) ?? [],
+      recent_logs: logsByJobId.get(mapped.id) ?? [],
     }
   })
 }
@@ -374,16 +431,39 @@ export async function requestShowroomShortsGeneration(jobId: string) {
     jobId: string
     status: string
     klingTaskId: string | null
+    provider?: string
+    upstreamStatus?: number
+    requestBaseUrl?: string
     message?: string
   }>('showroom-shorts-create', {
     body: { jobId },
   })
 
   if (error) {
-    throw new Error(error.message)
+    const fallbackMessage = typeof error.message === 'string' ? error.message : '원본 생성 요청에 실패했습니다.'
+    const detailedMessage =
+      typeof error.context === 'string' && error.context.trim()
+        ? (() => {
+            try {
+              const parsed = JSON.parse(error.context) as {
+                message?: string
+                provider?: string
+                requestBaseUrl?: string
+                upstreamStatus?: number
+              }
+              const parts = [parsed.message, parsed.provider ? `provider=${parsed.provider}` : null, parsed.upstreamStatus ? `status=${parsed.upstreamStatus}` : null]
+                .filter(Boolean)
+                .join(' | ')
+              return parts || fallbackMessage
+            } catch {
+              return fallbackMessage
+            }
+          })()
+        : fallbackMessage
+    throw new Error(detailedMessage)
   }
   if (!data?.ok) {
-    throw new Error(data?.message ?? 'Kling 생성 요청에 실패했습니다.')
+    throw new Error(data?.message ?? '원본 생성 요청에 실패했습니다.')
   }
   return data
 }
@@ -396,16 +476,312 @@ export async function pollShowroomShortsJob(jobId: string) {
     klingStatus?: string | null
     sourceVideoUrl?: string | null
     finalVideoUrl?: string | null
+    provider?: string
+    upstreamStatus?: number
+    requestBaseUrl?: string
     message?: string
   }>('showroom-shorts-poll', {
     body: { jobId },
   })
 
   if (error) {
-    throw new Error(error.message)
+    const fallbackMessage = typeof error.message === 'string' ? error.message : '숏츠 작업 상태 조회에 실패했습니다.'
+    const detailedMessage =
+      typeof error.context === 'string' && error.context.trim()
+        ? (() => {
+            try {
+              const parsed = JSON.parse(error.context) as {
+                message?: string
+                provider?: string
+                requestBaseUrl?: string
+                upstreamStatus?: number
+              }
+              const parts = [parsed.message, parsed.provider ? `provider=${parsed.provider}` : null, parsed.upstreamStatus ? `status=${parsed.upstreamStatus}` : null]
+                .filter(Boolean)
+                .join(' | ')
+              return parts || fallbackMessage
+            } catch {
+              return fallbackMessage
+            }
+          })()
+        : fallbackMessage
+    throw new Error(detailedMessage)
   }
   if (!data?.ok) {
     throw new Error(data?.message ?? '숏츠 작업 상태 조회에 실패했습니다.')
   }
   return data
+}
+
+async function insertShortsTargetLog(params: {
+  jobId: string
+  targetId: string
+  stage: string
+  message: string
+  payload?: Record<string, unknown>
+}) {
+  await supabase.from('showroom_shorts_logs').insert({
+    shorts_job_id: params.jobId,
+    target_id: params.targetId,
+    stage: params.stage,
+    message: params.message,
+    payload: params.payload ?? {},
+  })
+}
+
+function joinHashtags(hashtags: string[]) {
+  return hashtags.join(' ').trim()
+}
+
+export function buildShowroomShortsPublishPackage(target: ShowroomShortsTargetRecord) {
+  const hashtagsText = joinHashtags(target.hashtags)
+  const descriptionWithHashtags = [target.description.trim(), hashtagsText].filter(Boolean).join('\n\n')
+  const caption = [target.description.trim(), hashtagsText].filter(Boolean).join('\n\n')
+
+  return {
+    title: target.title,
+    description: target.description,
+    hashtagsText,
+    firstComment: target.first_comment,
+    descriptionWithHashtags,
+    caption,
+  }
+}
+
+export async function markShowroomShortsTargetsReady(jobId: string) {
+  const nowIso = new Date().toISOString()
+  const { data: targets, error } = await supabase
+    .from('showroom_shorts_targets')
+    .update({
+      publish_status: 'ready',
+      updated_at: nowIso,
+    })
+    .eq('shorts_job_id', jobId)
+    .in('publish_status', ['draft', 'failed'])
+    .select('*')
+
+  if (error) {
+    throw new Error(error.message)
+  }
+
+  await Promise.all(
+    (targets ?? []).map((target) =>
+      insertShortsTargetLog({
+        jobId,
+        targetId: String(target.id),
+        stage: 'publish_ready',
+        message: '업로드 준비가 완료되었습니다.',
+        payload: { channel: target.channel },
+      })
+    )
+  )
+
+  return (targets ?? []).map((target) => mapShortsTargetRow(target as Record<string, unknown>))
+}
+
+export async function approveShowroomShortsTarget(targetId: string) {
+  const nowIso = new Date().toISOString()
+  const { data: target, error } = await supabase
+    .from('showroom_shorts_targets')
+    .update({
+      publish_status: 'approved',
+      approved_at: nowIso,
+      updated_at: nowIso,
+    })
+    .eq('id', targetId)
+    .select('*')
+    .single()
+
+  if (error || !target) {
+    throw new Error(error?.message ?? '업로드 승인 처리에 실패했습니다.')
+  }
+
+  const mapped = mapShortsTargetRow(target as Record<string, unknown>)
+  await insertShortsTargetLog({
+    jobId: mapped.shorts_job_id,
+    targetId: mapped.id,
+    stage: 'publish_approved',
+    message: `${mapped.channel} 업로드를 승인했습니다.`,
+    payload: { channel: mapped.channel },
+  })
+
+  return mapped
+}
+
+export async function markShowroomShortsTargetPublished(
+  targetId: string,
+  payload?: { externalPostId?: string | null; externalPostUrl?: string | null }
+) {
+  const nowIso = new Date().toISOString()
+  const { data: target, error } = await supabase
+    .from('showroom_shorts_targets')
+    .update({
+      publish_status: 'published',
+      external_post_id: trimOrNull(payload?.externalPostId),
+      external_post_url: trimOrNull(payload?.externalPostUrl),
+      published_at: nowIso,
+      updated_at: nowIso,
+    })
+    .eq('id', targetId)
+    .select('*')
+    .single()
+
+  if (error || !target) {
+    throw new Error(error?.message ?? '게시 완료 처리에 실패했습니다.')
+  }
+
+  const mapped = mapShortsTargetRow(target as Record<string, unknown>)
+  await insertShortsTargetLog({
+    jobId: mapped.shorts_job_id,
+    targetId: mapped.id,
+    stage: 'publish_completed',
+    message: `${mapped.channel} 게시를 완료했습니다.`,
+    payload: {
+      channel: mapped.channel,
+      external_post_id: mapped.external_post_id,
+      external_post_url: mapped.external_post_url,
+    },
+  })
+
+  return mapped
+}
+
+export async function markShowroomShortsTargetFailed(targetId: string) {
+  const nowIso = new Date().toISOString()
+  const { data: target, error } = await supabase
+    .from('showroom_shorts_targets')
+    .update({
+      publish_status: 'failed',
+      updated_at: nowIso,
+    })
+    .eq('id', targetId)
+    .select('*')
+    .single()
+
+  if (error || !target) {
+    throw new Error(error?.message ?? '업로드 실패 상태 저장에 실패했습니다.')
+  }
+
+  const mapped = mapShortsTargetRow(target as Record<string, unknown>)
+  await insertShortsTargetLog({
+    jobId: mapped.shorts_job_id,
+    targetId: mapped.id,
+    stage: 'publish_failed',
+    message: `${mapped.channel} 업로드를 실패로 표시했습니다.`,
+    payload: { channel: mapped.channel },
+  })
+
+  return mapped
+}
+
+function getShowroomShortsJobGroupKeys(job: ShowroomShortsJobRecord, assets: ShowroomImageAsset[]) {
+  const keys = new Set<string>()
+  if (job.before_after_group_key?.trim()) {
+    keys.add(job.before_after_group_key.trim())
+  }
+
+  const beforeAsset = assets.find((asset) => asset.id === job.before_asset_id)
+  const afterAsset = assets.find((asset) => asset.id === job.after_asset_id)
+
+  const beforeKey = beforeAsset ? buildShowroomShortsGroupKey(beforeAsset) : null
+  const afterKey = afterAsset ? buildShowroomShortsGroupKey(afterAsset) : null
+
+  if (beforeKey) keys.add(beforeKey)
+  if (afterKey) keys.add(afterKey)
+
+  return {
+    keys,
+    beforeAsset,
+    afterAsset,
+    canonicalSiteNames: new Set(
+      [beforeAsset, afterAsset]
+        .map((asset) => (asset ? normalizeComparableText(getCanonicalSiteName(asset)) : null))
+        .filter((value): value is string => Boolean(value))
+    ),
+  }
+}
+
+export async function listShowroomShortsReplacementCandidates(
+  job: ShowroomShortsJobRecord,
+  role: 'before' | 'after'
+) {
+  const assets = await fetchShowroomImageAssets()
+  const context = getShowroomShortsJobGroupKeys(job, assets)
+
+  const candidates = assets
+    .filter((asset) => asset.before_after_role === role)
+    .filter((asset) => {
+      const groupKey = buildShowroomShortsGroupKey(asset)
+      if (groupKey && context.keys.has(groupKey)) return true
+      const canonicalSiteName = normalizeComparableText(getCanonicalSiteName(asset))
+      return canonicalSiteName ? context.canonicalSiteNames.has(canonicalSiteName) : false
+    })
+    .sort((a, b) => {
+      const aTime = a.created_at ? new Date(a.created_at).getTime() : 0
+      const bTime = b.created_at ? new Date(b.created_at).getTime() : 0
+      return bTime - aTime
+    })
+
+  return candidates
+}
+
+export async function replaceShowroomShortsJobImage(
+  job: ShowroomShortsJobRecord,
+  role: 'before' | 'after',
+  assetId: string
+) {
+  const assets = await fetchShowroomImageAssets()
+  const context = getShowroomShortsJobGroupKeys(job, assets)
+  const replacement = assets.find((asset) => asset.id === assetId)
+
+  if (!replacement) {
+    throw new Error('선택한 이미지를 찾지 못했습니다.')
+  }
+  if (replacement.before_after_role !== role) {
+    throw new Error(`${role === 'before' ? 'Before' : 'After'} 역할의 이미지만 선택할 수 있습니다.`)
+  }
+
+  const currentBefore = role === 'before' ? replacement : context.beforeAsset
+  const currentAfter = role === 'after' ? replacement : context.afterAsset
+
+  if (!currentBefore || !currentAfter) {
+    throw new Error('현재 작업의 Before/After 이미지를 불러오지 못했습니다.')
+  }
+
+  const selection = validateBeforeAfterSelection([currentBefore, currentAfter])
+  if (!selection.ok) {
+    throw new Error(selection.message)
+  }
+
+  const nowIso = new Date().toISOString()
+  const { error: updateError } = await supabase
+    .from('showroom_shorts_jobs')
+    .update({
+      before_asset_id: selection.beforeImage.id,
+      after_asset_id: selection.afterImage.id,
+      before_asset_url: selection.beforeImage.cloudinary_url || selection.beforeImage.thumbnail_url,
+      after_asset_url: selection.afterImage.cloudinary_url || selection.afterImage.thumbnail_url,
+      before_after_group_key: selection.groupKey,
+      status: 'draft',
+      kling_job_id: null,
+      kling_status: null,
+      source_video_url: null,
+      final_video_url: null,
+      updated_at: nowIso,
+    })
+    .eq('id', job.id)
+
+  if (updateError) {
+    throw new Error(updateError.message)
+  }
+
+  await supabase.from('showroom_shorts_logs').insert({
+    shorts_job_id: job.id,
+    stage: 'assets_replaced',
+    message: `${role === 'before' ? 'Before' : 'After'} 이미지를 같은 현장 사진으로 교체했습니다.`,
+    payload: {
+      before_asset_id: selection.beforeImage.id,
+      after_asset_id: selection.afterImage.id,
+    },
+  })
 }

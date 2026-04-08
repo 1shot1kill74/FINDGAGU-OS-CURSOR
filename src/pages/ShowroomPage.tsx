@@ -992,11 +992,18 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
         setCaseProfileDraftBySite((prev) => {
           const next = { ...prev }
           rows.forEach((row) => {
-            const existing = next[row.siteName]
-            next[row.siteName] = {
+            const keys = Array.from(new Set([
+              row.siteName.trim(),
+              row.canonicalSiteName?.trim() ?? '',
+            ].filter(Boolean)))
+            const existing = keys.map((key) => next[key]).find(Boolean)
+            const value = {
               painPoint: existing?.painPoint ?? row.painPoint ?? '',
               solutionPoint: existing?.solutionPoint ?? row.solutionPoint ?? '',
             }
+            keys.forEach((key) => {
+              next[key] = value
+            })
           })
           return next
         })
@@ -1584,16 +1591,6 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
             )}
           </div>
         </button>
-        {caseProfileDraft.painPoint.trim() && (
-          <div className="border-t border-neutral-100 bg-white p-3">
-            <div className="rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2.5">
-              <p className="text-xs font-medium text-neutral-800">전후 비교 설명</p>
-              <div className="mt-3 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm leading-6 text-neutral-700 whitespace-pre-wrap">
-                {caseProfileDraft.painPoint}
-              </div>
-            </div>
-          </div>
-        )}
         {showInternalControls && (
           <div className="space-y-3 border-t border-neutral-100 bg-neutral-50/50 p-3">
             <p className="text-xs text-neutral-500">

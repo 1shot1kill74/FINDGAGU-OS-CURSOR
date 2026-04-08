@@ -7,6 +7,9 @@ const CORS = {
 }
 
 type JsonRecord = Record<string, unknown>
+const DEFAULT_KLING_API_BASE_URL = "https://api.klingai.com"
+const FALLBACK_KLING_API_BASE_URL = "https://api-beijing.klingai.com"
+type KlingApiMode = "legacy-multi-image" | "image-to-video-v3" | "omni"
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -42,6 +45,7 @@ async function createKlingJwt(accessKey: string, secretKey: string) {
   const payload = {
     iss: accessKey,
     iat: now,
+    nbf: now - 5,
     exp: now + 1800,
   }
   const headerPart = base64UrlEncodeJson(header)
@@ -65,6 +69,121 @@ function getRecord(value: unknown): JsonRecord | null {
 
 function getString(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : ""
+}
+
+function getOptionalString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null
+}
+
+function normalizeKlingModelName(value: string) {
+  return value.trim().toLowerCase()
+}
+
+function resolveKlingApiMode(modelName: string): KlingApiMode {
+  const normalized = normalizeKlingModelName(modelName)
+  if (normalized.includes("omni")) return "omni"
+  if (normalized.includes("v3")) return "image-to-video-v3"
+  return "legacy-multi-image"
+}
+
+function getKlingCreatePath(mode: KlingApiMode) {
+  if (mode === "omni") return "/v1/videos/omni"
+  if (mode === "image-to-video-v3") return "/v1/videos/image2video"
+  return "/v1/videos/multi-image2video"
+}
+
+function buildKlingRequestBody(input: {
+  mode: KlingApiMode
+  modelName: string
+  beforeUrl: string
+  afterUrl: string
+  promptText: string
+  durationSeconds: number
+  aspectRatio: string
+  externalTaskId: string
+  callbackUrl: string | null
+}) {
+  const common = {
+    model_name: input.modelName,
+    aspect_ratio: input.aspectRatio,
+    external_task_id: input.externalTaskId,
+  }
+
+  if (input.mode === "omni") {
+    const requestBody: JsonRecord = {
+      ...common,
+      prompt: input.promptText,
+      image_urls: [input.beforeUrl, input.afterUrl],
+      duration: input.durationSeconds,
+      generate_audio: false,
+    }
+    if (input.callbackUrl) {
+      requestBody.callback_url = input.callbackUrl
+      requestBody.webhook_url = input.callbackUrl
+    }
+    return requestBody
+  }
+
+  if (input.mode === "image-to-video-v3") {
+    const requestBody: JsonRecord = {
+      ...common,
+      image: input.beforeUrl,
+      image_tail: input.afterUrl,
+      prompt: input.promptText,
+      mode: "pro",
+      duration: String(input.durationSeconds),
+      sound: "off",
+    }
+    if (input.callbackUrl) {
+      requestBody.callback_url = input.callbackUrl
+    }
+    return requestBody
+  }
+
+  const requestBody: JsonRecord = {
+    ...common,
+    image_list: [
+      { image: input.beforeUrl },
+      { image: input.afterUrl },
+    ],
+    prompt: input.promptText,
+    mode: "pro",
+    duration: String(input.durationSeconds),
+    watermark_info: { enabled: true },
+  }
+  if (input.callbackUrl) {
+    requestBody.callback_url = input.callbackUrl
+  }
+  return requestBody
+}
+
+function buildKlingApiBaseUrls(preferredBaseUrl: string | null) {
+  const candidates = [preferredBaseUrl || DEFAULT_KLING_API_BASE_URL, DEFAULT_KLING_API_BASE_URL, FALLBACK_KLING_API_BASE_URL]
+  return Array.from(new Set(candidates.map((value) => value.replace(/\/+$/, "")).filter(Boolean)))
+}
+
+function parseJsonRecord(rawText: string): JsonRecord | null {
+  try {
+    return rawText ? JSON.parse(rawText) as JsonRecord : null
+  } catch {
+    return null
+  }
+}
+
+function getKlingErrorMessage(payload: JsonRecord | null, rawText: string, status: number) {
+  return (
+    getString(payload?.message) ||
+    getString(payload?.error) ||
+    getOptionalString(getRecord(payload?.data)?.message) ||
+    rawText.trim() ||
+    `원본 생성 요청 실패 (${status})`
+  )
+}
+
+function shouldRetryWithFallback(status: number, payload: JsonRecord | null, rawText: string) {
+  if (status !== 401) return false
+  const message = getKlingErrorMessage(payload, rawText, status).toLowerCase()
+  return message.includes("access key not found") || message.includes("authorization") || message.includes("jwt")
 }
 
 function extractTaskId(payload: JsonRecord | null): string | null {
@@ -100,8 +219,8 @@ Deno.serve(async (req) => {
     const serviceRoleKey = getEnv("SUPABASE_SERVICE_ROLE_KEY")
     const klingAccessKey = getEnv("KLING_ACCESS_KEY")
     const klingSecretKey = getEnv("KLING_SECRET_KEY")
-    const klingApiBaseUrl = getEnv("KLING_API_BASE_URL", false) || "https://api-beijing.klingai.com"
-    const klingModelName = getEnv("KLING_MODEL_NAME", false) || "kling-v1-6"
+    const klingApiBaseUrl = getEnv("KLING_API_BASE_URL", false) || DEFAULT_KLING_API_BASE_URL
+    const klingModelName = getEnv("KLING_MODEL_NAME", false) || "kling-v3"
     const callbackUrl = getEnv("SHOWROOM_SHORTS_CALLBACK_URL", false)
 
     const supabase = createClient(supabaseUrl, serviceRoleKey)
@@ -128,25 +247,23 @@ Deno.serve(async (req) => {
     }
 
     const token = await createKlingJwt(klingAccessKey, klingSecretKey)
-    const requestBody: JsonRecord = {
-      model_name: klingModelName,
-      image_list: [
-        { image: beforeUrl },
-        { image: afterUrl },
-      ],
-      prompt: getString(job.prompt_text),
-      mode: "pro",
-      duration: String(job.duration_seconds ?? 10),
-      aspect_ratio: getString(job.source_aspect_ratio) || "16:9",
-      external_task_id: jobId,
-      watermark_info: { enabled: true },
-    }
+    const apiMode = resolveKlingApiMode(klingModelName)
+    const requestPath = getKlingCreatePath(apiMode)
+    const requestBody = buildKlingRequestBody({
+      mode: apiMode,
+      modelName: klingModelName,
+      beforeUrl,
+      afterUrl,
+      promptText: getString(job.prompt_text),
+      durationSeconds: Number(job.duration_seconds ?? 10),
+      aspectRatio: getString(job.source_aspect_ratio) || "16:9",
+      externalTaskId: jobId,
+      callbackUrl: getOptionalString(callbackUrl),
+    })
 
-    if (callbackUrl) {
-      requestBody.callback_url = callbackUrl
-    }
-
-    const response = await fetch(`${klingApiBaseUrl.replace(/\/+$/, "")}/v1/videos/multi-image2video`, {
+    const candidateBaseUrls = buildKlingApiBaseUrls(klingApiBaseUrl)
+    let activeBaseUrl = candidateBaseUrls[0]
+    let response = await fetch(`${activeBaseUrl}${requestPath}`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
@@ -155,12 +272,26 @@ Deno.serve(async (req) => {
       body: JSON.stringify(requestBody),
     })
 
-    const rawText = await response.text()
-    let parsed: JsonRecord | null = null
-    try {
-      parsed = rawText ? JSON.parse(rawText) as JsonRecord : null
-    } catch {
-      parsed = null
+    let rawText = await response.text()
+    let parsed: JsonRecord | null = parseJsonRecord(rawText)
+
+    if (!response.ok && shouldRetryWithFallback(response.status, parsed, rawText) && candidateBaseUrls.length > 1) {
+      for (const candidate of candidateBaseUrls.slice(1)) {
+        activeBaseUrl = candidate
+        response = await fetch(`${activeBaseUrl}${requestPath}`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(requestBody),
+        })
+        rawText = await response.text()
+        parsed = parseJsonRecord(rawText)
+        if (response.ok || !shouldRetryWithFallback(response.status, parsed, rawText)) {
+          break
+        }
+      }
     }
 
     if (!response.ok) {
@@ -175,13 +306,22 @@ Deno.serve(async (req) => {
       await insertLog(supabase, {
         jobId,
         stage: "kling_request_failed",
-        message: `Kling 요청 실패 (${response.status})`,
-        payload: parsed ?? { rawText },
+        message: `원본 생성 요청 실패 (${response.status})`,
+        payload: {
+          ...(parsed ?? { rawText }),
+          request_path: requestPath,
+          request_mode: apiMode,
+          model_name: klingModelName,
+          request_base_url: activeBaseUrl,
+        },
       })
       return json({
         ok: false,
-        message: getString(parsed?.message) || getString(parsed?.error) || `Kling 요청 실패 (${response.status})`,
-      }, response.status)
+        provider: "kling",
+        upstreamStatus: response.status,
+        requestBaseUrl: activeBaseUrl,
+        message: getKlingErrorMessage(parsed, rawText, response.status),
+      })
     }
 
     const taskId = extractTaskId(parsed)
@@ -198,8 +338,14 @@ Deno.serve(async (req) => {
     await insertLog(supabase, {
       jobId,
       stage: "kling_requested",
-      message: "Kling multi-image2video 작업을 요청했습니다.",
-      payload: parsed ?? { rawText },
+      message: "원본 영상 생성 작업을 요청했습니다.",
+      payload: {
+        ...(parsed ?? { rawText }),
+        request_path: requestPath,
+        request_mode: apiMode,
+        model_name: klingModelName,
+        request_base_url: activeBaseUrl,
+      },
     })
 
     return json({
@@ -207,7 +353,9 @@ Deno.serve(async (req) => {
       jobId,
       status: "generating",
       klingTaskId: taskId,
-      message: "Kling 원본 생성 요청을 전달했습니다.",
+      requestBaseUrl: activeBaseUrl,
+      requestPath,
+      message: "원본 생성 요청을 전달했습니다.",
     })
   } catch (error) {
     return json({

@@ -1,0 +1,62 @@
+{
+  "content_item_id": "test-naver-blog-20260401-mail-check",
+  "showroom_group_key": "AAAAWeHmZZ8",
+  "site_name": "2409 경기 광주 학원 9543 메일확인",
+  "internal_site_name": "완료 2412 경기광주 학원 9543",
+  "title_hint": "2409 경기 광주 학원 9543 메일확인 네이버 블로그 초안",
+  "location_kr": "경기 광주",
+  "business_type_kr": "학원",
+  "primary_keyword": "학원 가구",
+  "product_names": [
+    "학원 가구",
+    "클래식A",
+    "멀바우",
+    "경기 광주"
+  ],
+  "color_names": [
+    "멀바우"
+  ],
+  "seo_description": "실제 쇼룸 이미지 자산을 바탕으로 학원 공간 구성과 좌석 배치 포인트를 SEO, AEO, GEO 관점에서 정리한 네이버 블로그 초안",
+  "faq_topics": [
+    "학원 좌석 구성",
+    "학원 가구 선택 기준",
+    "학원 동선 계획"
+  ],
+  "cta_text": "비슷한 사례를 더 보려면 파인드가구 홈페이지 안의 온라인 쇼룸에서 다른 현장도 함께 비교해보세요.",
+  "review_email": "admin@findgagu.com",
+  "quality_threshold": 85,
+  "max_images": 5,
+  "before_after_available": false,
+  "comparison_focus": [
+    "공간 구성 변화",
+    "동선 변화",
+    "분위기 변화"
+  ],
+  "before_images": [],
+  "after_images": [
+    {
+      "id": "680bfa61-bcb9-4d61-98f6-23f57f4fccf4",
+      "url": "https://res.cloudinary.com/dcjlf5wpg/image/upload/v1773675316/assets/projects/260316_%EC%99%84%EB%A3%8C_2412_%EA%B2%BD%EA%B8%B0%EA%B4%91%EC%A3%BC_%ED%95%99%EC%9B%90_9543_%EC%B1%85%EC%83%81_mmtchkw6.jpg",
+      "pair_id": "",
+      "product_name": "클래식A",
+      "color_name": "멀바우",
+      "caption": "완료 2412 경기광주 학원 9543 애프터 이미지 1"
+    },
+    {
+      "id": "5cd06018-8e3c-421d-a162-b61dcc9b05cd",
+      "url": "https://res.cloudinary.com/dcjlf5wpg/image/upload/v1773675317/assets/projects/260316_%EC%99%84%EB%A3%8C_2412_%EA%B2%BD%EA%B8%B0%EA%B4%91%EC%A3%BC_%ED%95%99%EC%9B%90_9543_%EC%B1%85%EC%83%81_mmtchltg.jpg",
+      "pair_id": "",
+      "product_name": "클래식A",
+      "color_name": "멀바우",
+      "caption": "완료 2412 경기광주 학원 9543 애프터 이미지 2"
+    },
+    {
+      "id": "df9edea7-0fdc-410e-89b5-d3219bbf1502",
+      "url": "https://res.cloudinary.com/dcjlf5wpg/image/upload/v1773675318/assets/projects/260316_%EC%99%84%EB%A3%8C_2412_%EA%B2%BD%EA%B8%B0%EA%B4%91%EC%A3%BC_%ED%95%99%EC%9B%90_9543_%EC%B1%85%EC%83%81_mmtchmoh.jpg",
+      "pair_id": "",
+      "product_name": "클래식A",
+      "color_name": "멀바우",
+      "caption": "완료 2412 경기광주 학원 9543 애프터 이미지 3"
+    }
+  ]
+}

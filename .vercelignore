@@ -1,19 +1,21 @@
-node_modules
-dist
-dist-ssr
-.git
-.cursor
-assets
-snapshots
-data
-supabase/.temp
-apps/homepage-lovable-ref
+/node_modules
+/dist
+/dist-ssr
+/.git
+/.cursor
+/.vercel
+/.claude
+/assets
+/시공현장 이미지
+/snapshots
+/data
+/supabase/.temp
+/apps/homepage-lovable-ref
 *.log
 *.local
-tsconfig.tsbuildinfo
-data_migration.xlsx
-project_image_summary.csv
+/tsconfig.tsbuildinfo
+/data_migration.xlsx
+/project_image_summary.csv
 .tmp_*.js
-시공현장 이미지
-_archived
-docs
+/_archived
+/docs
