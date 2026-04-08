@@ -18,6 +18,22 @@ export type ResolvedShowroomShare = {
   expires_at: string | null
 }
 
+function buildPublicShowroomImageProxyUrl(assetId: string, variant: 'thumb' | 'full'): string {
+  const query = new URLSearchParams({
+    id: assetId,
+    variant,
+  })
+  return `/api/showroom-image?${query.toString()}`
+}
+
+function mapToProtectedPublicShowroomAsset(asset: ShowroomImageAsset): ShowroomImageAsset {
+  return {
+    ...asset,
+    cloudinary_url: buildPublicShowroomImageProxyUrl(asset.id, 'full'),
+    thumbnail_url: buildPublicShowroomImageProxyUrl(asset.id, 'thumb'),
+  }
+}
+
 type CreateShowroomShareInput = {
   title?: string
   description?: string
@@ -156,7 +172,7 @@ async function fetchAllPublicShowroomRpcRows(
 
 export async function fetchPublicShowroomAssets(): Promise<ShowroomImageAsset[]> {
   const rows = await fetchAllPublicShowroomRpcRows('get_public_showroom_assets')
-  return rows.map((r) => mapPublicShowroomRpcRowToShowroomAsset(r))
+  return rows.map((r) => mapToProtectedPublicShowroomAsset(mapPublicShowroomRpcRowToShowroomAsset(r)))
 }
 
 export async function fetchPublicShowroomAssetsByShareToken(
@@ -170,5 +186,5 @@ export async function fetchPublicShowroomAssetsByShareToken(
     share_token: trimmed,
     include_all: Boolean(options?.includeAll),
   })
-  return rows.map((r) => mapPublicShowroomRpcRowToShowroomAsset(r))
+  return rows.map((r) => mapToProtectedPublicShowroomAsset(mapPublicShowroomRpcRowToShowroomAsset(r)))
 }
