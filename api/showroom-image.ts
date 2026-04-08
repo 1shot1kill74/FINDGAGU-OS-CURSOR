@@ -1,4 +1,3 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { createClient } from '@supabase/supabase-js'
 import sharp from 'sharp'
 
@@ -10,36 +9,42 @@ type AssetRow = {
   id: string
   cloudinary_url: string | null
   thumbnail_url: string | null
+  site_name: string | null
   location: string | null
   business_type: string | null
   created_at: string | null
-  metadata?: Record<string, unknown> | null
 }
 
-function getSupabaseAdminClient() {
+type RequestLike = {
+  method?: string
+  query: Record<string, string | string[] | undefined>
+  headers: Record<string, string | string[] | undefined>
+  socket: { remoteAddress?: string | undefined }
+}
+
+type ResponseLike = {
+  setHeader(name: string, value: string): void
+  status(code: number): { send(body: string | Buffer): void }
+}
+
+function getSupabasePublicClient() {
   const url = process.env.VITE_SUPABASE_URL
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-  if (!url || !serviceRoleKey) {
-    throw new Error('Supabase server credentials are not configured.')
+  const anonKey = process.env.VITE_SUPABASE_ANON_KEY
+  if (!url || !anonKey) {
+    throw new Error('Supabase public credentials are not configured.')
   }
-  return createClient(url, serviceRoleKey, { auth: { persistSession: false } })
+  return createClient(url, anonKey, { auth: { persistSession: false } })
 }
 
 function normalizeSpace(value: string | null | undefined) {
   return (value ?? '').trim().replace(/\s+/g, ' ')
 }
 
-function pickWatermarkCode(metadata: Record<string, unknown> | null | undefined) {
-  const candidates = [
-    typeof metadata?.public_display_name === 'string' ? metadata.public_display_name : '',
-    typeof metadata?.external_display_name === 'string' ? metadata.external_display_name : '',
-  ]
-  for (const candidate of candidates) {
-    const normalized = normalizeSpace(candidate)
-    const match = normalized.match(/([A-Z]?\d{4})$/i)
-    if (match?.[1]) return match[1].toUpperCase()
-  }
-  return null
+function pickWatermarkCode(siteName: string | null) {
+  const normalized = normalizeSpace(siteName)
+  if (!normalized) return null
+  const match = normalized.match(/([A-Z]?\d{4})$/i)
+  return match?.[1] ? match[1].toUpperCase() : null
 }
 
 function toBroadRegion(location: string | null) {
@@ -76,15 +81,14 @@ function toMonthCode(createdAt: string | null) {
 }
 
 function buildDisplayName(row: AssetRow) {
-  const metadata = row.metadata ?? {}
-  const code = pickWatermarkCode(metadata)
+  const code = pickWatermarkCode(row.site_name)
   const monthCode = toMonthCode(row.created_at)
   const region = toBroadRegion(row.location)
   const businessType = normalizeSpace(row.business_type) || '기타'
-  return [monthCode, region, businessType, code].filter(Boolean).join(' ').trim() || '시공 사례'
+  return normalizeSpace(row.site_name) || [monthCode, region, businessType, code].filter(Boolean).join(' ').trim() || '시공 사례'
 }
 
-function getClientIp(req: VercelRequest) {
+function getClientIp(req: RequestLike) {
   const forwarded = req.headers['x-forwarded-for']
   if (typeof forwarded === 'string' && forwarded.trim()) {
     return forwarded.split(',')[0].trim()
@@ -108,13 +112,10 @@ function checkRateLimit(ip: string) {
 }
 
 async function fetchAssetRow(assetId: string): Promise<AssetRow | null> {
-  const supabase = getSupabaseAdminClient()
-  const { data, error } = await supabase
-    .from('image_assets')
-    .select('id, cloudinary_url, thumbnail_url, location, business_type, created_at, metadata')
+  const supabase = getSupabasePublicClient()
+  const { data, error } = await (supabase as any)
+    .rpc('get_public_showroom_assets')
     .eq('id', assetId)
-    .eq('is_consultation', true)
-    .not('category', 'in', '("purchase_order","floor_plan")')
     .maybeSingle()
 
   if (error) {
@@ -173,7 +174,7 @@ async function addWatermark(input: Buffer, displayName: string, variant: 'thumb'
     .toBuffer()
 }
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+export default async function handler(req: RequestLike, res: ResponseLike) {
   try {
     if (req.method !== 'GET') {
       res.setHeader('Allow', 'GET')
