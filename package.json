@@ -19,8 +19,6 @@
     "handout:oldei:all-assets": "node scripts/generate-oldei-handout-from-metadata.mjs --all-assets"
   },
   "dependencies": {
-    "@ffmpeg/ffmpeg": "^0.12.15",
-    "@ffmpeg/util": "^0.12.2",
     "@google/generative-ai": "^0.24.1",
     "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-slot": "^1.2.4",

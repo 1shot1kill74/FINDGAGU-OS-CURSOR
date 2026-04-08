@@ -12,25 +12,28 @@ import {
 import {
   approveShowroomShortsTarget,
   buildShowroomShortsPublishPackage,
+  getShowroomShortsCompositionStatus,
   listShowroomShortsReplacementCandidates,
   listShowroomShortsJobs,
   markShowroomShortsTargetFailed,
   markShowroomShortsTargetPublished,
   pollShowroomShortsJob,
+  requestShowroomShortsComposition,
   replaceShowroomShortsJobImage,
   requestShowroomShortsGeneration,
   type ShowroomShortsJobRecord,
   type ShowroomShortsTargetRecord,
 } from '@/lib/showroomShorts'
-import { composeShowroomShortsJob, downloadShowroomShortsFinalAsMp4 } from '@/lib/showroomShortsComposer'
+import { downloadShowroomShortsFinalAsMp4 } from '@/lib/showroomShortsComposer'
 import type { ShowroomImageAsset } from '@/lib/imageAssetService'
 import { toast } from 'sonner'
 
 function getProgressSteps(job: ShowroomShortsJobRecord) {
-  const hasRequested = !!job.kling_job_id || ['generating', 'generated', 'composited', 'ready_for_review'].includes(job.status)
-  const hasGenerated = job.status === 'generated' || job.status === 'composited' || job.status === 'ready_for_review'
+  const hasRequested = !!job.kling_job_id || ['generating', 'generated', 'composition_queued', 'composition_processing', 'composited', 'ready_for_review'].includes(job.status)
+  const hasGenerated = ['generated', 'composition_queued', 'composition_processing', 'composited', 'ready_for_review'].includes(job.status)
   const hasSourceStored = !!job.source_video_url
   const hasComposited = job.status === 'composited' || job.status === 'ready_for_review' || !!job.final_video_url
+  const isCompositing = job.status === 'composition_queued' || job.status === 'composition_processing'
   const hasReviewReady = job.status === 'ready_for_review'
 
   return [
@@ -38,7 +41,7 @@ function getProgressSteps(job: ShowroomShortsJobRecord) {
     { label: '원본 생성 요청', done: hasRequested, current: hasRequested && !hasGenerated },
     { label: '원본 생성', done: hasGenerated, current: job.status === 'generating' || job.kling_status === 'submitted' || job.kling_status === 'processing' },
     { label: '원본 저장', done: hasSourceStored, current: hasGenerated && !hasSourceStored },
-    { label: '9:16 합성', done: hasComposited, current: false },
+    { label: '9:16 합성', done: hasComposited, current: isCompositing },
     { label: '검수 준비', done: hasReviewReady, current: hasComposited && !hasReviewReady },
   ]
 }
@@ -80,6 +83,19 @@ export default function ShowroomShortsPage() {
     void load()
   }, [])
 
+  useEffect(() => {
+    const hasActiveComposition = jobs.some((job) =>
+      job.status === 'composition_queued' || job.status === 'composition_processing'
+    )
+    if (!hasActiveComposition) return
+
+    const timer = window.setInterval(() => {
+      void load()
+    }, 8_000)
+
+    return () => window.clearInterval(timer)
+  }, [jobs])
+
   const handleRequestGeneration = async (jobId: string) => {
     setActingJobId(jobId)
     try {
@@ -109,11 +125,31 @@ export default function ShowroomShortsPage() {
   const handleCompose = async (job: ShowroomShortsJobRecord) => {
     setActingJobId(job.id)
     try {
-      const result = await composeShowroomShortsJob(job)
-      toast.success(result.message)
+      const result = await requestShowroomShortsComposition(job.id)
+      toast.success(result.message ?? 'Railway 워커 합성 요청을 등록했습니다.')
       await load()
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : '9:16 합성에 실패했습니다.')
+      toast.error(error instanceof Error ? error.message : 'Railway 워커 합성 요청에 실패했습니다.')
+    } finally {
+      setActingJobId(null)
+    }
+  }
+
+  const handleComposePoll = async (jobId: string) => {
+    setActingJobId(jobId)
+    try {
+      const result = await getShowroomShortsCompositionStatus(jobId)
+      const statusMessage =
+        result.message ??
+        (result.status === 'completed'
+          ? 'Railway 워커 합성이 완료되었습니다.'
+          : result.status === 'failed'
+            ? result.error || 'Railway 워커 합성이 실패했습니다.'
+            : `Railway 워커 상태: ${result.status}`)
+      toast.success(statusMessage)
+      await load()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '합성 상태 확인에 실패했습니다.')
     } finally {
       setActingJobId(null)
     }
@@ -243,7 +279,7 @@ export default function ShowroomShortsPage() {
         </div>
 
         <div className="rounded-lg border border-border bg-card p-4 text-sm text-muted-foreground">
-          현재 단계는 원본 생성 완료 후 원본 영상을 검수하고, 필요할 때만 9:16 합성을 수동으로 진행하는 흐름입니다.
+          현재 단계는 원본 생성 완료 후 Railway 워커에 9:16 합성을 요청하고, 완료되면 같은 화면에서 검수하는 흐름입니다.
         </div>
 
         {loading ? (
@@ -373,16 +409,28 @@ export default function ShowroomShortsPage() {
                     {job.source_video_url ? (
                       <div className="rounded-xl border border-border bg-muted/20 p-4">
                         <p className="text-sm font-medium text-foreground">3. 합성</p>
-                        <div className="mt-3">
+                        <div className="mt-3 flex flex-wrap gap-2">
                           <Button
                             type="button"
                             disabled={actingJobId === job.id}
                             onClick={() => void handleCompose(job)}
                           >
                             {actingJobId === job.id ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                            {job.final_video_url ? '합성 다시하기' : '합성 진행'}
+                            {job.final_video_url ? '워커 합성 다시하기' : '워커 합성 요청'}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            disabled={actingJobId === job.id}
+                            onClick={() => void handleComposePoll(job.id)}
+                          >
+                            {actingJobId === job.id ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                            합성 상태 확인
                           </Button>
                         </div>
+                        <p className="mt-3 text-xs text-muted-foreground">
+                          합성 요청 후에는 워커가 `composition_queued` 또는 `composition_processing` 상태를 거쳐 최종 MP4를 생성합니다.
+                        </p>
                       </div>
                     ) : null}
 
@@ -564,7 +612,7 @@ export default function ShowroomShortsPage() {
                         안내문 보기
                       </summary>
                       <p className="mt-3">
-                        원본 영상을 먼저 확인하고, 마음에 들지 않으면 원본을 다시 생성하세요. 원하는 원본이 나왔을 때만 `합성 진행`으로 9:16 템플릿을 만들고, 마지막에 최종 영상을 확인하는 흐름입니다.
+                        원본 영상을 먼저 확인하고, 마음에 들지 않으면 원본을 다시 생성하세요. 원하는 원본이 나왔을 때만 `워커 합성 요청`을 눌러 서버에서 최종 MP4를 만들고, 마지막에 최종 영상을 확인하는 흐름입니다.
                       </p>
                     </details>
 

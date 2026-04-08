@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase'
 import { fetchShowroomImageAssets, type ShowroomImageAsset } from '@/lib/imageAssetService'
+import { getShowroomShortsWorkerUrl } from '@/lib/config'
 
 export const SHOWROOM_SHORTS_CHANNELS = ['youtube', 'facebook', 'instagram'] as const
 
@@ -10,6 +11,8 @@ export const SHOWROOM_SHORTS_JOB_STATUSES = [
   'requested',
   'generating',
   'generated',
+  'composition_queued',
+  'composition_processing',
   'composited',
   'ready_for_review',
   'failed',
@@ -77,6 +80,17 @@ export interface ShowroomShortsJobRecord {
   updated_at: string
   targets?: ShowroomShortsTargetRecord[]
   recent_logs?: ShowroomShortsLogRecord[]
+}
+
+export interface ShowroomShortsWorkerJobStatus {
+  ok: boolean
+  jobId: string
+  status: 'idle' | 'queued' | 'processing' | 'completed' | 'failed'
+  jobStatus?: string
+  sourceVideoUrl?: string | null
+  finalVideoUrl?: string | null
+  error?: string | null
+  message?: string
 }
 
 export type ShowroomShortsSelectionValidation =
@@ -511,6 +525,37 @@ export async function pollShowroomShortsJob(jobId: string) {
     throw new Error(data?.message ?? '숏츠 작업 상태 조회에 실패했습니다.')
   }
   return data
+}
+
+async function callShowroomShortsWorker<T>(pathname: string, init?: RequestInit): Promise<T> {
+  const workerUrl = getShowroomShortsWorkerUrl()
+  const response = await fetch(`${workerUrl}${pathname}`, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(init?.headers ?? {}),
+    },
+  })
+
+  const data = (await response.json().catch(() => null)) as (T & { message?: string }) | null
+  if (!response.ok || !data) {
+    throw new Error(data?.message ?? 'Railway 워커 요청에 실패했습니다.')
+  }
+
+  return data
+}
+
+export async function requestShowroomShortsComposition(jobId: string) {
+  return callShowroomShortsWorker<ShowroomShortsWorkerJobStatus>('', {
+    method: 'POST',
+    body: JSON.stringify({ jobId }),
+  })
+}
+
+export async function getShowroomShortsCompositionStatus(jobId: string) {
+  return callShowroomShortsWorker<ShowroomShortsWorkerJobStatus>(`?jobId=${encodeURIComponent(jobId)}`, {
+    method: 'GET',
+  })
 }
 
 async function insertShortsTargetLog(params: {
