@@ -29,7 +29,7 @@ import { Search, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Package, 
 import { toast } from 'sonner'
 import { shareGalleryKakao } from '@/lib/kakaoShare'
 import { createSharedGallery, snapshotShowroomImageAsset } from '@/lib/sharedGalleryService'
-import { fetchPublicShowroomAssets } from '@/lib/showroomShareService'
+import { broadenPublicDisplayName, fetchPublicShowroomAssets } from '@/lib/showroomShareService'
 import ShowroomShortsCreateDialog from '@/components/showroom/ShowroomShortsCreateDialog'
 import {
   fetchShowroomCaseProfileDrafts,
@@ -204,7 +204,7 @@ function getPreferredExternalDisplayName(images: ShowroomImageAsset[]): string |
     return bTime - aTime
   })
   for (const image of sorted) {
-    const externalDisplayName = image.external_display_name?.trim()
+    const externalDisplayName = broadenPublicDisplayName(image.external_display_name?.trim() ?? null)
     if (externalDisplayName) return externalDisplayName
   }
   return null

@@ -51,7 +51,7 @@ function broadenRegionLabel(value: string): string {
   return map[first] ?? first
 }
 
-function broadenPublicDisplayName(siteName: string | null): string | null {
+export function broadenPublicDisplayName(siteName: string | null): string | null {
   const normalized = (siteName ?? '').trim().replace(/\s+/g, ' ')
   if (!normalized) return null
   const parts = normalized.split(' ')
