@@ -13,6 +13,7 @@ export {
 
 export type ShowroomCaseProfileDraft = {
   siteName: string
+  canonicalSiteName: string | null
   painPoint: string | null
   solutionPoint: string | null
 }
@@ -21,18 +22,36 @@ export async function fetchShowroomCaseProfileDrafts(siteNames: string[]): Promi
   const normalized = Array.from(new Set(siteNames.map((siteName) => siteName.trim()).filter(Boolean)))
   if (normalized.length === 0) return []
 
-  const { data, error } = await (supabase as any)
-    .from('showroom_case_profiles')
-    .select('site_name, pain_point, solution_point')
-    .in('site_name', normalized)
+  const [siteNameResult, canonicalNameResult] = await Promise.all([
+    (supabase as any)
+      .from('showroom_case_profiles')
+      .select('site_name, canonical_site_name, pain_point, solution_point')
+      .in('site_name', normalized),
+    (supabase as any)
+      .from('showroom_case_profiles')
+      .select('site_name, canonical_site_name, pain_point, solution_point')
+      .in('canonical_site_name', normalized),
+  ])
 
-  if (error) throw new Error(error.message)
+  if (siteNameResult.error) throw new Error(siteNameResult.error.message)
+  if (canonicalNameResult.error) throw new Error(canonicalNameResult.error.message)
 
-  return ((data ?? []) as Array<Record<string, unknown>>).map((row) => ({
-    siteName: String(row.site_name ?? ''),
-    painPoint: typeof row.pain_point === 'string' ? row.pain_point : null,
-    solutionPoint: typeof row.solution_point === 'string' ? row.solution_point : null,
-  }))
+  const seen = new Set<string>()
+  const rows = [...(siteNameResult.data ?? []), ...(canonicalNameResult.data ?? [])] as Array<Record<string, unknown>>
+
+  return rows.flatMap((row) => {
+    const siteName = String(row.site_name ?? '').trim()
+    if (!siteName || seen.has(siteName)) return []
+    seen.add(siteName)
+    return [{
+      siteName,
+      canonicalSiteName: typeof row.canonical_site_name === 'string' && row.canonical_site_name.trim()
+        ? row.canonical_site_name.trim()
+        : null,
+      painPoint: typeof row.pain_point === 'string' ? row.pain_point : null,
+      solutionPoint: typeof row.solution_point === 'string' ? row.solution_point : null,
+    }]
+  })
 }
 
 export async function saveShowroomCaseProfileDraft(input: {
