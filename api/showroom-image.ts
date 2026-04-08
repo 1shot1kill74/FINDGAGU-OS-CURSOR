@@ -73,6 +73,23 @@ function toBroadRegion(location: string | null) {
   return map[firstToken] ?? firstToken
 }
 
+function broadenPublicDisplayName(siteName: string | null) {
+  const normalized = normalizeSpace(siteName)
+  if (!normalized) return null
+  const parts = normalized.split(' ')
+  if (parts.length < 3) return normalized
+  const hasMonthPrefix = /^\d{4}$/.test(parts[0] ?? '')
+  const regionIndex = hasMonthPrefix ? 1 : 0
+  const regionToken = parts[regionIndex] ?? ''
+  const cityToken = parts[regionIndex + 1] ?? ''
+  const broadRegion = toBroadRegion(`${regionToken} ${cityToken}`)
+  const shouldReplaceRegion = /^(서울|경기|인천|부산|대구|광주|대전|울산|세종|강원|충북|충남|전북|전남|경북|경남|제주)$/.test(regionToken)
+  if (!shouldReplaceRegion) return normalized
+  return [hasMonthPrefix ? parts[0] : null, broadRegion, ...parts.slice(regionIndex + 2)]
+    .filter(Boolean)
+    .join(' ')
+}
+
 function toMonthCode(createdAt: string | null) {
   if (!createdAt) return ''
   const parsed = new Date(createdAt)
@@ -81,11 +98,12 @@ function toMonthCode(createdAt: string | null) {
 }
 
 function buildDisplayName(row: AssetRow) {
-  const code = pickWatermarkCode(row.site_name)
+  const publicName = broadenPublicDisplayName(row.site_name)
+  const code = pickWatermarkCode(publicName)
   const monthCode = toMonthCode(row.created_at)
   const region = toBroadRegion(row.location)
   const businessType = normalizeSpace(row.business_type) || '기타'
-  return normalizeSpace(row.site_name) || [monthCode, region, businessType, code].filter(Boolean).join(' ').trim() || '시공 사례'
+  return publicName || [monthCode, region, businessType, code].filter(Boolean).join(' ').trim() || '시공 사례'
 }
 
 function getClientIp(req: RequestLike) {

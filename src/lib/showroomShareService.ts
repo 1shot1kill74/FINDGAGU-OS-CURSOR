@@ -26,9 +26,52 @@ function buildPublicShowroomImageProxyUrl(assetId: string, variant: 'thumb' | 'f
   return `/api/showroom-image?${query.toString()}`
 }
 
+function broadenRegionLabel(value: string): string {
+  const normalized = value.trim().replace(/\s+/g, ' ')
+  const first = normalized.split(' ')[0] ?? ''
+  const map: Record<string, string> = {
+    서울: '서울권',
+    경기: '경기권',
+    인천: '경기권',
+    부산: '부산권',
+    대구: '대구권',
+    광주: '광주권',
+    대전: '대전권',
+    울산: '울산권',
+    세종: '충청권',
+    강원: '강원권',
+    충북: '충청권',
+    충남: '충청권',
+    전북: '전북권',
+    전남: '전남권',
+    경북: '경북권',
+    경남: '경남권',
+    제주: '제주권',
+  }
+  return map[first] ?? first
+}
+
+function broadenPublicDisplayName(siteName: string | null): string | null {
+  const normalized = (siteName ?? '').trim().replace(/\s+/g, ' ')
+  if (!normalized) return null
+  const parts = normalized.split(' ')
+  if (parts.length < 3) return normalized
+  const hasMonthPrefix = /^\d{4}$/.test(parts[0] ?? '')
+  const regionIndex = hasMonthPrefix ? 1 : 0
+  const regionToken = parts[regionIndex] ?? ''
+  const cityToken = parts[regionIndex + 1] ?? ''
+  const broadRegion = broadenRegionLabel(`${regionToken} ${cityToken}`)
+  const shouldReplaceRegion = /^(서울|경기|인천|부산|대구|광주|대전|울산|세종|강원|충북|충남|전북|전남|경북|경남|제주)$/.test(regionToken)
+  if (!shouldReplaceRegion) return normalized
+  return [hasMonthPrefix ? parts[0] : null, broadRegion, ...parts.slice(regionIndex + 2)]
+    .filter(Boolean)
+    .join(' ')
+}
+
 function mapToProtectedPublicShowroomAsset(asset: ShowroomImageAsset): ShowroomImageAsset {
   return {
     ...asset,
+    site_name: broadenPublicDisplayName(asset.site_name) ?? asset.site_name,
     cloudinary_url: buildPublicShowroomImageProxyUrl(asset.id, 'full'),
     thumbnail_url: buildPublicShowroomImageProxyUrl(asset.id, 'thumb'),
   }
