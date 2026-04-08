@@ -1,5 +1,4 @@
 import { createClient } from '@supabase/supabase-js'
-import sharp from 'sharp'
 
 const RATE_LIMIT_WINDOW_MS = 60_000
 const RATE_LIMIT_MAX_REQUESTS = 120
@@ -164,32 +163,23 @@ function sanitizeDownloadName(value: string) {
     .slice(0, 80) || 'showroom-case'
 }
 
-async function addWatermark(input: Buffer, displayName: string, variant: 'thumb' | 'full') {
-  const image = sharp(input).rotate()
-  const metadata = await image.metadata()
-  const width = metadata.width ?? (variant === 'thumb' ? 800 : 1600)
-  const height = metadata.height ?? Math.round(width * 0.75)
-  const repeatedText = 'FINDGAGU OPEN SHOWROOM'
-  const footerText = `파인드가구 오픈쇼룸 | 무단 재사용·재배포 금지 | ${displayName}`
-  const diagonalFontSize = variant === 'thumb' ? 22 : 34
-  const footerFontSize = variant === 'thumb' ? 18 : 24
-  const svg = `
-    <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <pattern id="wm" patternUnits="userSpaceOnUse" width="320" height="220" patternTransform="rotate(-26)">
-          <text x="0" y="120" fill="rgba(255,255,255,0.16)" font-size="${diagonalFontSize}" font-family="Arial, sans-serif" font-weight="700">${repeatedText}</text>
-        </pattern>
-      </defs>
-      <rect width="100%" height="100%" fill="url(#wm)" />
-      <rect x="0" y="${height - (variant === 'thumb' ? 42 : 56)}" width="${width}" height="${variant === 'thumb' ? 42 : 56}" fill="rgba(0,0,0,0.42)" />
-      <text x="${width / 2}" y="${height - (variant === 'thumb' ? 15 : 20)}" text-anchor="middle" fill="rgba(255,255,255,0.92)" font-size="${footerFontSize}" font-family="Arial, sans-serif" font-weight="600">${footerText}</text>
-    </svg>
-  `
+function encodeCloudinaryText(value: string) {
+  return encodeURIComponent(value).replace(/%20/g, '%20')
+}
 
-  return image
-    .composite([{ input: Buffer.from(svg), gravity: 'center' }])
-    .jpeg({ quality: variant === 'thumb' ? 72 : 82, mozjpeg: true })
-    .toBuffer()
+function buildCloudinaryWatermarkedUrl(sourceUrl: string, displayName: string, variant: 'thumb' | 'full') {
+  const repeatedText = encodeCloudinaryText('FINDGAGU OPEN SHOWROOM')
+  const footerText = encodeCloudinaryText(`파인드가구 오픈쇼룸 | 무단 재사용·재배포 금지 | ${displayName}`)
+  const brandFont = variant === 'thumb' ? '28' : '42'
+  const footerFont = variant === 'thumb' ? '20' : '28'
+  const quality = variant === 'thumb' ? 'q_auto:good' : 'q_auto'
+  const watermarkTransforms = [
+    `l_text:Arial_${brandFont}_bold:${repeatedText},co_white,o_18,g_center`,
+    `l_text:Arial_${footerFont}_bold:${footerText},co_white,o_88,g_south,y_20`,
+    `${quality},f_jpg`,
+  ].join('/')
+
+  return sourceUrl.replace('/image/upload/', `/image/upload/${watermarkTransforms}/`)
 }
 
 export default async function handler(req: RequestLike, res: ResponseLike) {
@@ -230,9 +220,9 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
       return
     }
 
-    const buffer = await fetchRemoteImage(sourceUrl)
     const displayName = buildDisplayName(row)
-    const watermarked = await addWatermark(buffer, displayName, variant)
+    const watermarkedUrl = buildCloudinaryWatermarkedUrl(sourceUrl, displayName, variant)
+    const watermarked = await fetchRemoteImage(watermarkedUrl)
     const filename = sanitizeDownloadName(displayName)
 
     res.setHeader('Content-Type', 'image/jpeg')
