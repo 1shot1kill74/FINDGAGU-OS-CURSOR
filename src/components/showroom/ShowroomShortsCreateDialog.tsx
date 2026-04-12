@@ -11,7 +11,7 @@ import {
   validateBeforeAfterSelection,
   type ShowroomShortsChannel,
 } from '@/lib/showroomShorts'
-import { Loader2, Video, CheckCircle2 } from 'lucide-react'
+import { Loader2, Video, CheckCircle2, ExternalLink } from 'lucide-react'
 import { toast } from 'sonner'
 
 type Props = {
@@ -248,9 +248,15 @@ export default function ShowroomShortsCreateDialog({ open, onOpenChange, selecte
                 <div>
                   <p className="font-medium">숏츠 작업 초안이 생성되었습니다.</p>
                   <p className="mt-1">현재 DB 저장과 원본 생성 호출 구조까지 준비되었습니다. 서버 함수 배포 후 원본 생성과 상태 조회가 연결됩니다.</p>
-                  <Link to="/admin/showroom-shorts" className="mt-2 inline-block font-medium underline underline-offset-4">
+                  <a
+                    href="/admin/showroom-shorts"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-2 inline-flex items-center gap-1 font-medium underline underline-offset-4"
+                  >
                     검수 대기 화면 열기
-                  </Link>
+                    <ExternalLink className="h-4 w-4" />
+                  </a>
                 </div>
               </div>
             </div>

@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FINDGAGU Product Flow</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #111111;
+        --panel: rgba(255, 255, 255, 0.06);
+        --panel-strong: rgba(255, 255, 255, 0.1);
+        --text: #f6f2ea;
+        --muted: #c6c0b6;
+        --line: rgba(255, 255, 255, 0.12);
+        --accent: #ff8552;
+        --accent-soft: rgba(255, 133, 82, 0.18);
+        --accent-2: #ffd166;
+        --accent-3: #7bdff2;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "IBM Plex Sans KR", sans-serif;
+        background:
+          radial-gradient(circle at top left, rgba(255, 133, 82, 0.18), transparent 30%),
+          radial-gradient(circle at top right, rgba(123, 223, 242, 0.16), transparent 28%),
+          linear-gradient(180deg, #181512 0%, var(--bg) 38%, #0d0d0d 100%);
+        color: var(--text);
+      }
+
+      .page {
+        max-width: 1480px;
+        margin: 0 auto;
+        padding: 48px 28px 80px;
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: 1.2fr 0.8fr;
+        gap: 24px;
+        align-items: end;
+        margin-bottom: 28px;
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 14px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        color: var(--accent-2);
+        font-size: 13px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        background: rgba(255, 255, 255, 0.03);
+      }
+
+      .hero h1 {
+        margin: 18px 0 12px;
+        font-family: "Black Han Sans", sans-serif;
+        font-size: clamp(54px, 8vw, 96px);
+        line-height: 0.98;
+        letter-spacing: -0.03em;
+        font-weight: 400;
+      }
+
+      .hero p {
+        margin: 0;
+        max-width: 800px;
+        color: var(--muted);
+        font-size: 18px;
+        line-height: 1.7;
+      }
+
+      .summary {
+        padding: 24px;
+        border: 1px solid var(--line);
+        background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.03));
+        border-radius: 28px;
+        box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+      }
+
+      .summary strong {
+        display: block;
+        color: var(--accent);
+        font-size: 14px;
+        margin-bottom: 10px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .summary ul {
+        margin: 0;
+        padding-left: 18px;
+        color: var(--muted);
+        line-height: 1.8;
+      }
+
+      .slides {
+        display: grid;
+        gap: 26px;
+      }
+
+      .slide {
+        position: relative;
+        overflow: hidden;
+        border-radius: 34px;
+        border: 1px solid var(--line);
+        background:
+          linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.03)),
+          rgba(0, 0, 0, 0.28);
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.3);
+        padding: 30px;
+      }
+
+      .slide::before {
+        content: "";
+        position: absolute;
+        inset: auto -60px -60px auto;
+        width: 220px;
+        height: 220px;
+        background: radial-gradient(circle, rgba(255, 133, 82, 0.2), transparent 72%);
+        pointer-events: none;
+      }
+
+      .slide-head {
+        display: grid;
+        grid-template-columns: 120px 1fr;
+        gap: 18px;
+        margin-bottom: 26px;
+      }
+
+      .slide-number {
+        font-family: "Black Han Sans", sans-serif;
+        font-size: 78px;
+        line-height: 0.9;
+        color: rgba(255, 255, 255, 0.16);
+      }
+
+      .slide h2 {
+        margin: 2px 0 8px;
+        font-size: 34px;
+        line-height: 1.15;
+      }
+
+      .slide .purpose {
+        margin: 0;
+        color: var(--accent-2);
+        font-size: 15px;
+        line-height: 1.7;
+      }
+
+      .slide-copy {
+        margin-top: 12px;
+        color: var(--muted);
+        font-size: 17px;
+        line-height: 1.75;
+      }
+
+      .layout-two {
+        display: grid;
+        grid-template-columns: 1.3fr 0.7fr;
+        gap: 24px;
+      }
+
+      .notes {
+        display: grid;
+        gap: 14px;
+        align-content: start;
+      }
+
+      .note {
+        padding: 16px 18px;
+        border-radius: 20px;
+        border: 1px solid var(--line);
+        background: var(--panel);
+      }
+
+      .note strong {
+        display: block;
+        margin-bottom: 6px;
+        color: var(--text);
+        font-size: 14px;
+      }
+
+      .note span {
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.7;
+      }
+
+      .diagram-grid {
+        display: grid;
+        gap: 14px;
+      }
+
+      .row {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 14px;
+      }
+
+      .row.three {
+        grid-template-columns: repeat(3, 1fr);
+      }
+
+      .row.two {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      .node {
+        min-height: 94px;
+        padding: 16px;
+        border-radius: 24px;
+        border: 1px solid var(--line);
+        background: var(--panel);
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        position: relative;
+      }
+
+      .node::after {
+        content: "";
+        position: absolute;
+        left: calc(100% + 6px);
+        top: 50%;
+        width: 12px;
+        height: 12px;
+        border-top: 1px solid rgba(255,255,255,0.22);
+        border-right: 1px solid rgba(255,255,255,0.22);
+        transform: translateY(-50%) rotate(45deg);
+      }
+
+      .row .node:last-child::after,
+      .row.two .node:last-child::after,
+      .row.three .node:last-child::after,
+      .node.no-arrow::after {
+        display: none;
+      }
+
+      .node small {
+        color: var(--accent-2);
+        font-size: 12px;
+        margin-bottom: 6px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .node strong {
+        font-size: 18px;
+        line-height: 1.25;
+      }
+
+      .node p {
+        margin: 8px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.5;
+      }
+
+      .accent {
+        background: linear-gradient(180deg, rgba(255,133,82,0.22), rgba(255,133,82,0.08));
+      }
+
+      .accent-blue {
+        background: linear-gradient(180deg, rgba(123,223,242,0.18), rgba(123,223,242,0.08));
+      }
+
+      .accent-gold {
+        background: linear-gradient(180deg, rgba(255,209,102,0.18), rgba(255,209,102,0.08));
+      }
+
+      .dashed {
+        border-style: dashed;
+        opacity: 0.86;
+      }
+
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 16px;
+      }
+
+      .legend span {
+        padding: 10px 12px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: rgba(255,255,255,0.04);
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .vertical-flow {
+        display: grid;
+        gap: 14px;
+      }
+
+      .step {
+        display: grid;
+        grid-template-columns: 80px 1fr;
+        gap: 14px;
+        align-items: center;
+        padding: 14px;
+        border-radius: 24px;
+        border: 1px solid var(--line);
+        background: var(--panel);
+      }
+
+      .step-number {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 64px;
+        height: 64px;
+        border-radius: 20px;
+        font-family: "Black Han Sans", sans-serif;
+        font-size: 30px;
+        background: rgba(255,255,255,0.08);
+        color: var(--accent);
+      }
+
+      .step strong {
+        display: block;
+        font-size: 18px;
+        margin-bottom: 4px;
+      }
+
+      .step span {
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.65;
+      }
+
+      .footer-line {
+        margin-top: 18px;
+        padding-top: 18px;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.7;
+      }
+
+      @media (max-width: 1100px) {
+        .hero,
+        .layout-two {
+          grid-template-columns: 1fr;
+        }
+
+        .slide-head {
+          grid-template-columns: 1fr;
+        }
+
+        .slide-number {
+          font-size: 52px;
+        }
+      }
+
+      @media (max-width: 840px) {
+        .row,
+        .row.two,
+        .row.three {
+          grid-template-columns: 1fr;
+        }
+
+        .node::after {
+          display: none;
+        }
+
+        .step {
+          grid-template-columns: 64px 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="hero">
+        <div>
+          <div class="eyebrow">FINDGAGU OS PRODUCT FLOW</div>
+          <h1>이미지를<br />운영 자산으로 바꾸는 흐름</h1>
+          <p>
+            FINDGAGU OS는 현장 이미지를 단순 저장하지 않습니다. 이미지 업로드부터 메타데이터 정리,
+            before/after 페어링, 쇼룸 생성, 상담 연결, SNS 활용까지 하나의 사례 문맥으로 이어집니다.
+          </p>
+        </div>
+        <aside class="summary">
+          <strong>One-Line Purpose</strong>
+          <ul>
+            <li>제품의 큰 흐름을 한 번에 보여주기</li>
+            <li>핵심 데이터가 어떻게 연결되는지 설명하기</li>
+            <li>실무에서 어떤 순서로 쓰이는지 보여주기</li>
+          </ul>
+        </aside>
+      </section>
+
+      <section class="slides">
+        <article class="slide">
+          <div class="slide-head">
+            <div class="slide-number">01</div>
+            <div>
+              <p class="purpose">제품에 무엇이 들어오고, 내부에서 어떻게 가공되며, 무엇이 나가는지 보여주기</p>
+              <h2>제품 구조도</h2>
+              <p class="slide-copy">
+                이미지는 업로드되는 순간 끝나는 데이터가 아니라, 다시 꺼내 쓸 수 있는 자산이 됩니다.
+                이 자산은 메타데이터와 before/after 문맥을 통해 쇼룸으로 재구성되고, 상담 설명과 외부
+                공개, 문의 전환, 숏츠 활용까지 이어집니다.
+              </p>
+            </div>
+          </div>
+
+          <div class="layout-two">
+            <div class="diagram-grid">
+              <div class="row">
+                <div class="node accent">
+                  <small>Input</small>
+                  <strong>이미지 업로드</strong>
+                  <p>현장 이미지, 상담 문맥 유입</p>
+                </div>
+                <div class="node">
+                  <small>Process</small>
+                  <strong>메타데이터 정리</strong>
+                  <p>현장명, 공간, 업종, 외부 표시명 정리</p>
+                </div>
+                <div class="node accent-blue">
+                  <small>Process</small>
+                  <strong>Before/After 페어링</strong>
+                  <p>전후 스토리 단위 구성</p>
+                </div>
+                <div class="node accent-gold no-arrow">
+                  <small>Hub</small>
+                  <strong>쇼룸 구성</strong>
+                  <p>사례 문맥으로 재구성</p>
+                </div>
+              </div>
+              <div class="row two">
+                <div class="node">
+                  <small>Output</small>
+                  <strong>내부쇼룸 / 오픈쇼룸</strong>
+                  <p>내부 설명, 외부 공개, 공유 링크</p>
+                </div>
+                <div class="node no-arrow">
+                  <small>Output</small>
+                  <strong>상담 문맥 / SNS 활용</strong>
+                  <p>문의 연결, 숏츠 생성, 채널 활용</p>
+                </div>
+              </div>
+              <div class="row three">
+                <div class="node dashed">
+                  <small>Future</small>
+                  <strong>추가 채널 자동화</strong>
+                  <p>YouTube, Facebook, Instagram 확장</p>
+                </div>
+                <div class="node dashed">
+                  <small>Future</small>
+                  <strong>콘텐츠 파생</strong>
+                  <p>카드뉴스, 소개 자료, 파생 콘텐츠</p>
+                </div>
+                <div class="node dashed no-arrow">
+                  <small>Future</small>
+                  <strong>후속 자동화</strong>
+                  <p>행동 기반 후속 정보 제공</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="notes">
+              <div class="note">
+                <strong>메시지 1</strong>
+                <span>이미지는 그냥 저장되는 것이 아니라, 찾아 쓰고 설명하고 재배포할 수 있는 자산이 됩니다.</span>
+              </div>
+              <div class="note">
+                <strong>메시지 2</strong>
+                <span>쇼룸은 단순 갤러리가 아니라 상담과 문의, SNS를 연결하는 운영 허브입니다.</span>
+              </div>
+              <div class="note">
+                <strong>메시지 3</strong>
+                <span>점선으로 표시한 부분은 현재 범위가 아니라 이후 확장 가능한 제품 영역입니다.</span>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="slide">
+          <div class="slide-head">
+            <div class="slide-number">02</div>
+            <div>
+              <p class="purpose">DB 전체가 아니라, 제품을 이해하는 데 필요한 핵심 엔티티와 관계를 보여주기</p>
+              <h2>핵심 데이터 구조</h2>
+              <p class="slide-copy">
+                데이터는 많이 쌓이는 것보다 끊기지 않고 연결되는 것이 중요합니다. 프로젝트 문맥 아래
+                이미지가 모이고, 일부는 before/after 스토리로 묶이며, 그 문맥이 쇼룸과 문의로 이어집니다.
+              </p>
+            </div>
+          </div>
+
+          <div class="layout-two">
+            <div class="diagram-grid">
+              <div class="row three">
+                <div class="node accent">
+                  <small>Context</small>
+                  <strong>Project</strong>
+                  <p>상담/현장 문맥</p>
+                </div>
+                <div class="node accent-blue">
+                  <small>Resource</small>
+                  <strong>Asset</strong>
+                  <p>업로드된 이미지 자산</p>
+                </div>
+                <div class="node accent-gold no-arrow">
+                  <small>Story</small>
+                  <strong>Pair</strong>
+                  <p>Before/After 관계</p>
+                </div>
+              </div>
+              <div class="row two">
+                <div class="node">
+                  <small>Experience</small>
+                  <strong>Showroom</strong>
+                  <p>자산과 문맥으로 만든 사례 묶음</p>
+                </div>
+                <div class="node no-arrow">
+                  <small>Control</small>
+                  <strong>Consent / Visibility</strong>
+                  <p>외부 노출 가능 범위 제어</p>
+                </div>
+              </div>
+              <div class="row two">
+                <div class="node accent no-arrow">
+                  <small>Outcome</small>
+                  <strong>Lead / Inquiry</strong>
+                  <p>쇼룸 이후 발생하는 고객 문의</p>
+                </div>
+                <div class="node dashed no-arrow">
+                  <small>Extension</small>
+                  <strong>SNS / Shorts</strong>
+                  <p>같은 자산의 재활용 경로</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="notes">
+              <div class="note">
+                <strong>Project</strong>
+                <span>이 제품에서 프로젝트는 별도 PM 개념보다 상담/현장 문맥에 가깝습니다.</span>
+              </div>
+              <div class="note">
+                <strong>Showroom</strong>
+                <span>쇼룸은 이미지 모음이 아니라 사례 해석과 탐색 경험을 담는 단위입니다.</span>
+              </div>
+              <div class="note">
+                <strong>Visibility</strong>
+                <span>모든 이미지가 공개되는 것이 아니라, 외부 표시명과 공개 범위를 거친 것만 외부로 나갑니다.</span>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="slide">
+          <div class="slide-head">
+            <div class="slide-number">03</div>
+            <div>
+              <p class="purpose">사용자가 실제 업무에서 어떤 순서로 제품을 쓰는지 보여주기</p>
+              <h2>사용 흐름</h2>
+              <p class="slide-copy">
+                실무에서는 프로젝트 문맥을 만들고 이미지를 올린 뒤, 메타와 before/after 관계를 정리합니다.
+                정리된 자산은 쇼룸이 되어 상담 중 설명과 외부 공유에 쓰이고, 필요하면 숏츠까지 확장됩니다.
+              </p>
+            </div>
+          </div>
+
+          <div class="layout-two">
+            <div class="vertical-flow">
+              <div class="step">
+                <div class="step-number">1</div>
+                <div>
+                  <strong>프로젝트 / 상담 문맥 생성</strong>
+                  <span>현장 기준점과 상담 배경을 먼저 잡습니다.</span>
+                </div>
+              </div>
+              <div class="step">
+                <div class="step-number">2</div>
+                <div>
+                  <strong>이미지 업로드</strong>
+                  <span>현장 이미지를 공통 자산 허브에 적재합니다.</span>
+                </div>
+              </div>
+              <div class="step">
+                <div class="step-number">3</div>
+                <div>
+                  <strong>메타데이터 입력 / 정리</strong>
+                  <span>현장명, 공간, 업종, 외부 표기용 정보를 다듬습니다.</span>
+                </div>
+              </div>
+              <div class="step">
+                <div class="step-number">4</div>
+                <div>
+                  <strong>Before / After 선택 및 페어링</strong>
+                  <span>전후 변화를 하나의 설득 스토리로 묶습니다.</span>
+                </div>
+              </div>
+              <div class="step">
+                <div class="step-number">5</div>
+                <div>
+                  <strong>쇼룸 생성</strong>
+                  <span>내부쇼룸 또는 오픈쇼룸 형태로 사례를 구성합니다.</span>
+                </div>
+              </div>
+              <div class="step">
+                <div class="step-number">6</div>
+                <div>
+                  <strong>상담 설명 / 공유 활용</strong>
+                  <span>고객에게 비슷한 사례를 빠르게 설명하고 공유합니다.</span>
+                </div>
+              </div>
+              <div class="step">
+                <div class="step-number">7</div>
+                <div>
+                  <strong>고객 문의 / 상담 연결</strong>
+                  <span>쇼룸에서 발생한 관심을 실제 상담 문맥으로 연결합니다.</span>
+                </div>
+              </div>
+              <div class="step">
+                <div class="step-number">8</div>
+                <div>
+                  <strong>SNS용 숏츠 활용</strong>
+                  <span>같은 자산으로 숏츠를 만들고 유입 경로를 확장합니다.</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="notes">
+              <div class="note">
+                <strong>실무 핵심</strong>
+                <span>현장 이미지는 한 번 올리고 끝나는 것이 아니라, 나중에 여러 목적에 다시 쓰입니다.</span>
+              </div>
+              <div class="note">
+                <strong>설득 구조</strong>
+                <span>고객은 이미지 자체보다 자기 상황과 닮은 사례 문맥을 보고 더 잘 반응합니다.</span>
+              </div>
+              <div class="note">
+                <strong>확장 포인트</strong>
+                <span>쇼룸까지 정리된 자산은 상담을 넘어서 SNS와 후속 자동화로 계속 재사용할 수 있습니다.</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="legend">
+            <span>Slide 1: 전체 흐름</span>
+            <span>Slide 2: 데이터 연결</span>
+            <span>Slide 3: 실무 사용 순서</span>
+          </div>
+
+          <div class="footer-line">
+            한 문장 요약: `FINDGAGU OS`는 이미지를 보관하는 시스템이 아니라, 현장 이미지를 사례
+            문맥으로 연결해 상담과 쇼룸, 문의, SNS 활용까지 이어주는 운영 시스템입니다.
+          </div>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>

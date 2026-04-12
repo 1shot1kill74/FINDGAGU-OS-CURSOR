@@ -83,7 +83,11 @@ export type Database = {
           publish_status: string
           external_post_id: string | null
           external_post_url: string | null
+          preparation_payload: Json
+          preparation_error: string | null
           approved_at: string | null
+          prepared_at: string | null
+          launch_ready_at: string | null
           published_at: string | null
           created_at: string
           updated_at: string
@@ -99,7 +103,11 @@ export type Database = {
           publish_status?: string
           external_post_id?: string | null
           external_post_url?: string | null
+          preparation_payload?: Json
+          preparation_error?: string | null
           approved_at?: string | null
+          prepared_at?: string | null
+          launch_ready_at?: string | null
           published_at?: string | null
           created_at?: string
           updated_at?: string
@@ -115,7 +123,11 @@ export type Database = {
           publish_status?: string
           external_post_id?: string | null
           external_post_url?: string | null
+          preparation_payload?: Json
+          preparation_error?: string | null
           approved_at?: string | null
+          prepared_at?: string | null
+          launch_ready_at?: string | null
           published_at?: string | null
           created_at?: string
           updated_at?: string

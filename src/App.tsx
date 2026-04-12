@@ -1,5 +1,5 @@
 import { Suspense, lazy } from 'react'
-import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, useLocation, Navigate } from 'react-router-dom'
 import { Toaster } from 'sonner'
 import ProtectedRoute from '@/auth/ProtectedRoute'
 import { describeInternalRoute } from '@/lib/internalRouteLabel'
@@ -20,7 +20,6 @@ const ContactPage = lazy(() => import('@/pages/ContactPage'))
 const DashboardPage = lazy(() => import('@/pages/DashboardPage'))
 const LoginPage = lazy(() => import('@/pages/LoginPage'))
 const HomepageConceptPage = lazy(() => import('@/pages/HomepageConceptPage'))
-const ShowroomHomepagePage = lazy(() => import('@/pages/ShowroomHomepagePage'))
 const MigrationPage = lazy(() => import('@/pages/admin/MigrationPage'))
 const ArchivePage = lazy(() => import('@/pages/admin/ArchivePage'))
 const ShowroomShortsPage = lazy(() => import('@/pages/admin/ShowroomShortsPage'))
@@ -50,7 +49,7 @@ function App() {
       <Toaster position="top-center" richColors closeButton />
       <Suspense fallback={<RouteFallback />}>
         <Routes>
-          <Route path="/" element={<ShowroomHomepagePage />} />
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/p/estimate/:id" element={<PublicProposalView />} />
           <Route path="/share" element={<ShareRedirect />} />

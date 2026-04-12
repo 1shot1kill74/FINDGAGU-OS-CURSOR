@@ -6,6 +6,7 @@ const PUBLIC_SHOWROOM_RPC_PAGE_SIZE = 1000
 
 export const DEFAULT_PUBLIC_SHOWROOM_PATH = '/public/showroom'
 export const DEFAULT_PUBLIC_SHOWROOM_ORIGIN = 'https://findgagu-os-cursor.vercel.app'
+const PAUSED_PUBLIC_SHOWROOM_HOSTS = new Set(['findgagu.com', 'www.findgagu.com'])
 
 export type ResolvedShowroomShare = {
   token: string
@@ -92,14 +93,25 @@ function createShareToken(): string {
   return `${crypto.randomUUID().replace(/-/g, '')}${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`
 }
 
+function isPausedPublicShowroomBaseUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value.includes('://') ? value : `https://${value}`)
+    const normalizedPath = parsed.pathname.replace(/\/+$/, '') || '/'
+    return PAUSED_PUBLIC_SHOWROOM_HOSTS.has(parsed.hostname) && normalizedPath === '/showroom'
+  } catch {
+    return false
+  }
+}
+
 function getShowroomBaseUrl(): string {
   const configured = (import.meta.env.VITE_PUBLIC_SHOWROOM_BASE_URL ?? '').toString().trim()
-  if (!configured) return `${DEFAULT_PUBLIC_SHOWROOM_ORIGIN}${DEFAULT_PUBLIC_SHOWROOM_PATH}`
+  if (!configured || isPausedPublicShowroomBaseUrl(configured)) {
+    return `${DEFAULT_PUBLIC_SHOWROOM_ORIGIN}${DEFAULT_PUBLIC_SHOWROOM_PATH}`
+  }
 
   try {
     const parsed = new URL(configured.includes('://') ? configured : `https://${configured}`)
-    const isLegacyHomepageHost = parsed.hostname === 'findgagu.com' || parsed.hostname === 'www.findgagu.com'
-    const origin = isLegacyHomepageHost ? DEFAULT_PUBLIC_SHOWROOM_ORIGIN : parsed.origin
+    const origin = parsed.origin
     const path = parsed.pathname.replace(/\/+$/, '') || ''
 
     if (path.endsWith(DEFAULT_PUBLIC_SHOWROOM_PATH)) return `${origin}${path}`

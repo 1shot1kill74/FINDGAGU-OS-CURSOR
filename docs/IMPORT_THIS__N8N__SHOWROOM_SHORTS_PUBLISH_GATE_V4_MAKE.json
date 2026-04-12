@@ -1,0 +1,319 @@
+{
+  "name": "Findgagu Showroom Shorts Publish Gate V4 (YouTube + Make Meta)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "findgagu-showroom-shorts-publish",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node-webhook",
+      "name": "쇼룸 숏츠 퍼블리싱 요청",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [320, 320],
+      "webhookId": "findgagu-showroom-shorts-publish"
+    },
+    {
+      "parameters": {
+        "jsCode": "const incoming = $input.first().json ?? {};\nconst body = incoming.body ?? incoming ?? {};\n\nconst getString = (value) => typeof value === 'string' && value.trim() ? value.trim() : '';\nconst getArray = (value) => Array.isArray(value) ? value : [];\nconst getRecord = (value) => value && typeof value === 'object' && !Array.isArray(value) ? value : {};\n\nconst action = getString(body.action) === 'launch' ? 'launch' : 'prepare';\nconst callback = getRecord(body.callback);\nconst job = getRecord(body.job);\nconst target = getRecord(body.target);\nconst publishPackage = getRecord(body.publishPackage);\n\nconst channel = getString(body.channel) || getString(target.channel);\nconst title = getString(body.title) || getString(publishPackage.title) || getString(target.title);\nconst description = getString(body.description) || getString(target.description);\nconst caption = getString(body.caption) || getString(publishPackage.caption) || getString(publishPackage.descriptionWithHashtags) || description;\nconst firstComment = getString(body.firstComment) || getString(publishPackage.firstComment) || getString(target.firstComment);\nconst callbackSecret = getString(callback.secret) || getString($env.SHOWROOM_SHORTS_PUBLISH_CALLBACK_SECRET);\n\nreturn [{\n  json: {\n    source: getString(body.source) || 'showroom-shorts',\n    action,\n    dispatchedAt: getString(body.dispatchedAt) || new Date().toISOString(),\n    callbackUrl: getString(callback.url),\n    callbackSecretHeaderName: getString(callback.secretHeaderName) || 'x-showroom-shorts-publish-secret',\n    callbackSecret,\n    jobId: getString(body.jobId) || getString(job.id),\n    finalVideoUrl: getString(body.finalVideoUrl) || getString(job.finalVideoUrl),\n    sourceVideoUrl: getString(body.sourceVideoUrl) || getString(job.sourceVideoUrl),\n    durationSeconds: Number(body.durationSeconds ?? job.durationSeconds ?? 10),\n    targetId: getString(body.targetId) || getString(target.id),\n    channel,\n    title,\n    description,\n    hashtags: getArray(body.hashtags ?? target.hashtags).map((item) => String(item).trim()).filter(Boolean),\n    firstComment,\n    publishStatus: getString(body.publishStatus) || getString(target.publishStatus),\n    publishPackage,\n    preparedTitle: title,\n    preparedDescription: getString(publishPackage.descriptionWithHashtags) || description,\n    preparedCaption: caption,\n    preparedFirstComment: firstComment,\n  }\n}];"
+      },
+      "id": "node-normalize",
+      "name": "입력 정규화",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [560, 320]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "cond-launch",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "launch",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node-if-launch",
+      "name": "Launch 요청인가?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [780, 320]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "cond-yt",
+              "leftValue": "={{ $json.channel }}",
+              "rightValue": "youtube",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node-if-youtube",
+      "name": "채널이 YouTube?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1000, 240]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "cond-fb",
+              "leftValue": "={{ $json.channel }}",
+              "rightValue": "facebook",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node-if-facebook",
+      "name": "채널이 Facebook?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1220, 480]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "cond-ig",
+              "leftValue": "={{ $json.channel }}",
+              "rightValue": "instagram",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node-if-instagram",
+      "name": "채널이 Instagram?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1440, 600]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{\n  json: {\n    ...$json,\n    callbackBody: {\n      targetId: $json.targetId,\n      action: 'prepare',\n      status: 'launch_ready',\n      message: 'upload ready',\n      completedAt: new Date().toISOString(),\n      payload: {\n        title: $json.preparedTitle,\n        descriptionWithHashtags: $json.preparedDescription,\n        firstComment: $json.preparedFirstComment,\n        previewUrl: $json.finalVideoUrl,\n        checklist: [\n          `${$json.channel} 제목 점검`,\n          `${$json.channel} 설명 점검`,\n          '최종 MP4 URL 확인',\n          '론칭 전 승인 대기'\n        ]\n      }\n    }\n  }\n}];"
+      },
+      "id": "node-prepare-payload",
+      "name": "Prepare 결과 만들기",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 120]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('입력 정규화').item.json.finalVideoUrl }}",
+        "responseFormat": "file",
+        "options": {}
+      },
+      "id": "node-download-video",
+      "name": "비디오 다운로드",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1220, 200]
+    },
+    {
+      "parameters": {
+        "resource": "video",
+        "operation": "upload",
+        "title": "={{ $('입력 정규화').item.json.preparedTitle }}",
+        "description": "={{ $('입력 정규화').item.json.preparedDescription }}",
+        "categoryId": "26",
+        "privacyStatus": "unlisted",
+        "binaryPropertyName": "data"
+      },
+      "id": "node-youtube-upload",
+      "name": "YouTube 업로드",
+      "type": "n8n-nodes-base.youTube",
+      "typeVersion": 1,
+      "position": [1440, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{\n  json: {\n    ...$json,\n    makePayload: {\n      source: 'showroom-shorts',\n      action: 'launch',\n      targetId: $json.targetId,\n      channel: $json.channel,\n      jobId: $json.jobId,\n      finalVideoUrl: $json.finalVideoUrl,\n      title: $json.preparedTitle,\n      caption: $json.preparedCaption,\n      firstComment: $json.preparedFirstComment,\n      callback: {\n        url: $json.callbackUrl,\n        secretHeaderName: $json.callbackSecretHeaderName,\n        secret: $json.callbackSecret,\n      }\n    }\n  }\n}];"
+      },
+      "id": "node-make-payload",
+      "name": "Make Launch Payload 만들기",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1660, 480]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.MAKE_META_WEBHOOK_URL }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "X-Showroom-Shorts-Source", "value": "showroom-shorts" },
+            { "name": "X-Showroom-Shorts-Action", "value": "launch" },
+            { "name": "X-Make-Webhook-Secret", "value": "={{ $env.MAKE_META_WEBHOOK_SECRET }}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.makePayload) }}",
+        "options": {}
+      },
+      "id": "node-make-webhook",
+      "name": "Make Meta Webhook 호출",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1880, 480]
+    },
+    {
+      "parameters": {
+        "jsCode": "const normalizeNode = $('입력 정규화').item.json;\nreturn [{\n  json: {\n    ok: true,\n    accepted: true,\n    action: 'launch',\n    status: 'publishing',\n    provider: 'make',\n    channel: normalizeNode.channel,\n    targetId: normalizeNode.targetId,\n    message: 'Make launch accepted'\n  }\n}];"
+      },
+      "id": "node-make-accepted",
+      "name": "Launch 접수 응답 (Make)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2100, 480]
+    },
+    {
+      "parameters": {
+        "jsCode": "const normalizeNode = $('입력 정규화').item.json;\nconst youtubeOutput = $json;\nconst externalPostId = youtubeOutput.id || `youtube-${Date.now()}`;\nconst externalPostUrl = youtubeOutput.id ? `https://www.youtube.com/shorts/${youtubeOutput.id}` : `https://www.youtube.com/watch?v=${externalPostId}`;\nreturn [{\n  json: {\n    ...normalizeNode,\n    callbackBody: {\n      targetId: normalizeNode.targetId,\n      action: 'launch',\n      status: 'published',\n      message: 'published',\n      completedAt: new Date().toISOString(),\n      externalPostId,\n      externalPostUrl,\n      payload: {\n        channel: 'youtube',\n        finalVideoUrl: normalizeNode.finalVideoUrl,\n        youtubeResponse: youtubeOutput\n      }\n    }\n  }\n}];"
+      },
+      "id": "node-launch-yt",
+      "name": "Launch 결과 YouTube",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1660, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{\n  json: {\n    ...$json,\n    callbackBody: {\n      targetId: $json.targetId,\n      action: 'launch',\n      status: 'failed',\n      message: `Unsupported channel: ${$json.channel}`,\n      payload: {\n        channel: $json.channel,\n        provider: 'n8n',\n        errorCode: 'UNSUPPORTED_CHANNEL'\n      }\n    }\n  }\n}];"
+      },
+      "id": "node-launch-unsupported",
+      "name": "Launch 실패 결과 (Unsupported)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1660, 760]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('입력 정규화').item.json.callbackUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "x-showroom-shorts-publish-secret", "value": "={{ $('입력 정규화').item.json.callbackSecret }}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.callbackBody) }}",
+        "options": {}
+      },
+      "id": "node-callback",
+      "name": "Supabase Callback 호출",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1880, 280]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "node-response",
+      "name": "Webhook 응답",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [2320, 360]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "쇼룸 숏츠 퍼블리싱 요청": {
+      "main": [[{ "node": "입력 정규화", "type": "main", "index": 0 }]]
+    },
+    "입력 정규화": {
+      "main": [[{ "node": "Launch 요청인가?", "type": "main", "index": 0 }]]
+    },
+    "Launch 요청인가?": {
+      "main": [
+        [{ "node": "채널이 YouTube?", "type": "main", "index": 0 }],
+        [{ "node": "Prepare 결과 만들기", "type": "main", "index": 0 }]
+      ]
+    },
+    "채널이 YouTube?": {
+      "main": [
+        [{ "node": "비디오 다운로드", "type": "main", "index": 0 }],
+        [{ "node": "채널이 Facebook?", "type": "main", "index": 0 }]
+      ]
+    },
+    "채널이 Facebook?": {
+      "main": [
+        [{ "node": "Make Launch Payload 만들기", "type": "main", "index": 0 }],
+        [{ "node": "채널이 Instagram?", "type": "main", "index": 0 }]
+      ]
+    },
+    "채널이 Instagram?": {
+      "main": [
+        [{ "node": "Make Launch Payload 만들기", "type": "main", "index": 0 }],
+        [{ "node": "Launch 실패 결과 (Unsupported)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Prepare 결과 만들기": {
+      "main": [[{ "node": "Supabase Callback 호출", "type": "main", "index": 0 }]]
+    },
+    "비디오 다운로드": {
+      "main": [[{ "node": "YouTube 업로드", "type": "main", "index": 0 }]]
+    },
+    "YouTube 업로드": {
+      "main": [[{ "node": "Launch 결과 YouTube", "type": "main", "index": 0 }]]
+    },
+    "Launch 결과 YouTube": {
+      "main": [[{ "node": "Supabase Callback 호출", "type": "main", "index": 0 }]]
+    },
+    "Launch 실패 결과 (Unsupported)": {
+      "main": [[{ "node": "Supabase Callback 호출", "type": "main", "index": 0 }]]
+    },
+    "Supabase Callback 호출": {
+      "main": [[{ "node": "Webhook 응답", "type": "main", "index": 0 }]]
+    },
+    "Make Launch Payload 만들기": {
+      "main": [[{ "node": "Make Meta Webhook 호출", "type": "main", "index": 0 }]]
+    },
+    "Make Meta Webhook 호출": {
+      "main": [[{ "node": "Launch 접수 응답 (Make)", "type": "main", "index": 0 }]]
+    },
+    "Launch 접수 응답 (Make)": {
+      "main": [[{ "node": "Webhook 응답", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "findgagu-showroom-shorts-publish-gate-v4-make",
+  "meta": { "templateCredsSetupCompleted": false },
+  "id": "findgagu-showroom-shorts-publish-gate-v4-make"
+}

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Loader2, Video, ExternalLink } from 'lucide-react'
+import { Loader2, Video, ExternalLink, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -10,17 +10,21 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import {
-  approveShowroomShortsTarget,
   buildShowroomShortsPublishPackage,
+  deleteShowroomShortsJob,
+  deleteFailedShowroomShortsJob,
   getShowroomShortsCompositionStatus,
   listShowroomShortsReplacementCandidates,
   listShowroomShortsJobs,
   markShowroomShortsTargetFailed,
   markShowroomShortsTargetPublished,
   pollShowroomShortsJob,
+  requestShowroomShortsPublishLaunch,
+  requestShowroomShortsPublishPrepare,
   requestShowroomShortsComposition,
   replaceShowroomShortsJobImage,
   requestShowroomShortsGeneration,
+  updateShowroomShortsTargetPreparation,
   type ShowroomShortsJobRecord,
   type ShowroomShortsTargetRecord,
 } from '@/lib/showroomShorts'
@@ -53,6 +57,52 @@ function getGenerationButtonLabel(job: ShowroomShortsJobRecord) {
   return '원본 생성 요청'
 }
 
+function hasActivePublish(job: ShowroomShortsJobRecord) {
+  return (job.targets ?? []).some((target) => ['preparing', 'publishing'].includes(target.publish_status))
+}
+
+function pickPreparationString(payload: Record<string, unknown> | null | undefined, keys: string[]) {
+  if (!payload) return null
+  for (const key of keys) {
+    const value = payload[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return null
+}
+
+function getPreparationChecklist(target: ShowroomShortsTargetRecord) {
+  const raw = target.preparation_payload?.checklist
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map((item) => (typeof item === 'string' ? item.trim() : ''))
+    .filter(Boolean)
+}
+
+function formatDateTime(value: string | null) {
+  if (!value) return null
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return value
+  return parsed.toLocaleString('ko-KR')
+}
+
+function getChannelLabel(channel: string) {
+  if (channel === 'youtube') return 'YouTube'
+  if (channel === 'facebook') return 'Facebook'
+  if (channel === 'instagram') return 'Instagram'
+  return channel
+}
+
+function getPublishStatusGuide(status: string) {
+  if (status === 'ready') return '최종 MP4가 준비되어 있으며 업로드 준비를 시작할 수 있습니다.'
+  if (status === 'preparing') return 'n8n이 채널별 업로드 준비를 진행 중입니다.'
+  if (status === 'launch_ready') return '업로드 준비가 끝났습니다. 패키지를 확인한 뒤 론칭 승인하세요.'
+  if (status === 'publishing') return '실제 퍼블리싱이 진행 중이며 callback 결과를 기다리는 상태입니다.'
+  if (status === 'published') return '실제 퍼블리싱이 완료되었습니다.'
+  if (status === 'failed') return '준비 또는 론칭 단계에서 실패했습니다. 오류를 확인한 뒤 재시도하세요.'
+  if (status === 'approved') return '론칭 승인이 완료되어 실제 게시를 시작할 수 있습니다.'
+  return `현재 상태: ${status}`
+}
+
 export default function ShowroomShortsPage() {
   const [jobs, setJobs] = useState<ShowroomShortsJobRecord[]>([])
   const [loading, setLoading] = useState(true)
@@ -66,31 +116,40 @@ export default function ShowroomShortsPage() {
   const [selectedPickerAssetId, setSelectedPickerAssetId] = useState<string | null>(null)
   const [publishLinkInputs, setPublishLinkInputs] = useState<Record<string, string>>({})
   const [downloadingMp4JobId, setDownloadingMp4JobId] = useState<string | null>(null)
+  
+  // Package editing state
+  const [editingTargetId, setEditingTargetId] = useState<string | null>(null)
+  const [editTitle, setEditTitle] = useState('')
+  const [editBody, setEditBody] = useState('')
+  const [editComment, setEditComment] = useState('')
+  const [editSaving, setEditSaving] = useState(false)
 
-  const load = async () => {
-    setLoading(true)
+  const load = async (showSpinner = false) => {
+    if (showSpinner) setLoading(true)
     try {
       const nextJobs = await listShowroomShortsJobs()
       setJobs(nextJobs)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '숏츠 작업 목록을 불러오지 못했습니다.')
     } finally {
-      setLoading(false)
+      if (showSpinner) setLoading(false)
     }
   }
 
   useEffect(() => {
-    void load()
+    void load(true)
   }, [])
 
   useEffect(() => {
-    const hasActiveComposition = jobs.some((job) =>
-      job.status === 'composition_queued' || job.status === 'composition_processing'
+    const hasActiveWork = jobs.some((job) =>
+      job.status === 'composition_queued'
+      || job.status === 'composition_processing'
+      || hasActivePublish(job)
     )
-    if (!hasActiveComposition) return
+    if (!hasActiveWork) return
 
     const timer = window.setInterval(() => {
-      void load()
+      void load(false)
     }, 8_000)
 
     return () => window.clearInterval(timer)
@@ -203,14 +262,30 @@ export default function ShowroomShortsPage() {
     }
   }
 
-  const handleApproveTarget = async (target: ShowroomShortsTargetRecord) => {
+  const handlePrepareTarget = async (target: ShowroomShortsTargetRecord) => {
     setActingJobId(target.shorts_job_id)
     try {
-      await approveShowroomShortsTarget(target.id)
-      toast.success('업로드 승인 완료')
+      const result = await requestShowroomShortsPublishPrepare(target.id)
+      toast.success(result.message ?? 'n8n 업로드 준비 요청을 전달했습니다.')
       await load()
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : '업로드 승인에 실패했습니다.')
+      toast.error(error instanceof Error ? error.message : '업로드 준비 요청에 실패했습니다.')
+    } finally {
+      setActingJobId(null)
+    }
+  }
+
+  const handleLaunchTarget = async (target: ShowroomShortsTargetRecord) => {
+    const confirmed = window.confirm(`${target.channel} 채널에 실제 론칭을 시작할까요?`)
+    if (!confirmed) return
+
+    setActingJobId(target.shorts_job_id)
+    try {
+      const result = await requestShowroomShortsPublishLaunch(target.id)
+      toast.success(result.message ?? '론칭 승인 요청을 전달했습니다.')
+      await load()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '론칭 승인 요청에 실패했습니다.')
     } finally {
       setActingJobId(null)
     }
@@ -262,6 +337,79 @@ export default function ShowroomShortsPage() {
     }
   }
 
+  const handleDeleteFailedJob = async (job: ShowroomShortsJobRecord) => {
+    const confirmed = window.confirm('실패한 숏츠 작업을 삭제할까요? 관련 로그와 업로드 타깃도 함께 삭제됩니다.')
+    if (!confirmed) return
+
+    setActingJobId(job.id)
+    try {
+      await deleteFailedShowroomShortsJob(job)
+      toast.success('실패한 숏츠 작업을 삭제했습니다.')
+      await load()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '실패한 숏츠 작업 삭제에 실패했습니다.')
+    } finally {
+      setActingJobId(null)
+    }
+  }
+
+  const handleDeleteJob = async (job: ShowroomShortsJobRecord) => {
+    const confirmed = window.confirm(
+      '이 숏츠 작업을 삭제할까요?\n관련 로그와 업로드 타깃도 함께 삭제되며, 이미 외부 채널에 게시된 글은 자동으로 내려가지 않습니다.'
+    )
+    if (!confirmed) return
+
+    setActingJobId(job.id)
+    try {
+      await deleteShowroomShortsJob(job)
+      toast.success('숏츠 작업을 삭제했습니다.')
+      await load()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '숏츠 작업 삭제에 실패했습니다.')
+    } finally {
+      setActingJobId(null)
+    }
+  }
+
+  const handleStartEditPackage = (targetId: string, title: string, body: string, comment: string) => {
+    setEditingTargetId(targetId)
+    setEditTitle(title)
+    setEditBody(body)
+    setEditComment(comment)
+  }
+
+  const handleCancelEditPackage = () => {
+    setEditingTargetId(null)
+    setEditTitle('')
+    setEditBody('')
+    setEditComment('')
+  }
+
+  const handleSaveEditPackage = async (target: ShowroomShortsTargetRecord) => {
+    if (!editTitle.trim()) {
+      toast.error('제목을 입력해주세요.')
+      return
+    }
+    
+    setEditSaving(true)
+    setActingJobId(target.shorts_job_id)
+    try {
+      await updateShowroomShortsTargetPreparation(target.id, {
+        title: editTitle.trim(),
+        descriptionWithHashtags: editBody.trim(),
+        firstComment: editComment.trim(),
+      })
+      toast.success('업로드 준비 내용을 수정했습니다.')
+      setEditingTargetId(null)
+      await load(true)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '내용 수정에 실패했습니다.')
+    } finally {
+      setEditSaving(false)
+      setActingJobId(null)
+    }
+  }
+
   return (
     <div className="min-h-screen bg-background p-6">
       <div className="mx-auto max-w-6xl space-y-6">
@@ -273,13 +421,21 @@ export default function ShowroomShortsPage() {
               쇼룸 숏츠 검수 대기
             </h1>
           </div>
-          <Button type="button" variant="outline" onClick={() => void load()}>
-            새로고침
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button type="button" variant="outline" asChild>
+              <a href="/admin/showroom-shorts" target="_blank" rel="noopener noreferrer">
+                외부 브라우저로 열기
+                <ExternalLink className="h-4 w-4" />
+              </a>
+            </Button>
+            <Button type="button" variant="outline" onClick={() => void load(true)}>
+              새로고침
+            </Button>
+          </div>
         </div>
 
         <div className="rounded-lg border border-border bg-card p-4 text-sm text-muted-foreground">
-          현재 단계는 원본 생성 완료 후 Railway 워커에 9:16 합성을 요청하고, 완료되면 같은 화면에서 검수하는 흐름입니다.
+          현재 단계는 원본 생성 완료 후 Railway 워커로 최종 MP4를 만들고, n8n이 채널별 업로드 준비를 끝낸 뒤 관리자 승인을 통해 실제 론칭하는 흐름입니다.
         </div>
 
         {loading ? (
@@ -292,198 +448,298 @@ export default function ShowroomShortsPage() {
           </div>
         ) : (
           <div className="space-y-4">
-            {jobs.map((job) => (
-              <div key={job.id} className="rounded-2xl border border-border bg-card p-5">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                  <div className="space-y-3">
-                    <div>
-                      <p className="text-xs text-muted-foreground">작업 ID</p>
-                      <p className="font-mono text-xs text-foreground">{job.id}</p>
-                    </div>
-                    <div className="flex flex-wrap gap-2 text-xs">
-                      <span className="rounded-full bg-muted px-2.5 py-1 text-muted-foreground">상태 {job.status}</span>
-                      <span className="rounded-full bg-muted px-2.5 py-1 text-muted-foreground">원본 생성 {job.kling_status ?? '대기'}</span>
-                      <span className="rounded-full bg-muted px-2.5 py-1 text-muted-foreground">{job.duration_seconds}초</span>
-                      <span className="rounded-full bg-muted px-2.5 py-1 text-muted-foreground">{job.source_aspect_ratio} → {job.final_aspect_ratio}</span>
-                      <span className="rounded-full bg-muted px-2.5 py-1 text-muted-foreground">{job.is_muted ? '무음' : '오디오 포함'}</span>
-                    </div>
-                    <div className="rounded-xl border border-border bg-muted/20 p-4">
-                      <p className="text-sm font-medium text-foreground">진행 상태</p>
-                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                        {getProgressSteps(job).map((step) => (
-                          <div
-                            key={step.label}
-                            className={[
-                              'rounded-lg border px-3 py-2 text-sm',
-                              step.done
-                                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700'
-                                : step.current
-                                  ? 'border-amber-500/30 bg-amber-500/10 text-amber-700'
-                                  : 'border-border bg-card text-muted-foreground',
-                            ].join(' ')}
-                          >
-                            {step.done ? '완료' : step.current ? '진행중' : '대기'} · {step.label}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <div>
-                        <p className="mb-2 text-xs text-muted-foreground">Before</p>
-                        {job.before_asset_url ? (
-                          <img src={job.before_asset_url} alt="before" className="aspect-[4/3] w-full rounded-lg object-cover" />
-                        ) : null}
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="mt-2 w-full"
-                          disabled={actingJobId === job.id}
-                          onClick={() => void handleOpenReplacementPicker(job, 'before')}
-                        >
-                          Before 사진 바꾸기
-                        </Button>
-                      </div>
-                      <div>
-                        <p className="mb-2 text-xs text-muted-foreground">After</p>
-                        {job.after_asset_url ? (
-                          <img src={job.after_asset_url} alt="after" className="aspect-[4/3] w-full rounded-lg object-cover" />
-                        ) : null}
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="mt-2 w-full"
-                          disabled={actingJobId === job.id}
-                          onClick={() => void handleOpenReplacementPicker(job, 'after')}
-                        >
-                          After 사진 바꾸기
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
+            {jobs.map((job) => {
+              const orderedTargets = [...(job.targets ?? [])].sort((a, b) => {
+                const channelOrder = ['youtube', 'facebook', 'instagram']
+                return channelOrder.indexOf(a.channel) - channelOrder.indexOf(b.channel)
+              })
+              const hasFailedTargets = orderedTargets.some((target) => target.publish_status === 'failed')
+              const hasActiveJobWork = job.status === 'composition_queued' || job.status === 'composition_processing'
+              const hasActiveTargetWork = orderedTargets.some((target) =>
+                ['preparing', 'publishing'].includes(target.publish_status)
+              )
+              const deleteDisabled = actingJobId === job.id || hasActiveJobWork || hasActiveTargetWork
 
-                  <div className="w-full max-w-md space-y-3">
-                    {job.source_video_url ? (
-                      <div className="rounded-xl border border-border bg-muted/20 p-4">
-                        <p className="text-sm font-medium text-foreground">1. 원본 확인</p>
-                        <a
-                          href={job.source_video_url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="mt-3 inline-flex items-center gap-2 text-sm font-medium text-primary hover:underline"
-                        >
-                          원본 영상 열기
-                          <ExternalLink className="h-4 w-4" />
-                        </a>
-                      </div>
-                    ) : null}
-
-                    <div className="rounded-xl border border-border bg-muted/20 p-4">
-                      <p className="text-sm font-medium text-foreground">
-                        {job.source_video_url ? '2. 원본 재생성 또는 상태 확인' : '1. 원본 생성'}
-                      </p>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          disabled={actingJobId === job.id}
-                          onClick={() => void handleRequestGeneration(job.id)}
-                        >
-                          {actingJobId === job.id ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                          {getGenerationButtonLabel(job)}
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          disabled={actingJobId === job.id}
-                          onClick={() => void handlePoll(job.id)}
-                        >
-                          {actingJobId === job.id ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                          생성 상태 확인
-                        </Button>
-                      </div>
-                      <p className="mt-3 text-xs text-muted-foreground">
-                        `생성 상태 확인`은 백그라운드에서 진행 중인 원본 생성 결과를 새로 불러오는 버튼입니다.
-                      </p>
-                    </div>
-
-                    {job.source_video_url ? (
-                      <div className="rounded-xl border border-border bg-muted/20 p-4">
-                        <p className="text-sm font-medium text-foreground">3. 합성</p>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          <Button
-                            type="button"
-                            disabled={actingJobId === job.id}
-                            onClick={() => void handleCompose(job)}
-                          >
-                            {actingJobId === job.id ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                            {job.final_video_url ? '워커 합성 다시하기' : '워커 합성 요청'}
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            disabled={actingJobId === job.id}
-                            onClick={() => void handleComposePoll(job.id)}
-                          >
-                            {actingJobId === job.id ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                            합성 상태 확인
-                          </Button>
+              return (
+                <div key={job.id} className="rounded-3xl border border-border bg-card p-5 shadow-sm">
+                  <div className="space-y-6">
+                    <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                      <div className="space-y-3">
+                        <div>
+                          <p className="text-xs text-muted-foreground">작업 ID</p>
+                          <p className="font-mono text-xs text-foreground">{job.id}</p>
                         </div>
-                        <p className="mt-3 text-xs text-muted-foreground">
-                          합성 요청 후에는 워커가 `composition_queued` 또는 `composition_processing` 상태를 거쳐 최종 MP4를 생성합니다.
-                        </p>
+                        <div className="flex flex-wrap gap-2 text-xs">
+                          <span className="rounded-full bg-muted px-2.5 py-1 text-muted-foreground">상태 {job.status}</span>
+                          <span className="rounded-full bg-muted px-2.5 py-1 text-muted-foreground">원본 생성 {job.kling_status ?? '대기'}</span>
+                          <span className="rounded-full bg-muted px-2.5 py-1 text-muted-foreground">{job.duration_seconds}초</span>
+                          <span className="rounded-full bg-muted px-2.5 py-1 text-muted-foreground">{job.source_aspect_ratio} → {job.final_aspect_ratio}</span>
+                          <span className="rounded-full bg-muted px-2.5 py-1 text-muted-foreground">{job.is_muted ? '무음' : '오디오 포함'}</span>
+                        </div>
                       </div>
-                    ) : null}
+                      <div className="flex flex-col items-start gap-2 xl:items-end">
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          size="sm"
+                          disabled={deleteDisabled}
+                          onClick={() => void handleDeleteJob(job)}
+                        >
+                          {actingJobId === job.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                          작업 삭제
+                        </Button>
+                        <p className="max-w-xs text-right text-[11px] text-muted-foreground">
+                          진행 중 작업은 삭제할 수 없으며, 이미 외부 채널에 게시된 글은 별도로 내려가야 합니다.
+                        </p>
+                        {job.status === 'failed' || hasFailedTargets ? (
+                          <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 xl:max-w-sm">
+                            <p className="text-sm font-medium text-foreground">실패 작업 정리</p>
+                            <p className="mt-2 text-xs text-muted-foreground">
+                              실패한 작업은 검수 목록에서 삭제할 수 있습니다. 삭제 시 관련 로그와 배포 타깃도 함께 정리됩니다.
+                            </p>
+                            <Button
+                              type="button"
+                              variant="destructive"
+                              className="mt-3"
+                              disabled={actingJobId === job.id}
+                              onClick={() => void handleDeleteFailedJob(job)}
+                            >
+                              {actingJobId === job.id ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                              실패 작업 삭제
+                            </Button>
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    <div className="grid gap-6 xl:grid-cols-[minmax(0,1.7fr)_320px]">
+                      <div className="space-y-4">
+                        <div className="rounded-2xl border border-border bg-muted/20 p-4">
+                          <p className="text-sm font-medium text-foreground">진행 상태</p>
+                          <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                            {getProgressSteps(job).map((step) => (
+                              <div
+                                key={step.label}
+                                className={[
+                                  'rounded-lg border px-3 py-2 text-sm',
+                                  step.done
+                                    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700'
+                                    : step.current
+                                      ? 'border-amber-500/30 bg-amber-500/10 text-amber-700'
+                                      : 'border-border bg-card text-muted-foreground',
+                                ].join(' ')}
+                              >
+                                {step.done ? '완료' : step.current ? '진행중' : '대기'} · {step.label}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="grid gap-4 md:grid-cols-2">
+                          <div className="rounded-2xl border border-border bg-muted/20 p-3">
+                            <p className="mb-2 text-xs text-muted-foreground">Before</p>
+                            {job.before_asset_url ? (
+                              <img src={job.before_asset_url} alt="before" className="aspect-[4/3] w-full rounded-xl object-cover" />
+                            ) : null}
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="mt-3 w-full"
+                              disabled={actingJobId === job.id}
+                              onClick={() => void handleOpenReplacementPicker(job, 'before')}
+                            >
+                              Before 사진 바꾸기
+                            </Button>
+                          </div>
+
+                          <div className="rounded-2xl border border-border bg-muted/20 p-3">
+                            <p className="mb-2 text-xs text-muted-foreground">After</p>
+                            {job.after_asset_url ? (
+                              <img src={job.after_asset_url} alt="after" className="aspect-[4/3] w-full rounded-xl object-cover" />
+                            ) : null}
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="mt-3 w-full"
+                              disabled={actingJobId === job.id}
+                              onClick={() => void handleOpenReplacementPicker(job, 'after')}
+                            >
+                              After 사진 바꾸기
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+                        <div className="rounded-2xl border border-border bg-muted/20 p-4">
+                          <p className="text-sm font-medium text-foreground">1. 원본 확인</p>
+                          <p className="mt-1 text-xs text-muted-foreground">원본 영상 열기</p>
+                          {job.source_video_url ? (
+                            <a
+                              href={job.source_video_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mt-3 inline-flex items-center gap-2 text-sm font-medium text-primary hover:underline"
+                            >
+                              원본 영상 열기
+                              <ExternalLink className="h-4 w-4" />
+                            </a>
+                          ) : (
+                            <p className="mt-3 text-xs text-muted-foreground">아직 원본 영상이 없습니다.</p>
+                          )}
+                        </div>
+
+                        <div className="rounded-2xl border border-border bg-muted/20 p-4">
+                          <p className="text-sm font-medium text-foreground">2. 원본 재생성 또는 상태 확인</p>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={actingJobId === job.id}
+                              onClick={() => void handleRequestGeneration(job.id)}
+                            >
+                              {actingJobId === job.id ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                              {getGenerationButtonLabel(job)}
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={actingJobId === job.id}
+                              onClick={() => void handlePoll(job.id)}
+                            >
+                              {actingJobId === job.id ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                              생성 상태 확인
+                            </Button>
+                          </div>
+                          <p className="mt-3 text-xs text-muted-foreground">
+                            원본 생성이 끝났는지 백그라운드 상태를 다시 불러옵니다.
+                          </p>
+                        </div>
+
+                        <div className="rounded-2xl border border-border bg-muted/20 p-4">
+                          <p className="text-sm font-medium text-foreground">3. 합성</p>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <Button
+                              type="button"
+                              size="sm"
+                              disabled={actingJobId === job.id || !job.source_video_url}
+                              onClick={() => void handleCompose(job)}
+                            >
+                              {actingJobId === job.id ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                              {job.final_video_url ? '워커 합성 다시하기' : '워커 합성 요청'}
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={actingJobId === job.id}
+                              onClick={() => void handleComposePoll(job.id)}
+                            >
+                              {actingJobId === job.id ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                              합성 상태 확인
+                            </Button>
+                          </div>
+                          <p className="mt-3 text-xs text-muted-foreground">
+                            합성 요청 후에는 워커가 최종 MP4를 생성합니다.
+                          </p>
+                        </div>
+
+                        <div className="rounded-2xl border border-border bg-muted/20 p-4">
+                          <p className="text-sm font-medium text-foreground">4. 최종 확인</p>
+                          <p className="mt-1 text-xs text-muted-foreground">최종 영상 확인</p>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {job.final_video_url ? (
+                              <a
+                                href={job.final_video_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-2 text-sm font-medium text-primary hover:underline"
+                              >
+                                최종 영상 열기
+                                <ExternalLink className="h-4 w-4" />
+                              </a>
+                            ) : (
+                              <p className="text-xs text-muted-foreground">아직 최종 MP4가 없습니다.</p>
+                            )}
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={!job.final_video_url || downloadingMp4JobId === job.id}
+                              onClick={() => void handleDownloadMp4(job)}
+                            >
+                              {downloadingMp4JobId === job.id ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                              MP4 다운로드
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
 
                     {job.final_video_url ? (
-                      <div className="rounded-xl border border-border bg-muted/20 p-4">
-                        <p className="text-sm font-medium text-foreground">4. 최종 확인</p>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          <a
-                            href={job.final_video_url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex items-center gap-2 text-sm font-medium text-primary hover:underline"
-                          >
-                            최종 영상 열기
-                            <ExternalLink className="h-4 w-4" />
-                          </a>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            disabled={downloadingMp4JobId === job.id}
-                            onClick={() => void handleDownloadMp4(job)}
-                          >
-                            {downloadingMp4JobId === job.id ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                            MP4 다운로드
-                          </Button>
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-sm font-medium text-foreground">채널별 승인형 퍼블리싱</p>
+                          <p className="text-xs text-muted-foreground">업로드 준비 확인 후 채널별로 론칭 승인하세요.</p>
                         </div>
-                        <div className="mt-4 space-y-3">
-                          <p className="text-sm font-medium text-foreground">반자동 업로드</p>
-                          {(job.targets ?? []).map((target) => {
+                        <div className="grid gap-4 xl:grid-cols-3">
+                          {orderedTargets.map((target) => {
                             const publishPackage = buildShowroomShortsPublishPackage(target)
-                            const canApprove = target.publish_status === 'ready'
-                            const canComplete = target.publish_status === 'approved'
-                            const finalVideoUrl = job.final_video_url ?? ''
+                            const canPrepare = ['ready', 'failed', 'launch_ready', 'approved'].includes(target.publish_status)
+                            const canLaunch = ['launch_ready', 'approved'].includes(target.publish_status)
+                            const canEditPackage = !['preparing', 'publishing'].includes(target.publish_status)
+                            const isPreparing = target.publish_status === 'preparing'
+                            const isPublishing = target.publish_status === 'publishing'
+                            const preparedTitle =
+                              pickPreparationString(target.preparation_payload, ['preparedTitle', 'title', 'videoTitle'])
+                              ?? publishPackage.title
+                            const preparedBody =
+                              pickPreparationString(
+                                target.preparation_payload,
+                                target.channel === 'youtube'
+                                  ? ['descriptionWithHashtags', 'description', 'caption']
+                                  : ['caption', 'description', 'descriptionWithHashtags']
+                              )
+                              ?? (target.channel === 'youtube' ? publishPackage.descriptionWithHashtags : publishPackage.caption)
+                            const preparedFirstComment =
+                              pickPreparationString(target.preparation_payload, ['firstComment', 'comment'])
+                              ?? publishPackage.firstComment
+                            const preparedPreviewUrl = pickPreparationString(
+                              target.preparation_payload,
+                              ['previewUrl', 'draftUrl', 'platformDraftUrl', 'uploadUrl']
+                            )
+                            const preparationChecklist = getPreparationChecklist(target)
 
                             return (
-                              <div key={target.id} className="rounded-xl border border-border bg-card p-3">
+                              <div key={target.id} className="flex h-full flex-col rounded-2xl border border-border bg-muted/20 p-4">
                                 <div className="flex items-center justify-between gap-3">
-                                  <p className="font-medium capitalize text-foreground">{target.channel}</p>
-                                  <span className="rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground">
+                                  <p className="text-lg font-semibold text-foreground">{getChannelLabel(target.channel)}</p>
+                                  <span className="rounded-full bg-card px-2.5 py-1 text-xs text-muted-foreground">
                                     {target.publish_status}
                                   </span>
                                 </div>
 
-                                <div className="mt-3 flex flex-wrap gap-2">
+                                <div className="mt-4 grid grid-cols-2 gap-2">
                                   <Button
                                     type="button"
                                     variant="outline"
                                     size="sm"
-                                    disabled={!canApprove || actingJobId === job.id}
-                                    onClick={() => void handleApproveTarget(target)}
+                                    disabled={!canPrepare || actingJobId === job.id}
+                                    onClick={() => void handlePrepareTarget(target)}
                                   >
-                                    업로드 승인
+                                    {actingJobId === job.id && isPreparing ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                                    {target.publish_status === 'launch_ready' ? '업로드 준비 다시 요청' : '업로드 준비 요청'}
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    disabled={!canLaunch || actingJobId === job.id}
+                                    onClick={() => void handleLaunchTarget(target)}
+                                  >
+                                    {actingJobId === job.id && isPublishing ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                                    론칭 승인
                                   </Button>
                                   <Button
                                     type="button"
@@ -519,43 +775,144 @@ export default function ShowroomShortsPage() {
                                   </Button>
                                 </div>
 
-                                <details className="mt-3 rounded-lg border border-border bg-muted/20 p-3">
+                                <div className="mt-4 rounded-xl border border-border bg-card p-3 text-xs text-muted-foreground">
+                                  <p>{getPublishStatusGuide(target.publish_status)}</p>
+                                  <div className="mt-3 grid gap-1">
+                                    {target.prepared_at ? <p>준비 완료 시각: {formatDateTime(target.prepared_at)}</p> : null}
+                                    {target.launch_ready_at ? <p>승인 대기 시각: {formatDateTime(target.launch_ready_at)}</p> : null}
+                                    {target.published_at ? <p>게시 완료 시각: {formatDateTime(target.published_at)}</p> : null}
+                                  </div>
+                                </div>
+
+                                {target.preparation_error ? (
+                                  <div className="mt-3 rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
+                                    준비/론칭 오류: {target.preparation_error}
+                                  </div>
+                                ) : null}
+
+                                <details className="mt-4 rounded-xl border border-border bg-card p-3">
                                   <summary className="cursor-pointer list-none text-sm font-medium text-foreground">
                                     업로드 준비 패키지 보기
                                   </summary>
-                                  <div className="mt-3 space-y-3 text-sm">
-                                    <div>
-                                      <p className="text-xs text-muted-foreground">제목</p>
-                                      <p className="mt-1 whitespace-pre-wrap text-foreground">{publishPackage.title}</p>
+                                  {editingTargetId === target.id ? (
+                                    <div className="mt-3 space-y-4 text-sm">
+                                      <div>
+                                        <p className="mb-1 text-xs text-muted-foreground">제목</p>
+                                        <input
+                                          type="text"
+                                          value={editTitle}
+                                          onChange={(e) => setEditTitle(e.target.value)}
+                                          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground"
+                                        />
+                                      </div>
+                                      <div>
+                                        <p className="mb-1 text-xs text-muted-foreground">{target.channel === 'youtube' ? '설명 + 해시태그' : '캡션'}</p>
+                                        <textarea
+                                          value={editBody}
+                                          onChange={(e) => setEditBody(e.target.value)}
+                                          rows={5}
+                                          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground"
+                                        />
+                                      </div>
+                                      <div>
+                                        <p className="mb-1 text-xs text-muted-foreground">첫 댓글</p>
+                                        <textarea
+                                          value={editComment}
+                                          onChange={(e) => setEditComment(e.target.value)}
+                                          rows={2}
+                                          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground"
+                                        />
+                                      </div>
+                                      <div className="flex justify-end gap-2 pt-2">
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          size="sm"
+                                          disabled={editSaving}
+                                          onClick={handleCancelEditPackage}
+                                        >
+                                          취소
+                                        </Button>
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          disabled={editSaving}
+                                          onClick={() => void handleSaveEditPackage(target)}
+                                        >
+                                          {editSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                                          저장
+                                        </Button>
+                                      </div>
                                     </div>
-                                    <div>
-                                      <p className="text-xs text-muted-foreground">{target.channel === 'youtube' ? '설명 + 해시태그' : '캡션'}</p>
-                                      <p className="mt-1 whitespace-pre-wrap text-foreground">
-                                        {target.channel === 'youtube' ? publishPackage.descriptionWithHashtags : publishPackage.caption}
-                                      </p>
+                                  ) : (
+                                    <div className="mt-3 space-y-3 text-sm">
+                                      <div className="flex justify-end">
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          size="sm"
+                                          className="h-7 text-xs"
+                                          disabled={!canEditPackage || actingJobId === job.id}
+                                          onClick={() => handleStartEditPackage(target.id, preparedTitle, preparedBody, preparedFirstComment)}
+                                        >
+                                          내용 수정
+                                        </Button>
+                                      </div>
+                                      <div>
+                                        <p className="text-xs text-muted-foreground">제목</p>
+                                        <p className="mt-1 whitespace-pre-wrap text-foreground">{preparedTitle}</p>
+                                      </div>
+                                      <div>
+                                        <p className="text-xs text-muted-foreground">{target.channel === 'youtube' ? '설명 + 해시태그' : '캡션'}</p>
+                                        <p className="mt-1 whitespace-pre-wrap text-foreground">{preparedBody}</p>
+                                      </div>
+                                      <div>
+                                        <p className="text-xs text-muted-foreground">첫 댓글</p>
+                                        <p className="mt-1 whitespace-pre-wrap text-foreground">{preparedFirstComment}</p>
+                                      </div>
+                                      <div>
+                                        <p className="text-xs text-muted-foreground">최종 영상</p>
+                                        <a
+                                          href={job.final_video_url ?? ''}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="mt-1 inline-flex items-center gap-2 text-primary hover:underline"
+                                        >
+                                          최종 영상 열기
+                                          <ExternalLink className="h-4 w-4" />
+                                        </a>
+                                      </div>
+                                      {preparedPreviewUrl ? (
+                                        <div>
+                                          <p className="text-xs text-muted-foreground">n8n 준비 결과 링크</p>
+                                          <a
+                                            href={preparedPreviewUrl}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="mt-1 inline-flex items-center gap-2 text-primary hover:underline"
+                                          >
+                                            준비 결과 열기
+                                            <ExternalLink className="h-4 w-4" />
+                                          </a>
+                                        </div>
+                                      ) : null}
+                                      {preparationChecklist.length > 0 ? (
+                                        <div>
+                                          <p className="text-xs text-muted-foreground">체크리스트</p>
+                                          <div className="mt-1 space-y-1">
+                                            {preparationChecklist.map((item) => (
+                                              <p key={item} className="text-foreground">- {item}</p>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      ) : null}
                                     </div>
-                                    <div>
-                                      <p className="text-xs text-muted-foreground">첫 댓글</p>
-                                      <p className="mt-1 whitespace-pre-wrap text-foreground">{publishPackage.firstComment}</p>
-                                    </div>
-                                    <div>
-                                      <p className="text-xs text-muted-foreground">최종 영상</p>
-                                      <a
-                                        href={finalVideoUrl}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        className="mt-1 inline-flex items-center gap-2 text-primary hover:underline"
-                                      >
-                                        최종 영상 열기
-                                        <ExternalLink className="h-4 w-4" />
-                                      </a>
-                                    </div>
-                                  </div>
+                                  )}
                                 </details>
 
-                                <div className="mt-3 space-y-2">
+                                <div className="mt-4 space-y-2">
                                   <label className="block text-xs text-muted-foreground">
-                                    게시 링크 또는 게시 ID
+                                    수동 보정용 게시 링크 또는 게시 ID
                                     <input
                                       type="text"
                                       value={publishLinkInputs[target.id] ?? target.external_post_url ?? target.external_post_id ?? undefined}
@@ -573,10 +930,10 @@ export default function ShowroomShortsPage() {
                                     <Button
                                       type="button"
                                       size="sm"
-                                      disabled={!canComplete || actingJobId === job.id}
+                                      disabled={actingJobId === job.id}
                                       onClick={() => void handleMarkPublished(target)}
                                     >
-                                      게시 완료
+                                      수동 게시 완료
                                     </Button>
                                     <Button
                                       type="button"
@@ -585,7 +942,7 @@ export default function ShowroomShortsPage() {
                                       disabled={actingJobId === job.id}
                                       onClick={() => void handleMarkFailed(target)}
                                     >
-                                      업로드 실패
+                                      수동 실패 처리
                                     </Button>
                                     {target.external_post_url ? (
                                       <a
@@ -607,45 +964,18 @@ export default function ShowroomShortsPage() {
                       </div>
                     ) : null}
 
-                    <details className="rounded-xl border border-dashed border-border bg-muted/20 p-4 text-sm text-muted-foreground">
+                    <details className="rounded-2xl border border-dashed border-border bg-muted/20 p-4 text-sm text-muted-foreground">
                       <summary className="cursor-pointer list-none font-medium text-foreground">
                         안내문 보기
                       </summary>
                       <p className="mt-3">
-                        원본 영상을 먼저 확인하고, 마음에 들지 않으면 원본을 다시 생성하세요. 원하는 원본이 나왔을 때만 `워커 합성 요청`을 눌러 서버에서 최종 MP4를 만들고, 마지막에 최종 영상을 확인하는 흐름입니다.
+                        원본 영상을 먼저 확인하고, 원하는 결과가 나왔을 때만 `워커 합성 요청`으로 최종 MP4를 만듭니다. 이후 각 채널별 `업로드 준비 요청`은 n8n이 처리하고, 준비가 끝난 타깃만 `론칭 승인`으로 실제 게시를 시작합니다.
                       </p>
-                    </details>
-
-                    <details className="rounded-xl border border-border bg-muted/30 p-4">
-                      <summary className="cursor-pointer list-none text-sm font-medium text-foreground">
-                        배포 타깃 보기
-                      </summary>
-                      <div className="mt-3 space-y-3">
-                        {(job.targets ?? []).map((target) => (
-                          <div key={target.id} className="rounded-lg border border-border bg-card px-3 py-3">
-                            <div className="flex items-center justify-between gap-3">
-                              <p className="font-medium capitalize">{target.channel}</p>
-                              <span className="rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground">
-                                {target.publish_status}
-                              </span>
-                            </div>
-                            <p className="mt-2 text-sm text-foreground">{target.title}</p>
-                            <p className="mt-2 text-xs whitespace-pre-wrap text-muted-foreground">{target.description}</p>
-                            <div className="mt-2 flex flex-wrap gap-1">
-                              {target.hashtags.map((tag) => (
-                                <span key={tag} className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
-                                  {tag}
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
                     </details>
                   </div>
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </div>

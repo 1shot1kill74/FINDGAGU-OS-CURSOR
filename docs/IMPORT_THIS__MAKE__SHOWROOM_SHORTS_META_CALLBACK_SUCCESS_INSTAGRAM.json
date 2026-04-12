@@ -1,0 +1,14 @@
+{
+  "targetId": "TARGET_UUID",
+  "action": "launch",
+  "status": "published",
+  "message": "published",
+  "completedAt": "2026-04-11T12:00:00.000Z",
+  "externalPostId": "INSTAGRAM_MEDIA_ID",
+  "externalPostUrl": "https://www.instagram.com/reel/INSTAGRAM_MEDIA_ID/",
+  "payload": {
+    "channel": "instagram",
+    "provider": "make",
+    "finalVideoUrl": "https://example.com/final.mp4"
+  }
+}

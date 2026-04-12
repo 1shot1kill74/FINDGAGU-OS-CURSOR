@@ -1,0 +1,14 @@
+{
+  "targetId": "TARGET_UUID",
+  "action": "launch",
+  "status": "published",
+  "message": "published",
+  "completedAt": "2026-04-11T12:00:00.000Z",
+  "externalPostId": "FACEBOOK_VIDEO_ID",
+  "externalPostUrl": "https://www.facebook.com/watch/?v=FACEBOOK_VIDEO_ID",
+  "payload": {
+    "channel": "facebook",
+    "provider": "make",
+    "finalVideoUrl": "https://example.com/final.mp4"
+  }
+}

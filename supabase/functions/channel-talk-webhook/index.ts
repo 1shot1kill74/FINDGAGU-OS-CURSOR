@@ -24,6 +24,7 @@ const SHOWROOM_LINK_EVENT_TYPES = new Set(["message", "chat.user_message"])
 /** 공개 쇼룸 SPA 경로 (내부 관리용 `/showroom` 과 구분) */
 const CANON_PUBLIC_SHOWROOM_PATH = "/public/showroom"
 const DEFAULT_PUBLIC_SHOWROOM_ORIGIN = "https://findgagu-os-cursor.vercel.app"
+const PAUSED_PUBLIC_SHOWROOM_HOSTS = new Set(["findgagu.com", "www.findgagu.com"])
 const SHOWROOM_SHARE_EXPIRY_DAYS = 3
 const DEFAULT_SHOWROOM_TITLE = "시공사례 쇼룸"
 const DEFAULT_SHOWROOM_DESCRIPTION =
@@ -62,19 +63,28 @@ function getShowroomShareExpiryIso(days = SHOWROOM_SHARE_EXPIRY_DAYS): string {
   return expiresAt.toISOString()
 }
 
+function isPausedPublicShowroomBaseUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value.includes("://") ? value : `https://${value}`)
+    const normalizedPath = parsed.pathname.replace(/\/+$/, "") || "/"
+    return PAUSED_PUBLIC_SHOWROOM_HOSTS.has(parsed.hostname) && normalizedPath === "/showroom"
+  } catch {
+    return false
+  }
+}
+
 function getShowroomBaseUrl(): string {
   const fromEnv =
     Deno.env.get("SHOWROOM_PUBLIC_BASE_URL")?.trim() ||
     Deno.env.get("PUBLIC_SHOWROOM_BASE_URL")?.trim() ||
     ""
   const fallback = `${DEFAULT_PUBLIC_SHOWROOM_ORIGIN}${CANON_PUBLIC_SHOWROOM_PATH}`
-  const raw = (fromEnv || DEFAULT_PUBLIC_SHOWROOM_ORIGIN).replace(/\/+$/, "")
+  const raw = (!fromEnv || isPausedPublicShowroomBaseUrl(fromEnv) ? DEFAULT_PUBLIC_SHOWROOM_ORIGIN : fromEnv).replace(/\/+$/, "")
 
   try {
     const u = new URL(raw.includes("://") ? raw : `https://${raw}`)
     let path = u.pathname.replace(/\/+$/, "") || ""
-    const isLegacyHomepageHost = u.hostname === "findgagu.com" || u.hostname === "www.findgagu.com"
-    const origin = isLegacyHomepageHost ? DEFAULT_PUBLIC_SHOWROOM_ORIGIN : u.origin
+    const origin = u.origin
 
     if (path.endsWith(CANON_PUBLIC_SHOWROOM_PATH)) {
       return `${origin}${path}`

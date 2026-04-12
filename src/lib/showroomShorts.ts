@@ -23,6 +23,8 @@ export type ShowroomShortsJobStatus = (typeof SHOWROOM_SHORTS_JOB_STATUSES)[numb
 export const SHOWROOM_SHORTS_PUBLISH_STATUSES = [
   'draft',
   'ready',
+  'preparing',
+  'launch_ready',
   'approved',
   'publishing',
   'published',
@@ -42,7 +44,11 @@ export interface ShowroomShortsTargetRecord {
   publish_status: ShowroomShortsPublishStatus
   external_post_id: string | null
   external_post_url: string | null
+  preparation_payload: Record<string, unknown> | null
+  preparation_error: string | null
   approved_at: string | null
+  prepared_at: string | null
+  launch_ready_at: string | null
   published_at: string | null
   created_at: string
   updated_at: string
@@ -54,6 +60,7 @@ export interface ShowroomShortsLogRecord {
   target_id: string | null
   stage: string
   message: string
+  payload?: Record<string, unknown> | null
   created_at: string
 }
 
@@ -93,6 +100,14 @@ export interface ShowroomShortsWorkerJobStatus {
   message?: string
 }
 
+export interface ShowroomShortsPublishDispatchResult {
+  ok: boolean
+  action: 'prepare' | 'launch'
+  status: ShowroomShortsPublishStatus | 'published'
+  mode?: 'mock' | 'live'
+  message?: string
+}
+
 export type ShowroomShortsSelectionValidation =
   | {
       ok: true
@@ -114,6 +129,12 @@ export type ShowroomShortsSelectionValidation =
 
 function trimOrNull(value: string | null | undefined): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function asJsonRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
 }
 
 function stripShowroomStagePrefix(value: string | null | undefined): string | null {
@@ -199,11 +220,14 @@ export function validateBeforeAfterSelection(images: ShowroomImageAsset[]): Show
 }
 
 function buildHashtags(images: ShowroomImageAsset[]): string[] {
-  const siteName = getCanonicalSiteName(images[0])
-  const industry = trimOrNull(images[0]?.business_type)
-  const tags = ['#BeforeAfter', '#쇼츠', '#인테리어', '#파인드가구']
-  if (siteName) tags.push(`#${siteName.replace(/\s+/g, '')}`)
-  if (industry) tags.push(`#${industry.replace(/\s+/g, '')}`)
+  const meta = images[0]
+  const industry = trimOrNull(meta?.business_type)
+  const tags = ['#사무실인테리어', '#사무실가구', '#사무용가구', '#사무실꾸미기', '#파인드가구']
+  
+  if (industry && industry !== '기타') {
+    tags.push(`#${industry.replace(/\s+/g, '')}인테리어`)
+  }
+  
   return Array.from(new Set(tags))
 }
 
@@ -213,26 +237,31 @@ export function buildShowroomShortsDraft(images: ShowroomImageAsset[]) {
     throw new Error(selection.message)
   }
 
-  const openShowroomTitle =
-    trimOrNull(selection.afterImage.external_display_name) ||
-    trimOrNull(selection.beforeImage.external_display_name) ||
-    null
+    const siteName =
+      getCanonicalSiteName(selection.afterImage) ||
+      getCanonicalSiteName(selection.beforeImage) ||
+      '시공 사례'
 
-  const siteName =
-    getCanonicalSiteName(selection.afterImage) ||
-    getCanonicalSiteName(selection.beforeImage) ||
-    '시공 사례'
+    const openShowroomTitle =
+      trimOrNull(selection.afterImage.external_display_name) ||
+      trimOrNull(selection.beforeImage.external_display_name) ||
+      siteName
+    const industry = trimOrNull(selection.afterImage.business_type) || trimOrNull(selection.beforeImage.business_type)
+    const industryLine = industry && industry !== '기타'
+      ? `${industry} 업종 공간 구성과 사무가구 배치 아이디어가 필요하신 분들께 특히 참고가 되는 사례입니다.`
+      : '사무공간은 가구 배치와 레이아웃만 달라져도 업무 몰입도와 공간 인상이 크게 달라질 수 있습니다.'
 
   return {
-    title: `${openShowroomTitle ?? siteName} Before & After | 10초 숏츠`,
+    title: `${openShowroomTitle} Before & After | 10초 숏츠`,
     description: [
-      '잠시 후, 이 공간은 완전히 달라집니다.',
+      `${openShowroomTitle}의 Before & After 공간 변화입니다.`,
       '',
-      `${siteName} 실제 사진 기반 Before & After 영상입니다.`,
-      '자세한 구성은 파인드가구 온라인 쇼룸에서 확인하세요.',
+      '실제 현장 사진을 바탕으로 제작한 오피스 스타일링 전후 비교 사례입니다.',
+      industryLine,
+      '사무실 인테리어와 사무용 가구 구성이 고민되신다면 파인드가구 온라인 쇼룸에서 더 다양한 사례를 확인하실 수 있습니다.',
     ].join('\n'),
     hashtags: buildHashtags(images),
-    firstComment: `${siteName}에서 가장 달라진 포인트는 무엇인가요? 댓글로 알려주세요.`,
+    firstComment: `${openShowroomTitle}처럼 업종에 맞는 사무공간 구성이 필요하신가요? 가장 궁금한 포인트를 댓글로 남겨주세요.`,
   }
 }
 
@@ -327,7 +356,11 @@ function mapShortsTargetRow(row: Record<string, unknown>): ShowroomShortsTargetR
     publish_status: normalizePublishStatus(row.publish_status),
     external_post_id: trimOrNull(typeof row.external_post_id === 'string' ? row.external_post_id : null),
     external_post_url: trimOrNull(typeof row.external_post_url === 'string' ? row.external_post_url : null),
+    preparation_payload: asJsonRecord(row.preparation_payload),
+    preparation_error: trimOrNull(typeof row.preparation_error === 'string' ? row.preparation_error : null),
     approved_at: trimOrNull(typeof row.approved_at === 'string' ? row.approved_at : null),
+    prepared_at: trimOrNull(typeof row.prepared_at === 'string' ? row.prepared_at : null),
+    launch_ready_at: trimOrNull(typeof row.launch_ready_at === 'string' ? row.launch_ready_at : null),
     published_at: trimOrNull(typeof row.published_at === 'string' ? row.published_at : null),
     created_at: String(row.created_at ?? ''),
     updated_at: String(row.updated_at ?? ''),
@@ -341,6 +374,7 @@ function mapShortsLogRow(row: Record<string, unknown>): ShowroomShortsLogRecord 
     target_id: trimOrNull(typeof row.target_id === 'string' ? row.target_id : null),
     stage: String(row.stage ?? ''),
     message: String(row.message ?? ''),
+    payload: asJsonRecord(row.payload),
     created_at: String(row.created_at ?? ''),
   }
 }
@@ -558,6 +592,86 @@ export async function getShowroomShortsCompositionStatus(jobId: string) {
   })
 }
 
+export async function requestShowroomShortsPublishPrepare(targetId: string) {
+  const { data, error } = await supabase.functions.invoke<ShowroomShortsPublishDispatchResult>(
+    'showroom-shorts-publish-dispatch',
+    {
+      body: { targetId, action: 'prepare' },
+    }
+  )
+
+  if (error) {
+    throw new Error(typeof error.message === 'string' ? error.message : '업로드 준비 요청에 실패했습니다.')
+  }
+  if (!data?.ok) {
+    throw new Error(data?.message ?? '업로드 준비 요청에 실패했습니다.')
+  }
+  return data
+}
+
+export async function requestShowroomShortsPublishLaunch(targetId: string) {
+  const { data, error } = await supabase.functions.invoke<ShowroomShortsPublishDispatchResult>(
+    'showroom-shorts-publish-dispatch',
+    {
+      body: { targetId, action: 'launch' },
+    }
+  )
+
+  if (error) {
+    throw new Error(typeof error.message === 'string' ? error.message : '론칭 승인 요청에 실패했습니다.')
+  }
+  if (!data?.ok) {
+    throw new Error(data?.message ?? '론칭 승인 요청에 실패했습니다.')
+  }
+  return data
+}
+
+export async function deleteShowroomShortsJob(
+  job: Pick<ShowroomShortsJobRecord, 'id' | 'status' | 'targets'>
+) {
+  const hasActivePublish =
+    (job.targets ?? []).some((target) => ['preparing', 'publishing'].includes(target.publish_status))
+
+  if (job.status === 'composition_queued' || job.status === 'composition_processing' || hasActivePublish) {
+    throw new Error('현재 진행 중인 숏츠 작업은 삭제할 수 없습니다. 먼저 작업이 끝날 때까지 기다려주세요.')
+  }
+
+  const { error: logsError } = await supabase
+    .from('showroom_shorts_logs')
+    .delete()
+    .eq('shorts_job_id', job.id)
+
+  if (logsError) {
+    throw new Error(logsError.message)
+  }
+
+  const { error: targetsError } = await supabase
+    .from('showroom_shorts_targets')
+    .delete()
+    .eq('shorts_job_id', job.id)
+
+  if (targetsError) {
+    throw new Error(targetsError.message)
+  }
+
+  const { error: jobError } = await supabase
+    .from('showroom_shorts_jobs')
+    .delete()
+    .eq('id', job.id)
+
+  if (jobError) {
+    throw new Error(jobError.message)
+  }
+}
+
+export async function deleteFailedShowroomShortsJob(job: Pick<ShowroomShortsJobRecord, 'id' | 'status' | 'targets'>) {
+  if (job.status !== 'failed') {
+    throw new Error('실패한 숏츠 작업만 삭제할 수 있습니다.')
+  }
+
+  await deleteShowroomShortsJob(job)
+}
+
 async function insertShortsTargetLog(params: {
   jobId: string
   targetId: string
@@ -578,18 +692,50 @@ function joinHashtags(hashtags: string[]) {
   return hashtags.join(' ').trim()
 }
 
+function pickPreparationString(payload: Record<string, unknown> | null | undefined, keys: string[]) {
+  if (!payload) return null
+  for (const key of keys) {
+    const value = payload[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return null
+}
+
+function extractHashtagsText(value: string | null | undefined) {
+  const matches = value?.match(/#[^\s#]+/g) ?? []
+  return matches.join(' ').trim()
+}
+
 export function buildShowroomShortsPublishPackage(target: ShowroomShortsTargetRecord) {
-  const hashtagsText = joinHashtags(target.hashtags)
-  const descriptionWithHashtags = [target.description.trim(), hashtagsText].filter(Boolean).join('\n\n')
-  const caption = [target.description.trim(), hashtagsText].filter(Boolean).join('\n\n')
+  const preparation = target.preparation_payload
+  const fallbackHashtagsText = joinHashtags(target.hashtags)
+  const preparedTitle =
+    pickPreparationString(preparation, ['preparedTitle', 'title', 'videoTitle'])
+    ?? target.title
+  const preparedBody =
+    pickPreparationString(preparation, ['descriptionWithHashtags', 'caption'])
+    ?? [target.description.trim(), fallbackHashtagsText].filter(Boolean).join('\n\n')
+  const preparedCaption =
+    pickPreparationString(preparation, ['caption', 'descriptionWithHashtags'])
+    ?? preparedBody
+  const hashtagsText =
+    pickPreparationString(preparation, ['hashtagsText'])
+    ?? extractHashtagsText(preparedBody)
+    ?? fallbackHashtagsText
+  const preparedDescription =
+    pickPreparationString(preparation, ['description', 'preparedDescription'])
+    ?? target.description
+  const preparedFirstComment =
+    pickPreparationString(preparation, ['firstComment', 'comment'])
+    ?? target.first_comment
 
   return {
-    title: target.title,
-    description: target.description,
+    title: preparedTitle,
+    description: preparedDescription,
     hashtagsText,
-    firstComment: target.first_comment,
-    descriptionWithHashtags,
-    caption,
+    firstComment: preparedFirstComment,
+    descriptionWithHashtags: preparedBody,
+    caption: preparedCaption,
   }
 }
 
@@ -647,6 +793,68 @@ export async function approveShowroomShortsTarget(targetId: string) {
     targetId: mapped.id,
     stage: 'publish_approved',
     message: `${mapped.channel} 업로드를 승인했습니다.`,
+    payload: { channel: mapped.channel },
+  })
+
+  return mapped
+}
+
+export async function updateShowroomShortsTargetPreparation(
+  targetId: string,
+  payload: {
+    title: string
+    descriptionWithHashtags: string
+    firstComment: string
+  }
+) {
+  const nowIso = new Date().toISOString()
+  
+  // 1. Fetch current target to get existing preparation_payload
+  const { data: currentTarget, error: fetchError } = await supabase
+    .from('showroom_shorts_targets')
+    .select('preparation_payload')
+    .eq('id', targetId)
+    .single()
+
+  if (fetchError || !currentTarget) {
+    throw new Error(fetchError?.message ?? '타깃 정보를 불러오지 못했습니다.')
+  }
+
+  // 2. Merge new values into existing payload
+  const existingPayload = currentTarget.preparation_payload || {}
+  const hashtagsText = extractHashtagsText(payload.descriptionWithHashtags)
+  const nextPayload = {
+    ...existingPayload,
+    title: payload.title,
+    preparedTitle: payload.title,
+    descriptionWithHashtags: payload.descriptionWithHashtags,
+    description: payload.descriptionWithHashtags,
+    caption: payload.descriptionWithHashtags, // for fb/insta
+    hashtagsText,
+    firstComment: payload.firstComment,
+  }
+
+  // 3. Update the target
+  const { data: target, error } = await supabase
+    .from('showroom_shorts_targets')
+    .update({
+      preparation_payload: nextPayload,
+      updated_at: nowIso,
+    })
+    .eq('id', targetId)
+    .select('*')
+    .single()
+
+  if (error || !target) {
+    throw new Error(error?.message ?? '준비 내용 수정에 실패했습니다.')
+  }
+
+  const mapped = mapShortsTargetRow(target as Record<string, unknown>)
+  await insertShortsTargetLog({
+    jobId: mapped.shorts_job_id,
+    targetId: mapped.id,
+    stage: 'preparation_edited',
+    message: `${mapped.channel} 업로드 준비 내용을 수동으로 수정했습니다.`,
     payload: { channel: mapped.channel },
   })
 

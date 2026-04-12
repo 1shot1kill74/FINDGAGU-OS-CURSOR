@@ -1,0 +1,11 @@
+{
+  "targetId": "TARGET_UUID",
+  "action": "launch",
+  "status": "failed",
+  "message": "Instagram publish failed",
+  "payload": {
+    "channel": "instagram",
+    "provider": "make",
+    "errorCode": "META_UPLOAD_FAILED"
+  }
+}

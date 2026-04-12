@@ -1,0 +1,320 @@
+{
+  "name": "Findgagu Showroom Shorts Publish Gate V3 (YouTube + Meta)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "findgagu-showroom-shorts-publish",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "node-webhook",
+      "name": "쇼룸 숏츠 퍼블리싱 요청",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [320, 320],
+      "webhookId": "findgagu-showroom-shorts-publish"
+    },
+    {
+      "parameters": {
+        "jsCode": "const incoming = $input.first().json ?? {};\nconst body = incoming.body ?? incoming ?? {};\n\nconst getString = (value) => typeof value === 'string' && value.trim() ? value.trim() : '';\nconst getArray = (value) => Array.isArray(value) ? value : [];\n\nconst action = getString(body.action) === 'launch' ? 'launch' : 'prepare';\nconst callback = body.callback ?? {};\nconst job = body.job ?? {};\nconst target = body.target ?? {};\nconst publishPackage = body.publishPackage ?? {};\n\nreturn [{\n  json: {\n    source: getString(body.source) || 'showroom-shorts',\n    action,\n    dispatchedAt: getString(body.dispatchedAt) || new Date().toISOString(),\n    callbackUrl: getString(callback.url),\n    callbackSecretHeaderName: getString(callback.secretHeaderName) || 'x-showroom-shorts-publish-secret',\n    callbackSecret: 'REPLACE_WITH_SHOWROOM_SHORTS_PUBLISH_CALLBACK_SECRET',\n    jobId: getString(job.id),\n    finalVideoUrl: getString(job.finalVideoUrl),\n    sourceVideoUrl: getString(job.sourceVideoUrl),\n    durationSeconds: Number(job.durationSeconds ?? 10),\n    targetId: getString(target.id),\n    channel: getString(target.channel),\n    title: getString(target.title),\n    description: getString(target.description),\n    hashtags: getArray(target.hashtags).map((item) => String(item).trim()).filter(Boolean),\n    firstComment: getString(target.firstComment),\n    publishStatus: getString(target.publishStatus),\n    publishPackage,\n  }\n}];"
+      },
+      "id": "node-normalize",
+      "name": "입력 정규화",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [560, 320]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "cond-launch",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "launch",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node-if-launch",
+      "name": "Launch 요청인가?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [780, 320]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "cond-yt",
+              "leftValue": "={{ $json.channel }}",
+              "rightValue": "youtube",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node-if-youtube",
+      "name": "채널이 YouTube?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1000, 240]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "cond-fb",
+              "leftValue": "={{ $json.channel }}",
+              "rightValue": "facebook",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node-if-facebook",
+      "name": "채널이 Facebook?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1000, 480]
+    },
+    {
+      "parameters": {
+        "jsCode": "const title = $json.title || $json.publishPackage?.title || '';\nconst baseDescription = $json.channel === 'youtube'\n  ? ($json.publishPackage?.descriptionWithHashtags || $json.description)\n  : ($json.publishPackage?.caption || $json.description);\nconst firstComment = $json.publishPackage?.firstComment || $json.firstComment || '';\nconst hashtags = Array.isArray($json.hashtags) ? $json.hashtags.join(' ') : '';\n\nreturn [{\n  json: {\n    ...$json,\n    preparedTitle: title,\n    preparedDescription: baseDescription,\n    preparedFirstComment: firstComment,\n    checklist: [\n      `${$json.channel} 제목 점검`,\n      `${$json.channel} 설명 점검`,\n      '최종 MP4 URL 확인',\n      '론칭 전 승인 대기'\n    ],\n    previewUrl: $json.finalVideoUrl,\n    callbackBody: {\n      targetId: $json.targetId,\n      action: 'prepare',\n      status: 'launch_ready',\n      message: 'upload ready',\n      completedAt: new Date().toISOString(),\n      payload: {\n        title,\n        descriptionWithHashtags: baseDescription,\n        firstComment,\n        hashtagsText: hashtags,\n        previewUrl: $json.finalVideoUrl,\n        checklist: [\n          `${$json.channel} 제목 점검`,\n          `${$json.channel} 설명 점검`,\n          '최종 MP4 URL 확인',\n          '론칭 전 승인 대기'\n        ]\n      }\n    }\n  }\n}];"
+      },
+      "id": "node-prepare-payload",
+      "name": "Prepare 결과 만들기",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 120]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('입력 정규화').item.json.finalVideoUrl }}",
+        "responseFormat": "file",
+        "options": {}
+      },
+      "id": "node-download-video",
+      "name": "비디오 다운로드",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1220, 200]
+    },
+    {
+      "parameters": {
+        "resource": "video",
+        "operation": "upload",
+        "title": "={{ $('입력 정규화').item.json.publishPackage?.title || $('입력 정규화').item.json.title }}",
+        "description": "={{ $('입력 정규화').item.json.publishPackage?.descriptionWithHashtags || $('입력 정규화').item.json.description }}",
+        "categoryId": "26",
+        "privacyStatus": "unlisted",
+        "binaryPropertyName": "data"
+      },
+      "id": "node-youtube-upload",
+      "name": "YouTube 업로드",
+      "type": "n8n-nodes-base.youTube",
+      "typeVersion": 1,
+      "position": [1440, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v22.0/{{ $env.META_PAGE_ID }}/videos",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "file_url", "value": "={{ $('입력 정규화').item.json.finalVideoUrl }}" },
+            { "name": "description", "value": "={{ $('입력 정규화').item.json.publishPackage?.caption || $('입력 정규화').item.json.publishPackage?.descriptionWithHashtags || $('입력 정규화').item.json.description }}" },
+            { "name": "access_token", "value": "={{ $env.META_PAGE_ACCESS_TOKEN }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-fb-upload",
+      "name": "Facebook Page 영상",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1220, 480]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v22.0/{{ $env.META_IG_USER_ID }}/media",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "video_url", "value": "={{ $('입력 정규화').item.json.finalVideoUrl }}" },
+            { "name": "caption", "value": "={{ $('입력 정규화').item.json.publishPackage?.caption || $('입력 정규화').item.json.publishPackage?.descriptionWithHashtags || $('입력 정규화').item.json.description }}" },
+            { "name": "media_type", "value": "REELS" },
+            { "name": "access_token", "value": "={{ $env.META_IG_ACCESS_TOKEN }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-ig-container",
+      "name": "Instagram 릴스 컨테이너",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1220, 640]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v22.0/{{ $env.META_IG_USER_ID }}/media_publish",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "creation_id", "value": "={{ $('Instagram 릴스 컨테이너').item.json.id }}" },
+            { "name": "access_token", "value": "={{ $env.META_IG_ACCESS_TOKEN }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-ig-publish",
+      "name": "Instagram 릴스 게시",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1440, 640]
+    },
+    {
+      "parameters": {
+        "jsCode": "const normalizeNode = $('입력 정규화').item.json;\nconst youtubeOutput = $json;\nconst channel = String(normalizeNode.channel || '').toLowerCase();\nconst finalVideoUrl = normalizeNode.finalVideoUrl || '';\nconst externalPostId = youtubeOutput.id || `youtube-${Date.now()}`;\nconst externalPostUrl = youtubeOutput.id ? `https://www.youtube.com/shorts/${youtubeOutput.id}` : `https://www.youtube.com/watch?v=${externalPostId}`;\nreturn [{\n  json: {\n    ...normalizeNode,\n    callbackBody: {\n      targetId: normalizeNode.targetId,\n      action: 'launch',\n      status: 'published',\n      message: 'published',\n      completedAt: new Date().toISOString(),\n      externalPostId,\n      externalPostUrl,\n      payload: { channel, finalVideoUrl, youtubeResponse: youtubeOutput }\n    }\n  }\n}];"
+      },
+      "id": "node-launch-yt",
+      "name": "Launch 결과 YouTube",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1660, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const normalizeNode = $('입력 정규화').item.json;\nconst res = $json;\nconst id = res.id || res.post_id || `fb-${Date.now()}`;\nconst finalVideoUrl = normalizeNode.finalVideoUrl || '';\nconst externalPostUrl = `https://www.facebook.com/watch/?v=${id}`;\nreturn [{\n  json: {\n    ...normalizeNode,\n    callbackBody: {\n      targetId: normalizeNode.targetId,\n      action: 'launch',\n      status: 'published',\n      message: 'published',\n      completedAt: new Date().toISOString(),\n      externalPostId: String(id),\n      externalPostUrl,\n      payload: { channel: 'facebook', finalVideoUrl, graphResponse: res }\n    }\n  }\n}];"
+      },
+      "id": "node-launch-fb",
+      "name": "Launch 결과 Facebook",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1440, 480]
+    },
+    {
+      "parameters": {
+        "jsCode": "const normalizeNode = $('입력 정규화').item.json;\nconst res = $json;\nconst id = res.id || `ig-${Date.now()}`;\nconst finalVideoUrl = normalizeNode.finalVideoUrl || '';\nconst externalPostUrl = `https://www.instagram.com/p/${id}/`;\nreturn [{\n  json: {\n    ...normalizeNode,\n    callbackBody: {\n      targetId: normalizeNode.targetId,\n      action: 'launch',\n      status: 'published',\n      message: 'published',\n      completedAt: new Date().toISOString(),\n      externalPostId: String(id),\n      externalPostUrl,\n      payload: { channel: 'instagram', finalVideoUrl, graphResponse: res }\n    }\n  }\n}];"
+      },
+      "id": "node-launch-ig",
+      "name": "Launch 결과 Instagram",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1660, 640]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('입력 정규화').item.json.callbackUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "x-showroom-shorts-publish-secret", "value": "={{ $('입력 정규화').item.json.callbackSecret }}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.callbackBody) }}",
+        "options": {}
+      },
+      "id": "node-callback",
+      "name": "Supabase Callback 호출",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2100, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ ({ ok: true, accepted: true, action: $('입력 정규화').item.json.action, callbackTarget: $('입력 정규화').item.json.callbackUrl, callbackResult: $json }) }}",
+        "options": {}
+      },
+      "id": "node-response",
+      "name": "Webhook 응답",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [2320, 400]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "쇼룸 숏츠 퍼블리싱 요청": {
+      "main": [[{ "node": "입력 정규화", "type": "main", "index": 0 }]]
+    },
+    "입력 정규화": {
+      "main": [[{ "node": "Launch 요청인가?", "type": "main", "index": 0 }]]
+    },
+    "Launch 요청인가?": {
+      "main": [
+        [{ "node": "채널이 YouTube?", "type": "main", "index": 0 }],
+        [{ "node": "Prepare 결과 만들기", "type": "main", "index": 0 }]
+      ]
+    },
+    "채널이 YouTube?": {
+      "main": [
+        [{ "node": "비디오 다운로드", "type": "main", "index": 0 }],
+        [{ "node": "채널이 Facebook?", "type": "main", "index": 0 }]
+      ]
+    },
+    "채널이 Facebook?": {
+      "main": [
+        [{ "node": "Facebook Page 영상", "type": "main", "index": 0 }],
+        [{ "node": "Instagram 릴스 컨테이너", "type": "main", "index": 0 }]
+      ]
+    },
+    "비디오 다운로드": {
+      "main": [[{ "node": "YouTube 업로드", "type": "main", "index": 0 }]]
+    },
+    "YouTube 업로드": {
+      "main": [[{ "node": "Launch 결과 YouTube", "type": "main", "index": 0 }]]
+    },
+    "Facebook Page 영상": {
+      "main": [[{ "node": "Launch 결과 Facebook", "type": "main", "index": 0 }]]
+    },
+    "Instagram 릴스 컨테이너": {
+      "main": [[{ "node": "Instagram 릴스 게시", "type": "main", "index": 0 }]]
+    },
+    "Instagram 릴스 게시": {
+      "main": [[{ "node": "Launch 결과 Instagram", "type": "main", "index": 0 }]]
+    },
+    "Prepare 결과 만들기": {
+      "main": [[{ "node": "Supabase Callback 호출", "type": "main", "index": 0 }]]
+    },
+    "Launch 결과 YouTube": {
+      "main": [[{ "node": "Supabase Callback 호출", "type": "main", "index": 0 }]]
+    },
+    "Launch 결과 Facebook": {
+      "main": [[{ "node": "Supabase Callback 호출", "type": "main", "index": 0 }]]
+    },
+    "Launch 결과 Instagram": {
+      "main": [[{ "node": "Supabase Callback 호출", "type": "main", "index": 0 }]]
+    },
+    "Supabase Callback 호출": {
+      "main": [[{ "node": "Webhook 응답", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "findgagu-showroom-shorts-publish-gate-v3-meta",
+  "meta": { "templateCredsSetupCompleted": false },
+  "id": "findgagu-showroom-shorts-publish-gate-v3-meta"
+}

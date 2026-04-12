@@ -1,0 +1,382 @@
+{
+  "name": "Findgagu Showroom Shorts Meta Publish",
+  "flow": [
+    {
+      "id": 1,
+      "module": "gateway:CustomWebHook",
+      "version": 1,
+      "parameters": {
+        "webhook": 4038369,
+        "maxResults": 1
+      },
+      "mapper": {},
+      "metadata": {
+        "designer": {
+          "x": 0,
+          "y": 300
+        }
+      }
+    },
+    {
+      "id": 2,
+      "module": "builtin:BasicRouter",
+      "version": 1,
+      "mapper": null,
+      "metadata": {
+        "designer": {
+          "x": 300,
+          "y": 300
+        }
+      },
+      "routes": [
+        {
+          "flow": [
+            {
+              "id": 10,
+              "module": "http:ActionSendData",
+              "version": 3,
+              "filter": {
+                "name": "facebook",
+                "conditions": [
+                  [
+                    {
+                      "a": "{{1.channel}}",
+                      "b": "facebook",
+                      "o": "text:equal:ci"
+                    }
+                  ]
+                ]
+              },
+              "parameters": {
+                "handleErrors": true,
+                "useNewZLibDeCompress": true
+              },
+              "mapper": {
+                "url": "https://graph.facebook.com/v23.0/{{1.meta.facebookPageId}}/video_reels",
+                "method": "post",
+                "headers": [
+                  {
+                    "name": "Authorization",
+                    "value": "Bearer {{1.meta.facebookAccessToken}}"
+                  }
+                ],
+                "qs": [],
+                "bodyType": "multipart/form-data",
+                "formData": [
+                  {
+                    "name": "upload_phase",
+                    "value": "finish"
+                  },
+                  {
+                    "name": "video_url",
+                    "value": "{{1.finalVideoUrl}}"
+                  },
+                  {
+                    "name": "description",
+                    "value": "{{1.caption}}"
+                  }
+                ],
+                "authUser": "",
+                "authPass": "",
+                "timeout": 40,
+                "gzip": true,
+                "parseResponse": true,
+                "shareCookies": false,
+                "followRedirect": true,
+                "useQuerystring": false,
+                "serializeUrl": false,
+                "rejectUnauthorized": true
+              },
+              "metadata": {
+                "designer": {
+                  "x": 600,
+                  "y": 120
+                }
+              }
+            },
+            {
+              "id": 11,
+              "module": "http:ActionSendData",
+              "version": 3,
+              "parameters": {
+                "handleErrors": true,
+                "useNewZLibDeCompress": true
+              },
+              "mapper": {
+                "url": "{{1.callback.url}}",
+                "method": "post",
+                "headers": [
+                  {
+                    "name": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "name": "{{ifempty(1.callback.secretHeaderName; \"x-showroom-shorts-publish-secret\")}}",
+                    "value": "{{1.callback.secret}}"
+                  }
+                ],
+                "qs": [],
+                "bodyType": "raw",
+                "body": "{\n  \"targetId\": \"{{1.targetId}}\",\n  \"action\": \"launch\",\n  \"status\": \"published\",\n  \"message\": \"published\",\n  \"completedAt\": \"{{formatDate(now; \"YYYY-MM-DDTHH:mm:ss.SSS[Z]\")}}\",\n  \"externalPostId\": \"{{10.id}}\",\n  \"externalPostUrl\": \"https://www.facebook.com/watch/?v={{10.id}}\",\n  \"payload\": {\n    \"channel\": \"facebook\",\n    \"provider\": \"make\",\n    \"finalVideoUrl\": \"{{1.finalVideoUrl}}\"\n  }\n}",
+                "authUser": "",
+                "authPass": "",
+                "timeout": 40,
+                "gzip": true,
+                "parseResponse": true,
+                "shareCookies": false,
+                "followRedirect": true,
+                "useQuerystring": false,
+                "serializeUrl": false,
+                "rejectUnauthorized": true
+              },
+              "metadata": {
+                "designer": {
+                  "x": 900,
+                  "y": 120
+                }
+              }
+            }
+          ]
+        },
+        {
+          "flow": [
+            {
+              "id": 20,
+              "module": "http:ActionSendData",
+              "version": 3,
+              "filter": {
+                "name": "instagram",
+                "conditions": [
+                  [
+                    {
+                      "a": "{{1.channel}}",
+                      "b": "instagram",
+                      "o": "text:equal:ci"
+                    }
+                  ]
+                ]
+              },
+              "parameters": {
+                "handleErrors": true,
+                "useNewZLibDeCompress": true
+              },
+              "mapper": {
+                "url": "https://graph.facebook.com/v23.0/{{1.meta.instagramBusinessAccountId}}/media",
+                "method": "post",
+                "headers": [
+                  {
+                    "name": "Authorization",
+                    "value": "Bearer {{1.meta.instagramAccessToken}}"
+                  }
+                ],
+                "qs": [],
+                "bodyType": "urlencoded",
+                "formData": [
+                  {
+                    "name": "media_type",
+                    "value": "REELS"
+                  },
+                  {
+                    "name": "video_url",
+                    "value": "{{1.finalVideoUrl}}"
+                  },
+                  {
+                    "name": "caption",
+                    "value": "{{1.caption}}"
+                  }
+                ],
+                "authUser": "",
+                "authPass": "",
+                "timeout": 40,
+                "gzip": true,
+                "parseResponse": true,
+                "shareCookies": false,
+                "followRedirect": true,
+                "useQuerystring": false,
+                "serializeUrl": false,
+                "rejectUnauthorized": true
+              },
+              "metadata": {
+                "designer": {
+                  "x": 600,
+                  "y": 420
+                }
+              }
+            },
+            {
+              "id": 21,
+              "module": "http:ActionSendData",
+              "version": 3,
+              "parameters": {
+                "handleErrors": true,
+                "useNewZLibDeCompress": true
+              },
+              "mapper": {
+                "url": "https://graph.facebook.com/v23.0/{{1.meta.instagramBusinessAccountId}}/media_publish",
+                "method": "post",
+                "headers": [
+                  {
+                    "name": "Authorization",
+                    "value": "Bearer {{1.meta.instagramAccessToken}}"
+                  }
+                ],
+                "qs": [],
+                "bodyType": "urlencoded",
+                "formData": [
+                  {
+                    "name": "creation_id",
+                    "value": "{{20.id}}"
+                  }
+                ],
+                "authUser": "",
+                "authPass": "",
+                "timeout": 40,
+                "gzip": true,
+                "parseResponse": true,
+                "shareCookies": false,
+                "followRedirect": true,
+                "useQuerystring": false,
+                "serializeUrl": false,
+                "rejectUnauthorized": true
+              },
+              "metadata": {
+                "designer": {
+                  "x": 900,
+                  "y": 420
+                }
+              }
+            },
+            {
+              "id": 22,
+              "module": "http:ActionSendData",
+              "version": 3,
+              "parameters": {
+                "handleErrors": true,
+                "useNewZLibDeCompress": true
+              },
+              "mapper": {
+                "url": "{{1.callback.url}}",
+                "method": "post",
+                "headers": [
+                  {
+                    "name": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "name": "{{ifempty(1.callback.secretHeaderName; \"x-showroom-shorts-publish-secret\")}}",
+                    "value": "{{1.callback.secret}}"
+                  }
+                ],
+                "qs": [],
+                "bodyType": "raw",
+                "body": "{\n  \"targetId\": \"{{1.targetId}}\",\n  \"action\": \"launch\",\n  \"status\": \"published\",\n  \"message\": \"published\",\n  \"completedAt\": \"{{formatDate(now; \"YYYY-MM-DDTHH:mm:ss.SSS[Z]\")}}\",\n  \"externalPostId\": \"{{21.id}}\",\n  \"externalPostUrl\": \"https://www.instagram.com/reel/{{21.id}}/\",\n  \"payload\": {\n    \"channel\": \"instagram\",\n    \"provider\": \"make\",\n    \"finalVideoUrl\": \"{{1.finalVideoUrl}}\"\n  }\n}",
+                "authUser": "",
+                "authPass": "",
+                "timeout": 40,
+                "gzip": true,
+                "parseResponse": true,
+                "shareCookies": false,
+                "followRedirect": true,
+                "useQuerystring": false,
+                "serializeUrl": false,
+                "rejectUnauthorized": true
+              },
+              "metadata": {
+                "designer": {
+                  "x": 1200,
+                  "y": 420
+                }
+              }
+            }
+          ]
+        },
+        {
+          "flow": [
+            {
+              "id": 30,
+              "module": "http:ActionSendData",
+              "version": 3,
+              "filter": {
+                "name": "unsupported-channel",
+                "conditions": [
+                  [
+                    {
+                      "a": "{{1.channel}}",
+                      "b": "facebook",
+                      "o": "text:notequal:ci"
+                    },
+                    {
+                      "a": "{{1.channel}}",
+                      "b": "instagram",
+                      "o": "text:notequal:ci"
+                    }
+                  ]
+                ]
+              },
+              "parameters": {
+                "handleErrors": true,
+                "useNewZLibDeCompress": true
+              },
+              "mapper": {
+                "url": "{{1.callback.url}}",
+                "method": "post",
+                "headers": [
+                  {
+                    "name": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "name": "{{ifempty(1.callback.secretHeaderName; \"x-showroom-shorts-publish-secret\")}}",
+                    "value": "{{1.callback.secret}}"
+                  }
+                ],
+                "qs": [],
+                "bodyType": "raw",
+                "body": "{\n  \"targetId\": \"{{1.targetId}}\",\n  \"action\": \"launch\",\n  \"status\": \"failed\",\n  \"message\": \"Unsupported channel\",\n  \"payload\": {\n    \"channel\": \"{{1.channel}}\",\n    \"provider\": \"make\",\n    \"errorCode\": \"UNSUPPORTED_CHANNEL\"\n  }\n}",
+                "authUser": "",
+                "authPass": "",
+                "timeout": 40,
+                "gzip": true,
+                "parseResponse": true,
+                "shareCookies": false,
+                "followRedirect": true,
+                "useQuerystring": false,
+                "serializeUrl": false,
+                "rejectUnauthorized": true
+              },
+              "metadata": {
+                "designer": {
+                  "x": 600,
+                  "y": 720
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "instant": true,
+    "version": 1,
+    "scenario": {
+      "roundtrips": 1,
+      "maxErrors": 3,
+      "autoCommit": true,
+      "autoCommitTriggerLast": true,
+      "sequential": false,
+      "confidential": false,
+      "dataloss": false,
+      "dlq": false,
+      "freshVariables": false
+    },
+    "designer": {
+      "orphans": []
+    },
+    "notes": [
+      "Import 후 첫 모듈의 webhook은 새 계정에 맞게 다시 선택해야 할 수 있습니다.",
+      "Facebook/Instagram access token, page/account id는 payload.meta.* 에서 받도록 설계되어 있습니다."
+    ],
+    "zone": "eu2.make.com"
+  }
+}
