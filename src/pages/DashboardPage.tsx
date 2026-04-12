@@ -20,6 +20,7 @@ import { toast } from 'sonner'
 import { useAuth } from '@/auth/AuthProvider'
 import { Button } from '@/components/ui/button'
 import { fetchShowroomImageAssets, type ShowroomImageAsset } from '@/lib/imageAssetService'
+import { DEFAULT_PUBLIC_SHOWROOM_ORIGIN, DEFAULT_PUBLIC_SHOWROOM_PATH } from '@/lib/showroomShareService'
 import { useConsultations } from '@/hooks/useConsultations'
 
 const DASHBOARD_WORKFLOW_STAGES = ['상담접수', '견적중', '계약완료', '시공완료'] as const
@@ -117,11 +118,31 @@ function getNeglectDaysLabel(value: string | null | undefined, fallback?: string
   return `${days}일 방치`
 }
 
+function getOpenShowroomUrl() {
+  const configured = (import.meta.env.VITE_PUBLIC_SHOWROOM_BASE_URL ?? '').toString().trim()
+  if (configured) {
+    try {
+      const parsed = new URL(configured.includes('://') ? configured : `https://${configured}`)
+      const normalizedPath = parsed.pathname.replace(/\/+$/, '')
+      if (normalizedPath.endsWith(DEFAULT_PUBLIC_SHOWROOM_PATH)) return parsed.toString()
+      if (!normalizedPath || normalizedPath === '/' || normalizedPath === '/showroom') {
+        return `${parsed.origin}${DEFAULT_PUBLIC_SHOWROOM_PATH}`
+      }
+      return `${parsed.origin}${DEFAULT_PUBLIC_SHOWROOM_PATH}`
+    } catch {
+      return `${DEFAULT_PUBLIC_SHOWROOM_ORIGIN}${DEFAULT_PUBLIC_SHOWROOM_PATH}`
+    }
+  }
+
+  return `${DEFAULT_PUBLIC_SHOWROOM_ORIGIN}${DEFAULT_PUBLIC_SHOWROOM_PATH}`
+}
+
 export default function DashboardPage() {
   const { user, signOut } = useAuth()
   const { consultations, loading: consultationsLoading } = useConsultations(true)
   const [showroomAssets, setShowroomAssets] = useState<ShowroomImageAsset[]>([])
   const [assetsLoading, setAssetsLoading] = useState(true)
+  const openShowroomUrl = getOpenShowroomUrl()
 
   useEffect(() => {
     let cancelled = false
@@ -303,6 +324,12 @@ export default function DashboardPage() {
                   내부 쇼룸 보기
                 </Button>
               </Link>
+              <a href={openShowroomUrl} target="_blank" rel="noopener noreferrer">
+                <Button type="button" variant="outline" className="gap-1.5">
+                  오픈 쇼룸 보기
+                  <ExternalLink className="h-4 w-4" />
+                </Button>
+              </a>
               <Button
                 type="button"
                 variant="outline"
