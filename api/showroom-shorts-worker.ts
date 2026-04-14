@@ -51,9 +51,20 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
     }
 
     if (req.method === 'POST') {
+      const draftId = getString((req.body as { draftId?: unknown } | null)?.draftId)
+      if (draftId) {
+        const workerResponse = await forwardToWorker('/jobs/basic', {
+          method: 'POST',
+          body: JSON.stringify({ draftId }),
+        })
+        res.setHeader('Content-Type', workerResponse.contentType)
+        res.status(workerResponse.status).send(workerResponse.payload)
+        return
+      }
+
       const jobId = getString((req.body as { jobId?: unknown } | null)?.jobId)
       if (!jobId) {
-        res.status(400).json({ ok: false, message: 'jobId가 필요합니다.' })
+        res.status(400).json({ ok: false, message: 'jobId 또는 draftId가 필요합니다.' })
         return
       }
 
@@ -67,9 +78,19 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
     }
 
     if (req.method === 'GET') {
+      const draftId = getString(req.query.draftId)
+      if (draftId) {
+        const workerResponse = await forwardToWorker(`/jobs/basic/${encodeURIComponent(draftId)}`, {
+          method: 'GET',
+        })
+        res.setHeader('Content-Type', workerResponse.contentType)
+        res.status(workerResponse.status).send(workerResponse.payload)
+        return
+      }
+
       const jobId = getString(req.query.jobId)
       if (!jobId) {
-        res.status(400).json({ ok: false, message: 'jobId가 필요합니다.' })
+        res.status(400).json({ ok: false, message: 'jobId 또는 draftId가 필요합니다.' })
         return
       }
 

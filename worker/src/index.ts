@@ -16,6 +16,36 @@ type ShowroomShortsJobRow = {
   updated_at?: string | null
 }
 
+type ShowroomBasicShortsDraftRow = {
+  id: string
+  status: string
+  display_name?: string | null
+  industry?: string | null
+  product_summary?: string | null
+  color_summary?: string | null
+  duration_seconds: number | null
+  image_order: string[] | null
+  script: {
+    heroLine?: string
+    detailLine?: string
+    detailLine2?: string
+    closingLine?: string
+    endingTitle?: string
+    endingSubtitle?: string
+  } | null
+  final_video_url: string | null
+  render_error?: string | null
+  updated_at?: string | null
+}
+
+type ImageAssetRow = {
+  id: string
+  cloudinary_url: string | null
+  thumbnail_url: string | null
+  product_name?: string | null
+  color_name?: string | null
+}
+
 type ActiveJobState = {
   status: 'queued' | 'processing' | 'completed' | 'failed'
   updatedAt: string
@@ -36,7 +66,7 @@ const DEFAULT_DURATION_SECONDS = 10
 const AFTER_HOLD_SECONDS = 2
 const WORKER_TOKEN = process.env.SHOWROOM_SHORTS_WORKER_TOKEN?.trim() || ''
 const DEFAULT_BGM_URL =
-  'https://res.cloudinary.com/dcjlf5wpg/video/upload/v1775975852/showroom-shorts/bgm/bright-lines-new-light-15s.mp3'
+  'https://findgagu-os-cursor.vercel.app/assets/bgm/bright-lines-new-light-16s.mp3'
 const BGM_URL = process.env.SHOWROOM_SHORTS_BGM_URL?.trim() || DEFAULT_BGM_URL
 const BODY_FONT_FILE =
   process.env.SHOWROOM_SHORTS_FONT_FILE?.trim() ||
@@ -59,14 +89,22 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 const activeJobs = new Map<string, ActiveJobState>()
 const queuedJobs: string[] = []
 let queueRunning = false
+const activeBasicDrafts = new Map<string, ActiveJobState>()
+const queuedBasicDrafts: string[] = []
+let basicQueueRunning = false
 
 app.get('/health', (_req, res) => {
   res.json({
     ok: true,
     service: 'showroom-shorts-worker',
     queueDepth: queuedJobs.length,
+    basicQueueDepth: queuedBasicDrafts.length,
     activeJobs: Array.from(activeJobs.entries()).map(([jobId, state]) => ({
       jobId,
+      ...state,
+    })),
+    activeBasicDrafts: Array.from(activeBasicDrafts.entries()).map(([draftId, state]) => ({
+      draftId,
       ...state,
     })),
   })
@@ -164,9 +202,97 @@ app.get('/jobs/:id', requireWorkerAuth, async (req, res) => {
   }
 })
 
+app.post('/jobs/basic', requireWorkerAuth, async (req, res) => {
+  const draftId = getString(req.body?.draftId)
+  if (!draftId) {
+    res.status(400).json({ ok: false, message: 'draftId가 필요합니다.' })
+    return
+  }
+
+  try {
+    const draft = await getBasicShortsDraft(draftId)
+    if (!draft) {
+      res.status(404).json({ ok: false, message: '기본 쇼츠 요청을 찾지 못했습니다.' })
+      return
+    }
+
+    const existingState = activeBasicDrafts.get(draftId)
+    if (existingState?.status === 'queued' || existingState?.status === 'processing') {
+      res.status(202).json({
+        ok: true,
+        draftId,
+        status: existingState.status,
+        finalVideoUrl: draft.final_video_url,
+        error: existingState.error ?? null,
+        message: existingState.status === 'processing' ? '이미 기본 쇼츠 렌더링이 진행 중입니다.' : '이미 기본 쇼츠 렌더링 대기열에 있습니다.',
+      })
+      return
+    }
+
+    if (existingState?.status === 'failed' || existingState?.status === 'completed') {
+      activeBasicDrafts.delete(draftId)
+    }
+
+    await updateBasicShortsDraft(draftId, {
+      status: 'render_queued',
+      final_video_url: null,
+      render_error: null,
+      updated_at: new Date().toISOString(),
+    })
+
+    activeBasicDrafts.set(draftId, {
+      status: 'queued',
+      updatedAt: new Date().toISOString(),
+      error: null,
+    })
+    queuedBasicDrafts.push(draftId)
+    void drainBasicQueue()
+
+    res.status(202).json({
+      ok: true,
+      draftId,
+      status: 'queued',
+      message: '기본 쇼츠 자동 렌더링 요청을 등록했습니다.',
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '기본 쇼츠 렌더 요청 처리 중 오류가 발생했습니다.'
+    res.status(500).json({ ok: false, message })
+  }
+})
+
+app.get('/jobs/basic/:id', requireWorkerAuth, async (req, res) => {
+  const draftId = getString(req.params.id)
+  if (!draftId) {
+    res.status(400).json({ ok: false, message: 'draftId가 필요합니다.' })
+    return
+  }
+
+  try {
+    const draft = await getBasicShortsDraft(draftId)
+    if (!draft) {
+      res.status(404).json({ ok: false, message: '기본 쇼츠 요청을 찾지 못했습니다.' })
+      return
+    }
+
+    const state = activeBasicDrafts.get(draftId)
+    const responseStatus = state?.status ?? mapBasicWorkerStatus(draft.status, draft.final_video_url)
+    res.json({
+      ok: true,
+      draftId,
+      status: responseStatus,
+      finalVideoUrl: draft.final_video_url,
+      error: state?.error ?? draft.render_error ?? null,
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '기본 쇼츠 상태 조회 중 오류가 발생했습니다.'
+    res.status(500).json({ ok: false, message })
+  }
+})
+
 app.listen(PORT, () => {
   console.log(`[showroom-shorts-worker] listening on ${PORT}`)
   void reconcileStaleComposeJobs()
+  void reconcileStaleBasicShortsDrafts()
 })
 
 function getEnv(name: string) {
@@ -208,6 +334,21 @@ async function drainQueue() {
     }
   } finally {
     queueRunning = false
+  }
+}
+
+async function drainBasicQueue() {
+  if (basicQueueRunning) return
+  basicQueueRunning = true
+
+  try {
+    while (queuedBasicDrafts.length > 0) {
+      const nextDraftId = queuedBasicDrafts.shift()
+      if (!nextDraftId) continue
+      await processBasicShortsDraft(nextDraftId)
+    }
+  } finally {
+    basicQueueRunning = false
   }
 }
 
@@ -322,6 +463,130 @@ async function processComposeJob(jobId: string) {
   }
 }
 
+async function processBasicShortsDraft(draftId: string) {
+  const updateActiveState = (state: ActiveJobState) => {
+    activeBasicDrafts.set(draftId, state)
+  }
+
+  updateActiveState({
+    status: 'processing',
+    updatedAt: new Date().toISOString(),
+    error: null,
+  })
+
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), `showroom-basic-shorts-${draftId}-`))
+
+  try {
+    await updateBasicShortsDraft(draftId, {
+      status: 'render_processing',
+      render_error: null,
+      updated_at: new Date().toISOString(),
+    })
+
+    const draft = await getBasicShortsDraft(draftId)
+    if (!draft) {
+      throw new Error('기본 쇼츠 요청을 찾지 못했습니다.')
+    }
+
+    const imageIds = (draft.image_order ?? []).filter(Boolean)
+    if (imageIds.length === 0) {
+      throw new Error('렌더링할 이미지 순서가 없습니다.')
+    }
+
+    const imageAssets = await getImageAssetsByIds(imageIds)
+    const orderedImages = imageIds
+      .map((id) => imageAssets.find((asset) => asset.id === id))
+      .filter((asset): asset is ImageAssetRow => Boolean(asset))
+
+    if (orderedImages.length === 0) {
+      throw new Error('렌더링할 이미지 URL을 찾지 못했습니다.')
+    }
+
+    const imagePaths: string[] = []
+    for (let index = 0; index < orderedImages.length; index += 1) {
+      const asset = orderedImages[index]
+      const sourceUrl = asset.cloudinary_url || asset.thumbnail_url
+      if (!sourceUrl) continue
+      const imagePath = path.join(tempDir, `image-${index + 1}.jpg`)
+      await downloadToFile(sourceUrl, imagePath)
+      imagePaths.push(imagePath)
+    }
+
+    if (imagePaths.length === 0) {
+      throw new Error('다운로드 가능한 이미지가 없습니다.')
+    }
+
+    const bgmAudioPath = path.join(tempDir, 'bgm-audio')
+    const outputVideoPath = path.join(tempDir, 'basic-shorts-final.mp4')
+    const bgmPath = BGM_URL ? await downloadBgmToFile(BGM_URL, bgmAudioPath) : null
+    const durationSeconds = Math.max(draft.duration_seconds ?? DEFAULT_DURATION_SECONDS, 8)
+    const productChip =
+      orderedImages.map((asset) => asset.product_name?.trim()).find((value): value is string => Boolean(value)) ?? '제품 구성'
+    const colorChip =
+      orderedImages.map((asset) => asset.color_name?.trim()).find((value): value is string => Boolean(value)) ?? '색상 미지정'
+    const textPaths = await writeBasicShortsTextAssets(tempDir, {
+      heroLine: draft.script?.heroLine ?? '이 공간이 좋아 보이시나요?',
+      detailLine: draft.script?.detailLine ?? '교육 공간에 맞춘 배치와 구성으로',
+      detailLine2: draft.script?.detailLine2 ?? '집중감과 완성도를 잡았습니다.',
+      closingLine: draft.script?.closingLine ?? '이런 구성을 우리 공간에도 적용하고 싶다면',
+      productChip,
+      colorChip,
+      endingTitle: draft.script?.endingTitle ?? '파인드가구',
+      endingSubtitle: draft.script?.endingSubtitle ?? '성공한 공간은 디테일이 다릅니다',
+    })
+
+    await runFfmpegBasicShortsCompose({
+      imagePaths,
+      bgmPath,
+      outputVideoPath,
+      durationSeconds,
+      textPaths,
+    })
+
+    const objectPath = `basic/${draftId}/basic-shorts-final-${Date.now()}.mp4`
+    const videoBuffer = await fs.readFile(outputVideoPath)
+    const { error: uploadError } = await supabase.storage.from(VIDEO_BUCKET).upload(objectPath, videoBuffer, {
+      contentType: 'video/mp4',
+      upsert: true,
+    })
+    if (uploadError) {
+      throw new Error(`기본 쇼츠 MP4 업로드에 실패했습니다: ${uploadError.message}`)
+    }
+
+    const finalVideoUrl = supabase.storage.from(VIDEO_BUCKET).getPublicUrl(objectPath).data.publicUrl
+    await updateBasicShortsDraft(draftId, {
+      status: 'render_completed',
+      final_video_url: finalVideoUrl,
+      render_error: null,
+      updated_at: new Date().toISOString(),
+    })
+    await ensureBasicShortsTargetsAndPrepare(draftId, draft, finalVideoUrl).catch((error) => {
+      console.error('[showroom-shorts-worker] basic shorts auto prepare failed', error)
+    })
+
+    updateActiveState({
+      status: 'completed',
+      updatedAt: new Date().toISOString(),
+      error: null,
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '기본 쇼츠 자동 렌더링 중 오류가 발생했습니다.'
+    await updateBasicShortsDraft(draftId, {
+      status: 'render_failed',
+      render_error: message,
+      updated_at: new Date().toISOString(),
+    }).catch(() => undefined)
+
+    updateActiveState({
+      status: 'failed',
+      updatedAt: new Date().toISOString(),
+      error: message,
+    })
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined)
+  }
+}
+
 async function reconcileStaleComposeJobs() {
   try {
     const { data, error } = await supabase
@@ -358,18 +623,78 @@ async function reconcileStaleComposeJobs() {
   }
 }
 
-async function getJob(jobId: string) {
+async function reconcileStaleBasicShortsDrafts() {
+  try {
+    const { data, error } = await supabase
+      .from('showroom_basic_shorts_drafts')
+      .select('id, status, final_video_url, updated_at')
+      .in('status', ['render_queued', 'render_processing'])
+      .is('final_video_url', null)
+      .returns<ShowroomBasicShortsDraftRow[]>()
+
+    if (error) {
+      throw new Error(error.message)
+    }
+
+    for (const draft of data ?? []) {
+      await updateBasicShortsDraft(draft.id, {
+        status: 'render_failed',
+        render_error: '워커 재시작 또는 중단으로 렌더링이 끊겨 실패 처리되었습니다. 다시 제작 요청을 눌러주세요.',
+        updated_at: new Date().toISOString(),
+      })
+    }
+  } catch (error) {
+    console.error('[showroom-shorts-worker] failed to reconcile stale basic drafts', error)
+  }
+}
+
+async function getBasicShortsDraft(draftId: string) {
   const { data, error } = await supabase
-    .from('showroom_shorts_jobs')
-    .select('id, status, source_video_url, final_video_url, duration_seconds, updated_at')
-    .eq('id', jobId)
-    .single<ShowroomShortsJobRow>()
+    .from('showroom_basic_shorts_drafts')
+    .select('id, status, display_name, industry, product_summary, color_summary, duration_seconds, image_order, script, final_video_url, render_error, updated_at')
+    .eq('id', draftId)
+    .maybeSingle<ShowroomBasicShortsDraftRow>()
 
   if (error) {
     throw new Error(error.message)
   }
 
-  return data
+  return data ?? null
+}
+
+async function updateBasicShortsDraft(draftId: string, patch: JsonRecord) {
+  const { error } = await supabase.from('showroom_basic_shorts_drafts').update(patch).eq('id', draftId)
+  if (error) {
+    throw new Error(error.message)
+  }
+}
+
+async function getImageAssetsByIds(ids: string[]) {
+  const { data, error } = await supabase
+    .from('image_assets')
+    .select('id, cloudinary_url, thumbnail_url, product_name, color_name')
+    .in('id', ids)
+    .returns<ImageAssetRow[]>()
+
+  if (error) {
+    throw new Error(error.message)
+  }
+
+  return data ?? []
+}
+
+async function getJob(jobId: string) {
+  const { data, error } = await supabase
+    .from('showroom_shorts_jobs')
+    .select('id, status, source_video_url, final_video_url, duration_seconds, updated_at')
+    .eq('id', jobId)
+    .maybeSingle<ShowroomShortsJobRow>()
+
+  if (error) {
+    throw new Error(error.message)
+  }
+
+  return data ?? null
 }
 
 async function updateJob(jobId: string, patch: JsonRecord) {
@@ -382,6 +707,25 @@ async function updateJob(jobId: string, patch: JsonRecord) {
 async function insertLog(jobId: string, stage: string, message: string, payload: JsonRecord = {}) {
   const { error } = await supabase.from('showroom_shorts_logs').insert({
     shorts_job_id: jobId,
+    stage,
+    message,
+    payload,
+  })
+  if (error) {
+    throw new Error(error.message)
+  }
+}
+
+async function insertBasicShortsLog(
+  draftId: string,
+  stage: string,
+  message: string,
+  payload: JsonRecord = {},
+  targetId?: string
+) {
+  const { error } = await supabase.from('showroom_basic_shorts_logs').insert({
+    basic_shorts_draft_id: draftId,
+    target_id: targetId ?? null,
     stage,
     message,
     payload,
@@ -412,6 +756,137 @@ async function markTargetsReady(jobId: string) {
       channel: target.channel,
       target_id: target.id,
     })
+  }
+}
+
+async function ensureBasicShortsTargetsAndPrepare(draftId: string, draft: ShowroomBasicShortsDraftRow, finalVideoUrl: string) {
+  const nowIso = new Date().toISOString()
+  const displayName = getString(draft.display_name)
+  const industry = getString(draft.industry)
+  const productSummary = getString(draft.product_summary)
+  const colorSummary = getString(draft.color_summary)
+  const description = [
+    [
+      displayName ? `${displayName} 사례입니다.` : '교육 공간 사례입니다.',
+      industry ? `${industry} 공간에 맞춘 배치와 구성으로 집중감과 완성도를 높였습니다.` : '공간에 맞춘 배치와 구성으로 집중감과 완성도를 높였습니다.',
+    ].filter(Boolean).join(' '),
+    [
+      productSummary ? `적용 제품은 ${productSummary}입니다.` : '',
+      colorSummary ? `${colorSummary} 톤으로 공간 분위기를 정리했습니다.` : '',
+    ].filter(Boolean).join(' '),
+    '이런 구성을 우리 공간에도 적용하고 싶다면 파인드가구 온라인 쇼룸에서 더 자세히 확인해보세요.',
+  ].filter(Boolean).join('\n')
+  const hashtags = Array.from(
+    new Set([
+      '#파인드가구',
+      '#교육공간',
+      '#공간구성',
+      ...[industry, productSummary, displayName]
+        .flatMap((value) => value.replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/))
+        .map((token) => token.trim())
+        .filter(Boolean)
+        .slice(0, 9)
+        .map((token) => `#${token}`),
+    ])
+  )
+  const titleParts = [displayName, industry ? `${industry} 공간` : '', productSummary].filter(Boolean)
+  const title = titleParts.length > 0
+    ? `${titleParts.slice(0, 3).join(' | ')} | 파인드가구`
+    : '교육 공간 구성 쇼츠 | 파인드가구'
+
+  const { data: targets, error } = await supabase
+    .from('showroom_basic_shorts_targets')
+    .upsert(
+      [
+        {
+          basic_shorts_draft_id: draftId,
+          channel: 'youtube',
+          title,
+          description,
+          hashtags,
+          first_comment: '',
+          publish_status: 'ready',
+          updated_at: nowIso,
+        },
+        {
+          basic_shorts_draft_id: draftId,
+          channel: 'facebook',
+          title,
+          description,
+          hashtags,
+          first_comment: '',
+          publish_status: 'ready',
+          updated_at: nowIso,
+        },
+        {
+          basic_shorts_draft_id: draftId,
+          channel: 'instagram',
+          title,
+          description,
+          hashtags,
+          first_comment: '',
+          publish_status: 'ready',
+          updated_at: nowIso,
+        },
+      ],
+      { onConflict: 'basic_shorts_draft_id,channel' }
+    )
+    .select('id, channel, publish_status')
+
+  if (error) {
+    throw new Error(error.message)
+  }
+
+  await insertBasicShortsLog(draftId, 'publish_targets_ensured', '기본 쇼츠 3채널 업로드 타깃을 확인했습니다.', {
+    final_video_url: finalVideoUrl,
+    channels: (targets ?? []).map((target) => target.channel),
+  }).catch(() => undefined)
+
+  for (const target of targets ?? []) {
+    if (!['ready', 'failed'].includes(getString(target.publish_status))) continue
+
+    const response = await fetch(`${SUPABASE_URL}/functions/v1/showroom-shorts-publish-dispatch`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      },
+      body: JSON.stringify({
+        targetId: target.id,
+        action: 'prepare',
+        sourceType: 'basic_shorts',
+      }),
+    })
+
+    const responseBody = await response.text().catch(() => '')
+    if (!response.ok) {
+      await insertBasicShortsLog(
+        draftId,
+        'publish_prepare_failed',
+        '기본 쇼츠 자동 업로드 준비 호출에 실패했습니다.',
+        {
+          channel: target.channel,
+          target_id: target.id,
+          response_status: response.status,
+          response_body: responseBody,
+        },
+        target.id
+      ).catch(() => undefined)
+      continue
+    }
+
+    await insertBasicShortsLog(
+      draftId,
+      'publish_prepare_requested',
+      '기본 쇼츠 채널 업로드 준비를 자동 요청했습니다.',
+      {
+        channel: target.channel,
+        target_id: target.id,
+        response_body: responseBody,
+      },
+      target.id
+    ).catch(() => undefined)
   }
 }
 
@@ -488,6 +963,58 @@ async function writeTextAssets(tempDir: string) {
   return Object.fromEntries(entries) as Record<keyof typeof assets, string>
 }
 
+async function writeBasicShortsTextAssets(
+  tempDir: string,
+  input: {
+    heroLine: string
+    detailLine: string
+    detailLine2: string
+    closingLine: string
+    productChip: string
+    colorChip: string
+    endingTitle: string
+    endingSubtitle: string
+  },
+) {
+  const endingSubtitle = input.endingSubtitle || '성공한 공간은 디테일이 다릅니다'
+  const assets = {
+    headerLine1: '성공한 공간은',
+    headerLine2: '디테일이 다릅니다',
+    productChip: input.productChip || '제품 구성',
+    colorChip: input.colorChip || '색상 미지정',
+    captionLine1: input.heroLine || '이 공간이 좋아 보이시나요?',
+    captionLine2: input.detailLine || '교육 공간에 맞춘 배치와 구성으로',
+    captionLine3: input.detailLine2 || '집중감과 완성도를 잡았습니다.',
+    captionLine4: input.closingLine || '이런 구성을 우리 공간에도 적용하고 싶다면',
+    ctaLine1: '자세한 구성은',
+    ctaLine2: '파인드가구 온라인 쇼룸에서 확인',
+    ctaLine3: '프로필 링크에 있어요',
+    endingTitle: input.endingTitle || '파인드가구',
+    endingSubtitle,
+  }
+
+  const entries = await Promise.all(
+    Object.entries(assets).map(async ([key, value]) => {
+      const filePath = path.join(tempDir, `basic-${key}.txt`)
+      await fs.writeFile(filePath, value, 'utf8')
+      return [key, filePath] as const
+    }),
+  )
+
+  const endingSubtitleFrames = await Promise.all(
+    Array.from(endingSubtitle).map(async (_char, index, chars) => {
+      const filePath = path.join(tempDir, `basic-ending-subtitle-${index}.txt`)
+      await fs.writeFile(filePath, chars.slice(0, index + 1).join(''), 'utf8')
+      return filePath
+    }),
+  )
+
+  return {
+    ...(Object.fromEntries(entries) as Record<keyof typeof assets, string>),
+    endingSubtitleFrames,
+  }
+}
+
 async function runFfmpegCompose(input: {
   inputVideoPath: string
   titleOverlayPath: string
@@ -553,6 +1080,167 @@ async function runFfmpegCompose(input: {
     '-t',
     formatSeconds(outputDuration),
     input.outputVideoPath
+  )
+
+  await runCommand('ffmpeg', args)
+}
+
+async function runFfmpegBasicShortsCompose(input: {
+  imagePaths: string[]
+  bgmPath: string | null
+  outputVideoPath: string
+  durationSeconds: number
+  textPaths: Record<
+    'headerLine1' | 'headerLine2' | 'productChip' | 'colorChip' | 'captionLine1' | 'captionLine2' | 'captionLine3' | 'captionLine4' | 'ctaLine1' | 'ctaLine2' | 'ctaLine3' | 'endingTitle' | 'endingSubtitle',
+    string
+  > & { endingSubtitleFrames: string[] }
+}) {
+  const endingSeconds = 2
+  const imageDuration = 2.5
+  const innerVideoWidth = 854
+  const innerVideoHeight = 480
+  const innerVideoX = Math.round((OUTPUT_WIDTH - innerVideoWidth) / 2)
+  const innerVideoY = Math.round((OUTPUT_HEIGHT - innerVideoHeight) / 2)
+  const visualImageCount = Math.max(input.imagePaths.length, 1)
+  const slideshowDuration = visualImageCount * imageDuration
+  const outputDuration = Math.max(input.durationSeconds, slideshowDuration + endingSeconds)
+  const args = ['-y']
+
+  for (const imagePath of input.imagePaths) {
+    args.push('-loop', '1', '-t', formatSeconds(imageDuration), '-i', imagePath)
+  }
+
+  if (input.bgmPath) {
+    args.push('-stream_loop', '-1', '-i', input.bgmPath)
+  } else {
+    args.push('-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=48000')
+  }
+
+  const filterParts: string[] = []
+  for (let index = 0; index < input.imagePaths.length; index += 1) {
+    filterParts.push(
+      `[${index}:v]scale=${innerVideoWidth}:${innerVideoHeight}:force_original_aspect_ratio=increase,crop=${innerVideoWidth}:${innerVideoHeight},setsar=1,format=yuv420p[v${index}]`,
+    )
+  }
+
+  if (input.imagePaths.length === 1) {
+    filterParts.push('[v0]trim=duration=' + formatSeconds(slideshowDuration) + ',setpts=PTS-STARTPTS[vslideshow]')
+  } else {
+    const transitionDuration = 0.78
+    const transitions = buildBasicShortsTransitions(input.imagePaths.length - 1)
+    let previousLabel = 'v0'
+    let offsetSeconds = imageDuration
+    for (let index = 1; index < input.imagePaths.length; index += 1) {
+      const outputLabel = index === input.imagePaths.length - 1 ? 'vslideshow' : `vx${index}`
+      const transition = transitions[index - 1] ?? 'slideleft'
+      filterParts.push(
+        `[${previousLabel}][v${index}]xfade=transition=${transition}:duration=${formatSeconds(transitionDuration)}:offset=${formatSeconds(Math.max(offsetSeconds - transitionDuration, 0))}[${outputLabel}]`,
+      )
+      previousLabel = outputLabel
+      offsetSeconds += imageDuration
+    }
+  }
+
+  const audioInputIndex = input.imagePaths.length
+  const endingStart = outputDuration - endingSeconds
+  const escape = escapeFilterValue
+  const topPanelHeight = innerVideoY
+  const bottomPanelY = innerVideoY + innerVideoHeight
+  const bottomPanelHeight = OUTPUT_HEIGHT - bottomPanelY
+  const headerFontSize = 72
+  const headerLineGap = 18
+  const headerBlockHeight = headerFontSize * 2 + headerLineGap
+  const headerLine1Y = Math.round((topPanelHeight - headerBlockHeight) / 2)
+  const headerLine2Y = headerLine1Y + headerFontSize + headerLineGap
+  const ctaLine1FontSize = 40
+  const ctaLine2FontSize = 34
+  const ctaLine3FontSize = 30
+  const ctaLineGap = 12
+  const ctaLine2Y = bottomPanelY + Math.round(bottomPanelHeight * 0.2)
+  const ctaLine1Y = ctaLine2Y - ctaLine1FontSize - ctaLineGap
+  const ctaLine3Y = ctaLine2Y + ctaLine2FontSize + ctaLineGap
+  const captionBoxX = Math.max(innerVideoX + 28, 24)
+  const captionBoxY = innerVideoY + innerVideoHeight - 72
+  const captionBoxWidth = Math.min(innerVideoWidth - 56, OUTPUT_WIDTH - 48)
+  const captionBoxHeight = 56
+  const headerEnable = escapeExpression(`lt(t,${formatSeconds(endingStart)})`)
+  const captionLine1Enable = escapeExpression('between(t,0,2.5)')
+  const captionLine2Enable = escapeExpression('between(t,2.5,5.0)')
+  const captionLine3Enable = escapeExpression('between(t,5.0,7.5)')
+  const captionLine4Enable = escapeExpression('between(t,7.5,10.0)')
+  const ctaEnable = escapeExpression(`between(t,10.0,${formatSeconds(endingStart)})`)
+  const endingTitleY = 488
+  const endingSubtitleY = 584
+  const endingTitleStart = endingStart + 0.10
+  const endingSubtitleStart = endingStart + 0.42
+  const subtitleFrames = input.textPaths.endingSubtitleFrames
+  const subtitleStepSeconds = subtitleFrames.length > 0 ? Math.min(0.075, 1.15 / subtitleFrames.length) : 0.075
+  filterParts.push(
+    `color=c=black:s=${OUTPUT_WIDTH}x${OUTPUT_HEIGHT}:d=${formatSeconds(outputDuration)}[basebg]`,
+    `[basebg][vslideshow]overlay=${innerVideoX}:${innerVideoY}:enable='lt(t,${formatSeconds(endingStart)})'[stage0]`,
+    `[stage0]drawbox=x=0:y=0:w=${OUTPUT_WIDTH}:h=${topPanelHeight}:color=black@0.82:t=fill[stage1]`,
+    `[stage1]drawbox=x=0:y=${bottomPanelY}:w=${OUTPUT_WIDTH}:h=${bottomPanelHeight}:color=black@0.86:t=fill:enable='lt(t,${formatSeconds(endingStart)})'[stage2]`,
+    `[stage2]drawtext=fontfile='${escape(BOLD_FONT_FILE)}':textfile='${escape(input.textPaths.headerLine1)}':fontcolor=0x35d8ff:fontsize=${headerFontSize}:borderw=1.6:bordercolor=black@0.18:shadowcolor=black@0.38:shadowx=0:shadowy=3:x=(w-text_w)/2:y=${headerLine1Y}:enable='${headerEnable}'[stage3]`,
+    `[stage3]drawtext=fontfile='${escape(BOLD_FONT_FILE)}':textfile='${escape(input.textPaths.headerLine2)}':fontcolor=0x35d8ff:fontsize=${headerFontSize}:borderw=1.6:bordercolor=black@0.18:shadowcolor=black@0.38:shadowx=0:shadowy=3:x=(w-text_w)/2:y=${headerLine2Y}:enable='${headerEnable}'[stage4]`,
+    `[stage4]drawbox=x=${captionBoxX}:y=${captionBoxY}:w=${captionBoxWidth}:h=${captionBoxHeight}:color=black@0.44:t=fill:enable='${captionLine1Enable}'[stage5]`,
+    `[stage5]drawtext=fontfile='${escape(BODY_FONT_FILE)}':textfile='${escape(input.textPaths.captionLine1)}':fontcolor=white:fontsize=30:borderw=1:bordercolor=black@0.18:shadowcolor=black@0.45:shadowx=0:shadowy=2:x=(w-text_w)/2:y=${captionBoxY + 14}:enable='${captionLine1Enable}'[stage6]`,
+    `[stage6]drawbox=x=${captionBoxX}:y=${captionBoxY}:w=${captionBoxWidth}:h=${captionBoxHeight}:color=black@0.44:t=fill:enable='${captionLine2Enable}'[stage7]`,
+    `[stage7]drawtext=fontfile='${escape(BODY_FONT_FILE)}':textfile='${escape(input.textPaths.captionLine2)}':fontcolor=white:fontsize=30:borderw=1:bordercolor=black@0.18:shadowcolor=black@0.45:shadowx=0:shadowy=2:x=(w-text_w)/2:y=${captionBoxY + 14}:enable='${captionLine2Enable}'[stage8]`,
+    `[stage8]drawbox=x=${captionBoxX}:y=${captionBoxY}:w=${captionBoxWidth}:h=${captionBoxHeight}:color=black@0.44:t=fill:enable='${captionLine3Enable}'[stage9]`,
+    `[stage9]drawtext=fontfile='${escape(BODY_FONT_FILE)}':textfile='${escape(input.textPaths.captionLine3)}':fontcolor=white:fontsize=30:borderw=1:bordercolor=black@0.18:shadowcolor=black@0.45:shadowx=0:shadowy=2:x=(w-text_w)/2:y=${captionBoxY + 14}:enable='${captionLine3Enable}'[stage10]`,
+    `[stage10]drawbox=x=${captionBoxX}:y=${captionBoxY}:w=${captionBoxWidth}:h=${captionBoxHeight}:color=black@0.44:t=fill:enable='${captionLine4Enable}'[stage11]`,
+    `[stage11]drawtext=fontfile='${escape(BODY_FONT_FILE)}':textfile='${escape(input.textPaths.captionLine4)}':fontcolor=white:fontsize=30:borderw=1:bordercolor=black@0.18:shadowcolor=black@0.45:shadowx=0:shadowy=2:x=(w-text_w)/2:y=${captionBoxY + 14}:enable='${captionLine4Enable}'[stage12]`,
+    `[stage12]drawtext=fontfile='${escape(BOLD_FONT_FILE)}':textfile='${escape(input.textPaths.ctaLine1)}':fontcolor=0xffd54a:fontsize=${ctaLine1FontSize}:borderw=1.2:bordercolor=black@0.18:shadowcolor=black@0.4:shadowx=0:shadowy=2:x=(w-text_w)/2:y=${ctaLine1Y}:enable='${ctaEnable}'[stage13]`,
+    `[stage13]drawtext=fontfile='${escape(BOLD_FONT_FILE)}':textfile='${escape(input.textPaths.ctaLine2)}':fontcolor=0xffd54a:fontsize=${ctaLine2FontSize}:borderw=1.1:bordercolor=black@0.18:shadowcolor=black@0.4:shadowx=0:shadowy=2:x=(w-text_w)/2:y=${ctaLine2Y}:enable='${ctaEnable}'[stage14]`,
+    `[stage14]drawtext=fontfile='${escape(BODY_FONT_FILE)}':textfile='${escape(input.textPaths.ctaLine3)}':fontcolor=0xffd54a:fontsize=${ctaLine3FontSize}:borderw=1.0:bordercolor=black@0.18:shadowcolor=black@0.4:shadowx=0:shadowy=2:x=(w-text_w)/2:y=${ctaLine3Y}:enable='${ctaEnable}'[stage15]`,
+    `[stage15]drawbox=x=0:y=0:w=${OUTPUT_WIDTH}:h=${OUTPUT_HEIGHT}:color=black@0.92:t=fill:enable='gte(t,${formatSeconds(endingStart)})'[stage16]`,
+    `[stage16]drawtext=fontfile='${escape(BOLD_FONT_FILE)}':textfile='${escape(input.textPaths.endingTitle)}':fontcolor=0x35d8ff:fontsize=68:borderw=1.3:bordercolor=black@0.22:shadowcolor=black@0.45:shadowx=0:shadowy=3:x=(w-text_w)/2:y=${endingTitleY}:enable='gte(t,${formatSeconds(endingTitleStart)})'[stage17]`,
+    `[${audioInputIndex}:a]atrim=duration=${formatSeconds(outputDuration)},asetpts=PTS-STARTPTS,volume=0.92,afade=t=in:st=0:d=0.8,afade=t=out:st=${formatSeconds(Math.max(outputDuration - 0.5, 0))}:d=0.5[aout]`,
+  )
+
+  let endingStageLabel = 'stage17'
+  subtitleFrames.forEach((subtitleFramePath, index) => {
+    const startTime = endingSubtitleStart + subtitleStepSeconds * index
+    const endTime =
+      index === subtitleFrames.length - 1
+        ? outputDuration
+        : endingSubtitleStart + subtitleStepSeconds * (index + 1)
+    const outputLabel = index === subtitleFrames.length - 1 ? 'vout' : `stage14sub${index}`
+    const enableExpr =
+      index === subtitleFrames.length - 1
+        ? `gte(t,${formatSeconds(startTime)})`
+        : escapeExpression(`between(t,${formatSeconds(startTime)},${formatSeconds(endTime)})`)
+
+    filterParts.push(
+      `[${endingStageLabel}]drawtext=fontfile='${escape(BODY_FONT_FILE)}':textfile='${escape(subtitleFramePath)}':fontcolor=0xffd54a:fontsize=36:borderw=1.0:bordercolor=black@0.18:shadowcolor=black@0.45:shadowx=0:shadowy=2:x=(w-text_w)/2:y=${endingSubtitleY}:enable='${enableExpr}'[${outputLabel}]`,
+    )
+    endingStageLabel = outputLabel
+  })
+
+  args.push(
+    '-filter_complex',
+    filterParts.join(';'),
+    '-map',
+    '[vout]',
+    '-map',
+    '[aout]',
+    '-r',
+    '30',
+    '-t',
+    formatSeconds(outputDuration),
+    '-c:v',
+    'libx264',
+    '-pix_fmt',
+    'yuv420p',
+    '-preset',
+    'veryfast',
+    '-c:a',
+    'aac',
+    '-b:a',
+    '192k',
+    '-movflags',
+    '+faststart',
+    input.outputVideoPath,
   )
 
   await runCommand('ffmpeg', args)
@@ -638,6 +1326,13 @@ function escapeExpression(value: string) {
   return value.replace(/,/g, '\\,')
 }
 
+function buildBasicShortsTransitions(count: number) {
+  // Brand-style motion: smoother directional moves with occasional wipes
+  // so the reel feels premium without snapping between shots.
+  const cycle = ['smoothleft', 'wipeleft', 'smoothright', 'wiperight'] as const
+  return Array.from({ length: count }, (_, index) => cycle[index % cycle.length] ?? 'slideleft')
+}
+
 
 async function runCommand(command: string, args: string[]) {
   return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
@@ -684,6 +1379,14 @@ function mapWorkerStatus(jobStatus: string, finalVideoUrl: string | null) {
   if (jobStatus === 'composition_processing') return 'processing'
   if (jobStatus === 'ready_for_review' && finalVideoUrl) return 'completed'
   if (jobStatus === 'failed') return 'failed'
+  return 'idle'
+}
+
+function mapBasicWorkerStatus(jobStatus: string, finalVideoUrl: string | null) {
+  if (jobStatus === 'render_queued' || jobStatus === 'requested') return 'queued'
+  if (jobStatus === 'render_processing') return 'processing'
+  if (jobStatus === 'render_completed' && finalVideoUrl) return 'completed'
+  if (jobStatus === 'render_failed') return 'failed'
   return 'idle'
 }
 

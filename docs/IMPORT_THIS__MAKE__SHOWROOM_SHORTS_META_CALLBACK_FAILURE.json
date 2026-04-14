@@ -1,5 +1,6 @@
 {
   "targetId": "TARGET_UUID",
+  "sourceType": "basic_shorts",
   "action": "launch",
   "status": "failed",
   "message": "Instagram publish failed",

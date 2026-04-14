@@ -8,10 +8,12 @@ const CORS = {
 
 type JsonRecord = Record<string, unknown>
 type CallbackAction = "prepare" | "launch"
+type SourceType = "shorts" | "basic_shorts"
 
 type CallbackBody = {
   targetId?: string
   action?: CallbackAction
+  sourceType?: SourceType
   status?: string
   message?: string | null
   errorMessage?: string | null
@@ -61,18 +63,40 @@ function normalizeStatus(value: unknown) {
   return "processing"
 }
 
+function getSourceType(value: unknown): SourceType {
+  return value === "basic_shorts" ? "basic_shorts" : "shorts"
+}
+
+function getTables(sourceType: SourceType) {
+  if (sourceType === "basic_shorts") {
+    return {
+      targets: "showroom_basic_shorts_targets",
+      logs: "showroom_basic_shorts_logs",
+      parentIdField: "basic_shorts_draft_id",
+    } as const
+  }
+
+  return {
+    targets: "showroom_shorts_targets",
+    logs: "showroom_shorts_logs",
+    parentIdField: "shorts_job_id",
+  } as const
+}
+
 async function insertLog(
   supabase: ReturnType<typeof createClient>,
   input: {
-    jobId: string
+    parentId: string
     targetId: string
     stage: string
     message: string
     payload?: JsonRecord
+    sourceType: SourceType
   }
 ) {
-  await supabase.from("showroom_shorts_logs").insert({
-    shorts_job_id: input.jobId,
+  const tables = getTables(input.sourceType)
+  await supabase.from(tables.logs).insert({
+    [tables.parentIdField]: input.parentId,
     target_id: input.targetId,
     stage: input.stage,
     message: input.message,
@@ -109,6 +133,7 @@ Deno.serve(async (req) => {
     }
 
     const action = normalizeAction(body.action)
+    const sourceType = getSourceType(body.sourceType)
     const status = normalizeStatus(body.status)
     const message =
       trimOrNull(body.message)
@@ -120,10 +145,11 @@ Deno.serve(async (req) => {
     const externalPostUrl = trimOrNull(body.externalPostUrl) ?? trimOrNull(body.external_post_url)
 
     const supabase = createClient(getEnv("SUPABASE_URL"), getEnv("SUPABASE_SERVICE_ROLE_KEY"))
+    const tables = getTables(sourceType)
 
     const { data: target, error: targetError } = await supabase
-      .from("showroom_shorts_targets")
-      .select("id, shorts_job_id, channel, publish_status, preparation_payload")
+      .from(tables.targets)
+      .select(`id, ${tables.parentIdField}, channel, publish_status, preparation_payload`)
       .eq("id", targetId)
       .single()
 
@@ -168,7 +194,7 @@ Deno.serve(async (req) => {
     }
 
     const { error: updateError } = await supabase
-      .from("showroom_shorts_targets")
+      .from(tables.targets)
       .update(updatePatch)
       .eq("id", targetId)
 
@@ -177,7 +203,7 @@ Deno.serve(async (req) => {
     }
 
     await insertLog(supabase, {
-      jobId: String(target.shorts_job_id),
+      parentId: String(target[tables.parentIdField]),
       targetId,
       stage:
         action === "prepare"
@@ -188,10 +214,12 @@ Deno.serve(async (req) => {
         action,
         channel: target.channel,
         status,
+        sourceType,
         external_post_id: externalPostId,
         external_post_url: externalPostUrl,
         payload: body.payload ?? {},
       },
+      sourceType,
     })
 
     return json({

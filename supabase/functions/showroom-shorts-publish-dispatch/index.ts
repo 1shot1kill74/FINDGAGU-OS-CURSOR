@@ -8,10 +8,12 @@ const CORS = {
 
 type JsonRecord = Record<string, unknown>
 type DispatchAction = "prepare" | "launch"
+type SourceType = "shorts" | "basic_shorts"
 
 type DispatchBody = {
   targetId?: string
   action?: DispatchAction
+  sourceType?: SourceType
 }
 
 function json(body: unknown, status = 200) {
@@ -113,6 +115,30 @@ function getCompletedStatus(action: DispatchAction) {
   return action === "prepare" ? "launch_ready" : "published"
 }
 
+function getSourceType(value: unknown): SourceType {
+  return value === "basic_shorts" ? "basic_shorts" : "shorts"
+}
+
+function getTables(sourceType: SourceType) {
+  if (sourceType === "basic_shorts") {
+    return {
+      targets: "showroom_basic_shorts_targets",
+      logs: "showroom_basic_shorts_logs",
+      draftRelation: "showroom_basic_shorts_drafts",
+      parentIdField: "basic_shorts_draft_id",
+      finalVideoField: "final_video_url",
+    } as const
+  }
+
+  return {
+    targets: "showroom_shorts_targets",
+    logs: "showroom_shorts_logs",
+    draftRelation: "showroom_shorts_jobs",
+    parentIdField: "shorts_job_id",
+    finalVideoField: "final_video_url",
+  } as const
+}
+
 function extractMessage(record: JsonRecord | null, fallback: string) {
   return (
     trimOrNull(record?.message)
@@ -125,15 +151,17 @@ function extractMessage(record: JsonRecord | null, fallback: string) {
 async function insertLog(
   supabase: ReturnType<typeof createClient>,
   input: {
-    jobId: string
+    parentId: string
     targetId: string
     stage: string
     message: string
     payload?: JsonRecord
+    sourceType: SourceType
   }
 ) {
-  await supabase.from("showroom_shorts_logs").insert({
-    shorts_job_id: input.jobId,
+  const tables = getTables(input.sourceType)
+  await supabase.from(tables.logs).insert({
+    [tables.parentIdField]: input.parentId,
     target_id: input.targetId,
     stage: input.stage,
     message: input.message,
@@ -159,6 +187,7 @@ Deno.serve(async (req) => {
 
   const targetId = getString(body.targetId)
   const action = body.action === "launch" ? "launch" : "prepare"
+  const sourceType = getSourceType(body.sourceType)
   if (!targetId) {
     return json({ ok: false, message: "targetId가 필요합니다." }, 400)
   }
@@ -176,10 +205,11 @@ Deno.serve(async (req) => {
 
     const supabase = createClient(supabaseUrl, serviceRoleKey)
     const nowIso = new Date().toISOString()
+    const tables = getTables(sourceType)
 
     const { data: target, error: targetError } = await supabase
-      .from("showroom_shorts_targets")
-      .select("*, showroom_shorts_jobs(*)")
+      .from(tables.targets)
+      .select(`*, ${tables.draftRelation}(*)`)
       .eq("id", targetId)
       .single()
 
@@ -188,12 +218,12 @@ Deno.serve(async (req) => {
     }
 
     const targetRow = target as JsonRecord
-    const jobRow = getRecord(targetRow.showroom_shorts_jobs)
-    const jobId = getString(targetRow.shorts_job_id)
+    const parentRow = getRecord(targetRow[tables.draftRelation])
+    const parentId = getString(targetRow[tables.parentIdField])
     const publishStatus = getString(targetRow.publish_status)
-    const finalVideoUrl = trimOrNull(jobRow?.final_video_url)
+    const finalVideoUrl = trimOrNull(parentRow?.[tables.finalVideoField])
 
-    if (!jobRow || !jobId) {
+    if (!parentRow || !parentId) {
       return json({ ok: false, message: "연결된 숏츠 작업 정보를 찾지 못했습니다." }, 400)
     }
 
@@ -223,7 +253,7 @@ Deno.serve(async (req) => {
     if (action === "launch") optimisticPatch.approved_at = nowIso
 
     const { error: updateError } = await supabase
-      .from("showroom_shorts_targets")
+      .from(tables.targets)
       .update(optimisticPatch)
       .eq("id", targetId)
 
@@ -232,15 +262,17 @@ Deno.serve(async (req) => {
     }
 
     await insertLog(supabase, {
-      jobId,
+      parentId,
       targetId,
       stage: action === "prepare" ? "publish_prepare_requested" : "publish_launch_requested",
-      message: action === "prepare" ? "n8n 업로드 준비 요청을 보냈습니다." : "n8n 론칭 승인 요청을 보냈습니다.",
+      message: action === "prepare" ? "n8n 게이트로 업로드 준비 요청을 보냈습니다." : "n8n 게이트로 게시 요청을 보냈습니다.",
       payload: {
         action,
         channel: getString(targetRow.channel),
         mode,
+        sourceType,
       },
+      sourceType,
     })
 
     if (!webhookUrl) {
@@ -264,19 +296,21 @@ Deno.serve(async (req) => {
       }
 
       await supabase
-        .from("showroom_shorts_targets")
+        .from(tables.targets)
         .update(mockPatch)
         .eq("id", targetId)
 
       await insertLog(supabase, {
-        jobId,
+        parentId,
         targetId,
         stage: action === "prepare" ? "publish_prepare_mock_completed" : "publish_launch_mock_completed",
         message: action === "prepare" ? "mock 모드로 업로드 준비를 완료했습니다." : "mock 모드로 론칭을 완료했습니다.",
         payload: {
           action,
           mode: "mock",
+          sourceType,
         },
+        sourceType,
       })
 
       return json({
@@ -298,11 +332,11 @@ Deno.serve(async (req) => {
         ...(callbackSecret ? { secret: callbackSecret } : {}),
       },
       job: {
-        id: getString(jobRow.id),
-        status: getString(jobRow.status),
+        id: getString(parentRow.id),
+        status: getString(parentRow.status),
         finalVideoUrl,
-        sourceVideoUrl: trimOrNull(jobRow.source_video_url),
-        durationSeconds: jobRow.duration_seconds,
+        sourceVideoUrl: trimOrNull(parentRow.source_video_url),
+        durationSeconds: parentRow.duration_seconds,
       },
       target: {
         id: targetId,
@@ -314,6 +348,7 @@ Deno.serve(async (req) => {
         firstComment: getString(targetRow.first_comment),
       },
       publishPackage,
+      sourceType,
     }
 
     const response = await fetch(webhookUrl, {
@@ -332,7 +367,7 @@ Deno.serve(async (req) => {
 
     if (!response.ok) {
       await supabase
-        .from("showroom_shorts_targets")
+        .from(tables.targets)
         .update({
           publish_status: "failed",
           preparation_error: extractMessage(parsed, `외부 webhook 호출 실패 (${response.status})`),
@@ -341,14 +376,16 @@ Deno.serve(async (req) => {
         .eq("id", targetId)
 
       await insertLog(supabase, {
-        jobId,
+        parentId,
         targetId,
         stage: action === "prepare" ? "publish_prepare_failed" : "publish_launch_failed",
         message: extractMessage(parsed, `외부 webhook 호출 실패 (${response.status})`),
         payload: {
           action,
           status: response.status,
+          sourceType,
         },
+        sourceType,
       })
 
       return json({
@@ -360,7 +397,7 @@ Deno.serve(async (req) => {
     const returnedStatus = getString(parsed?.status).toLowerCase()
     if (action === "prepare" && ["completed", "launch_ready", "ready"].includes(returnedStatus)) {
       await supabase
-        .from("showroom_shorts_targets")
+        .from(tables.targets)
         .update({
           publish_status: "launch_ready",
           preparation_payload: parsed ?? {},
@@ -374,7 +411,7 @@ Deno.serve(async (req) => {
 
     if (action === "launch" && ["completed", "published"].includes(returnedStatus)) {
       await supabase
-        .from("showroom_shorts_targets")
+        .from(tables.targets)
         .update({
           publish_status: "published",
           external_post_id: trimOrNull(parsed?.externalPostId) ?? trimOrNull(parsed?.external_post_id),
