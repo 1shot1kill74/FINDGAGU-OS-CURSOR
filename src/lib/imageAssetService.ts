@@ -5,6 +5,7 @@
  * - base_alt_text: display_name에서 도출한 {date}_{company}_{space} — 싱글 소스, 외부 AI는 이를 접두어로 사용
  */
 import { supabase } from '@/lib/supabase'
+import { broadenPublicDisplayName } from '@/lib/showroomShareService'
 import { getCloudinaryCloudName, getCloudinaryUploadPreset } from '@/lib/config'
 import { CLOUDINARY_ADMIN_THUMBNAIL_OPTIONS } from '@/lib/constants'
 import type { ProjectImageAsset, SyncStatus } from '@/types/projectImage'
@@ -154,6 +155,12 @@ export function buildExternalDisplayName(params: {
   return `${monthCode} ${region} ${industry} ${phoneSuffix}`
 }
 
+export function buildBroadExternalDisplayName(value: string | null | undefined): string | null {
+  const normalized = (value ?? '').trim()
+  if (!normalized) return null
+  return broadenPublicDisplayName(normalized) ?? normalized
+}
+
 function parseImageAssetMeta(metadata: unknown): {
   raw: Record<string, unknown>
   spaceId: string | null
@@ -162,6 +169,7 @@ function parseImageAssetMeta(metadata: unknown): {
   legacySiteName: string | null
   spaceDisplayName: string | null
   externalDisplayName: string | null
+  broadExternalDisplayName: string | null
 } {
   const raw = metadata && typeof metadata === 'object' && !Array.isArray(metadata)
     ? { ...(metadata as Record<string, unknown>) }
@@ -181,6 +189,9 @@ function parseImageAssetMeta(metadata: unknown): {
   const externalDisplayName = typeof raw.external_display_name === 'string' && raw.external_display_name.trim()
     ? raw.external_display_name.trim()
     : null
+  const broadExternalDisplayName = typeof raw.broad_external_display_name === 'string' && raw.broad_external_display_name.trim()
+    ? raw.broad_external_display_name.trim()
+    : null
   return {
     raw,
     spaceId: parseStoredSpaceId(raw.space_id),
@@ -189,11 +200,16 @@ function parseImageAssetMeta(metadata: unknown): {
     legacySiteName,
     spaceDisplayName,
     externalDisplayName,
+    broadExternalDisplayName,
   }
 }
 
 export function getExternalDisplayNameFromImageAssetMeta(metadata: unknown): string | null {
   return parseImageAssetMeta(metadata).externalDisplayName
+}
+
+export function getBroadExternalDisplayNameFromImageAssetMeta(metadata: unknown): string | null {
+  return parseImageAssetMeta(metadata).broadExternalDisplayName
 }
 
 const IMAGE_ASSET_MANAGEMENT_SELECT =
@@ -699,6 +715,7 @@ export async function backfillImageAssetSpaceMetadata(): Promise<ImageAssetSpace
       industry: row.business_type?.trim() || null,
       customerPhone: matched.customer_phone,
     })
+    const broadExternalDisplayName = buildBroadExternalDisplayName(externalDisplayName)
     const currentSiteName = row.site_name?.trim() || null
     const nextMetadata: Record<string, unknown> = { ...meta.raw }
     let changed = false
@@ -725,6 +742,10 @@ export async function backfillImageAssetSpaceMetadata(): Promise<ImageAssetSpace
     }
     if (externalDisplayName && nextMetadata.external_display_name !== externalDisplayName) {
       nextMetadata.external_display_name = externalDisplayName
+      changed = true
+    }
+    if (broadExternalDisplayName && nextMetadata.broad_external_display_name !== broadExternalDisplayName) {
+      nextMetadata.broad_external_display_name = broadExternalDisplayName
       changed = true
     }
 
@@ -754,6 +775,49 @@ export async function backfillImageAssetSpaceMetadata(): Promise<ImageAssetSpace
     skippedUnmatched,
     skippedAmbiguous,
   }
+}
+
+export async function backfillImageAssetBroadExternalDisplayNames(): Promise<{ updated: number }> {
+  const imageAssets: ImageAssetMigrationRow[] = []
+  for (let from = 0; ; from += IMAGE_ASSET_PAGE_SIZE) {
+    const to = from + IMAGE_ASSET_PAGE_SIZE - 1
+    const { data, error } = await supabase
+      .from('image_assets')
+      .select('id, site_name, business_type, location, metadata')
+      .order('created_at', { ascending: false })
+      .range(from, to)
+    if (error) throw new Error(error.message)
+    if (!data?.length) break
+    imageAssets.push(...(data as ImageAssetMigrationRow[]))
+    if (data.length < IMAGE_ASSET_PAGE_SIZE) break
+  }
+
+  let updated = 0
+
+  for (const row of imageAssets) {
+    const meta = parseImageAssetMeta(row.metadata)
+    const currentExternal = meta.externalDisplayName?.trim() ?? ''
+    const currentBroad = meta.broadExternalDisplayName?.trim() ?? ''
+    const nextBroad = buildBroadExternalDisplayName(currentExternal)
+      || buildBroadExternalDisplayName(row.site_name?.trim() ?? null)
+      || currentBroad
+
+    if (!nextBroad || nextBroad === currentBroad) continue
+
+    const nextMetadata: Record<string, unknown> = {
+      ...meta.raw,
+      broad_external_display_name: nextBroad,
+    }
+
+    const { error } = await supabase
+      .from('image_assets')
+      .update({ metadata: nextMetadata as Json })
+      .eq('id', row.id)
+    if (error) throw new Error(error.message)
+    updated += 1
+  }
+
+  return { updated }
 }
 
 /** 이미지 자산 관리 전용: project_images + image_assets(스마트 업로드) 통합 조회. 썸네일은 DB 저장값 사용(즉시 표시). */
@@ -884,6 +948,7 @@ export interface ShowroomImageAsset {
   before_after_site_order?: number | null
   canonical_site_name?: string | null
   external_display_name?: string | null
+  broad_external_display_name?: string | null
   space_id?: string | null
   location: string | null
   business_type: string | null
@@ -896,6 +961,52 @@ export interface ShowroomImageAsset {
   internal_score: number | null
   before_after_role?: 'before' | 'after' | null
   before_after_group_id?: string | null
+}
+
+/** 비포어·애프터 그룹핑·동일 현장 사진 묶기에 공통 사용 */
+export function getShowroomAssetGroupKey(asset: ShowroomImageAsset): string {
+  const publicGroupKey = asset.public_group_key?.trim()
+  if (publicGroupKey) return publicGroupKey
+  const spaceId = asset.space_id?.trim()
+  if (spaceId) return `space:${spaceId}`
+  const beforeAfterGroupId = asset.before_after_group_id?.trim()
+  if (beforeAfterGroupId) return `before-after:${beforeAfterGroupId}`
+  const canonicalSiteName = asset.canonical_site_name?.trim()
+  if (canonicalSiteName) return `site:${canonicalSiteName}`
+  const siteName = asset.site_name?.trim()
+  if (siteName) return `site:${siteName}`
+  return 'site:미지정'
+}
+
+export function getShowroomImagePreviewUrl(asset: ShowroomImageAsset): string {
+  return (asset.thumbnail_url?.trim() || asset.cloudinary_url?.trim() || '').trim()
+}
+
+/**
+ * 동일 현장(그룹 키 일치 + 현장명 일치) 상담 이미지 전체 — 카드뉴스 등에서 한 현장의 모든 컷 선택 가능하게.
+ */
+export function collectConsultationImagesForSiteRow(
+  siteName: string,
+  anchorAsset: ShowroomImageAsset | null,
+  allAssets: ShowroomImageAsset[],
+): ShowroomImageAsset[] {
+  const map = new Map<string, ShowroomImageAsset>()
+  const push = (a: ShowroomImageAsset) => map.set(a.id, a)
+  if (anchorAsset) {
+    const gk = getShowroomAssetGroupKey(anchorAsset)
+    for (const a of allAssets) {
+      if (getShowroomAssetGroupKey(a) === gk) push(a)
+    }
+  }
+  const label = (a: ShowroomImageAsset) => a.canonical_site_name?.trim() || a.site_name?.trim() || ''
+  for (const a of allAssets) {
+    if (label(a) === siteName) push(a)
+  }
+  return Array.from(map.values()).sort((a, b) => {
+    const ta = a.created_at ? new Date(a.created_at).getTime() : 0
+    const tb = b.created_at ? new Date(b.created_at).getTime() : 0
+    return tb - ta
+  })
 }
 
 export interface ShowroomSiteOverride {
@@ -913,10 +1024,12 @@ export type ShowroomSiteOverrideSectionKey = ShowroomSiteOverride['section_key']
 
 /** RPC `get_public_showroom_assets_by_share_token` 한 행 → 쇼룸 카드용 자산 */
 export function mapPublicShowroomRpcRowToShowroomAsset(r: Record<string, unknown>): ShowroomImageAsset {
+  const beforeAfter = parseBeforeAfterMeta(r.metadata)
+  const meta = parseImageAssetMeta(r.metadata)
   const beforeAfterRole =
     r.before_after_role === 'before' || r.before_after_role === 'after'
       ? r.before_after_role
-      : null
+      : beforeAfter.role
   const industrySiteOrder = typeof r.industry_site_order === 'number'
     ? r.industry_site_order
     : typeof r.industry_site_order === 'string' && /^\d+$/.test(r.industry_site_order)
@@ -929,11 +1042,12 @@ export function mapPublicShowroomRpcRowToShowroomAsset(r: Record<string, unknown
       : null
   return {
     before_after_role: beforeAfterRole,
-    before_after_group_id: null,
+    before_after_group_id: beforeAfter.groupId,
     before_after_site_order: beforeAfterSiteOrder,
-    canonical_site_name: null,
-    external_display_name: null,
-    space_id: null,
+    canonical_site_name: meta.canonicalSiteName,
+    external_display_name: meta.externalDisplayName,
+    broad_external_display_name: meta.broadExternalDisplayName,
+    space_id: meta.spaceId,
     id: String(r.id),
     cloudinary_url: String(r.cloudinary_url ?? ''),
     industry_site_order: industrySiteOrder,
@@ -980,6 +1094,7 @@ export async function fetchShowroomImageAssets(): Promise<ShowroomImageAsset[]> 
         before_after_group_id: beforeAfter.groupId,
         canonical_site_name: meta.canonicalSiteName,
         external_display_name: meta.externalDisplayName,
+        broad_external_display_name: meta.broadExternalDisplayName,
         space_id: meta.spaceId,
       }
     })(),

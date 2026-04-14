@@ -33,6 +33,7 @@ import {
   updateImageAssetLocation,
   updateImageAssetTagColor,
   backfillImageAssetSpaceMetadata,
+  backfillImageAssetBroadExternalDisplayNames,
 } from '@/lib/imageAssetService'
 import { setImageAssetMain } from '@/lib/imageAssetUploadService'
 import { updateInternalScoreForAsset, updateInternalScoresBatch } from '@/lib/imageScoringService'
@@ -1259,6 +1260,28 @@ export default function ImageAssetViewer() {
                 }}
               >
                 {spaceMigrationLoading ? '이관 중…' : '스페이스/표시명 이관'}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 h-9 text-sm"
+                title="기존 image_assets에 broad_external_display_name을 일괄 백필합니다."
+                disabled={spaceMigrationLoading}
+                onClick={async () => {
+                  setSpaceMigrationLoading(true)
+                  try {
+                    const result = await backfillImageAssetBroadExternalDisplayNames()
+                    toast.success(`광역 익스터널 디스플레이 네임 백필 완료: ${result.updated}건 갱신`)
+                    setSectorAssetCache({})
+                    fetchFromDb(false).then((list) => setAssets(list))
+                  } catch (e: any) {
+                    toast.error(e?.message ?? '광역 익스터널 디스플레이 네임 백필 실패')
+                  } finally {
+                    setSpaceMigrationLoading(false)
+                  }
+                }}
+              >
+                {spaceMigrationLoading ? '백필 중…' : '광역 익스터널 표시명 백필'}
               </Button>
               <Button
                 variant="outline"

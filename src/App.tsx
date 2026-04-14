@@ -15,6 +15,8 @@ const ShareGalleryPage = lazy(() => import('@/pages/ShareGalleryPage'))
 const PublicGalleryView = lazy(() => import('@/pages/PublicGalleryView'))
 const ShareRedirect = lazy(() => import('@/pages/ShareRedirect'))
 const PublicShowroomPage = lazy(() => import('@/pages/PublicShowroomPage'))
+const PublicShowroomCardNewsPage = lazy(() => import('@/pages/PublicShowroomCardNewsPage'))
+const ShowroomCaseApproachPage = lazy(() => import('@/pages/ShowroomCaseApproachPage'))
 const ShowroomPage = lazy(() => import('@/pages/ShowroomPage'))
 const ContactPage = lazy(() => import('@/pages/ContactPage'))
 const DashboardPage = lazy(() => import('@/pages/DashboardPage'))
@@ -22,7 +24,10 @@ const LoginPage = lazy(() => import('@/pages/LoginPage'))
 const HomepageConceptPage = lazy(() => import('@/pages/HomepageConceptPage'))
 const MigrationPage = lazy(() => import('@/pages/admin/MigrationPage'))
 const ArchivePage = lazy(() => import('@/pages/admin/ArchivePage'))
+const ShowroomCaseStudioPage = lazy(() => import('@/pages/admin/ShowroomCaseStudioPage'))
 const ShowroomShortsPage = lazy(() => import('@/pages/admin/ShowroomShortsPage'))
+const ShowroomBasicShortsQueuePage = lazy(() => import('@/pages/admin/ShowroomBasicShortsQueuePage'))
+const ShowroomAdsDashboardPage = lazy(() => import('@/pages/admin/ShowroomAdsDashboardPage'))
 const TestConsole = lazy(() => import('@/pages/admin/TestConsole'))
 
 function RouteFallback() {
@@ -55,7 +60,14 @@ function App() {
           <Route path="/share" element={<ShareRedirect />} />
           <Route path="/share/gallery" element={<ShareGalleryPage />} />
           <Route path="/public/share" element={<PublicGalleryView />} />
+          <Route path="/public/showroom/cardnews/:siteKey" element={<ShowroomCaseApproachPage mode="public" entry="cardnews" />} />
+          <Route path="/public/showroom/cardnews" element={<PublicShowroomCardNewsPage />} />
+          <Route path="/public/showroom/case/:siteKey" element={<ShowroomCaseApproachPage mode="public" />} />
           <Route path="/public/showroom" element={<PublicShowroomPage />} />
+          <Route path="/open-showroom/cardnews/:siteKey" element={<ShowroomCaseApproachPage mode="public" entry="cardnews" />} />
+          <Route path="/open-showroom/cardnews" element={<PublicShowroomCardNewsPage />} />
+          <Route path="/open-showroom/case/:siteKey" element={<ShowroomCaseApproachPage mode="public" />} />
+          <Route path="/open-showroom" element={<PublicShowroomPage />} />
           <Route path="/contact" element={<ContactPage />} />
           <Route element={<ProtectedRoute />}>
             <Route path="/dashboard" element={<DashboardPage />} />
@@ -68,7 +80,11 @@ function App() {
             <Route path="/homepage-concept" element={<HomepageConceptPage />} />
             <Route path="/admin/migration" element={<MigrationPage />} />
             <Route path="/admin/archive" element={<ArchivePage />} />
+            <Route path="/admin/showroom-case-studio" element={<ShowroomCaseStudioPage />} />
+            <Route path="/admin/showroom-case-studio/:siteKey" element={<ShowroomCaseApproachPage mode="internal" />} />
             <Route path="/admin/showroom-shorts" element={<ShowroomShortsPage />} />
+            <Route path="/admin/showroom-basic-shorts" element={<ShowroomBasicShortsQueuePage />} />
+            <Route path="/admin/showroom-ads" element={<ShowroomAdsDashboardPage />} />
             <Route path="/admin/test-console" element={<TestConsole />} />
           </Route>
         </Routes>
