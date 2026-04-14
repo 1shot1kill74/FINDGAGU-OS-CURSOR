@@ -1750,10 +1750,10 @@ export default function ShowroomCaseStudioPage() {
                                 </button>
                                 <div className="absolute inset-x-0 bottom-0 p-5 md:p-7">
                                   <div className="flex flex-wrap items-center gap-2">
-                                    <span className="inline-flex rounded-full bg-white/15 px-2.5 py-1 text-[11px] font-medium text-white backdrop-blur-sm">
+                                    <span className="inline-flex rounded-full bg-black/40 px-2.5 py-1 text-[11px] font-medium text-white backdrop-blur-sm">
                                       카드뉴스 {Math.min(previewSlideIndex + 1, previewSlides.length)}/{previewSlides.length}
                                     </span>
-                                    <span className="inline-flex rounded-full bg-black/35 px-2.5 py-1 text-[11px] font-medium text-white/90 backdrop-blur-sm">
+                                    <span className="inline-flex rounded-full bg-black/40 px-2.5 py-1 text-[11px] font-medium text-white/90 backdrop-blur-sm">
                                       {activePreviewSlide?.key === 'problem'
                                         ? 'Before'
                                         : activePreviewSlide?.effectiveRef === 'signature'
@@ -1761,11 +1761,17 @@ export default function ShowroomCaseStudioPage() {
                                           : 'After'}
                                     </span>
                                   </div>
-                                  <div className="mt-3 max-w-2xl rounded-2xl bg-black/28 px-4 py-3 backdrop-blur-[2px]">
-                                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/70">
+                                  <div className="mt-3 max-w-2xl rounded-2xl bg-black/45 px-4 py-3 backdrop-blur-[3px]">
+                                    <p
+                                      className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/70"
+                                      style={{ textShadow: '0 1px 3px rgba(0,0,0,0.8), 0 0 1px rgba(0,0,0,0.6)' }}
+                                    >
                                       {activePreviewSlide?.title ?? ''}
                                     </p>
-                                    <p className="mt-2 whitespace-pre-wrap text-lg font-semibold leading-relaxed text-white md:text-[1.6rem]">
+                                    <p
+                                      className="mt-2 whitespace-pre-wrap text-lg font-semibold leading-relaxed text-white md:text-[1.6rem]"
+                                      style={{ textShadow: '0 1px 4px rgba(0,0,0,0.85), 0 0 2px rgba(0,0,0,0.5)' }}
+                                    >
                                       {formatShowroomCardTextForDisplay({
                                         text: activePreviewSlide?.body ?? '',
                                         role: activePreviewSlide?.key,
