@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, useLocation, useNavigate } from 'react-router-dom'
 import { ChevronLeft, ChevronRight, FileCheck, Images, Package, Search, X } from 'lucide-react'
 import { fetchShowroomImageAssets, type ShowroomImageAsset } from '@/lib/publicData'
 
@@ -478,6 +478,8 @@ function formatExpiryLabel(value: string | null): string | null {
 }
 
 export default function ShowroomPage() {
+  const location = useLocation()
+  const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const [assets, setAssets] = useState<ShowroomImageAsset[]>([])
   const [loading, setLoading] = useState(true)
@@ -756,6 +758,28 @@ export default function ShowroomPage() {
   const scrollToSection = useCallback((elementId: string) => {
     document.getElementById(elementId)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }, [])
+
+  /** 전후 비교를 문제·솔루션 세트 구역으로 안내: 업종 뷰로 전환 + URL 해시 + 스크롤 */
+  const scrollToBeforeAfterCorridor = useCallback(() => {
+    setViewMode('industry')
+    navigate({ pathname: location.pathname, search: location.search, hash: 'showroom-before-after-section' }, { replace: true })
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        document.getElementById('showroom-before-after-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      })
+    })
+  }, [navigate, location.pathname, location.search])
+
+  useEffect(() => {
+    if (location.hash !== '#showroom-before-after-section') return
+    if (loading) return
+    if (visibleBeforeAfterGroups.length === 0) return
+    setViewMode('industry')
+    const t = window.setTimeout(() => {
+      document.getElementById('showroom-before-after-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 280)
+    return () => window.clearTimeout(t)
+  }, [location.hash, loading, visibleBeforeAfterGroups.length])
 
   const renderSiteGroupCard = (group: SiteGroup) => {
     const imageUrl = group.mainImage?.thumbnail_url || group.mainImage?.cloudinary_url || ''
@@ -1136,10 +1160,10 @@ export default function ShowroomPage() {
                   <button
                     type="button"
                     className="inline-flex shrink-0 items-center gap-2 rounded-full border border-neutral-200 bg-white px-4 py-2 text-sm text-neutral-700 transition hover:border-neutral-300 hover:text-neutral-900"
-                    onClick={() => scrollToSection('showroom-before-after-section')}
+                    onClick={scrollToBeforeAfterCorridor}
                   >
                     <FileCheck className="h-4 w-4" />
-                    Before/After
+                    전후·솔루션
                   </button>
                 </div>
               )}
@@ -1155,16 +1179,17 @@ export default function ShowroomPage() {
               <div>
                 <h2 className="text-base font-semibold text-neutral-900">대표 Before/After 사례</h2>
                 <p className="text-sm text-neutral-600">
-                  변화 폭이 큰 전후 비교 사례 3개를 먼저 보여드립니다. 더 보고 싶으면 아래 전체 전후 비교 섹션으로 이동하세요.
+                  전후 컷과 함께, 현장 과제(문제 제기)와 적용 방향(해결)을 한 세트로 보여줍니다. 더 많은 사례는 아래 전후·솔루션 섹션으로 이동하세요.
                 </p>
               </div>
               <button
                 type="button"
-                onClick={() => scrollToSection('showroom-before-after-section')}
+                onClick={scrollToBeforeAfterCorridor}
                 className="inline-flex items-center gap-2 rounded-xl border border-neutral-200 bg-white px-4 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-50"
+                aria-label="전체 전후 비교 및 문제·솔루션 사례 섹션으로 이동"
               >
                 <FileCheck className="h-4 w-4" />
-                전체 Before/After 보기
+                전후·솔루션 전체 보기
               </button>
             </div>
             <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -1359,9 +1384,9 @@ export default function ShowroomPage() {
               >
                 <div className="flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
                   <div>
-                    <h3 className="text-base font-semibold text-neutral-900">전후 비교 사례</h3>
+                    <h3 className="text-base font-semibold text-neutral-900">전후 비교 · 문제와 솔루션</h3>
                     <p className="text-sm text-neutral-600">
-                      리뉴얼 전후 변화를 한눈에 비교할 수 있는 현장들입니다.
+                      리뉴얼 전후를 비교하고, 등록된 현장은 과제(문제)와 적용 방향(솔루션) 요약을 함께 확인할 수 있습니다.
                     </p>
                   </div>
                   <p className="text-xs text-neutral-500">{visibleBeforeAfterGroups.length}개 현장</p>
