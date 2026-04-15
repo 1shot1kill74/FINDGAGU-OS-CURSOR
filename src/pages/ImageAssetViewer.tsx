@@ -14,7 +14,6 @@ import { supabase } from '@/lib/supabase'
 import { toast } from 'sonner'
 import {
   getAssetUrl,
-  getSyncStatus,
   toMarkdownImageLine,
   getBaseAltText,
   buildImageExportPayload,
@@ -42,125 +41,29 @@ import { toProductTagsArray } from '@/lib/utils'
 import { shareGalleryKakao } from '@/lib/kakaoShare'
 import { createSharedGallery, snapshotProjectImageAsset } from '@/lib/sharedGalleryService'
 import { useColorChips } from '@/hooks/useColorChips'
-import type { ProjectImageAsset, SyncStatus } from '@/types/projectImage'
+import type { ProjectImageAsset } from '@/types/projectImage'
 import { USAGE_TYPES, REVIEW_STATUSES, getUsageLabel, getUsageTooltip, type UsageType, type ReviewStatus } from '@/types/projectImage'
-
-/** 자주 쓰는 색상 퀵 태깅 */
-const COLOR_QUICK = ['화이트', '오크', '블랙', '그레이', '네이비', '월넛'] as const
-const SWIPE_THRESHOLD_PX = 50
-
-/** 업종 인라인 편집 기본 옵션 */
-const SECTOR_OPTIONS = ['학원', '관리형', '스터디카페', '학교', '아파트', '기타'] as const
-
-const BUCKET = 'construction-assets'
-const PAGE_SIZE = 24
-type SortKey = 'latest' | 'industry' | 'popular' | 'ai' | 'internal'
-
-type GroupMode = 'by_industry' | 'by_site' | 'by_product' | 'by_color'
-type SiteOption = { value: string; label: string; spaceId: string | null }
-type AssetGroup = { key: string; label: string; items: ProjectImageAsset[] }
-
-const SYNC_LABEL: Record<SyncStatus, string> = {
-  synced: 'Cloudinary 연동',
-  cloudinary_only: 'Cloudinary만',
-  storage_only: 'Storage만',
-  missing: '미연동',
-}
-
-/** construction_images 레거시 행 → ProjectImageAsset (cloudinary 없으면 storage_only) */
-function legacyRowToAsset(row: {
-  id: string
-  storage_path: string
-  thumbnail_path: string | null
-  consultation_id: string | null
-  project_title: string | null
-  industry: string | null
-  is_marketing_ready: boolean
-  view_count: number
-  created_at: string
-}): ProjectImageAsset {
-  const storagePath = row.storage_path?.trim() || null
-  const cloudinaryPublicId = '' // 레거시: Cloudinary ID 없음
-  const usageType: UsageType = row.is_marketing_ready ? 'Marketing' : 'Archive'
-  const url = storagePath
-    ? supabase.storage.from(BUCKET).getPublicUrl(storagePath).data.publicUrl
-    : ''
-  return {
-    id: row.id,
-    cloudinaryPublicId: cloudinaryPublicId,
-    usageType,
-    displayName: null,
-    url,
-    thumbnailUrl: row.thumbnail_path
-      ? supabase.storage.from(BUCKET).getPublicUrl(row.thumbnail_path).data.publicUrl
-      : url,
-    storagePath,
-    consultationId: row.consultation_id,
-    projectTitle: row.project_title,
-    industry: row.industry,
-    viewCount: Number(row.view_count ?? 0),
-    createdAt: row.created_at,
-    syncStatus: getSyncStatus({ cloudinaryPublicId, storagePath, usageType }),
-  }
-}
-
-/** 통합 검색: 검색어를 공백으로 나눈 각 단어가 모두 포함된 자산만 노출 (제품명·색상·현장명 동시 검색) */
-function filterByUnifiedSearch(assets: ProjectImageAsset[], query: string): ProjectImageAsset[] {
-  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
-  if (terms.length === 0) return assets
-  return assets.filter((a) => {
-    const searchableTags = (a.productTags ?? []).map((t) => t.toLowerCase())
-    const searchableColor = (a.color ?? '').toLowerCase()
-    const searchableSite = (a.projectTitle ?? '').toLowerCase()
-    const metadataSpaceId = typeof a.metadata?.space_id === 'string' ? a.metadata.space_id.toLowerCase() : ''
-    const searchableSpaceId = (a.spaceId ?? metadataSpaceId).toLowerCase()
-    const match = (term: string) =>
-      searchableTags.some((t) => t.includes(term)) ||
-      searchableColor.includes(term) ||
-      searchableSite.includes(term) ||
-      searchableSpaceId.includes(term)
-    return terms.every(match)
-  })
-}
-
-function getAssetSpaceId(asset: ProjectImageAsset): string | null {
-  if (asset.spaceId?.trim()) return asset.spaceId.trim()
-  const raw = asset.metadata?.space_id
-  if (typeof raw !== 'string' || !raw.trim()) return null
-  const normalized = raw.trim()
-  return normalized.startsWith('spaces/') ? (normalized.slice('spaces/'.length) || null) : normalized
-}
-
-function getAssetSiteLabel(asset: ProjectImageAsset): string {
-  const canonical = asset.metadata?.canonical_site_name
-  if (typeof canonical === 'string' && canonical.trim()) return canonical.trim()
-  const fallback = (asset.siteName ?? asset.projectTitle ?? asset.consultationId ?? '미분류').trim()
-  return fallback || '미분류'
-}
-
-function getAssetSiteFilterValue(asset: ProjectImageAsset): string {
-  const spaceId = getAssetSpaceId(asset)
-  return spaceId ? `space:${spaceId}` : `name:${getAssetSiteLabel(asset)}`
-}
-
-function getAssetSiteDisplayLabel(asset: ProjectImageAsset): string {
-  const label = getAssetSiteLabel(asset)
-  const spaceId = getAssetSpaceId(asset)
-  return spaceId ? `${label} · ${spaceId}` : label
-}
-
-/** 현재는 관리자 창고(`/image-assets`)만 유지 */
-function usePageMode() {
-  return {
-    pageTitle: '이미지 자산 관리',
-    pageDescription: '고객에게 보낼 사진을 고르고 선별 공유 링크를 만드는 작업 화면입니다.',
-    isBankView: false,
-  }
-}
+import {
+  COLOR_QUICK,
+  SWIPE_THRESHOLD_PX,
+  SECTOR_OPTIONS,
+  PAGE_SIZE,
+  SYNC_LABEL,
+} from '@/pages/imageAssetViewer/imageAssetViewerConstants'
+import type { SortKey, GroupMode, SiteOption, AssetGroup } from '@/pages/imageAssetViewer/imageAssetViewerTypes'
+import {
+  legacyRowToAsset,
+  filterByUnifiedSearch,
+  getAssetSpaceId,
+  getAssetSiteLabel,
+  getAssetSiteFilterValue,
+  getAssetSiteDisplayLabel,
+} from '@/pages/imageAssetViewer/imageAssetViewerUtils'
+import { useImageAssetViewerPageMode } from '@/pages/imageAssetViewer/useImageAssetViewerPageMode'
 
 export default function ImageAssetViewer() {
   const navigate = useNavigate()
-  const { pageTitle, pageDescription, isBankView } = usePageMode()
+  const { pageTitle, pageDescription, isBankView } = useImageAssetViewerPageMode()
   const [assets, setAssets] = useState<ProjectImageAsset[]>([])
   const [loading, setLoading] = useState(true)
   const [sort, setSort] = useState<SortKey>('latest')

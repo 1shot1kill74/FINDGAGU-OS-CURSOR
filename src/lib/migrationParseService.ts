@@ -3,7 +3,7 @@
  * - VITE_MIGRATION_PARSE_API 설정 시 해당 URL로 파일 전송 후 ParsedEstimate 수신
  * - 미설정 시 Mock 반환 (테스트용)
  */
-import type { EstimateRow } from '@/components/estimate/EstimateForm'
+import type { EstimateRow } from '@/components/estimate/estimateFormShared'
 
 export interface ParsedEstimate {
   recipientName: string

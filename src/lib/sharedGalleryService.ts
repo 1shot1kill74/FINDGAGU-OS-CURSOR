@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase'
+import { createShareToken } from '@/lib/shareToken'
 import type { ShowroomImageAsset } from '@/lib/imageAssetService'
 import type { ProjectImageAsset } from '@/types/projectImage'
 
@@ -28,10 +29,6 @@ export type ResolvedSharedGallery = {
   items: SharedGalleryAssetSnapshot[]
   created_at: string | null
   expires_at: string | null
-}
-
-function createShareToken(): string {
-  return `${crypto.randomUUID().replace(/-/g, '')}${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`
 }
 
 export function buildSharedGalleryUrl(token: string): string {

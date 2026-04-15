@@ -9,6 +9,7 @@ import {
   fetchPublishedShowroomCaseProfileDrafts,
   type ShowroomCaseProfileDraft,
 } from '@/lib/showroomCaseProfileService'
+import { groupBeforeAfterAssets } from '@/lib/showroomImageAssetGrouping'
 import { broadenPublicDisplayName, fetchPublicShowroomAssets } from '@/lib/showroomShareService'
 
 export type PublicShowroomCardNewsListItem = {
@@ -32,20 +33,6 @@ type ShowroomCardNewsPublicContext = {
   afterImage: ShowroomImageAsset | null
   businessTypes: string[]
   images: ShowroomImageAsset[]
-}
-
-function getShowroomGroupKey(asset: ShowroomImageAsset): string {
-  const publicGroupKey = asset.public_group_key?.trim()
-  if (publicGroupKey) return publicGroupKey
-  const spaceId = asset.space_id?.trim()
-  if (spaceId) return `space:${spaceId}`
-  const beforeAfterGroupId = asset.before_after_group_id?.trim()
-  if (beforeAfterGroupId) return `before-after:${beforeAfterGroupId}`
-  const canonicalSiteName = asset.canonical_site_name?.trim()
-  if (canonicalSiteName) return `site:${canonicalSiteName}`
-  const siteName = asset.site_name?.trim()
-  if (siteName) return `site:${siteName}`
-  return 'site:미지정'
 }
 
 function getPreferredShowroomSiteName(images: ShowroomImageAsset[]): string {
@@ -75,19 +62,6 @@ function getPreferredExternalLabel(images: ShowroomImageAsset[]): string | null 
     if (externalLabel) return externalLabel
   }
   return null
-}
-
-function groupBeforeAfterAssets(assets: ShowroomImageAsset[]): Map<string, ShowroomImageAsset[]> {
-  const grouped = new Map<string, ShowroomImageAsset[]>()
-  assets
-    .filter((asset) => asset.before_after_role === 'before' || asset.before_after_role === 'after')
-    .forEach((asset) => {
-      const key = getShowroomGroupKey(asset)
-      const list = grouped.get(key) ?? []
-      list.push(asset)
-      grouped.set(key, list)
-    })
-  return grouped
 }
 
 function pickBeforeAfterPair(images: ShowroomImageAsset[]) {

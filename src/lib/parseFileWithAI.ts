@@ -5,7 +5,7 @@
  * - PDF.js worker: 로컬 패키지 사용 (CDN 미사용)
  */
 import { toast } from 'sonner'
-import type { EstimateRow } from '@/components/estimate/EstimateForm'
+import type { EstimateRow } from '@/components/estimate/estimateFormShared'
 import { supabase } from '@/lib/supabase'
 
 /** pdfjs-dist worker 로컬 참조 (Vite ?url → 번들 시 올바른 경로) */

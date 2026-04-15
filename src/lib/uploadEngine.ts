@@ -6,6 +6,7 @@
  * - image_assets에 저장 시 storage_type으로 'cloudinary' | 'supabase' 구분
  */
 import { supabase } from '@/lib/supabase'
+import { buildCloudinaryOriginalUrl, buildCloudinaryThumbnailUrl } from '@/lib/imageAssetUploadService'
 import { getCloudinaryCloudName, getCloudinaryUploadPreset, getSupabaseUrl } from '@/lib/config'
 import { CLOUDINARY_UPLOAD_FOLDER } from '@/lib/constants'
 
@@ -109,15 +110,6 @@ function buildPublicId(meta: UploadEngineMetadata): string {
   const suffix = Date.now().toString(36)
   const seg = [yymmdd, customer || '업로드', cat, suffix].filter(Boolean).join('_')
   return `${CLOUDINARY_UPLOAD_FOLDER}/${seg}`
-}
-
-function buildCloudinaryThumbnailUrl(cloudName: string, publicId: string): string {
-  const opts = 'w_800,c_scale,e_improve,e_sharpen,f_auto,q_auto'
-  return `https://res.cloudinary.com/${cloudName}/image/upload/${opts}/${publicId}`
-}
-
-function buildCloudinaryOriginalUrl(cloudName: string, publicId: string): string {
-  return `https://res.cloudinary.com/${cloudName}/image/upload/${publicId}`
 }
 
 function buildSupabasePublicUrl(storagePath: string): string {
