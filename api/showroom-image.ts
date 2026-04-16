@@ -12,6 +12,7 @@ type AssetRow = {
   location: string | null
   business_type: string | null
   created_at: string | null
+  public_watermark_status?: string | null
 }
 
 type RequestLike = {
@@ -221,7 +222,9 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
     }
 
     const displayName = buildDisplayName(row)
-    const watermarkedUrl = buildCloudinaryWatermarkedUrl(sourceUrl, displayName, variant)
+    const watermarkedUrl = row.public_watermark_status === 'ready'
+      ? sourceUrl
+      : buildCloudinaryWatermarkedUrl(sourceUrl, displayName, variant)
     const watermarked = await fetchRemoteImage(watermarkedUrl)
     const filename = sanitizeDownloadName(displayName)
 

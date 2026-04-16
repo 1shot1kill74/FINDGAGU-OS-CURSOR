@@ -7,6 +7,11 @@ import {
   parseStoredSpaceId,
 } from '@/lib/imageAssetMeta'
 import { IMAGE_ASSET_PAGE_SIZE } from '@/lib/imageAssetConstants'
+import {
+  buildOpenShowroomDisplayName,
+  buildOpenShowroomWatermarkedUrls,
+  OPEN_SHOWROOM_WATERMARK_VERSION,
+} from '@/lib/openShowroomWatermark'
 import type { Json } from '@/types/database'
 
 type ConsultationSpaceRow = {
@@ -24,9 +29,16 @@ type ConsultationSpaceRow = {
 
 type ImageAssetMigrationRow = {
   id: string
+  cloudinary_url?: string | null
+  thumbnail_url?: string | null
   site_name: string | null
   business_type: string | null
   location: string | null
+  created_at?: string | null
+  public_watermarked_url?: string | null
+  public_watermarked_thumbnail_url?: string | null
+  public_watermark_status?: string | null
+  public_watermark_version?: number | null
   metadata?: Record<string, unknown> | null
 }
 
@@ -239,4 +251,100 @@ export async function backfillImageAssetBroadExternalDisplayNames(): Promise<{ u
   }
 
   return { updated }
+}
+
+export async function backfillImageAssetPublicWatermarks(): Promise<{
+  updated: number
+  skippedReady: number
+  skippedNoSource: number
+  failed: number
+}> {
+  const imageAssets: ImageAssetMigrationRow[] = []
+  for (let from = 0; ; from += IMAGE_ASSET_PAGE_SIZE) {
+    const to = from + IMAGE_ASSET_PAGE_SIZE - 1
+    const { data, error } = await supabase
+      .from('image_assets')
+      .select('id, cloudinary_url, thumbnail_url, site_name, business_type, location, created_at, public_watermarked_url, public_watermarked_thumbnail_url, public_watermark_status, public_watermark_version, metadata')
+      .eq('is_consultation', true)
+      .not('category', 'in', '("purchase_order","floor_plan")')
+      .order('created_at', { ascending: false })
+      .range(from, to)
+    if (error) throw new Error(error.message)
+    if (!data?.length) break
+    imageAssets.push(...(data as ImageAssetMigrationRow[]))
+    if (data.length < IMAGE_ASSET_PAGE_SIZE) break
+  }
+
+  let updated = 0
+  let skippedReady = 0
+  let skippedNoSource = 0
+  let failed = 0
+
+  for (const row of imageAssets) {
+    const sourceUrl = row.cloudinary_url?.trim() ?? ''
+    if (!sourceUrl) {
+      skippedNoSource += 1
+      continue
+    }
+
+    const isReady =
+      row.public_watermark_status === 'ready' &&
+      (row.public_watermark_version ?? 0) >= OPEN_SHOWROOM_WATERMARK_VERSION &&
+      Boolean(row.public_watermarked_url?.trim()) &&
+      Boolean(row.public_watermarked_thumbnail_url?.trim())
+
+    if (isReady) {
+      skippedReady += 1
+      continue
+    }
+
+    const meta = parseImageAssetMeta(row.metadata)
+    const displayName = buildOpenShowroomDisplayName({
+      siteName: row.site_name,
+      externalDisplayName: meta.externalDisplayName,
+      broadExternalDisplayName: meta.broadExternalDisplayName,
+      location: row.location,
+      businessType: row.business_type,
+      createdAt: row.created_at,
+    })
+    const watermark = buildOpenShowroomWatermarkedUrls({
+      sourceUrl: row.cloudinary_url,
+      thumbnailUrl: row.thumbnail_url,
+      displayName,
+    })
+
+    if (!watermark.fullUrl || !watermark.thumbnailUrl) {
+      const { error } = await supabase
+        .from('image_assets')
+        .update({
+          public_watermark_status: 'failed',
+          public_watermark_version: watermark.version,
+          public_watermark_updated_at: new Date().toISOString(),
+        })
+        .eq('id', row.id)
+      if (error) throw new Error(error.message)
+      failed += 1
+      continue
+    }
+
+    const { error } = await supabase
+      .from('image_assets')
+      .update({
+        public_watermarked_url: watermark.fullUrl,
+        public_watermarked_thumbnail_url: watermark.thumbnailUrl,
+        public_watermark_status: 'ready',
+        public_watermark_version: watermark.version,
+        public_watermark_updated_at: new Date().toISOString(),
+      })
+      .eq('id', row.id)
+    if (error) throw new Error(error.message)
+    updated += 1
+  }
+
+  return {
+    updated,
+    skippedReady,
+    skippedNoSource,
+    failed,
+  }
 }

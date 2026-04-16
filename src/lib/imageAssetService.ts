@@ -32,7 +32,11 @@ export {
 export { rowToProjectAsset } from '@/lib/imageAssetProjectRows'
 
 export type { ImageAssetSpaceBackfillResult } from '@/lib/imageAssetBackfill'
-export { backfillImageAssetSpaceMetadata, backfillImageAssetBroadExternalDisplayNames } from '@/lib/imageAssetBackfill'
+export {
+  backfillImageAssetSpaceMetadata,
+  backfillImageAssetBroadExternalDisplayNames,
+  backfillImageAssetPublicWatermarks,
+} from '@/lib/imageAssetBackfill'
 
 export type {
   ImageAssetTreeYear,

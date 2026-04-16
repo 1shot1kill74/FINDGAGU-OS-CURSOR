@@ -28,6 +28,7 @@ import { roundToPriceUnit } from '@/lib/estimateUtils'
 import { insertSystemLog } from '@/lib/activityLog'
 import { resetConsultationImageData } from '@/lib/adminResetConsultationImages'
 import { resetImageAssetSystem } from '@/lib/adminResetImageAssetSystem'
+import { backfillImageAssetPublicWatermarks } from '@/lib/imageAssetService'
 
 const SUPPLIER_FIXED = {
   bizNumber: '374-81-02631',
@@ -183,6 +184,7 @@ export default function MigrationPage() {
   const [uploadedVendorItems, setUploadedVendorItems] = useState<UploadedVendorPriceItem[]>(loadUploadedVendorItemsFromStorage)
   /** 견적서 파일별 매칭된 상담 (기존 상담 연결 시) */
   const [matchedConsultation, setMatchedConsultation] = useState<Record<string, { id: string; company_name: string } | null>>({})
+  const [publicWatermarkBackfilling, setPublicWatermarkBackfilling] = useState(false)
 
   useEffect(() => {
     try {
@@ -1685,6 +1687,41 @@ export default function MigrationPage() {
           <p className="text-xs text-muted-foreground">
             저장된 데이터에는 is_test: true가 적용됩니다. 상담 관리 또는 별도 기능에서 테스트 데이터 일괄 삭제가 가능합니다.
           </p>
+        </div>
+
+        <div className="mt-8 pt-8 border-t border-border space-y-4">
+          <h3 className="text-sm font-semibold text-foreground">오픈쇼룸 워터마크 백필 (Admin)</h3>
+          <div className="space-y-2">
+            <p className="text-xs text-muted-foreground">
+              기존 `image_assets` 중 공개 쇼룸 대상 이미지에 대해 공개용 워터마크 URL을 일괄 계산해 저장합니다. 완료 후 오픈쇼룸은 조회 시 프록시 대신 저장된 워터마크 URL을 우선 사용합니다.
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={publicWatermarkBackfilling}
+              onClick={async () => {
+                try {
+                  setPublicWatermarkBackfilling(true)
+                  const result = await backfillImageAssetPublicWatermarks()
+                  toast.success(
+                    [
+                      result.updated > 0 ? `${result.updated}건 워터마크 백필` : null,
+                      result.skippedReady > 0 ? `${result.skippedReady}건 이미 준비됨` : null,
+                      result.skippedNoSource > 0 ? `${result.skippedNoSource}건 원본 없음` : null,
+                      result.failed > 0 ? `${result.failed}건 실패` : null,
+                    ].filter(Boolean).join(', ') || '처리할 공개 이미지가 없습니다.'
+                  )
+                } catch (error) {
+                  toast.error(error instanceof Error ? error.message : '워터마크 백필에 실패했습니다.')
+                } finally {
+                  setPublicWatermarkBackfilling(false)
+                }
+              }}
+            >
+              {publicWatermarkBackfilling ? '오픈쇼룸 워터마크 백필 실행 중...' : '오픈쇼룸 워터마크 백필 실행'}
+            </Button>
+          </div>
         </div>
 
         {/* Admin: DB 이미지 초기화 */}

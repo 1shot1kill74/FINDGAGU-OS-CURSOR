@@ -141,6 +141,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
   const lastAutoRefreshAtRef = useRef(0)
   const priorityEditorOpenByKeyRef = useRef(priorityEditorOpenByKey)
   const trackedPublicEntryRef = useRef(false)
+  const originalArchivePath = showInternalControls ? '/showroom/original' : '/public/showroom/original'
 
   priorityEditorOpenByKeyRef.current = priorityEditorOpenByKey
 
@@ -1550,19 +1551,42 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
       <header ref={headerRef} className="sticky top-0 z-10 bg-white/90 backdrop-blur border-b border-neutral-200 px-4 py-4 md:px-8">
         <div className="max-w-6xl mx-auto flex flex-col gap-4">
           <div className="flex items-center justify-between gap-3">
-            <h1 className="text-xl md:text-2xl font-semibold text-neutral-900 tracking-tight">
-              {showInternalControls ? '내부용 시공사례 쇼룸' : '시공사례 쇼룸'}
-            </h1>
-            {!showInternalControls && (
-              <Link to="/public/showroom/cardnews">
-                <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
-                  <FileText className="h-4 w-4" />
-                  카드뉴스 모아보기
-                </Button>
+            <div>
+              <h1 className="text-xl md:text-2xl font-semibold text-neutral-900 tracking-tight">
+                {showInternalControls ? '내부용 시공사례 쇼룸' : '시공사례 쇼룸'}
+              </h1>
+              <Link
+                to={originalArchivePath}
+                className="mt-1 inline-flex items-center gap-1.5 text-sm font-medium text-amber-700 transition hover:text-amber-800"
+              >
+                원자료 보기
+                <ArrowRight className="h-4 w-4" />
               </Link>
+            </div>
+            {!showInternalControls && (
+              <div className="flex items-center gap-2">
+                <Link to={originalArchivePath}>
+                  <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
+                    <Images className="h-4 w-4" />
+                    원자료 보기
+                  </Button>
+                </Link>
+                <Link to="/public/showroom/cardnews">
+                  <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
+                    <FileText className="h-4 w-4" />
+                    카드뉴스 모아보기
+                  </Button>
+                </Link>
+              </div>
             )}
             {showInternalControls && (
               <div className="flex items-center gap-2">
+                <Link to={originalArchivePath}>
+                  <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
+                    <Images className="h-4 w-4" />
+                    원자료 보기
+                  </Button>
+                </Link>
                 <Link to="/admin/showroom-ads">
                   <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
                     <BarChart3 className="h-4 w-4" />

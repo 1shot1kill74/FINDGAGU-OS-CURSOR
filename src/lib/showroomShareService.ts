@@ -32,12 +32,12 @@ function buildPublicShowroomImageProxyUrl(assetId: string, variant: 'thumb' | 'f
 }
 
 function mapToProtectedPublicShowroomAsset(asset: ShowroomImageAsset): ShowroomImageAsset {
+  const isWatermarkReady = asset.public_watermark_status === 'ready'
   return {
     ...asset,
     site_name: broadenPublicDisplayName(asset.site_name) ?? asset.site_name,
-    cloudinary_url: buildPublicShowroomImageProxyUrl(asset.id, 'full'),
-    // Keep card thumbnails on the CDN for faster public showroom loads.
-    thumbnail_url: asset.thumbnail_url || asset.cloudinary_url,
+    cloudinary_url: isWatermarkReady ? asset.cloudinary_url : buildPublicShowroomImageProxyUrl(asset.id, 'full'),
+    thumbnail_url: isWatermarkReady ? (asset.thumbnail_url || asset.cloudinary_url) : buildPublicShowroomImageProxyUrl(asset.id, 'thumb'),
   }
 }
 

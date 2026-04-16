@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase'
 import type { Json } from '@/types/database'
 import { getCloudinaryCloudName, getCloudinaryUploadPreset } from '@/lib/config'
 import { CLOUDINARY_ADMIN_THUMBNAIL_OPTIONS } from '@/lib/constants'
+import type { OpenShowroomWatermarkStatus } from '@/lib/openShowroomWatermark'
 
 /** 관리자 목록용 표준 썸네일 변환 옵션 — src/lib/constants.ts 에서 import 후 re-export */
 export { CLOUDINARY_ADMIN_THUMBNAIL_OPTIONS } from '@/lib/constants'
@@ -66,6 +67,11 @@ export type StorageType = 'cloudinary' | 'supabase'
 export interface ImageAssetInsertPayload {
   cloudinary_url: string
   thumbnail_url?: string | null
+  public_watermarked_url?: string | null
+  public_watermarked_thumbnail_url?: string | null
+  public_watermark_status?: OpenShowroomWatermarkStatus | null
+  public_watermark_version?: number | null
+  public_watermark_updated_at?: string | null
   site_name?: string | null
   photo_date?: string | null
   location?: string | null
@@ -103,6 +109,11 @@ export async function insertImageAsset(payload: ImageAssetInsertPayload): Promis
     .insert({
       cloudinary_url: payload.cloudinary_url,
       thumbnail_url: payload.thumbnail_url ?? null,
+      public_watermarked_url: payload.public_watermarked_url ?? null,
+      public_watermarked_thumbnail_url: payload.public_watermarked_thumbnail_url ?? null,
+      public_watermark_status: payload.public_watermark_status ?? 'pending',
+      public_watermark_version: payload.public_watermark_version ?? null,
+      public_watermark_updated_at: payload.public_watermark_updated_at ?? null,
       site_name: payload.site_name ?? null,
       photo_date: payload.photo_date ?? null,
       location: payload.location ?? null,

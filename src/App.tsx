@@ -18,6 +18,7 @@ const PublicShowroomPage = lazy(() => import('@/pages/PublicShowroomPage'))
 const PublicShowroomCardNewsPage = lazy(() => import('@/pages/PublicShowroomCardNewsPage'))
 const ShowroomCaseApproachPage = lazy(() => import('@/pages/ShowroomCaseApproachPage'))
 const ShowroomPage = lazy(() => import('@/pages/ShowroomPage'))
+const OriginalShowroomPage = lazy(() => import('@/pages/OriginalShowroomPage'))
 const ContactPage = lazy(() => import('@/pages/ContactPage'))
 const DashboardPage = lazy(() => import('@/pages/DashboardPage'))
 const LoginPage = lazy(() => import('@/pages/LoginPage'))
@@ -64,10 +65,12 @@ function App() {
           <Route path="/public/showroom/cardnews" element={<PublicShowroomCardNewsPage />} />
           <Route path="/public/showroom/case/:siteKey" element={<ShowroomCaseApproachPage mode="public" />} />
           <Route path="/public/showroom" element={<PublicShowroomPage />} />
+          <Route path="/public/showroom/original" element={<OriginalShowroomPage mode="public" />} />
           <Route path="/open-showroom/cardnews/:siteKey" element={<ShowroomCaseApproachPage mode="public" entry="cardnews" />} />
           <Route path="/open-showroom/cardnews" element={<PublicShowroomCardNewsPage />} />
           <Route path="/open-showroom/case/:siteKey" element={<ShowroomCaseApproachPage mode="public" />} />
           <Route path="/open-showroom" element={<PublicShowroomPage />} />
+          <Route path="/open-showroom/original" element={<OriginalShowroomPage mode="public" />} />
           <Route path="/contact" element={<ContactPage />} />
           <Route element={<ProtectedRoute />}>
             <Route path="/dashboard" element={<DashboardPage />} />
@@ -77,6 +80,7 @@ function App() {
             <Route path="/image-assets" element={<ImageAssetViewer />} />
             <Route path="/image-assets/upload" element={<ImageAssetUpload />} />
             <Route path="/showroom" element={<ShowroomPage />} />
+            <Route path="/showroom/original" element={<OriginalShowroomPage />} />
             <Route path="/homepage-concept" element={<HomepageConceptPage />} />
             <Route path="/admin/migration" element={<MigrationPage />} />
             <Route path="/admin/archive" element={<ArchivePage />} />

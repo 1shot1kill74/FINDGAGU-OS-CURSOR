@@ -8,6 +8,7 @@ export interface ShowroomImageAsset {
   id: string
   cloudinary_url: string
   thumbnail_url: string | null
+  public_watermark_status?: string | null
   site_name: string | null
   public_group_key?: string | null
   industry_site_order?: number | null
@@ -117,6 +118,10 @@ export function mapPublicShowroomRpcRowToShowroomAsset(r: Record<string, unknown
     id: String(r.id),
     cloudinary_url: String(r.cloudinary_url ?? ''),
     industry_site_order: industrySiteOrder,
+    public_watermark_status:
+      typeof r.public_watermark_status === 'string' && r.public_watermark_status.trim()
+        ? r.public_watermark_status.trim()
+        : null,
     thumbnail_url: r.thumbnail_url != null ? String(r.thumbnail_url) : null,
     site_name: r.site_name != null ? String(r.site_name) : null,
     public_group_key: r.public_group_key != null ? String(r.public_group_key) : null,

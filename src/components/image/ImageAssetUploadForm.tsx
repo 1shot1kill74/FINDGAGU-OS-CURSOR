@@ -19,6 +19,7 @@ import {
 import type { SpaceDisplayNameOption } from '@/lib/imageAssetUploadService'
 import { buildBroadExternalDisplayName, buildExternalDisplayName, isCloudinaryConfigured } from '@/lib/imageAssetService'
 import { getCloudinaryCloudName } from '@/lib/config'
+import { buildOpenShowroomDisplayName, buildOpenShowroomWatermarkedUrls } from '@/lib/openShowroomWatermark'
 import { toast } from 'sonner'
 import { X, Check } from 'lucide-react'
 
@@ -381,9 +382,27 @@ export function ImageAssetUploadForm({
           }
           const uploadResult = await uploadEngine(item.file, meta)
           const { cloudinary_url, thumbnail_url, public_id, storage_type, storage_path } = uploadResult
+          const publicDisplayName = buildOpenShowroomDisplayName({
+            siteName: siteTrim,
+            externalDisplayName: externalDisplayName || null,
+            broadExternalDisplayName: broadExternalDisplayName || null,
+            location: location.trim() || null,
+            businessType: business_type.trim() || null,
+            createdAt: photo_date.trim() || new Date().toISOString(),
+          })
+          const publicWatermark = buildOpenShowroomWatermarkedUrls({
+            sourceUrl: cloudinary_url,
+            thumbnailUrl: thumbnail_url,
+            displayName: publicDisplayName,
+          })
           const result = await insertImageAsset({
             cloudinary_url,
             thumbnail_url,
+            public_watermarked_url: publicWatermark.fullUrl,
+            public_watermarked_thumbnail_url: publicWatermark.thumbnailUrl,
+            public_watermark_status: storage_type === 'cloudinary' ? publicWatermark.status : 'skipped',
+            public_watermark_version: storage_type === 'cloudinary' ? publicWatermark.version : null,
+            public_watermark_updated_at: storage_type === 'cloudinary' ? new Date().toISOString() : null,
             storage_type: storage_type ?? 'cloudinary',
             storage_path: storage_path ?? null,
             ...common,
