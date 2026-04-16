@@ -51,7 +51,8 @@ npm run dev
 
 ## 권장 운영 메모
 
-- `SHOWROOM_SHORTS_BGM_URL`은 Railway 컨테이너가 직접 읽을 수 있는 공개 URL이어야 합니다.
-- 미설정 시 기본값으로 `https://findgagu-os-cursor.vercel.app/assets/bgm/bright-lines-new-light-16s.mp3`를 사용합니다.
+- 기본값은 워커 이미지 안에 포함된 `/app/assets/bgm/bright-lines-new-light-sample-b-24-34.mp3` 입니다.
+- `SHOWROOM_SHORTS_BGM_URL`을 주면 Railway 컨테이너가 직접 읽을 수 있는 공개 URL 또는 컨테이너 내부 파일 경로를 사용할 수 있습니다.
+- 원격 BGM URL이 깨졌을 때는 번들된 기본 BGM으로 fallback 하도록 구성했습니다.
 - 더 안정적인 운영을 원하면 나중에 Supabase Storage 또는 Cloudinary 공개 URL로 분리해도 됩니다.
 - 브라우저에 워커 토큰을 노출하지 않도록 프론트는 `/api/showroom-shorts-worker` 프록시를 통해 Railway를 호출합니다.

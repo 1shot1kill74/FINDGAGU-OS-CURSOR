@@ -65,9 +65,11 @@ const VIDEO_Y = 290
 const DEFAULT_DURATION_SECONDS = 10
 const AFTER_HOLD_SECONDS = 2
 const WORKER_TOKEN = process.env.SHOWROOM_SHORTS_WORKER_TOKEN?.trim() || ''
+const DEFAULT_BUNDLED_BGM_PATH =
+  '/app/assets/bgm/bright-lines-new-light-sample-b-24-34.mp3'
 const DEFAULT_BGM_URL =
   'https://findgagu-os-cursor.vercel.app/assets/bgm/bright-lines-new-light-sample-b-24-34.mp3'
-const BGM_URL = process.env.SHOWROOM_SHORTS_BGM_URL?.trim() || DEFAULT_BGM_URL
+const BGM_SOURCE = process.env.SHOWROOM_SHORTS_BGM_URL?.trim() || DEFAULT_BUNDLED_BGM_PATH
 const BODY_FONT_FILE =
   process.env.SHOWROOM_SHORTS_FONT_FILE?.trim() ||
   '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc'
@@ -97,6 +99,8 @@ app.get('/health', (_req, res) => {
   res.json({
     ok: true,
     service: 'showroom-shorts-worker',
+    bgmSource: BGM_SOURCE,
+    bgmSourceType: /^https?:\/\//i.test(BGM_SOURCE) ? 'remote' : 'bundled',
     queueDepth: queuedJobs.length,
     basicQueueDepth: queuedBasicDrafts.length,
     activeJobs: Array.from(activeJobs.entries()).map(([jobId, state]) => ({
@@ -386,7 +390,7 @@ async function processComposeJob(jobId: string) {
     console.log(`[showroom-shorts-worker] downloading source job=${jobId}`)
     await downloadToFile(job.source_video_url, inputVideoPath)
     console.log(`[showroom-shorts-worker] source ready job=${jobId} path=${inputVideoPath}`)
-    const bgmPath = BGM_URL ? await downloadBgmToFile(BGM_URL, bgmAudioPath) : null
+    const bgmPath = BGM_SOURCE ? await resolveBgmToFile(BGM_SOURCE, bgmAudioPath) : null
     console.log(`[showroom-shorts-worker] bgm ready job=${jobId} path=${bgmPath ?? 'none'}`)
     const durationSeconds = await getVideoDurationSeconds(inputVideoPath, job.duration_seconds ?? DEFAULT_DURATION_SECONDS)
     console.log(`[showroom-shorts-worker] duration job=${jobId} seconds=${durationSeconds}`)
@@ -518,7 +522,7 @@ async function processBasicShortsDraft(draftId: string) {
 
     const bgmAudioPath = path.join(tempDir, 'bgm-audio')
     const outputVideoPath = path.join(tempDir, 'basic-shorts-final.mp4')
-    const bgmPath = BGM_URL ? await downloadBgmToFile(BGM_URL, bgmAudioPath) : null
+    const bgmPath = BGM_SOURCE ? await resolveBgmToFile(BGM_SOURCE, bgmAudioPath) : null
     const durationSeconds = Math.max(draft.duration_seconds ?? DEFAULT_DURATION_SECONDS, 8)
     const productChip =
       orderedImages.map((asset) => asset.product_name?.trim()).find((value): value is string => Boolean(value)) ?? '제품 구성'
@@ -899,7 +903,46 @@ async function downloadToFile(url: string, destinationPath: string) {
   await fs.writeFile(destinationPath, buffer)
 }
 
-async function downloadBgmToFile(url: string, destinationBasePath: string) {
+async function resolveBgmToFile(source: string, destinationBasePath: string) {
+  if (/^https?:\/\//i.test(source)) {
+    try {
+      return await downloadRemoteBgmToFile(source, destinationBasePath)
+    } catch (error) {
+      if (source !== DEFAULT_BUNDLED_BGM_PATH && await fileExists(DEFAULT_BUNDLED_BGM_PATH)) {
+        console.warn(
+          `[showroom-shorts-worker] remote bgm unavailable, fallback to bundled asset source=${source} fallback=${DEFAULT_BUNDLED_BGM_PATH}`,
+          error,
+        )
+        return copyBundledBgmToFile(DEFAULT_BUNDLED_BGM_PATH, destinationBasePath)
+      }
+      throw error
+    }
+  }
+
+  return copyBundledBgmToFile(source, destinationBasePath)
+}
+
+async function fileExists(filePath: string) {
+  try {
+    await fs.access(filePath)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function copyBundledBgmToFile(sourcePath: string, destinationBasePath: string) {
+  if (!await fileExists(sourcePath)) {
+    throw new Error(`번들 BGM 파일을 찾지 못했습니다. (${sourcePath})`)
+  }
+
+  const extension = path.extname(sourcePath).replace(/^\./, '').toLowerCase() || 'mp3'
+  const destinationPath = `${destinationBasePath}.${extension}`
+  await fs.copyFile(sourcePath, destinationPath)
+  return destinationPath
+}
+
+async function downloadRemoteBgmToFile(url: string, destinationBasePath: string) {
   const response = await fetch(url)
   if (!response.ok) {
     throw new Error(`BGM 다운로드에 실패했습니다. (${response.status})`)
