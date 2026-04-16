@@ -46,6 +46,6 @@ apps/homepage/dist/
 public/assets/takeout-quote-inbox/
 public/data/takeout-quote-inbox.json
 
-# Local chat/image scratch assets
-assets/
+# Local chat/image scratch assets (repo root only — do not use plain "assets/" or public/assets is ignored)
+/assets/
 .vercel

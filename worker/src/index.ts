@@ -66,7 +66,7 @@ const DEFAULT_DURATION_SECONDS = 10
 const AFTER_HOLD_SECONDS = 2
 const WORKER_TOKEN = process.env.SHOWROOM_SHORTS_WORKER_TOKEN?.trim() || ''
 const DEFAULT_BGM_URL =
-  'https://findgagu-os-cursor.vercel.app/assets/bgm/bright-lines-new-light-16s.mp3'
+  'https://findgagu-os-cursor.vercel.app/assets/bgm/bright-lines-new-light-sample-b-24-34.mp3'
 const BGM_URL = process.env.SHOWROOM_SHORTS_BGM_URL?.trim() || DEFAULT_BGM_URL
 const BODY_FONT_FILE =
   process.env.SHOWROOM_SHORTS_FONT_FILE?.trim() ||
@@ -906,11 +906,44 @@ async function downloadBgmToFile(url: string, destinationBasePath: string) {
   }
 
   const contentType = response.headers.get('content-type') || ''
+  if (/^text\/|^application\/(json|javascript|xml)/i.test(contentType)) {
+    throw new Error(
+      `BGM URL이 오디오가 아닌 응답을 돌려줬습니다 (Content-Type: ${contentType || '없음'}). SPA가 index.html을 주는 경우가 많으니, 레포 public/assets/bgm에 MP3를 두고 배포했는지 또는 SHOWROOM_SHORTS_BGM_URL을 실제 오디오 URL로 설정했는지 확인하세요.`,
+    )
+  }
+
   const extension = inferAudioExtension(contentType, url)
   const destinationPath = `${destinationBasePath}.${extension}`
   const buffer = Buffer.from(await response.arrayBuffer())
+  assertDownloadedAudioBufferLooksValid(buffer, extension, url)
   await fs.writeFile(destinationPath, buffer)
   return destinationPath
+}
+
+function assertDownloadedAudioBufferLooksValid(buffer: Buffer, extension: string, url: string) {
+  if (buffer.length < 16) {
+    throw new Error(`BGM 데이터가 너무 짧습니다. (${buffer.length} bytes) URL: ${url}`)
+  }
+
+  const asciiHead = buffer.subarray(0, Math.min(64, buffer.length)).toString('utf8').trimStart()
+  if (asciiHead.startsWith('<!') || asciiHead.startsWith('<html') || asciiHead.startsWith('<?xml')) {
+    throw new Error(
+      `BGM URL이 HTML/XML을 반환했습니다. Vercel 등 SPA는 존재하지 않는 /assets 경로에 index.html을 줄 수 있습니다. public/assets/bgm에 MP3를 포함해 배포하거나 SHOWROOM_SHORTS_BGM_URL을 지정하세요. (${url})`,
+    )
+  }
+
+  if (extension === 'mp3' || extension === 'mpeg') {
+    const id3 = buffer.subarray(0, 3).toString('ascii') === 'ID3'
+    const frameSync = buffer[0] === 0xff && (buffer[1] & 0xe0) === 0xe0
+    if (!id3 && !frameSync) {
+      throw new Error(`BGM이 MP3 형식으로 보이지 않습니다. (${url})`)
+    }
+  } else if (extension === 'wav') {
+    const riff = buffer.subarray(0, 4).toString('ascii')
+    if (riff !== 'RIFF') {
+      throw new Error(`BGM이 WAV 형식으로 보이지 않습니다. (${url})`)
+    }
+  }
 }
 
 function inferAudioExtension(contentType: string, url: string) {
