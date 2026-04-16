@@ -249,6 +249,7 @@ export default function DashboardPage() {
     return consultations
       .filter((item) => {
         if (item.is_visible === false || item.is_test) return false
+        if (item.status === '거절') return false
         const workflowStage = resolveWorkflowStage(item.status, item.metadata)
         if (workflowStage !== '상담접수' && workflowStage !== '견적중') return false
         const updatedAt = parseComparableDateValue(item.update_date, item.created_at)
@@ -413,7 +414,12 @@ export default function DashboardPage() {
           <div className="rounded-3xl border border-neutral-200 bg-white p-6 shadow-sm">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <h2 className="text-lg font-semibold text-neutral-900">방치 상담</h2>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-lg font-semibold text-neutral-900">방치 상담</h2>
+                  <span className="inline-flex items-center rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-600">
+                    {neglectedConsultations.length}건
+                  </span>
+                </div>
                 <p className="mt-1 text-sm text-neutral-500">접수·견적 상태 중 8일 이상 30일 이내 방치된 상담을 확인합니다.</p>
               </div>
               <Link to="/consultation" className="text-sm font-medium text-amber-700 hover:text-amber-800">
