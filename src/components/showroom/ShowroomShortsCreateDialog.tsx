@@ -64,7 +64,7 @@ function channelLabel(channel: ShowroomShortsChannel) {
 export default function ShowroomShortsCreateDialog({ open, onOpenChange, selectedImages }: Props) {
   const selection = useMemo(() => validateBeforeAfterSelection(selectedImages), [selectedImages])
   const [promptText, setPromptText] = useState(DEFAULT_PROMPT)
-  const [channels, setChannels] = useState<ShowroomShortsChannel[]>(['youtube'])
+  const [channels, setChannels] = useState<ShowroomShortsChannel[]>([...SHOWROOM_SHORTS_CHANNELS])
   const [loading, setLoading] = useState(false)
   const [createdJobId, setCreatedJobId] = useState<string | null>(null)
 

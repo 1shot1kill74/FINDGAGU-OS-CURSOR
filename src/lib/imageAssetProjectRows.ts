@@ -2,6 +2,7 @@ import { supabase } from '@/lib/supabase'
 import { BUCKET } from '@/lib/imageAssetConstants'
 import { getAssetUrl, getSyncStatus } from '@/lib/imageAssetCloudinary'
 import { parseBeforeAfterMeta, parseImageAssetMeta } from '@/lib/imageAssetMeta'
+import { readStoredPrivacyScan } from '@/lib/imagePrivacyService'
 import type { ProjectImageAsset } from '@/types/projectImage'
 import { USAGE_TYPES, REVIEW_STATUSES, type UsageType, type ReviewStatus } from '@/types/projectImage'
 
@@ -78,6 +79,7 @@ export function rowImageAssetToProjectAsset(row: {
   const cloudinaryPublicId = match ? match[1] : `image_asset_${row.id}`
   const beforeAfter = parseBeforeAfterMeta(row.metadata)
   const meta = parseImageAssetMeta(row.metadata)
+  const privacyScan = readStoredPrivacyScan(row.metadata)
   const canonicalSiteName =
     meta.canonicalSiteName ||
     row.site_name?.trim() ||
@@ -115,5 +117,6 @@ export function rowImageAssetToProjectAsset(row: {
     beforeAfterGroupId: beforeAfter.groupId,
     metadata: meta.raw,
     spaceId: meta.spaceId,
+    privacyScan,
   }
 }

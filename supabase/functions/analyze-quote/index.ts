@@ -84,7 +84,13 @@ interface AnalyzeQuoteInput {
   /** PDF에서 추출한 텍스트 — 텍스트 분석용 (image 없을 때) */
   text?: string
   fileName: string
-  mode?: "estimates" | "vendor_price" | "detect" | "unit_price" | "exists"
+  mode?: "estimates" | "vendor_price" | "detect" | "unit_price" | "exists" | "privacy"
+}
+
+function truncateDebugText(value: string, max = 240): string {
+  const normalized = value.replace(/\s+/g, " ").trim()
+  if (normalized.length <= max) return normalized
+  return `${normalized.slice(0, max)}…`
 }
 
 /** exists 모드: 견적서 존재 여부 YES/NO만 판별 (경량, 503 최소화) */
@@ -99,6 +105,17 @@ const DETECT_PROMPT = `이미지 또는 텍스트에서 '파인드가구'와 '�
 const UNIT_PRICE_PROMPT = `당신은 PDF/이미지 문서에서 품목·단가·수량 표를 분석하는 전문가입니다.
 **추출 형식** (유효한 JSON만 출력): {"items":[{"품목":"제품명","단가":숫자,"수량":숫자}]}
 품목=제품/품명, 단가=원가(원) ₩·콤마 제거, 수량=EA 개수(없으면 1). 표·도면·수기 메모에서 모든 품목 행 추출.`
+
+const PRIVACY_PROMPT = `당신은 실내 시공 이미지의 민감정보 노출 위험을 점검하는 리뷰어다.
+사람 얼굴, 전화번호, 이메일, 주소, 차량번호, 계좌번호, 사업자번호, 실명 문서, 채팅 캡처/서류 화면, 기타 개인식별 정보가 보이는지 확인하라.
+출력은 반드시 아래 JSON만:
+{"result":{"verdict":"clear|review|blocked","summary":"한 줄 요약","issues":[{"type":"phone_number|email|address|person_name|license_plate|account_number|business_registration_number|face|document|chat_capture|other","label":"짧은 한글 라벨","severity":"low|medium|high","confidence":"low|medium|high","evidence":"근거 또는 위치 설명"}],"suggestedAction":"권장 조치"}}
+
+규칙:
+- 아무 문제 없으면 verdict는 clear, issues는 빈 배열.
+- 일부 식별 가능성은 있으나 사람이 확인하면 되는 수준이면 review.
+- 전화번호, 얼굴 식별, 차량번호, 문서/채팅 캡처 등 공개 위험이 높으면 blocked.
+- JSON 외 텍스트 금지.`
 
 /** FormData에서 파일을 base64로 변환 */
 async function fileToBase64(file: File): Promise<string> {
@@ -123,7 +140,10 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
+    let failureStage = "request_init"
+    let privacyResponsePreview: string | null = null
     // 1. 수동 JWT 검증 (Gateway 통과 후 내부 검증)
+    failureStage = "auth_header"
     const authHeader = req.headers.get("Authorization")
     if (!authHeader) {
       return new Response(
@@ -140,6 +160,7 @@ Deno.serve(async (req: Request) => {
       global: { headers: { Authorization: authHeader } }
     })
 
+    failureStage = "auth_verify"
     const { data: { user }, error: authError } = await supabaseClient.auth.getUser(token)
     if (authError || !user) {
       console.error("[analyze-quote] Auth Error:", authError)
@@ -150,6 +171,7 @@ Deno.serve(async (req: Request) => {
     }
 
     // 2. 환경 변수 확인
+    failureStage = "env_check"
     const apiKey = Deno.env.get("GOOGLE_GEMINI_API_KEY")
     if (!apiKey?.trim()) {
       console.error("[analyze-quote] GOOGLE_GEMINI_API_KEY 미설정")
@@ -164,6 +186,7 @@ Deno.serve(async (req: Request) => {
     let fileName: string
     let mode: AnalyzeQuoteInput["mode"] = "estimates"
 
+    failureStage = "parse_request"
     const contentType = req.headers.get("content-type") ?? ""
     if (contentType.includes("multipart/form-data")) {
       const formData = await req.formData()
@@ -201,6 +224,7 @@ Deno.serve(async (req: Request) => {
       mode = body.mode ?? "estimates"
     }
 
+    failureStage = "validate_request"
     if (!fileName || typeof fileName !== "string") {
       return new Response(
         JSON.stringify({ error: "fileName is required" }),
@@ -214,6 +238,7 @@ Deno.serve(async (req: Request) => {
       )
     }
 
+    failureStage = "build_prompt"
     const sysPrompt =
       mode === "exists"
         ? EXISTS_PROMPT
@@ -221,10 +246,13 @@ Deno.serve(async (req: Request) => {
           ? DETECT_PROMPT
           : mode === "unit_price"
             ? UNIT_PRICE_PROMPT
+            : mode === "privacy"
+              ? PRIVACY_PROMPT
             : mode === "estimates"
               ? VISION_ESTIMATE_PROMPT
               : VISION_VENDOR_PROMPT
     const genAI = new GoogleGenerativeAI(apiKey)
+    failureStage = "init_model"
     const model = genAI.getGenerativeModel({
       model: GEMINI_MODEL,
       systemInstruction: sysPrompt,
@@ -245,9 +273,12 @@ Deno.serve(async (req: Request) => {
             ? '이 이미지에 "파인드가구"와 "김지윤"이 둘 다 보이는지 확인하세요.'
             : mode === "unit_price"
               ? "이 문서 이미지에서 품목·단가·수량 표를 추출하세요."
+            : mode === "privacy"
+              ? "이 이미지에서 공개 전 가려야 할 민감정보가 있는지 판정하세요."
               : mode === "estimates"
                 ? `${captureHint}가장 먼저 문서 중앙 상단에 '견 적 서' 타이틀이 있는지 확인해. 없다면 견적서가 아니므로 skipped로 응답. 통과하면 '주식회사 파인드가구' 확인, 필수 항목(사업자번호·공급가액·VAT·합계·품명 중 3개 이상) 확인 후, 이 견적서 이미지에서 모든 정보를 추출하세요.`
                 : "이 원가 명세서 이미지에서 표와 도면 옆 수기 메모를 모두 분석해, 모든 품목을 items 배열로 추출하세요."
+      failureStage = "gemini_generate_image"
       result = await model.generateContent([
         userPrompt,
         { inlineData: { data: image, mimeType } },
@@ -258,9 +289,12 @@ Deno.serve(async (req: Request) => {
           ? '이 텍스트에 "파인드가구"와 "김지윤"이 둘 다 포함되어 있는지 확인하세요.'
           : mode === "unit_price"
             ? `${UNIT_PRICE_PROMPT}\n위 형식으로 추출. 유효한 JSON만 출력.`
+            : mode === "privacy"
+              ? `${PRIVACY_PROMPT}\n문서/텍스트에 민감정보 노출 가능성이 있는지 위 형식으로 판단하세요.`
             : mode === "estimates"
               ? `가구 견적서 문서 분석. 판매 견적서 등록. 품목 단가는 판매가(unitPrice) 추출. 파인드가구·김지윤 확인. 텍스트에서 JSON 추출: siteName, region, industry, quoteDate(YYYY-MM-DD), recipientContact, customer_name, customer_phone, site_location, total_amount, rows[{no,name,spec,qty,unit,unitPrice,note}]. unitPrice=공급가(원). 유효한 JSON만 출력.`
               : `매입 원가 등록. 아래 항목 모두 추출: site_name, product_name(또는 품목), color, cost_price(또는 단가), quantity(또는 수량, 없으면 1), size(외경 가로×세로×높이), memo(상판 모번 23T·그외 18T 라이트그레이 등 상세 사양). items 배열. 출력 형식: {"items":[{"product_name":"","size":"","cost_price":숫자,"quantity":숫자,"description":"","site_name":"","color":"","memo":""}]} 유효한 JSON만 출력.`
+      failureStage = "gemini_generate_text"
       result = await model.generateContent([`${textPrompt}\n\n---\n\n${text.slice(0, 15000)}`])
     } else {
       return new Response(
@@ -269,8 +303,10 @@ Deno.serve(async (req: Request) => {
       )
     }
 
+    failureStage = "read_response"
     const response = result.response
     const responseText = response.text?.()?.trim() ?? ""
+    privacyResponsePreview = mode === "privacy" ? truncateDebugText(responseText) : null
     if (!responseText) {
       console.error("[analyze-quote] Gemini API 응답이 비어 있습니다.")
       return new Response(
@@ -288,7 +324,33 @@ Deno.serve(async (req: Request) => {
       )
     }
 
-    const parsed = parseJsonBlock(responseText)
+    failureStage = "parse_response"
+    let parsed: Record<string, unknown>
+    try {
+      parsed = parseJsonBlock(responseText)
+    } catch (parseError) {
+      if (mode === "privacy") {
+        console.warn("[analyze-quote] privacy parse fallback:", parseError)
+        return new Response(
+          JSON.stringify({
+            result: {
+              verdict: "review",
+              summary: "자동 판독이 불완전해 수동 검토가 필요합니다.",
+              issues: [],
+              suggestedAction: "업로드 후 관리자 화면에서 이미지를 직접 확인하세요.",
+              debug: {
+                engine: "gemini",
+                stage: "parse_response",
+                detail: parseError instanceof Error ? parseError.message : String(parseError),
+                responsePreview: privacyResponsePreview,
+              },
+            },
+          }),
+          { status: 200, headers: { ...CORS, "Content-Type": "application/json" } }
+        )
+      }
+      throw parseError
+    }
 
     if (mode === "estimates" && parsed?.skipped === true) {
       const reason = String(parsed.reason ?? "Not a quotation")
@@ -328,6 +390,30 @@ Deno.serve(async (req: Request) => {
       })
       return new Response(
         JSON.stringify({ items }),
+        { status: 200, headers: { ...CORS, "Content-Type": "application/json" } }
+      )
+    }
+
+    if (mode === "privacy") {
+      if (!parsed.result || typeof parsed.result !== "object" || Array.isArray(parsed.result)) {
+        parsed.result = {
+          verdict: "review",
+          summary: "자동 판독 결과 형식이 예상과 달라 수동 검토가 필요합니다.",
+          issues: [],
+          suggestedAction: "업로드 후 관리자 화면에서 이미지를 직접 확인하세요.",
+        }
+      }
+      const privacyResult = parsed.result as Record<string, unknown>
+      if (!privacyResult.debug || typeof privacyResult.debug !== "object" || Array.isArray(privacyResult.debug)) {
+        privacyResult.debug = {
+          engine: "gemini",
+          stage: "completed",
+          detail: null,
+          responsePreview: privacyResponsePreview,
+        }
+      }
+      return new Response(
+        JSON.stringify(parsed),
         { status: 200, headers: { ...CORS, "Content-Type": "application/json" } }
       )
     }
@@ -437,6 +523,9 @@ Deno.serve(async (req: Request) => {
       JSON.stringify({
         error: "이미지 분석에 실패했습니다.",
         detail: message.slice(0, 200),
+        stage: failureStage,
+        model: GEMINI_MODEL,
+        responsePreview: privacyResponsePreview,
       }),
       { status: 500, headers: { ...CORS, "Content-Type": "application/json" } }
     )

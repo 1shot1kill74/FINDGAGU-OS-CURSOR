@@ -176,7 +176,7 @@ function formatCardNewsDisplayBody(text: string, linesPerParagraph = 2): string 
     .map((paragraph) => paragraph.split('\n').map((line) => line.trim()).filter(Boolean))
     .filter((paragraph) => paragraph.length > 0)
   if (rawParagraphs.length > 1) {
-    return rawParagraphs.map((paragraph) => paragraph.join('\n')).join('\n\n')
+    return rawParagraphs.map((paragraph) => paragraph.join('\n')).join('\n')
   }
   const lines = rawParagraphs[0] ?? []
   if (lines.length <= linesPerParagraph) return lines.join('\n')
@@ -184,7 +184,7 @@ function formatCardNewsDisplayBody(text: string, linesPerParagraph = 2): string 
   for (let index = 0; index < lines.length; index += linesPerParagraph) {
     paragraphs.push(lines.slice(index, index + linesPerParagraph).join('\n'))
   }
-  return paragraphs.join('\n\n')
+  return paragraphs.join('\n')
 }
 
 function formatEvidenceCardNewsBody(text: string): string {

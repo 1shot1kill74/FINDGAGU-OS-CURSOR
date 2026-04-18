@@ -344,6 +344,75 @@ export async function createShowroomShortsJob(payload: {
   }
 }
 
+/** 유튜브만 저장된 레거시 작업에 페이스북·인스타 타깃 행을 채워 3열 검수 UI가 다시 나오도록 합니다. */
+export async function ensureShowroomShortsTripleTargets(jobId: string): Promise<{ inserted: number }> {
+  const nowIso = new Date().toISOString()
+
+  const { data: rows, error: targetsError } = await supabase
+    .from('showroom_shorts_targets')
+    .select('*')
+    .eq('shorts_job_id', jobId)
+
+  if (targetsError) {
+    throw new Error(targetsError.message)
+  }
+
+  const list = (rows ?? []) as Record<string, unknown>[]
+  const byChannel = new Map<ShowroomShortsChannel, Record<string, unknown>>()
+  for (const row of list) {
+    byChannel.set(normalizeChannel(row.channel), row)
+  }
+
+  const template =
+    byChannel.get('youtube') ?? byChannel.get('facebook') ?? byChannel.get('instagram') ?? list[0]
+  if (!template) {
+    throw new Error('기존 타깃이 없어 채널 행을 추가할 수 없습니다.')
+  }
+
+  const title = String(template.title ?? '')
+  const description = String(template.description ?? '')
+  const hashtags = Array.isArray(template.hashtags) ? template.hashtags.map((item) => String(item)) : []
+  const firstComment = String(template.first_comment ?? '')
+
+  const inserts: Array<Record<string, unknown>> = []
+  for (const channel of SHOWROOM_SHORTS_CHANNELS) {
+    if (byChannel.has(channel)) continue
+    inserts.push({
+      shorts_job_id: jobId,
+      channel,
+      title,
+      description,
+      hashtags,
+      first_comment: firstComment,
+      publish_status: 'draft',
+      updated_at: nowIso,
+    })
+  }
+
+  if (inserts.length === 0) {
+    return { inserted: 0 }
+  }
+
+  const { error: insertError } = await supabase.from('showroom_shorts_targets').insert(inserts)
+  if (insertError) {
+    throw new Error(insertError.message)
+  }
+
+  const { error: jobError } = await supabase
+    .from('showroom_shorts_jobs')
+    .update({
+      requested_channels: [...SHOWROOM_SHORTS_CHANNELS],
+      updated_at: nowIso,
+    })
+    .eq('id', jobId)
+
+  if (jobError) {
+    throw new Error(jobError.message)
+  }
+
+  return { inserted: inserts.length }
+}
+
 function mapShortsTargetRow(row: Record<string, unknown>): ShowroomShortsTargetRecord {
   return {
     id: String(row.id ?? ''),
@@ -407,7 +476,9 @@ function mapShortsJobRow(row: Record<string, unknown>): ShowroomShortsJobRecord 
 }
 
 function normalizeChannel(value: unknown): ShowroomShortsChannel {
-  return value === 'facebook' || value === 'instagram' ? value : 'youtube'
+  const raw = typeof value === 'string' ? value.trim().toLowerCase() : ''
+  if (raw === 'youtube' || raw === 'facebook' || raw === 'instagram') return raw
+  return 'youtube'
 }
 
 function normalizeJobStatus(value: unknown): ShowroomShortsJobStatus {

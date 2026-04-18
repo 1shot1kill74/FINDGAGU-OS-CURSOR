@@ -1555,22 +1555,18 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
               <h1 className="text-xl md:text-2xl font-semibold text-neutral-900 tracking-tight">
                 {showInternalControls ? '내부용 시공사례 쇼룸' : '시공사례 쇼룸'}
               </h1>
-              <Link
-                to={originalArchivePath}
-                className="mt-1 inline-flex items-center gap-1.5 text-sm font-medium text-amber-700 transition hover:text-amber-800"
-              >
-                원자료 보기
-                <ArrowRight className="h-4 w-4" />
-              </Link>
+              {showInternalControls && (
+                <Link
+                  to={originalArchivePath}
+                  className="mt-1 inline-flex items-center gap-1.5 text-sm font-medium text-amber-700 transition hover:text-amber-800"
+                >
+                  원자료 보기
+                  <ArrowRight className="h-4 w-4" />
+                </Link>
+              )}
             </div>
             {!showInternalControls && (
               <div className="flex items-center gap-2">
-                <Link to={originalArchivePath}>
-                  <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
-                    <Images className="h-4 w-4" />
-                    원자료 보기
-                  </Button>
-                </Link>
                 <Link to="/public/showroom/cardnews">
                   <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
                     <FileText className="h-4 w-4" />

@@ -10,9 +10,11 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import {
+  SHOWROOM_SHORTS_CHANNELS,
   buildShowroomShortsPublishPackage,
   deleteShowroomShortsJob,
   deleteFailedShowroomShortsJob,
+  ensureShowroomShortsTripleTargets,
   getShowroomShortsCompositionStatus,
   listShowroomShortsReplacementCandidates,
   listShowroomShortsJobs,
@@ -385,6 +387,23 @@ export default function ShowroomShortsPage() {
     setEditComment('')
   }
 
+  const handleEnsureTripleTargets = async (job: ShowroomShortsJobRecord) => {
+    setActingJobId(job.id)
+    try {
+      const result = await ensureShowroomShortsTripleTargets(job.id)
+      toast.success(
+        result.inserted > 0
+          ? `페이스북·인스타 타깃 ${result.inserted}건을 추가했습니다.`
+          : '이미 3채널 타깃이 모두 있습니다.'
+      )
+      await load()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '채널 타깃 추가에 실패했습니다.')
+    } finally {
+      setActingJobId(null)
+    }
+  }
+
   const handleSaveEditPackage = async (target: ShowroomShortsTargetRecord) => {
     if (!editTitle.trim()) {
       toast.error('제목을 입력해주세요.')
@@ -684,6 +703,24 @@ export default function ShowroomShortsPage() {
                           <p className="text-sm font-medium text-foreground">채널별 승인형 퍼블리싱</p>
                           <p className="text-xs text-muted-foreground">업로드 준비 확인 후 채널별로 론칭 승인하세요.</p>
                         </div>
+                        {orderedTargets.length < SHOWROOM_SHORTS_CHANNELS.length ? (
+                          <div className="flex flex-col gap-3 rounded-xl border border-amber-500/35 bg-amber-500/10 p-4 sm:flex-row sm:items-center sm:justify-between">
+                            <p className="text-sm text-foreground">
+                              DB에 저장된 퍼블리시 타깃이 {orderedTargets.length}개뿐입니다. 예전처럼 3열(유튜브·페이스북·인스타)로 검수하려면 타깃 행을 맞춰 주세요.
+                            </p>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="secondary"
+                              className="shrink-0"
+                              disabled={actingJobId === job.id}
+                              onClick={() => void handleEnsureTripleTargets(job)}
+                            >
+                              {actingJobId === job.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                              3채널 타깃 맞추기
+                            </Button>
+                          </div>
+                        ) : null}
                         <div className="grid gap-4 xl:grid-cols-3">
                           {orderedTargets.map((target) => {
                             const publishPackage = buildShowroomShortsPublishPackage(target)

@@ -104,4 +104,6 @@ export interface ProjectImageAsset {
   metadata?: Record<string, unknown> | null
   /** image_assets 전용: Google Chat space_id 기반 묶음 키 */
   spaceId?: string | null
+  /** image_assets 전용: 업로드 시점 민감정보 스캔 결과 */
+  privacyScan?: import('@/types/imagePrivacy').StoredImagePrivacyScan | null
 }

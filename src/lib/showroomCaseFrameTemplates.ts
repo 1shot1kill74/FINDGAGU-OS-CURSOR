@@ -65,6 +65,36 @@ export const DEFAULT_SOLUTION_FRAME_TEMPLATES: ShowroomCaseFrameTemplate[] = [
     label: '경쟁사와 차별화되고 엑시트까지 고려한 공간 전략으로 접근',
     body: '단순히 예쁜 공간이 아니라 주변 경쟁 매장과 어떻게 다른 인상을 줄지, 이후 매각이나 양도 시에도 강점이 될 수 있을지를 함께 고려해 레이아웃과 구성 방향을 제안했습니다.',
   },
+  {
+    id: 'solution-interior-order-as-baseline',
+    label: '인테리어 업체 오더를 기준으로 가구 스펙·수량 확정',
+    body: '인테리어 업체에서 내려온 오더(도면·수량·마감 조건)를 기준으로 가구 규격·재질·색상·옵션을 확정하고, 제작 착수 전에 합의된 스펙으로 고정했습니다.',
+  },
+  {
+    id: 'solution-field-measure-to-shop-order',
+    label: '실측 반영 후 가구 제작용 오더로 정리',
+    body: '현장 실측으로 확정한 치수·간섭을 반영한 뒤, 공장·제작에 넘길 수 있는 단위·부위별 오더로 정리해 인테리어 일정과 맞춰 진행했습니다.',
+  },
+  {
+    id: 'solution-mfg-schedule-with-interior',
+    label: '인테리어 공정·입고 일정에 맞춘 제작·납품',
+    body: '바닥·벽·전기 마감 등 인테리어 공정 순서에 맞춰 가구 제작 리드타임과 납품·조립 시점을 조율해, 현장 훼손 없이 맞물리게 했습니다.',
+  },
+  {
+    id: 'solution-finish-spec-to-product',
+    label: '업체 마감·전기 스펙에 맞춘 제품·부속 선정',
+    body: '몰딩·걸레받이·콘센트 위치·바닥 두께 등 인테리어 측에서 정한 조건에 맞게 하부 구조·다리·철물·연장 전선 등을 선정·반영했습니다.',
+  },
+  {
+    id: 'solution-order-revision-gate',
+    label: '오더 확정 후 변경은 합의·리드타임 기준으로만',
+    body: '제작 착수 전 오더를 확정하고, 이후 변경은 인테리어 업체·현장과 일정·비용 영향을 공유한 뒤에만 반영하도록 게이트를 두었습니다.',
+  },
+  {
+    id: 'solution-custom-furniture-to-contract',
+    label: '계약 스펙에 맞춘 맞춤 제작·검수',
+    body: '인테리어 계약서·시방에 명시된 규격과 허용 오차 범위 안에서 제작하고, 납품 시 현장·업체 기준에 맞춰 검수 포인트를 함께 정리했습니다.',
+  },
 ]
 
 export const DEFAULT_SPECIFIC_PROBLEM_FRAME_TEMPLATES: ShowroomCaseFrameTemplate[] = [
@@ -98,6 +128,36 @@ export const DEFAULT_SPECIFIC_PROBLEM_FRAME_TEMPLATES: ShowroomCaseFrameTemplate
     label: '소음차단 구조 부족',
     body: '집중이 필요한 공간인데도 좌석 주변 차음과 구획 구조가 약해 소음 간섭이 쉽게 발생하는 상태였습니다.',
   },
+  {
+    id: 'specific-problem-site-measure-baseline',
+    label: '실측으로 확정하는 현장 기준',
+    body: '도면은 의도를 공유하는 출발점이고, 벽·바닥·수직·기존 마감·배관·동선은 현장에서만 정확히 잡힙니다. 실측으로 치수와 간섭을 확정한 뒤에야 가구를 그 환경에 맞출 수 있는 과제였습니다.',
+  },
+  {
+    id: 'specific-problem-finish-line-fit',
+    label: '인테리어 마감 라인에 맞춘 가구',
+    body: '업체가 정한 몰딩·걸레받이·전기 포인트·바닥 마감 두께·실링 라인에 맞춰 가구 하부·틀·분할을 조정해야 했습니다. 도면이 틀린 문제라기보다, 합의된 마감 요구에 맞춰 맞춤하는 것이 핵심이었습니다.',
+  },
+  {
+    id: 'specific-problem-environment-not-drawing',
+    label: '도면이 아니라 ‘환경’에 맞추는 일',
+    body: '이슈의 본질은 도면 오류 수정이 아니라, 완공 편차와 실제 사용 조건이 반영된 환경에 가구·설치를 맞추는 일이었습니다. 실측은 측정을 넘어, 그 공간에 맞게 구성을 확정하는 단계였습니다.',
+  },
+  {
+    id: 'specific-problem-clearance-after-measure',
+    label: '실측 후에야 잡히는 설치·간섭',
+    body: '장막·파티션·수납·선반 등은 실측으로 회전·개폐·고정 공간을 확인한 뒤에야 배치와 부착 방식을 확정할 수 있는 상황이었습니다.',
+  },
+  {
+    id: 'specific-problem-interior-sequence',
+    label: '인테리어 공정·일정과 맞춘 조립',
+    body: '마감 시점·바닥·벽면 보호와 공정 순서에 맞춰 가구 입고·조립 시점을 조율하지 않으면 흠·단차가 생길 수 있어, 현장 일정과 조건에 맞춰 진행해야 했습니다.',
+  },
+  {
+    id: 'specific-problem-joint-to-spec',
+    label: '요청 마감 품질에 맞춘 이음·단차',
+    body: '코킹·단차·면 맞춤 등 업체에서 요구한 마감 기준에 맞춰 가구 면과의 이음을 맞추는 것이 과제였습니다.',
+  },
 ]
 
 export const DEFAULT_EVIDENCE_FRAME_TEMPLATES: ShowroomCaseFrameTemplate[] = [
@@ -130,6 +190,36 @@ export const DEFAULT_EVIDENCE_FRAME_TEMPLATES: ShowroomCaseFrameTemplate[] = [
     id: 'evidence-exit-strategy',
     label: '엑시트 전략 제안',
     body: '현재 운영뿐 아니라 이후 매각이나 양도 시에도 강점이 될 수 있도록 공간 구성과 전략 포인트를 함께 제안했습니다.',
+  },
+  {
+    id: 'evidence-measured-custom-installed',
+    label: '실측 반영 맞춤 제작 가구 납품·설치 완료',
+    body: '현장 실측으로 확정한 치수·간섭에 맞춰 제작한 가구가 납품·조립까지 반영되어, 도면만으로는 보이지 않던 맞춤이 눈에 띄게 정리되었습니다.',
+  },
+  {
+    id: 'evidence-finish-line-visual',
+    label: '인테리어 마감 라인과 맞춘 가구 이음·하부 정리',
+    body: '몰딩·걸레받이·바닥 마감과의 단차·면 맞춤이 정리되어, 가구와 인테리어가 한 줄로 이어지는 인상으로 바뀌었습니다.',
+  },
+  {
+    id: 'evidence-order-spec-verified',
+    label: '오더·계약 스펙대로 제작·현장 검수 반영',
+    body: '합의된 규격·재질·색상·옵션이 제작물에 그대로 반영되었고, 현장·인테리어 측과 함께 검수 포인트를 맞춰 확인했습니다.',
+  },
+  {
+    id: 'evidence-schedule-clean-delivery',
+    label: '인테리어 공정에 맞춘 무훼손 입고·조립',
+    body: '마감 보호와 공정 순서에 맞춘 입고·조립으로 바닥·벽면 손상 없이 설치가 끝나, 개장 전 공간 상태가 안정적으로 유지되었습니다.',
+  },
+  {
+    id: 'evidence-electrical-furniture-fit',
+    label: '전기 포인트·가구 사용 동선이 맞물린 사용감',
+    body: '콘센트·배선 위치와 가구 배치가 맞춰져 케이블 정리와 실사용 동선이 한결 자연스러워졌습니다.',
+  },
+  {
+    id: 'evidence-site-vs-drawing-clarity',
+    label: '현장 기준으로 확정된 배치·여유 공간',
+    body: '실측 후 조정한 배치 덕분에 개폐·통로·착석 여유가 실제 이용 기준에서 확인 가능해져, 도면 대비 현장 완성도가 분명해졌습니다.',
   },
 ]
 

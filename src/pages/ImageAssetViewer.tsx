@@ -1531,7 +1531,8 @@ export default function ImageAssetViewer() {
                   <span className="text-muted-foreground font-normal">({list.length}건)</span>
                 </h2>
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
-                  {list.map((asset) => (
+                  {list.map((asset) => {
+                    return (
                     <div
                       key={asset.id}
                       data-asset-id={!isBankView ? asset.id : undefined}
@@ -1799,7 +1800,8 @@ export default function ImageAssetViewer() {
                         </div>
                       )}
                     </div>
-                  ))}
+                    )
+                  })}
                 </div>
               </section>
               )
@@ -1808,7 +1810,8 @@ export default function ImageAssetViewer() {
         ) : (
           <>
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
-              {(isBankView ? bankDisplayPaginated : paginated).map((asset) => (
+              {(isBankView ? bankDisplayPaginated : paginated).map((asset) => {
+                return (
                 <div
                   key={asset.id}
                   data-asset-id={!isBankView ? asset.id : undefined}
@@ -2076,7 +2079,8 @@ export default function ImageAssetViewer() {
                     </div>
                   )}
                 </div>
-              ))}
+                )
+              })}
             </div>
             {(isBankView ? bankDisplayHasMore : hasMore) && (
               <div className="mt-4 flex justify-center">
