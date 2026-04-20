@@ -174,7 +174,6 @@ export async function loadShowroomCaseApproachBundle(
 
     const siteName = getPreferredShowroomSiteName(matched)
     const { before, after } = pickBeforeAfterPair(matched)
-    if (!before || !after) return { ok: false, reason: 'incomplete' }
 
     const businessTypes = Array.from(
       new Set(matched.map((i) => i.business_type?.trim()).filter(Boolean) as string[])
@@ -191,6 +190,15 @@ export async function loadShowroomCaseApproachBundle(
 
     const drafts = await fetchShowroomCaseProfileDrafts(draftLookupNames)
     const profile = drafts[0] ?? null
+
+    // 비포/애프터 메타 부착이 누락된 사례라도 approved 블로그 정본이 있으면
+    // 블로그 섹션만이라도 노출되도록 fallback을 허용한다.
+    const hasApprovedBlog = profile?.canonicalBlogPost?.status === 'approved'
+      && (profile?.canonicalBlogPost?.bodyMarkdown?.trim().length ?? 0) > 0
+
+    if ((!before || !after) && !hasApprovedBlog) {
+      return { ok: false, reason: 'incomplete' }
+    }
 
     return {
       ok: true,
