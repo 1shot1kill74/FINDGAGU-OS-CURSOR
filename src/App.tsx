@@ -1,5 +1,5 @@
 import { Suspense, lazy } from 'react'
-import { BrowserRouter, Routes, Route, useLocation, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, useLocation, useParams, Navigate } from 'react-router-dom'
 import { Toaster } from 'sonner'
 import ProtectedRoute from '@/auth/ProtectedRoute'
 import { describeInternalRoute } from '@/lib/internalRouteLabel'
@@ -49,6 +49,23 @@ function RouteFallback() {
   )
 }
 
+function LegacyOpenShowroomRedirect(props: { targetPath: string }) {
+  const location = useLocation()
+  return <Navigate replace to={`${props.targetPath}${location.search}${location.hash}`} />
+}
+
+function LegacyOpenShowroomCardNewsDetailRedirect() {
+  const location = useLocation()
+  const { siteKey = '' } = useParams<{ siteKey: string }>()
+  return <Navigate replace to={`/public/showroom/cardnews/${encodeURIComponent(siteKey)}${location.search}${location.hash}`} />
+}
+
+function LegacyOpenShowroomCaseDetailRedirect() {
+  const location = useLocation()
+  const { siteKey = '' } = useParams<{ siteKey: string }>()
+  return <Navigate replace to={`/public/showroom/case/${encodeURIComponent(siteKey)}${location.search}${location.hash}`} />
+}
+
 function App() {
   return (
     <BrowserRouter>
@@ -66,11 +83,11 @@ function App() {
           <Route path="/public/showroom/case/:siteKey" element={<ShowroomCaseApproachPage mode="public" />} />
           <Route path="/public/showroom" element={<PublicShowroomPage />} />
           <Route path="/public/showroom/original" element={<OriginalShowroomPage mode="public" />} />
-          <Route path="/open-showroom/cardnews/:siteKey" element={<ShowroomCaseApproachPage mode="public" entry="cardnews" />} />
-          <Route path="/open-showroom/cardnews" element={<PublicShowroomCardNewsPage />} />
-          <Route path="/open-showroom/case/:siteKey" element={<ShowroomCaseApproachPage mode="public" />} />
-          <Route path="/open-showroom" element={<PublicShowroomPage />} />
-          <Route path="/open-showroom/original" element={<OriginalShowroomPage mode="public" />} />
+          <Route path="/open-showroom/cardnews/:siteKey" element={<LegacyOpenShowroomCardNewsDetailRedirect />} />
+          <Route path="/open-showroom/cardnews" element={<LegacyOpenShowroomRedirect targetPath="/public/showroom/cardnews" />} />
+          <Route path="/open-showroom/case/:siteKey" element={<LegacyOpenShowroomCaseDetailRedirect />} />
+          <Route path="/open-showroom" element={<LegacyOpenShowroomRedirect targetPath="/public/showroom" />} />
+          <Route path="/open-showroom/original" element={<LegacyOpenShowroomRedirect targetPath="/public/showroom/original" />} />
           <Route path="/contact" element={<ContactPage />} />
           <Route element={<ProtectedRoute />}>
             <Route path="/dashboard" element={<DashboardPage />} />
