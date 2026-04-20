@@ -1340,17 +1340,24 @@ export default function ShowroomCaseStudioPage() {
                             </p>
                             <div className="mt-3 flex flex-wrap gap-2 text-xs">
                               <span className={`rounded-full px-2.5 py-1 font-medium ${getGenerationStatusTone(row.cardNewsGeneration.status)}`}>
-                                카드뉴스 {getGenerationStatusLabel(row.cardNewsGeneration.status)}
+                                카드뉴스 제작 {getGenerationStatusLabel(row.cardNewsGeneration.status)}
                               </span>
                               <span className={`rounded-full px-2.5 py-1 font-medium ${getGenerationStatusTone(row.blogGeneration.status)}`}>
-                                블로그 {getGenerationStatusLabel(row.blogGeneration.status)}
+                                블로그 제작 {getGenerationStatusLabel(row.blogGeneration.status)}
                               </span>
                               <span className={`rounded-full px-2.5 py-1 font-medium ${
                                 row.cardNewsPublication.isPublished
                                   ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200'
                                   : 'bg-slate-100 text-slate-600'
                               }`}>
-                                공개 {row.cardNewsPublication.isPublished ? '발행 중' : '비공개'}
+                                카드뉴스 발행 {row.cardNewsPublication.isPublished ? '완료' : '대기'}
+                              </span>
+                              <span className={`rounded-full px-2.5 py-1 font-medium ${
+                                row.canonicalBlogPost?.status === 'approved'
+                                  ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200'
+                                  : 'bg-slate-100 text-slate-600'
+                              }`}>
+                                블로그 발행 {row.canonicalBlogPost?.status === 'approved' ? '완료' : '대기'}
                               </span>
                             </div>
                             {row.cardNewsGeneration.errorMessage || row.blogGeneration.errorMessage ? (
@@ -1367,17 +1374,34 @@ export default function ShowroomCaseStudioPage() {
                                     : ''}
                               </p>
                             ) : null}
-                            {row.cardNewsPublication.isPublished && (
+                            {(row.cardNewsPublication.isPublished || row.canonicalBlogPost?.status === 'approved') && (
                               <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-emerald-700">
-                                <span>공개 링크 준비됨</span>
-                                <Link
-                                  to={buildPublicCardNewsPath(row.cardNewsPublication.siteKey || row.siteName)}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="font-medium underline underline-offset-2"
-                                >
-                                  고객 페이지 열기
-                                </Link>
+                                {row.cardNewsPublication.isPublished && (
+                                  <>
+                                    <span>카드뉴스 공개 링크 준비됨</span>
+                                    <Link
+                                      to={buildPublicCardNewsPath(row.cardNewsPublication.siteKey || row.siteName)}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="font-medium underline underline-offset-2"
+                                    >
+                                      카드뉴스 열기
+                                    </Link>
+                                  </>
+                                )}
+                                {row.canonicalBlogPost?.status === 'approved' && (
+                                  <>
+                                    <span>블로그 공개 링크 준비됨</span>
+                                    <Link
+                                      to={`/public/showroom/case/${encodeURIComponent(row.externalLabel || row.siteName)}`}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="font-medium underline underline-offset-2"
+                                    >
+                                      블로그 열기
+                                    </Link>
+                                  </>
+                                )}
                               </div>
                             )}
                           </div>
