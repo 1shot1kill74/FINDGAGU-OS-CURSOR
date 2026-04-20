@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { ArrowRight, ChevronLeft, ChevronRight, Eye, Loader2 } from 'lucide-react'
+import { ArrowRight, ChevronLeft, ChevronRight, Copy, Download, Eye, Hash, Loader2, Send } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -35,6 +35,11 @@ import {
   type ShowroomCaseFrameTemplate,
 } from '@/lib/showroomCaseFrameTemplates'
 import { requestDeployHookTrigger } from '@/lib/triggerVercelDeployHook'
+import {
+  buildNaverBlogPackage,
+  downloadNaverPackageAsZip,
+  type NaverBlogPackage,
+} from '@/lib/naverBlogPackageBuilder'
 import {
   buildCanonicalBlogPostFromN8nBlogResponse,
   repairCanonicalBlogBodyHtmlForPreview,
@@ -86,6 +91,12 @@ export default function ShowroomCaseStudioPage() {
   const [rows, setRows] = useState<CaseDraftState[]>([])
   const [approvingBlogSite, setApprovingBlogSite] = useState<string | null>(null)
   const [blogViewer, setBlogViewer] = useState<{ displayLabel: string; post: ShowroomCaseCanonicalBlogPost; html: string } | null>(null)
+  const [naverPackageState, setNaverPackageState] = useState<{
+    displayLabel: string
+    siteName: string
+    pkg: NaverBlogPackage
+  } | null>(null)
+  const [naverZipDownloading, setNaverZipDownloading] = useState(false)
   const sectionRefs = useRef<Record<string, HTMLElement | null>>({})
   const studioPanelRefs = useRef<Record<string, HTMLElement | null>>({})
   const lastAutoFocusKeyRef = useRef('')
@@ -98,6 +109,69 @@ export default function ShowroomCaseStudioPage() {
     setSolutionTemplates(loadShowroomCaseFrameTemplates('solution'))
     setEvidenceTemplates(loadShowroomCaseFrameTemplates('evidence'))
   }, [])
+
+  function openNaverPackageDialog(row: CaseDraftState) {
+    if (!row.canonicalBlogPost) {
+      toast.error('아직 블로그 정본이 없습니다. 먼저 블로그 만들기를 진행해주세요.')
+      return
+    }
+    if (!row.canonicalBlogPost.bodyMarkdown?.trim()) {
+      toast.error('정본 본문(마크다운)이 비어 있어 네이버용으로 변환할 수 없습니다.')
+      return
+    }
+    const displayLabel = getShowroomCasePublicDisplayName(deriveStudioSeedFromSlides(row))
+    const pkg = buildNaverBlogPackage({
+      post: row.canonicalBlogPost,
+      displayLabel,
+      industryLabel: row.industry || null,
+      problemLabel: row.problemFrameLabel || null,
+      solutionLabel: row.solutionFrameLabel || null,
+    })
+    setNaverPackageState({ displayLabel, siteName: row.siteName, pkg })
+  }
+
+  async function copyToClipboardSafely(text: string, label: string) {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text)
+      } else {
+        const ta = document.createElement('textarea')
+        ta.value = text
+        ta.style.position = 'fixed'
+        ta.style.opacity = '0'
+        document.body.appendChild(ta)
+        ta.select()
+        document.execCommand('copy')
+        document.body.removeChild(ta)
+      }
+      toast.success(`${label} 복사 완료`)
+    } catch (err) {
+      console.warn('clipboard failed', err)
+      toast.error(`${label} 복사 실패`)
+    }
+  }
+
+  async function handleDownloadNaverZip() {
+    if (!naverPackageState) return
+    setNaverZipDownloading(true)
+    try {
+      const safeSite = naverPackageState.siteName.replace(/[\\/:*?"<>|\s]+/g, '_').slice(0, 60) || 'naver'
+      const zipName = `naver_${safeSite}.zip`
+      const result = await downloadNaverPackageAsZip(naverPackageState.pkg, zipName)
+      if (result.skipped.length > 0) {
+        toast.message(
+          `이미지 ${result.downloaded}/${result.totalImages} 다운로드 완료. ${result.skipped.length}장은 권한/네트워크 문제로 건너뛰었습니다.`,
+        )
+      } else {
+        toast.success(`이미지 ${result.downloaded}장과 본문이 zip으로 저장되었습니다.`)
+      }
+    } catch (err) {
+      console.error(err)
+      toast.error(err instanceof Error ? err.message : 'zip 다운로드에 실패했습니다.')
+    } finally {
+      setNaverZipDownloading(false)
+    }
+  }
 
   function buildBlogPreviewHtmlForRow(row: CaseDraftState): string {
     if (!row.canonicalBlogPost) return ''
@@ -1041,6 +1115,150 @@ export default function ShowroomCaseStudioPage() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={naverPackageState !== null} onOpenChange={(open) => !open && setNaverPackageState(null)}>
+        <DialogContent className="flex max-h-[min(92vh,900px)] w-[min(100vw-1.5rem,52rem)] flex-col gap-0 overflow-hidden border-0 p-0 shadow-xl sm:max-w-3xl">
+          <DialogHeader className="shrink-0 border-b border-slate-200 bg-slate-50 px-5 py-4 text-left">
+            <DialogTitle className="text-base font-semibold text-slate-900">네이버 블로그 발행 패키지</DialogTitle>
+            <p className="mt-1 text-xs text-slate-500">
+              {naverPackageState?.displayLabel ? (
+                <>
+                  <span className="font-medium text-slate-700">{naverPackageState.displayLabel}</span>
+                  <span className="text-slate-400"> · </span>
+                </>
+              ) : null}
+              본문·해시태그·사진을 한 번에 챙겨서 네이버 에디터에 붙여 넣기만 하면 끝입니다. 본문 끝에는 자가 사이트 사례 페이지로의 백링크가 자동 포함됩니다.
+            </p>
+          </DialogHeader>
+          {naverPackageState ? (
+            <div className="grid min-h-0 flex-1 grid-cols-1 gap-0 overflow-hidden md:grid-cols-[1fr_320px]">
+              <div className="min-h-0 overflow-y-auto px-5 py-5 text-sm leading-relaxed text-slate-800">
+                <div className="mb-5 flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5"
+                    onClick={() => void copyToClipboardSafely(naverPackageState.pkg.bodyHtml, '네이버 본문 HTML')}
+                  >
+                    <Copy className="h-4 w-4" /> HTML 복사
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5"
+                    onClick={() => void copyToClipboardSafely(naverPackageState.pkg.bodyMarkdown, '네이버 본문 마크다운')}
+                  >
+                    <Copy className="h-4 w-4" /> 마크다운 복사
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5"
+                    onClick={() => void copyToClipboardSafely(naverPackageState.pkg.hashtags.join(' '), '해시태그')}
+                  >
+                    <Hash className="h-4 w-4" /> 해시태그 복사
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="gap-1.5"
+                    disabled={naverZipDownloading}
+                    onClick={() => void handleDownloadNaverZip()}
+                  >
+                    {naverZipDownloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                    이미지+본문 zip 다운로드
+                  </Button>
+                </div>
+
+                <section className="mb-5 rounded-2xl border border-slate-200 bg-slate-50/60 px-4 py-3">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">제목 후보</p>
+                  <ul className="mt-2 space-y-1.5">
+                    {naverPackageState.pkg.titleCandidates.map((t) => (
+                      <li key={t} className="flex items-start justify-between gap-3">
+                        <span className="text-sm text-slate-800">{t}</span>
+                        <button
+                          type="button"
+                          className="shrink-0 text-[11px] font-medium text-emerald-700 hover:text-emerald-800"
+                          onClick={() => void copyToClipboardSafely(t, '제목')}
+                        >
+                          복사
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+
+                <section className="mb-5 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">본문 미리보기 (HTML 렌더링)</p>
+                  <div
+                    className="mt-3 max-w-none text-[15px] leading-[1.7] text-slate-800 [&_blockquote]:my-3 [&_h1]:mb-3 [&_h1]:mt-0 [&_h1]:text-xl [&_h1]:font-semibold [&_h2]:mb-2 [&_h2]:mt-5 [&_h2]:text-base [&_h2]:font-semibold [&_p]:mb-3"
+                    dangerouslySetInnerHTML={{ __html: naverPackageState.pkg.bodyHtml }}
+                  />
+                </section>
+
+                <section className="mb-5 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">이미지 (zip에 같은 순서로 들어갑니다)</p>
+                  <ul className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                    {naverPackageState.pkg.images.map((img) => (
+                      <li key={`${img.index}-${img.url}`} className="overflow-hidden rounded-xl border border-slate-100 bg-slate-50">
+                        <div className="relative aspect-[4/3] bg-slate-200">
+                          <img src={img.url} alt={img.alt} className="h-full w-full object-cover" loading="lazy" />
+                          <span
+                            className={`absolute left-2 top-2 rounded-full px-2 py-0.5 text-[10px] font-semibold text-white ${
+                              img.label === 'before' ? 'bg-slate-900/80' : img.label === 'after' ? 'bg-emerald-700/85' : 'bg-slate-700/80'
+                            }`}
+                          >
+                            {img.label === 'before' ? `Before · [이미지 ${img.index}]` : img.label === 'after' ? `After · [이미지 ${img.index}]` : `[이미지 ${img.index}]`}
+                          </span>
+                        </div>
+                        <p className="px-2 py-1.5 text-[11px] text-slate-600">{img.filename}</p>
+                      </li>
+                    ))}
+                  </ul>
+                  {naverPackageState.pkg.images.length === 0 ? (
+                    <p className="mt-2 text-xs text-slate-500">정본에 이미지가 없습니다. 이미지 없이 본문만 발행하거나, 정본을 다시 만들어주세요.</p>
+                  ) : null}
+                </section>
+              </div>
+
+              <aside className="border-t border-slate-200 bg-slate-50 px-5 py-5 text-xs text-slate-700 md:max-h-full md:overflow-y-auto md:border-l md:border-t-0">
+                <div className="mb-5">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">백링크 (본문 끝에 자동 포함)</p>
+                  <a
+                    href={naverPackageState.pkg.canonicalSourceUrl}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="mt-1 block break-all text-[12px] font-medium text-emerald-700 hover:text-emerald-800"
+                  >
+                    {naverPackageState.pkg.canonicalSourceUrl}
+                  </a>
+                </div>
+                <div className="mb-5">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">추천 해시태그</p>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {naverPackageState.pkg.hashtags.map((tag) => (
+                      <span key={tag} className="rounded-full bg-white px-2 py-0.5 text-[11px] text-slate-700 ring-1 ring-slate-200">
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">발행 체크리스트</p>
+                  <ol className="mt-2 list-decimal space-y-1.5 pl-4 text-[12px] leading-relaxed text-slate-700">
+                    {naverPackageState.pkg.publishingChecklist.map((line) => (
+                      <li key={line}>{line}</li>
+                    ))}
+                  </ol>
+                </div>
+              </aside>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
       <div className="space-y-6">
         {cards.map((row) => (
           <section
@@ -1252,6 +1470,18 @@ export default function ShowroomCaseStudioPage() {
                                 <Loader2 className="h-4 w-4 animate-spin" />
                               ) : null}
                               블로그 발행
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="gap-1.5"
+                              disabled={!row.canonicalBlogPost?.bodyMarkdown?.trim()}
+                              onClick={() => openNaverPackageDialog(row)}
+                              title="네이버 블로그에 수기 발행할 본문/이미지/해시태그 패키지를 만듭니다."
+                            >
+                              <Send className="h-4 w-4" aria-hidden />
+                              네이버 패키지
                             </Button>
                           </div>
                         </div>
