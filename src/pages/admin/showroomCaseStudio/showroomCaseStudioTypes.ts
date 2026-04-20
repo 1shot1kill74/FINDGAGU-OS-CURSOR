@@ -1,5 +1,6 @@
 import type { ShowroomImageAsset } from '@/lib/imageAssetService'
 import type { CardNewsSlideImageRef, ShowroomCaseCardNewsSlide } from '@/lib/showroomCaseContentPackage'
+import type { ShowroomCaseCanonicalBlogPost } from '@/lib/showroomCaseCanonicalBlog'
 import type { ShowroomCaseCardNewsPublication, ShowroomCaseProfileDraft } from '@/lib/showroomCaseProfileService'
 
 export type StudioCardNewsSlide = {
@@ -31,6 +32,8 @@ export type CaseDraftState = {
   cardNewsGeneration: ShowroomCaseProfileDraft['cardNewsGeneration']
   blogGeneration: ShowroomCaseProfileDraft['blogGeneration']
   cardNewsPublication: ShowroomCaseCardNewsPublication
+  /** 저장된 블로그 정본(미리보기·공개 노출용). 없으면 `null`. */
+  canonicalBlogPost: ShowroomCaseCanonicalBlogPost | null
   cardNewsSlides: StudioCardNewsSlide[]
 }
 

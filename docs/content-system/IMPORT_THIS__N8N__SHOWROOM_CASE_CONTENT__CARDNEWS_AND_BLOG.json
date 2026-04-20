@@ -1,5 +1,5 @@
 {
-  "name": "Findgagu Showroom Case Content -> Channel Routed",
+  "name": "Findgagu Showroom Case Content -> Channel Routed (authorBrief v5)",
   "nodes": [
     {
       "parameters": {},
@@ -7,7 +7,10 @@
       "name": "수동 테스트 시작",
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
-      "position": [260, 240]
+      "position": [
+        260,
+        240
+      ]
     },
     {
       "parameters": {
@@ -20,18 +23,24 @@
       "name": "쇼룸 케이스 콘텐츠 생성 요청",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
-      "position": [260, 420],
+      "position": [
+        260,
+        420
+      ],
       "webhookId": "findgagu-showroom-case-content-generate"
     },
     {
       "parameters": {
-        "jsCode": "const incoming = $input.first().json ?? {};\nconst body = incoming.body ?? incoming ?? {};\n\nconst clean = (value) => String(value ?? '').replace(/\\s+/g, ' ').trim();\nconst toArray = (value) => {\n  if (Array.isArray(value)) return value.map((item) => String(item ?? '').trim()).filter(Boolean);\n  if (typeof value === 'string') return value.split(/[\\n,]/).map((item) => item.trim()).filter(Boolean);\n  return [];\n};\n\nconst slideSeed = Array.isArray(body.cardNews?.slides) ? body.cardNews.slides : [];\nconst normalizedSlides = slideSeed\n  .map((item, index) => ({\n    slide: Number(item?.slide ?? index + 1),\n    role: clean(item?.role ?? item?.key ?? `slide_${index + 1}`),\n    title: clean(item?.title),\n    text: clean(item?.text ?? item?.body),\n  }))\n  .filter((item) => item.text);\n\nconst evidencePoints = toArray(body.evidencePoints ?? body.evidence_points);\nconst displayName = clean(body.displayName ?? body.display_name ?? body.titleHint ?? body.externalLabel ?? body.external_label ?? body.siteName ?? body.site_name) || '시공 사례';\nconst hook = clean(body.hook ?? body.headlineHook ?? body.headline_hook);\nconst problemSummary = clean(body.problemSummary ?? body.problem_summary);\nconst problemDetail = clean(body.problemDetail ?? body.problem_detail);\nconst solutionSummary = clean(body.solutionSummary ?? body.solution_summary);\nconst solutionDetail = clean(body.solutionDetail ?? body.solution_detail);\nconst blogDraftMarkdown = String(body.blogDraftMarkdown ?? body.blog_draft_markdown ?? '').trim();\nconst channel = clean(body.channel).toLowerCase() || 'cardnews';\n\nconst cardNewsSeed = normalizedSlides.length > 0\n  ? normalizedSlides\n  : [\n      { slide: 1, role: 'hook', title: displayName, text: hook || '이 공간은 무엇이 달라졌을까요?' },\n      { slide: 2, role: 'problem', title: '문제 인식', text: [problemSummary, problemDetail].filter(Boolean).join('\\n\\n') || '현장 과제를 정리 중입니다.' },\n      { slide: 3, role: 'solution', title: '해결 접근', text: [solutionSummary, solutionDetail].filter(Boolean).join('\\n\\n') || '적용 방향을 정리 중입니다.' },\n      { slide: 4, role: 'evidence', title: '변화 포인트', text: evidencePoints.length ? evidencePoints.map((item) => `- ${item}`).join('\\n') : '전후 변화와 관찰 포인트를 정리 중입니다.' },\n      { slide: 5, role: 'cta', title: '온라인 쇼룸에서 더 보기', text: `${displayName} 사례처럼 우리 공간에 맞는 교육 환경 구성이 필요하다면 온라인 쇼룸에서 비슷한 사례를 더 비교해보세요.` },\n    ];\n\nreturn [{\n  json: {\n    requestSource: incoming.body ? 'webhook' : 'manual',\n    contentType: clean(body.contentType ?? body.content_type) || 'showroom-case-content',\n    channel,\n    displayName,\n    siteName: clean(body.siteName ?? body.site_name),\n    externalLabel: clean(body.externalLabel ?? body.external_label) || null,\n    industry: clean(body.industry) || null,\n    titleHint: clean(body.titleHint ?? body.title_hint) || displayName,\n    hook,\n    problemSummary,\n    problemDetail,\n    solutionSummary,\n    solutionDetail,\n    evidencePoints,\n    cardNewsSeed,\n    blogDraftMarkdown,\n    cardNewsModel: clean(body.cardNewsModel ?? body.cardnews_model ?? body.model) || 'gpt-4.1',\n    blogModel: clean(body.blogModel ?? body.blog_model ?? body.model) || 'gpt-4.1',\n    generatedAt: new Date().toISOString(),\n  },\n}];"
+        "jsCode": "const incoming = $input.first().json ?? {};\nconst body = incoming.body ?? incoming ?? {};\n\nconst clean = (value) => String(value ?? '').replace(/\\s+/g, ' ').trim();\nconst toArray = (value) => {\n  if (Array.isArray(value)) return value.map((item) => String(item ?? '').trim()).filter(Boolean);\n  if (typeof value === 'string') return value.split(/[\\n,]/).map((item) => item.trim()).filter(Boolean);\n  return [];\n};\n\nconst abRaw = body.authorBrief && typeof body.authorBrief === 'object' ? body.authorBrief : {};\nconst primaryProblemNote = clean(abRaw.primaryProblemNote ?? abRaw.primary_problem_note ?? '');\nconst primarySolutionNote = clean(abRaw.primarySolutionNote ?? abRaw.primary_solution_note ?? '');\nconst authorEvidenceNotes = Array.isArray(abRaw.evidenceNotes)\n  ? abRaw.evidenceNotes.map((item) => String(item ?? '').trim()).filter(Boolean)\n  : toArray(abRaw.evidence_notes ?? abRaw.evidenceNotes);\n\nconst slideSeed = Array.isArray(body.cardNews?.slides) ? body.cardNews.slides : [];\nconst normalizedSlides = slideSeed\n  .map((item, index) => ({\n    slide: Number(item?.slide ?? index + 1),\n    role: clean(item?.role ?? item?.key ?? `slide_${index + 1}`),\n    title: clean(item?.title),\n    text: clean(item?.text ?? item?.body),\n  }))\n  .filter((item) => item.text);\n\nlet evidencePoints = toArray(body.evidencePoints ?? body.evidence_points);\nif (evidencePoints.length === 0 && authorEvidenceNotes.length > 0) {\n  evidencePoints = authorEvidenceNotes;\n}\n\nconst displayName = clean(body.displayName ?? body.display_name ?? body.titleHint ?? body.externalLabel ?? body.external_label ?? body.siteName ?? body.site_name) || '시공 사례';\nconst hook = clean(body.hook ?? body.headlineHook ?? body.headline_hook);\nlet problemSummary = clean(body.problemSummary ?? body.problem_summary);\nlet problemDetail = clean(body.problemDetail ?? body.problem_detail);\nlet solutionSummary = clean(body.solutionSummary ?? body.solution_summary);\nlet solutionDetail = clean(body.solutionDetail ?? body.solution_detail);\nif (!problemDetail && primaryProblemNote) problemDetail = primaryProblemNote;\nif (!solutionDetail && primarySolutionNote) solutionDetail = primarySolutionNote;\n\nconst blogDraftMarkdown = String(body.blogDraftMarkdown ?? body.blog_draft_markdown ?? '').trim();\nconst channel = clean(body.channel).toLowerCase() || 'cardnews';\n\nconst normalizeImageCtxRow = (item) => {\n  if (!item || typeof item !== 'object' || Array.isArray(item)) return null;\n  const assetId = clean(item.assetId ?? item.asset_id ?? item.id);\n  const summaryLineRaw = clean(item.summaryLine ?? item.summary_line);\n  const baRaw = clean(item.beforeAfter ?? item.before_after).toLowerCase();\n  const beforeAfter = baRaw === 'before' ? 'before' : baRaw === 'after' ? 'after' : null;\n  const productName = clean(item.productName ?? item.product_name) || null;\n  const colorName = clean(item.colorName ?? item.color_name) || null;\n  const location = clean(item.location) || null;\n  const businessType = clean(item.businessType ?? item.business_type) || null;\n  const bits = [\n    Boolean(item.isMain ?? item.is_main) ? '대표컷' : '',\n    beforeAfter === 'before' ? '비포' : beforeAfter === 'after' ? '애프터' : '',\n    productName,\n    colorName,\n    location,\n    businessType,\n  ].filter(Boolean);\n  const summaryLine = summaryLineRaw || bits.join(' · ') || null;\n  const url = clean(item.url ?? item.preview_url ?? item.image_url ?? item.imageUrl);\n  if (!assetId && !summaryLine) return null;\n  return {\n    assetId,\n    url,\n    beforeAfter,\n    productName,\n    colorName,\n    location,\n    businessType,\n    isMain: Boolean(item.isMain ?? item.is_main),\n    summaryLine: summaryLine || '현장 컷',\n  };\n};\nconst icRaw = body.imageContext ?? body.image_context ?? body.siteImageMetadata ?? body.site_image_metadata;\nconst imageContext = Array.isArray(icRaw)\n  ? icRaw.map(normalizeImageCtxRow).filter(Boolean)\n  : [];\n\nconst cardNewsSeed = normalizedSlides.length > 0\n  ? normalizedSlides\n  : [\n      { slide: 1, role: 'hook', title: displayName, text: hook || '이 공간은 무엇이 달라졌을까요?' },\n      { slide: 2, role: 'problem', title: '문제 인식', text: [problemSummary, problemDetail].filter(Boolean).join('\\n\\n') || '현장 과제를 정리 중입니다.' },\n      { slide: 3, role: 'solution', title: '해결 접근', text: [solutionSummary, solutionDetail].filter(Boolean).join('\\n\\n') || '적용 방향을 정리 중입니다.' },\n      { slide: 4, role: 'evidence', title: '변화 포인트', text: evidencePoints.length ? evidencePoints.map((item) => `- ${item}`).join('\\n') : '전후 변화와 관찰 포인트를 정리 중입니다.' },\n      { slide: 5, role: 'cta', title: '온라인 쇼룸에서 더 보기', text: `${displayName} 사례처럼 우리 공간에 맞는 교육 환경 구성이 필요하다면 온라인 쇼룸에서 비슷한 사례를 더 비교해보세요.` },\n    ];\n\nconst authorBrief = {\n  primaryProblemNote: primaryProblemNote || problemDetail,\n  primarySolutionNote: primarySolutionNote || solutionDetail,\n  evidenceNotes: authorEvidenceNotes.length ? authorEvidenceNotes : evidencePoints,\n};\n\nreturn [{\n  json: {\n    requestSource: incoming.body ? 'webhook' : 'manual',\n    contentType: clean(body.contentType ?? body.content_type) || 'showroom-case-content',\n    channel,\n    displayName,\n    siteName: clean(body.siteName ?? body.site_name),\n    externalLabel: clean(body.externalLabel ?? body.external_label) || null,\n    industry: clean(body.industry) || null,\n    titleHint: clean(body.titleHint ?? body.title_hint) || displayName,\n    hook,\n    problemSummary,\n    problemDetail,\n    solutionSummary,\n    solutionDetail,\n    evidencePoints,\n    authorBrief,\n    cardNewsSeed,\n    blogDraftMarkdown,\n    imageContext,\n    cardNewsModel: clean(body.cardNewsModel ?? body.cardnews_model ?? body.model) || 'gpt-4.1',\n    blogModel: clean(body.blogModel ?? body.blog_model ?? body.model) || 'gpt-4.1',\n    generatedAt: new Date().toISOString(),\n  },\n}];"
       },
       "id": "node-normalize",
       "name": "입력 정규화",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [520, 320]
+      "position": [
+        520,
+        320
+      ]
     },
     {
       "parameters": {
@@ -60,7 +69,10 @@
       "name": "카드뉴스 요청인가?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [760, 320]
+      "position": [
+        760,
+        320
+      ]
     },
     {
       "parameters": {
@@ -89,17 +101,23 @@
       "name": "블로그 요청인가?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [980, 480]
+      "position": [
+        980,
+        480
+      ]
     },
     {
       "parameters": {
-        "jsCode": "const data = $input.first().json;\nconst slidesText = Array.isArray(data.cardNewsSeed)\n  ? data.cardNewsSeed.map((slide) => `${slide.slide}. [${slide.role}] ${slide.title ? `${slide.title} :: ` : ''}${slide.text}`).join('\\n')\n  : '';\n\nconst prompt = [\n  '당신은 파인드가구 콘텐츠 에디터다.',\n  '쇼룸은 오프라인 전시장이 아니라 홈페이지 안의 온라인 사례 쇼룸이다.',\n  '아래 시드 문장을 바탕으로 클릭형 카드뉴스 최종 초안을 JSON으로 정리하라.',\n  '반드시 JSON만 반환한다.',\n  '',\n  `[공개명] ${data.displayName}`,\n  `[업종] ${data.industry ?? '미기재'}`,\n  '',\n  '[카드뉴스 시드]',\n  slidesText,\n  '',\n  '[출력 스키마]',\n  '{',\n  '  \"master\": {',\n  '    \"cta\": \"string\",',\n  '    \"slides\": [',\n  '      { \"slide\": 1, \"role\": \"hook\", \"title\": \"string\", \"text\": \"string\" }',\n  '    ]',\n  '  },',\n  '  \"instagram\": {',\n  '    \"slides\": [',\n  '      { \"slide\": 1, \"role\": \"hook\", \"title\": \"string\", \"text\": \"string\" }',\n  '    ],',\n  '    \"caption\": \"string\"',\n  '  },',\n  '  \"facebook\": {',\n  '    \"slides\": [',\n  '      { \"slide\": 1, \"role\": \"hook\", \"title\": \"string\", \"text\": \"string\" }',\n  '    ],',\n  '    \"caption\": \"string\"',\n  '  }',\n  '}',\n  '',\n  '규칙:',\n  '- slide는 1부터 시작',\n  '- 총 슬라이드는 5장 기준',\n  '- title은 짧게, text는 카드 안에 들어갈 정도로 간결하게',\n  '- CTA는 클릭 버튼형이 아니라 온라인 쇼룸 유도형 문장으로 작성',\n].join('\\n');\n\nreturn [{\n  json: {\n    ...data,\n    cardNewsRequestBody: {\n      model: data.cardNewsModel,\n      temperature: 0.7,\n      max_tokens: 2400,\n      response_format: { type: 'json_object' },\n      messages: [\n        {\n          role: 'user',\n          content: prompt,\n        },\n      ],\n    },\n  },\n}];"
+        "jsCode": "const data = $input.first().json;\nconst slidesText = Array.isArray(data.cardNewsSeed)\n  ? data.cardNewsSeed.map((slide) => `${slide.slide}. [${slide.role}] ${slide.title ? `${slide.title} :: ` : ''}${slide.text}`).join('\\n')\n  : '';\n\nconst ab = data.authorBrief || {};\nconst briefLines = [];\nif (ab.primaryProblemNote) briefLines.push(`· 핵심 문제/과제 (운영자 확정): ${ab.primaryProblemNote}`);\nif (ab.primarySolutionNote) briefLines.push(`· 해결/접근 (운영자 확정): ${ab.primarySolutionNote}`);\nif (Array.isArray(ab.evidenceNotes) && ab.evidenceNotes.length) {\n  briefLines.push(`· 근거·변화 포인트: ${ab.evidenceNotes.join(' / ')}`);\n}\nconst briefBlock = briefLines.length\n  ? ['[운영자 브리프 — 사실·메시지의 1순위 원천. 시드/슬라이드와 충돌하면 반드시 브리프를 따른다.]', ...briefLines].join('\\n')\n  : '[운영자 브리프] 비어 있음 → 아래 카드뉴스 시드만으로 작성.';\n\nconst prompt = [\n  '당신은 파인드가구 콘텐츠 에디터다.',\n  '쇼룸은 오프라인 전시장이 아니라 홈페이지 안의 온라인 사례 쇼룸이다.',\n  '아래 시드·브리프를 바탕으로 클릭형 카드뉴스 최종 초안을 JSON으로 정리하라.',\n  '브리프에 없는 사실은 추측하지 말고 생략하거나 일반 표현만 쓴다.',\n  '반드시 JSON만 반환한다.',\n  '',\n  `[공개명] ${data.displayName}`,\n  `[업종] ${data.industry ?? '미기재'}`,\n  '',\n  briefBlock,\n  '',\n  '[카드뉴스 시드(앱에서 온 참고안·슬라이드 텍스트)]',\n  slidesText,\n  '',\n  '[출력 스키마]',\n  '{',\n  '  \"master\": {',\n  '    \"cta\": \"string\",',\n  '    \"slides\": [',\n  '      { \"slide\": 1, \"role\": \"hook\", \"title\": \"string\", \"text\": \"string\" }',\n  '    ]',\n  '  },',\n  '  \"instagram\": {',\n  '    \"slides\": [',\n  '      { \"slide\": 1, \"role\": \"hook\", \"title\": \"string\", \"text\": \"string\" }',\n  '    ],',\n  '    \"caption\": \"string\"',\n  '  },',\n  '  \"facebook\": {',\n  '    \"slides\": [',\n  '      { \"slide\": 1, \"role\": \"hook\", \"title\": \"string\", \"text\": \"string\" }',\n  '    ],',\n  '    \"caption\": \"string\"',\n  '  }',\n  '}',\n  '',\n  '규칙:',\n  '- slide는 1부터 시작',\n  '- master.slides는 역할 순서를 지키면 좋다: hook → problem → specific-problem → solution → evidence → cta (앱 6장 레이아웃과 호환)',\n  '- 가능하면 총 6장을 채운다. 부족하면 최소 5장 이상.',\n  '- title은 짧게, text는 카드 안에 들어갈 정도로 간결하게',\n  '- 운영자 브리프와 모순되는 사실·수치를 만들지 마라.',\n  '- CTA는 클릭 버튼형이 아니라 온라인 쇼룸 유도형 문장으로 작성',\n].join('\\n');\n\nreturn [{\n  json: {\n    ...data,\n    cardNewsRequestBody: {\n      model: data.cardNewsModel,\n      temperature: 0.7,\n      max_tokens: 2400,\n      response_format: { type: 'json_object' },\n      messages: [\n        {\n          role: 'user',\n          content: prompt,\n        },\n      ],\n    },\n  },\n}];"
       },
       "id": "node-cardnews-request",
       "name": "카드뉴스 요청 준비",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [980, 180]
+      "position": [
+        980,
+        180
+      ]
     },
     {
       "parameters": {
@@ -127,7 +145,10 @@
       "name": "OpenAI 카드뉴스 생성",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
-      "position": [1220, 180]
+      "position": [
+        1220,
+        180
+      ]
     },
     {
       "parameters": {
@@ -137,7 +158,10 @@
       "name": "카드뉴스 결과 정리",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1460, 180]
+      "position": [
+        1460,
+        180
+      ]
     },
     {
       "parameters": {
@@ -149,17 +173,23 @@
       "name": "카드뉴스 Webhook 응답",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.4,
-      "position": [1700, 180]
+      "position": [
+        1700,
+        180
+      ]
     },
     {
       "parameters": {
-        "jsCode": "const data = $input.first().json;\nconst prompt = [\n  '당신은 파인드가구 블로그 에디터다.',\n  '쇼룸은 홈페이지 안의 온라인 사례 쇼룸이다.',\n  '아래 초안과 케이스 정보를 바탕으로 블로그 발행용 초안을 JSON으로 정리하라.',\n  '반드시 JSON만 반환한다.',\n  '',\n  `[공개명] ${data.displayName}`,\n  `[업종] ${data.industry ?? '미기재'}`,\n  `[한 줄 훅] ${data.hook || '없음'}`,\n  `[문제 요약] ${data.problemSummary || '없음'}`,\n  `[문제 상세] ${data.problemDetail || '없음'}`,\n  `[해결 요약] ${data.solutionSummary || '없음'}`,\n  `[해결 상세] ${data.solutionDetail || '없음'}`,\n  `[변화 포인트] ${data.evidencePoints.length ? data.evidencePoints.join(' / ') : '없음'}`,\n  '',\n  '[블로그 초안 시드]',\n  data.blogDraftMarkdown || '없음',\n  '',\n  '[출력 스키마]',\n  '{',\n  '  \"title\": \"string\",',\n  '  \"summary\": \"string\",',\n  '  \"body_markdown\": \"string\",',\n  '  \"hashtags\": [\"#태그1\", \"#태그2\"],',\n  '  \"review_note\": \"string\"',\n  '}',\n  '',\n  '규칙:',\n  '- 블로그는 과장 없이 설명형으로 작성',\n  '- 첫 문단에서 핵심 답을 먼저 제시',\n  '- CTA는 온라인 쇼룸에서 더 비교해보는 흐름으로 마무리',\n].join('\\n');\n\nreturn [{\n  json: {\n    ...data,\n    blogRequestBody: {\n      model: data.blogModel,\n      temperature: 0.7,\n      max_tokens: 3600,\n      response_format: { type: 'json_object' },\n      messages: [\n        {\n          role: 'user',\n          content: prompt,\n        },\n      ],\n    },\n  },\n}];"
+        "jsCode": "const data = $input.first().json;\nconst clean = (value) => String(value ?? '').replace(/\\s+/g, ' ').trim();\nconst ab = data.authorBrief || {};\nconst briefLines = [];\nif (ab.primaryProblemNote) briefLines.push(`· 핵심 문제/과제 (운영자 확정): ${ab.primaryProblemNote}`);\nif (ab.primarySolutionNote) briefLines.push(`· 해결/접근 (운영자 확정): ${ab.primarySolutionNote}`);\nif (Array.isArray(ab.evidenceNotes) && ab.evidenceNotes.length) {\n  briefLines.push(`· 근거·변화 포인트: ${ab.evidenceNotes.join(' / ')}`);\n}\nconst briefBlock = briefLines.length\n  ? ['[운영자 브리프 — 사실·메시지의 1순위 원천. 다른 필드와 충돌하면 브리프를 따른다.]', ...briefLines].join('\\n')\n  : '';\n\nconst imageLines = Array.isArray(data.imageContext) && data.imageContext.length\n  ? data.imageContext\n      .map((row) => {\n        if (!row || typeof row !== 'object') return '';\n        const id = clean(row.assetId ?? row.asset_id ?? '');\n        const url = clean(row.url ?? row.preview_url ?? row.imageUrl ?? row.image_url);\n        const meta = clean(row.summaryLine ?? row.summary_line);\n        if (!url) {\n          return meta ? `· [${id || '자산'}] (URL 없음) 메타: ${meta}` : '';\n        }\n        return `· [${id || '자산'}] 본문 삽입용 URL(복사해 그대로 쓸 것): ${url} | 메타 힌트: ${meta || '없음'}`;\n      })\n      .filter(Boolean)\n  : [];\nconst imageContextBlock = imageLines.length\n  ? [\n      '[현장 사진 목록 — 아래 URL만 본문에 사용 가능. 목록에 없는 이미지 URL을 만들거나 추측하지 않는다.]',\n      '[이미지 마크다운] body_markdown 안에서 각 사진을 한 번씩 `![한글 alt 설명](위 URL과 완전히 동일한 문자열)` 형태로 넣는다. alt는 접근성·SEO용: 장면·제품·비포/애프를 한두 문장 분량의 자연스러운 한국어로 쓰고, 메타 한 줄을 그대로 복붙하지 않는다.]',\n      '[배치 순서] 컷을 넣는 순서는 엄격하지 않다. “이전에는 이랬고, 적용 후에는 이렇게 바뀌었다”는 흐름만 읽히면 된다. 앞·뒤 서술과 자연스럽게 맞춰 적당히 끼워 넣는다.]',\n      ...imageLines,\n    ].join('\\n')\n  : '';\n\nconst prompt = [\n  '당신은 파인드가구 블로그 에디터다.',\n  '쇼룸은 홈페이지 안의 온라인 사례 쇼룸이다.',\n  '아래 초안과 케이스 정보를 바탕으로 블로그 발행용 초안을 JSON으로 정리하라.',\n  '브리프에 없는 사실은 추측하지 말고 생략하거나 완곡하게만 다룬다.',\n  '반드시 JSON만 반환한다.',\n  '',\n  `[공개명] ${data.displayName}`,\n  `[업종] ${data.industry ?? '미기재'}`,\n  `[한 줄 훅] ${data.hook || '없음'}`,\n  `[문제 요약] ${data.problemSummary || '없음'}`,\n  `[문제 상세] ${data.problemDetail || '없음'}`,\n  `[해결 요약] ${data.solutionSummary || '없음'}`,\n  `[해결 상세] ${data.solutionDetail || '없음'}`,\n  `[변화 포인트] ${data.evidencePoints.length ? data.evidencePoints.join(' / ') : '없음'}`,\n  '',\n  briefBlock,\n  '',\n  imageContextBlock,\n  '',\n  '[블로그 초안 시드]',\n  data.blogDraftMarkdown || '없음',\n  '',\n  '[출력 스키마]',\n  '{',\n  '  \"title\": \"string\",',\n  '  \"summary\": \"string\",',\n  '  \"body_markdown\": \"string\",',\n  '  \"hashtags\": [\"#태그1\", \"#태그2\"],',\n  '  \"review_note\": \"string\"',\n  '}',\n  '',\n  '규칙:',\n  '- 블로그는 과장 없이 설명형으로 작성한다.',\n  '- 첫 문단에서 핵심 답(AEO용 요지)을 먼저 제시한다.',\n  '- 운영자 브리프와 모순되는 주장을 하지 않는다.',\n  '- body_markdown 분량: 한글 기준 최소 약 1,800자 이상. 가능하면 2,400~3,200자 수준으로 서술한다. 단락은 12개 이상 권장(소제목 ## 사용 가능). 짧은 나열형만 반복하지 말고 사례 맥락·근거·비교를 풀어 쓴다.',\n  '- 현장 사진 목록이 있으면: 각 URL을 body_markdown에 마크다운 이미지로 최소 한 번씩 포함한다(alt 필수). 순서는 자유지만 전·후 변화 서사와 맞출 것. 메타 라벨을 그대로 나열하지 말고 문장·alt에 녹인다.',\n  '- 브리프·메타가 모두 빈약하면 블로그 초안 시드를 확장 서술하되 새로운 사실은 만들지 않는다.',\n  '- CTA는 온라인 쇼룸에서 더 비교해보는 흐름으로 마무리한다.',\n].join('\\n');\n\nreturn [{\n  json: {\n    ...data,\n    blogRequestBody: {\n      model: data.blogModel,\n      temperature: 0.7,\n      max_tokens: 5600,\n      response_format: { type: 'json_object' },\n      messages: [\n        {\n          role: 'user',\n          content: prompt,\n        },\n      ],\n    },\n  },\n}];"
       },
       "id": "node-blog-request",
       "name": "블로그 요청 준비",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1220, 420]
+      "position": [
+        1220,
+        420
+      ]
     },
     {
       "parameters": {
@@ -187,7 +217,10 @@
       "name": "OpenAI 블로그 생성",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
-      "position": [1460, 420]
+      "position": [
+        1460,
+        420
+      ]
     },
     {
       "parameters": {
@@ -197,7 +230,10 @@
       "name": "블로그 결과 정리",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1700, 420]
+      "position": [
+        1700,
+        420
+      ]
     },
     {
       "parameters": {
@@ -209,7 +245,10 @@
       "name": "블로그 Webhook 응답",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.4,
-      "position": [1940, 420]
+      "position": [
+        1940,
+        420
+      ]
     },
     {
       "parameters": {
@@ -219,7 +258,10 @@
       "name": "잘못된 채널 응답 구성",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1220, 620]
+      "position": [
+        1220,
+        620
+      ]
     },
     {
       "parameters": {
@@ -231,7 +273,10 @@
       "name": "잘못된 채널 Webhook 응답",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.4,
-      "position": [1460, 620]
+      "position": [
+        1460,
+        620
+      ]
     }
   ],
   "pinData": {},
@@ -389,6 +434,6 @@
   "meta": {
     "templateCredsSetupCompleted": false
   },
-  "id": "findgagu-showroom-case-content-channel-routed-v4",
+  "id": "findgagu-showroom-case-content-channel-routed-v5",
   "tags": []
 }

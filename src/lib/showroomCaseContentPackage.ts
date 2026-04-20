@@ -303,6 +303,29 @@ export type ShowroomCaseCardNewsPackage = {
   slides: ShowroomCaseCardNewsSlide[]
 }
 
+/** 운영자 최소 브리프 — LLM 프롬프트에서 사실 원천으로 우선 사용하도록 명시 */
+export type ShowroomCaseN8nAuthorBrief = {
+  primaryProblemNote: string
+  primarySolutionNote: string
+  evidenceNotes: string[]
+}
+
+/** 블로그/n8n용 — DB 이미지 자산 메타를 LLM이 전개 문장에 녹이도록 전달 */
+export type ShowroomCaseN8nImageContextItem = {
+  assetId: string
+  /** 미리보기용 공개 URL — `body_markdown`의 `![alt](url)`에 그대로 사용 */
+  url: string
+  /** 비포/애프/미분류 */
+  beforeAfter: 'before' | 'after' | null
+  productName: string | null
+  colorName: string | null
+  location: string | null
+  businessType: string | null
+  isMain: boolean
+  /** 프롬프트에 그대로 붙일 한 줄 설명 */
+  summaryLine: string
+}
+
 export type ShowroomCaseN8nPayload = {
   contentType: 'showroom-case-content'
   channel: 'cardnews+blog'
@@ -317,8 +340,12 @@ export type ShowroomCaseN8nPayload = {
   solutionSummary: string
   solutionDetail: string
   evidencePoints: string[]
+  /** 최소 입력(LLM 확장 시 우선 참고). `problemDetail`/`solutionDetail`과 동일 원천을 명시적으로 분리해 둠 */
+  authorBrief: ShowroomCaseN8nAuthorBrief
   cardNews: ShowroomCaseCardNewsPackage
   blogDraftMarkdown: string
+  /** 현장 컷 메타(제품·컬러·비포애프 등) — 블로그 분량·구체성 보강용 */
+  imageContext: ShowroomCaseN8nImageContextItem[]
 }
 
 function clean(value: string | null | undefined): string {
@@ -549,9 +576,16 @@ export function normalizeShowroomCardNewsSlides(params: {
 export function parseCardNewsSlidesFromStoredResponse(response: unknown): ShowroomCaseCardNewsSlide[] | null {
   if (!response || typeof response !== 'object' || Array.isArray(response)) return null
   const root = response as Record<string, unknown>
-  const cardNews = root.cardNews && typeof root.cardNews === 'object' && !Array.isArray(root.cardNews)
-    ? root.cardNews as Record<string, unknown>
-    : null
+  const payloadWrap =
+    root.payload && typeof root.payload === 'object' && !Array.isArray(root.payload)
+      ? (root.payload as Record<string, unknown>)
+      : null
+  const cardNews =
+    root.cardNews && typeof root.cardNews === 'object' && !Array.isArray(root.cardNews)
+      ? (root.cardNews as Record<string, unknown>)
+      : payloadWrap?.cardNews && typeof payloadWrap.cardNews === 'object' && !Array.isArray(payloadWrap.cardNews)
+        ? (payloadWrap.cardNews as Record<string, unknown>)
+        : null
   const master = cardNews?.master && typeof cardNews.master === 'object' && !Array.isArray(cardNews.master)
     ? cardNews.master as Record<string, unknown>
     : null
@@ -579,9 +613,71 @@ export function parseCardNewsSlidesFromStoredResponse(response: unknown): Showro
   return out.length > 0 ? out : null
 }
 
+function sortAssetsForBlogContext(images: ShowroomImageAsset[]): ShowroomImageAsset[] {
+  const list = Array.isArray(images) ? [...images] : []
+  return list.sort((a, b) => {
+    const ra = a.before_after_role === 'before' ? 0 : a.before_after_role === 'after' ? 1 : 2
+    const rb = b.before_after_role === 'before' ? 0 : b.before_after_role === 'after' ? 1 : 2
+    if (ra !== rb) return ra - rb
+    const oa = a.before_after_site_order ?? 9999
+    const ob = b.before_after_site_order ?? 9999
+    if (oa !== ob) return oa - ob
+    if (a.is_main !== b.is_main) return a.is_main ? -1 : 1
+    const ta = a.created_at ? new Date(a.created_at).getTime() : 0
+    const tb = b.created_at ? new Date(b.created_at).getTime() : 0
+    return tb - ta
+  })
+}
+
+/**
+ * 상담 이미지 자산 메타를 n8n 블로그 프롬프트에 실을 요약 행으로 만듭니다.
+ * 사실(메타)만 넘기고, LLM이 전개·연결하도록 합니다.
+ */
+export function buildShowroomCaseN8nImageContext(images: ShowroomImageAsset[] | undefined | null): ShowroomCaseN8nImageContextItem[] {
+  const sorted = sortAssetsForBlogContext(images ?? [])
+  const max = 30
+  const out: ShowroomCaseN8nImageContextItem[] = []
+  for (const a of sorted.slice(0, max)) {
+    const id = a.id?.trim()
+    if (!id) continue
+    const role =
+      a.before_after_role === 'before' || a.before_after_role === 'after' ? a.before_after_role : null
+    const productName = clean(a.product_name) || null
+    const colorName = clean(a.color_name) || null
+    const location = clean(a.location) || null
+    const businessType = clean(a.business_type) || null
+    const mainTag = a.is_main ? '대표컷' : ''
+    const roleKo =
+      role === 'before' ? '비포' : role === 'after' ? '애프터' : '기타'
+    const bits = [
+      mainTag,
+      roleKo,
+      productName,
+      colorName,
+      location,
+      businessType,
+    ].filter(Boolean)
+    const summaryLine =
+      bits.length > 0 ? bits.join(' · ') : `${roleKo} 컷`
+    const url = getShowroomImagePreviewUrl(a).trim()
+    out.push({
+      assetId: id,
+      url,
+      beforeAfter: role,
+      productName,
+      colorName,
+      location,
+      businessType,
+      isMain: Boolean(a.is_main),
+      summaryLine,
+    })
+  }
+  return out
+}
+
 export function buildShowroomCaseN8nPayload(
   seed: ShowroomCaseContentSeed,
-  options?: { cardNewsPackage?: ShowroomCaseCardNewsPackage },
+  options?: { cardNewsPackage?: ShowroomCaseCardNewsPackage; projectImages?: ShowroomImageAsset[] },
 ): ShowroomCaseN8nPayload {
   const displayName = getShowroomCasePublicDisplayName(seed)
   const hook = clean(seed.headlineHook) || '이 공간은 무엇이 달라졌을까요?'
@@ -592,6 +688,14 @@ export function buildShowroomCaseN8nPayload(
   const evidencePoints = (seed.evidencePoints ?? []).map((item) => clean(item)).filter(Boolean)
   const cardNews = options?.cardNewsPackage ?? buildShowroomCaseCardNewsPackage(seed)
   const blogDraftMarkdown = buildShowroomCaseBlogDraft(seed)
+
+  const authorBrief: ShowroomCaseN8nAuthorBrief = {
+    primaryProblemNote: clean(seed.problemDetail),
+    primarySolutionNote: clean(seed.solutionDetail),
+    evidenceNotes: evidencePoints,
+  }
+
+  const imageContext = buildShowroomCaseN8nImageContext(options?.projectImages)
 
   return {
     contentType: 'showroom-case-content',
@@ -607,7 +711,9 @@ export function buildShowroomCaseN8nPayload(
     solutionSummary,
     solutionDetail,
     evidencePoints,
+    authorBrief,
     cardNews,
     blogDraftMarkdown,
+    imageContext,
   }
 }

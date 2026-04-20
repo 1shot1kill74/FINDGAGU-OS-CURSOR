@@ -4,6 +4,7 @@ import { ArrowLeft, ChevronLeft, ChevronRight, FileText, Images, MessageCircle }
 import { Button } from '@/components/ui/button'
 import { usePublicShowroomChannelTalk } from '@/hooks/usePublicShowroomChannelTalk'
 import { buildShowroomCaseCardNewsPackage, formatShowroomCardTextForDisplay, normalizeShowroomCardNewsSlides, resolveCardNewsSlideImageUrl } from '@/lib/showroomCaseContentPackage'
+import { filterCanonicalBlogImagesNotInBodyHtml, renderCanonicalBlogPostHtml } from '@/lib/showroomCaseCanonicalBlog'
 import {
   loadShowroomCaseApproachBundle,
   type ShowroomCaseApproachBundle,
@@ -291,6 +292,11 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
   const goToPreviousSlide = () => setActiveSlideIndex((prev) => (prev - 1 + totalSlides) % totalSlides)
   const goToNextSlide = () => setActiveSlideIndex((prev) => (prev + 1) % totalSlides)
 
+  const canonicalBlog = bundle.profile?.canonicalBlogPost ?? null
+  const showCanonicalBlogSection =
+    canonicalBlog !== null && (mode === 'internal' || canonicalBlog.status === 'approved')
+  const isStoryLayout = mode === 'public' && entry === 'case'
+
   return (
     <div className="min-h-screen bg-neutral-50">
       <header className="border-b border-neutral-200 bg-white">
@@ -299,13 +305,13 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
             <Link to={backHref}>
               <ArrowLeft className="h-4 w-4" />
               {mode === 'public'
-                ? (entry === 'cardnews' ? '카드뉴스 목록' : '전후 비교 목록')
+                ? (entry === 'cardnews' ? '카드뉴스 목록' : '오픈 쇼룸')
                 : '케이스 작업실'}
             </Link>
           </Button>
           <div>
             <p className="text-xs font-medium uppercase tracking-wide text-emerald-700">
-              {entry === 'cardnews' ? '공개 카드뉴스' : '현장 기획 방식'}
+              {entry === 'cardnews' ? '공개 카드뉴스' : isStoryLayout ? '이 현장의 이야기' : '현장 기획 방식'}
             </p>
             <h1 className="mt-1 text-2xl font-bold text-neutral-900 md:text-3xl">{displayName}</h1>
             {bundle.businessTypes.length > 0 && (
@@ -325,6 +331,15 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
       </header>
 
       <main className="mx-auto max-w-3xl space-y-10 px-4 py-8 md:px-6 md:py-10">
+        {isStoryLayout ? (
+          <section className="space-y-2">
+            <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">카드뉴스</p>
+            <h2 className="text-xl font-semibold text-neutral-900">사진을 보며 이 현장의 핵심 변화를 빠르게 확인해보세요.</h2>
+            <p className="text-sm leading-relaxed text-neutral-600">
+              먼저 카드뉴스로 문제와 해결 흐름을 훑고, 아래에서 블로그로 더 자세한 비하인드 스토리를 읽을 수 있습니다.
+            </p>
+          </section>
+        ) : null}
         <section className="overflow-hidden rounded-[28px] border border-neutral-200 bg-white shadow-sm">
           <div className="relative aspect-[16/10] bg-neutral-900">
             <img
@@ -400,13 +415,64 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
           </div>
         </section>
 
-        {!hasCopy && (
+        {showCanonicalBlogSection && canonicalBlog ? (
+          <section className="space-y-3" aria-labelledby="canonical-blog-article">
+            <div className="flex flex-wrap items-center gap-2 text-neutral-900">
+              <FileText className="h-5 w-5 text-emerald-700" aria-hidden />
+              <h2 id="canonical-blog-article" className="text-lg font-semibold">
+                {isStoryLayout ? '이 현장의 블로그 이야기' : '사례 블로그 글'}
+              </h2>
+              {mode === 'internal' && canonicalBlog.status !== 'approved' ? (
+                <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-medium text-amber-900">
+                  미승인 정본은 공개 사용자에게 숨김 · 작업실에서 승인 필요
+                </span>
+              ) : null}
+            </div>
+            {(() => {
+              const previewHtml = renderCanonicalBlogPostHtml(canonicalBlog)
+              return (
+            <div className="rounded-2xl border border-neutral-200 bg-white p-5 text-neutral-800">
+              {(() => {
+                const extraImages = filterCanonicalBlogImagesNotInBodyHtml(previewHtml, canonicalBlog.images)
+                return extraImages.length > 0 ? (
+                  <div className="mb-5 rounded-xl border border-neutral-100 bg-neutral-50 p-4">
+                    <p className="mb-3 text-[11px] font-medium text-neutral-500">현장 이미지</p>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      {extraImages.map((img) => (
+                        <figure key={img.id} className="overflow-hidden rounded-xl border border-neutral-100 bg-white">
+                          <img
+                            src={img.url}
+                            alt={img.alt}
+                            className="max-h-96 w-full object-cover"
+                            loading="lazy"
+                            decoding="async"
+                          />
+                          {img.caption ? (
+                            <figcaption className="px-2 py-2 text-xs text-neutral-600">{img.caption}</figcaption>
+                          ) : null}
+                        </figure>
+                      ))}
+                    </div>
+                  </div>
+                ) : null
+              })()}
+              <div
+                className="showroom-canonical-blog-public max-w-none text-sm leading-relaxed [&_img]:max-h-96 [&_img]:w-full [&_img]:rounded-xl [&_img]:object-cover [&_p]:mb-4"
+                dangerouslySetInnerHTML={{ __html: previewHtml }}
+              />
+            </div>
+              )
+            })()}
+          </section>
+        ) : null}
+
+        {!isStoryLayout && !hasCopy && (
           <section className="rounded-2xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm text-amber-900">
             이 현장의 과제·해결 설명은 준비 중입니다. 전후 이미지와 쇼룸 목록은 아래에서 확인할 수 있습니다.
           </section>
         )}
 
-        {(pain || problemDetail) && (
+        {!isStoryLayout && (pain || problemDetail) && (
           <section className="space-y-3" aria-labelledby="approach-problem">
             <div className="flex items-center gap-2 text-neutral-900">
               <FileText className="h-5 w-5 text-emerald-700" aria-hidden />
@@ -427,7 +493,7 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
           </section>
         )}
 
-        {(solution || solutionDetail) && (
+        {!isStoryLayout && (solution || solutionDetail) && (
           <section className="space-y-3" aria-labelledby="approach-solution">
             <div className="flex items-center gap-2 text-neutral-900">
               <Images className="h-5 w-5 text-emerald-700" aria-hidden />
@@ -448,7 +514,7 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
           </section>
         )}
 
-        {evidencePoints.length > 0 && (
+        {!isStoryLayout && evidencePoints.length > 0 && (
           <section className="space-y-3" aria-labelledby="approach-evidence">
             <div className="flex items-center gap-2 text-neutral-900">
               <Images className="h-5 w-5 text-emerald-700" aria-hidden />
@@ -469,7 +535,7 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
           </section>
         )}
 
-        {hasBeforeAfterImages && (
+        {!isStoryLayout && hasBeforeAfterImages && (
           <section className="space-y-4" aria-labelledby="approach-ba">
             <h2 id="approach-ba" className="text-lg font-semibold text-neutral-900">
               전후 비교
@@ -505,7 +571,9 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
 
         <section className="flex flex-col gap-3 rounded-2xl border border-emerald-200 bg-emerald-50/60 p-5 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-neutral-700">
-            같은 형태로 우리 공간을 상담받고 싶다면 문의로 연결해 주세요.
+            {isStoryLayout
+              ? '비슷한 변화 사례를 더 보고 싶다면 오픈 쇼룸으로 돌아가거나, 바로 상담으로 이어갈 수 있습니다.'
+              : '같은 형태로 우리 공간을 상담받고 싶다면 문의로 연결해 주세요.'}
           </p>
           <div className="flex flex-wrap gap-2">
             <Button asChild variant="outline" className="gap-1.5 bg-white">

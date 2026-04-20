@@ -62,13 +62,18 @@ export function buildTemplatedCaseSeed(row: CaseDraftState): ShowroomCaseContent
   const slideMap = slideMapFromRow(row)
   const problemBody = slideMap.get('problem')?.body?.trim() ?? ''
   const solutionBody = slideMap.get('solution')?.body?.trim() ?? ''
-  const evidenceBody = slideMap.get('evidence')?.body?.trim() ?? row.evidencePoints
+  const evidenceFromSlide = slideMap.get('evidence')?.body?.trim() ?? ''
   const problemDetail = normalizeText(row.problemDetail || problemBody)
   const solutionDetail = normalizeText(row.solutionDetail || solutionBody)
-  const evidencePoints = evidenceBody
+  const authorEvidence = row.evidencePoints
     .split('\n')
     .map((item) => item.replace(/^-\s*/, '').trim())
     .filter(Boolean)
+  const evidenceFromSlideList = evidenceFromSlide
+    .split('\n')
+    .map((item) => item.replace(/^-\s*/, '').trim())
+    .filter(Boolean)
+  const evidencePoints = authorEvidence.length > 0 ? authorEvidence : evidenceFromSlideList
   const painPoint = problem.summary || summarizeText(problemDetail, 30)
   const solutionPoint = solution.summary || summarizeText(solutionDetail, 30)
   const hookBase = problem.label || painPoint || problemDetail
@@ -161,14 +166,29 @@ export function deriveStudioSeedFromSlides(row: CaseDraftState): ShowroomCaseCon
   const hookBody = m.get('hook')?.body?.trim() ?? ''
   const evidenceBody = m.get('evidence')?.body?.trim() ?? ''
 
-  const evidencePoints = evidenceBody
+  const authorProblem = normalizeText(row.problemDetail)
+  const authorSolution = normalizeText(row.solutionDetail)
+  const authorEvidencePoints = row.evidencePoints
     .split('\n')
     .map((line) => line.replace(/^-\s*/, '').trim())
     .filter(Boolean)
 
-  const painPoint = summarizeText(problemBody, 30)
-  const solutionPoint = summarizeText(solutionBody, 30)
-  const headlineHook = normalizeText(hookBody) || buildHeadlineHook({ problemDetail: specificProblemBody || problemBody })
+  const evidenceFromSlides = evidenceBody
+    .split('\n')
+    .map((line) => line.replace(/^-\s*/, '').trim())
+    .filter(Boolean)
+
+  const evidencePoints = authorEvidencePoints.length > 0 ? authorEvidencePoints : evidenceFromSlides
+
+  const mergedProblemDetail = authorProblem || specificProblemBody
+  const mergedSolutionDetail = authorSolution || solutionBody
+
+  const painPoint = summarizeText(mergedProblemDetail || problemBody, 30)
+  const solutionPoint = summarizeText(mergedSolutionDetail || solutionBody, 30)
+  const headlineHook =
+    normalizeText(row.headlineHook) ||
+    normalizeText(hookBody) ||
+    buildHeadlineHook({ problemDetail: mergedProblemDetail || specificProblemBody || problemBody })
 
   return {
     siteName: row.siteName,
@@ -176,9 +196,9 @@ export function deriveStudioSeedFromSlides(row: CaseDraftState): ShowroomCaseCon
     industry: row.industry,
     headlineHook,
     painPoint,
-    problemDetail: specificProblemBody,
+    problemDetail: mergedProblemDetail,
     solutionPoint,
-    solutionDetail: solutionBody,
+    solutionDetail: mergedSolutionDetail,
     evidencePoints,
   }
 }

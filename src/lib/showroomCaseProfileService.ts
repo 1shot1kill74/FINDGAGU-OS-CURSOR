@@ -1,5 +1,12 @@
 import { supabase } from '@/lib/supabase'
 import {
+  CANONICAL_BLOG_METADATA_KEY,
+  hydrateCanonicalBlogPostFromGenerationResponse,
+  parseCanonicalBlogPostFromMetadata,
+  serializeCanonicalBlogPost,
+  type ShowroomCaseCanonicalBlogPost,
+} from '@/lib/showroomCaseCanonicalBlog'
+import {
   buildShowroomFollowupSummary,
   resolveShowroomCaseProfile,
   type ShowroomCaseProfile,
@@ -29,6 +36,8 @@ export type ShowroomCaseProfileDraft = {
   cardNewsGeneration: ShowroomCaseGenerationState
   blogGeneration: ShowroomCaseGenerationState
   cardNewsPublication: ShowroomCaseCardNewsPublication
+  /** Google/네이버/내부 쇼룸 공통 블로그 정본. 미저장 시 `null`. */
+  canonicalBlogPost: ShowroomCaseCanonicalBlogPost | null
 }
 
 export type ShowroomCaseCardNewsPublication = {
@@ -285,6 +294,10 @@ export async function fetchShowroomCaseProfileDrafts(siteNames: string[]): Promi
     const generation = parseGenerationMeta(row.metadata)
     const consultationCardDraft = parseConsultationCardDraft(row.metadata)
     const publication = parsePublicationMeta(row.metadata)
+    const canonicalBlogPost = hydrateCanonicalBlogPostFromGenerationResponse(
+      parseCanonicalBlogPostFromMetadata(row.metadata),
+      generation.blogGeneration.response,
+    )
     return [{
       siteName,
       canonicalSiteName: typeof row.canonical_site_name === 'string' && row.canonical_site_name.trim()
@@ -307,6 +320,7 @@ export async function fetchShowroomCaseProfileDrafts(siteNames: string[]): Promi
       cardNewsGeneration: generation.cardNewsGeneration,
       blogGeneration: generation.blogGeneration,
       cardNewsPublication: publication,
+      canonicalBlogPost,
     }]
   })
 }
@@ -329,6 +343,10 @@ export async function fetchPublishedShowroomCaseProfileDrafts(): Promise<Showroo
     const outline = parseOutlineMeta(row.metadata)
     const generation = parseGenerationMeta(row.metadata)
     const consultationCardDraft = parseConsultationCardDraft(row.metadata)
+    const canonicalBlogPost = hydrateCanonicalBlogPostFromGenerationResponse(
+      parseCanonicalBlogPostFromMetadata(row.metadata),
+      generation.blogGeneration.response,
+    )
 
     return [{
       siteName,
@@ -352,6 +370,7 @@ export async function fetchPublishedShowroomCaseProfileDrafts(): Promise<Showroo
       cardNewsGeneration: generation.cardNewsGeneration,
       blogGeneration: generation.blogGeneration,
       cardNewsPublication: publication,
+      canonicalBlogPost,
     }]
   }).sort((a, b) => {
     const at = a.cardNewsPublication.publishedAt ? new Date(a.cardNewsPublication.publishedAt).getTime() : 0
@@ -453,6 +472,41 @@ export async function saveShowroomCaseGenerationState(input: {
       ...generation,
       [input.channel]: nextChannel,
     },
+  }
+
+  const { error } = await (supabase as any)
+    .from('showroom_case_profiles')
+    .upsert({
+      site_name: siteName,
+      metadata: nextMeta,
+      updated_at: now,
+    }, { onConflict: 'site_name', ignoreDuplicates: false })
+
+  return { error: error ?? null }
+}
+
+/** Google/네이버/내부 쇼룸이 공유하는 블로그 정본을 `metadata.canonical_blog_post`에 저장합니다. */
+export async function saveShowroomCaseCanonicalBlogPost(input: {
+  siteName: string
+  post: ShowroomCaseCanonicalBlogPost
+}): Promise<{ error: Error | null }> {
+  const siteName = input.siteName.trim()
+  if (!siteName) {
+    return { error: new Error('현장명이 비어 있어 블로그 정본을 저장할 수 없습니다.') }
+  }
+  if (input.post.siteName.trim() !== siteName) {
+    return { error: new Error('블로그 정본의 siteName이 현장명과 일치하지 않습니다.') }
+  }
+
+  const existingMeta = await readExistingMetadata(siteName)
+  const now = new Date().toISOString()
+  const nextPost: ShowroomCaseCanonicalBlogPost = {
+    ...input.post,
+    updatedAt: now,
+  }
+  const nextMeta = {
+    ...existingMeta,
+    [CANONICAL_BLOG_METADATA_KEY]: serializeCanonicalBlogPost(nextPost),
   }
 
   const { error } = await (supabase as any)

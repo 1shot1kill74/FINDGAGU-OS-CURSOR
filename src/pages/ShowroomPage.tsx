@@ -62,6 +62,7 @@ import {
   getBroadPublicLabel,
   getGroupPublicLabel,
   getPreferredExternalDisplayName,
+  getPreferredShowroomSiteName,
   getPrimaryIndustryLabel,
   getPublicCardNewsHref,
   getPublicLabelsFromImages,
@@ -755,6 +756,13 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
       .filter((asset): asset is ShowroomImageAsset => asset != null),
     [selectedImageIds, assets]
   )
+
+  const detailStoryHref = useMemo(() => {
+    if (detailImages.length === 0) return null
+    const siteName = getPreferredShowroomSiteName(detailImages).trim()
+    if (!siteName || siteName === '미지정') return null
+    return `/public/showroom/case/${encodeURIComponent(siteName)}`
+  }, [detailImages])
 
   const shortsSelection = useMemo(
     () => validateBeforeAfterSelection(selectedImages),
@@ -2805,13 +2813,24 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                 </div>
               </>
             ) : !showInternalControls ? (
-              <Link
-                to={buildShowroomContactUrl({ category: '시공사례 쇼룸 문의' })}
-                className="flex items-center justify-center gap-2 w-full rounded-xl py-3.5 bg-amber-500 hover:bg-amber-600 text-neutral-900 font-semibold text-sm transition-colors shadow-md"
-              >
-                <Sparkles className="h-4 w-4" />
-                무료 레이아웃 컨설팅 신청
-              </Link>
+              detailStoryHref ? (
+                <Link
+                  to={detailStoryHref}
+                  className="flex items-center justify-center gap-2 w-full rounded-xl py-3.5 bg-amber-500 hover:bg-amber-600 text-neutral-900 font-semibold text-sm transition-colors shadow-md"
+                >
+                  <Sparkles className="h-4 w-4" />
+                  이 현장의 이야기 보기
+                </Link>
+              ) : (
+                <button
+                  type="button"
+                  disabled
+                  className="flex items-center justify-center gap-2 w-full rounded-xl py-3.5 bg-neutral-700 text-neutral-300 font-semibold text-sm"
+                >
+                  <Sparkles className="h-4 w-4" />
+                  이 현장의 이야기 준비 중
+                </button>
+              )
             ) : null}
           </div>
         </DialogContent>

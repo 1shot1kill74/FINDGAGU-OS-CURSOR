@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { ArrowRight, ChevronLeft, ChevronRight, Copy, Loader2, Save } from 'lucide-react'
+import { ArrowRight, ChevronLeft, ChevronRight, Copy, Eye, Loader2, Save } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import {
   collectConsultationImagesForSiteRow,
   fetchShowroomImageAssets,
+  getShowroomImagePreviewUrl,
   type ShowroomImageAsset,
 } from '@/lib/imageAssetService'
 import type {
@@ -19,6 +20,7 @@ import {
   buildLocalCardNewsMasterResponse,
   buildShowroomAssetUrlByIdMap,
   buildShowroomCaseCardNewsPackage,
+  buildShowroomCaseN8nImageContext,
   buildShowroomCaseN8nPayload,
   formatShowroomCardTextForDisplay,
   formatShowroomAssetPickerLabel,
@@ -33,7 +35,15 @@ import {
   type ShowroomCaseFrameTemplate,
 } from '@/lib/showroomCaseFrameTemplates'
 import {
+  buildCanonicalBlogPostFromN8nBlogResponse,
+  filterCanonicalBlogImagesNotInBodyHtml,
+  repairCanonicalBlogBodyHtmlForPreview,
+  renderCanonicalBlogPostHtml,
+  type ShowroomCaseCanonicalBlogPost,
+} from '@/lib/showroomCaseCanonicalBlog'
+import {
   fetchShowroomCaseProfileDrafts,
+  saveShowroomCaseCanonicalBlogPost,
   saveShowroomCaseCardNewsPublication,
   saveShowroomCaseConsultationCardDraft,
   saveShowroomCaseGenerationState,
@@ -78,6 +88,8 @@ export default function ShowroomCaseStudioPage() {
   const [solutionTemplateDrafts, setSolutionTemplateDrafts] = useState<FrameTemplateEditorState[]>([])
   const [evidenceTemplateDrafts, setEvidenceTemplateDrafts] = useState<FrameTemplateEditorState[]>([])
   const [rows, setRows] = useState<CaseDraftState[]>([])
+  const [approvingBlogSite, setApprovingBlogSite] = useState<string | null>(null)
+  const [blogViewer, setBlogViewer] = useState<{ displayLabel: string; post: ShowroomCaseCanonicalBlogPost; html: string } | null>(null)
   const sectionRefs = useRef<Record<string, HTMLElement | null>>({})
   const didAutoFocusSiteRef = useRef(false)
   const focusedSiteName = searchParams.get('site')?.trim() ?? ''
@@ -89,6 +101,21 @@ export default function ShowroomCaseStudioPage() {
     setEvidenceTemplates(loadShowroomCaseFrameTemplates('evidence'))
   }, [])
 
+  function buildBlogPreviewHtmlForRow(row: CaseDraftState): string {
+    if (!row.canonicalBlogPost) return ''
+    if (row.canonicalBlogPost.bodyMarkdown?.trim()) {
+      return renderCanonicalBlogPostHtml(row.canonicalBlogPost)
+    }
+    const previewFigures = [
+      ...row.canonicalBlogPost.images.map((img) => ({ url: img.url, alt: img.alt })),
+      ...row.projectImages.map((img) => ({
+        url: getShowroomImagePreviewUrl(img),
+        alt: formatShowroomAssetPickerLabel(img),
+      })),
+    ]
+    return repairCanonicalBlogBodyHtmlForPreview(row.canonicalBlogPost.bodyHtml, previewFigures)
+  }
+
   useEffect(() => {
     let cancelled = false
     void (async () => {
@@ -97,6 +124,7 @@ export default function ShowroomCaseStudioPage() {
         const groups = groupBeforeAfter(assets)
         const drafts = await fetchShowroomCaseProfileDrafts(groups.map((group) => group.siteName))
         const draftMap = new Map(drafts.map((draft) => [draft.siteName, draft]))
+        const blogBackfillTargets: Array<{ siteName: string; post: ShowroomCaseCanonicalBlogPost }> = []
 
         const nextRows = groups.map((group) => {
           const saved = draftMap.get(group.siteName)
@@ -136,6 +164,17 @@ export default function ShowroomCaseStudioPage() {
               slug: null,
               siteKey: group.siteName,
             },
+            canonicalBlogPost: saved?.canonicalBlogPost ?? null,
+          }
+          if (
+            saved?.canonicalBlogPost &&
+            !saved.canonicalBlogPost.bodyMarkdown?.trim() &&
+            seedRow.canonicalBlogPost?.bodyMarkdown?.trim()
+          ) {
+            blogBackfillTargets.push({
+              siteName: seedRow.siteName,
+              post: seedRow.canonicalBlogPost,
+            })
           }
           const pkg = buildShowroomCaseCardNewsPackage(buildStudioContentSeed(seedRow))
           const projectImages = seedRow.projectImages
@@ -165,6 +204,16 @@ export default function ShowroomCaseStudioPage() {
         })
 
         if (!cancelled) setRows(nextRows)
+        if (blogBackfillTargets.length > 0) {
+          void (async () => {
+            for (const target of blogBackfillTargets) {
+              const { error } = await saveShowroomCaseCanonicalBlogPost(target)
+              if (error) {
+                console.warn('canonical blog markdown backfill failed', target.siteName, error)
+              }
+            }
+          })()
+        }
       } catch (error) {
         if (!cancelled) toast.error(error instanceof Error ? error.message : '케이스 작업실을 불러오지 못했습니다.')
       } finally {
@@ -542,6 +591,27 @@ export default function ShowroomCaseStudioPage() {
         if (error) throw error
       }
 
+      let savedCanonicalBlog: ShowroomCaseCanonicalBlogPost | null = null
+      if (params.channel === 'blog') {
+        savedCanonicalBlog = buildCanonicalBlogPostFromN8nBlogResponse({
+          siteName: params.row.siteName,
+          n8nResponse: parsed,
+          beforeImageUrl: params.row.beforeUrl,
+          afterImageUrl: params.row.afterUrl,
+          imageContext: buildShowroomCaseN8nImageContext(params.row.projectImages),
+          existingCreatedAt: params.row.canonicalBlogPost?.createdAt ?? null,
+        })
+        if (savedCanonicalBlog) {
+          const { error: canonError } = await saveShowroomCaseCanonicalBlogPost({
+            siteName: params.row.siteName,
+            post: savedCanonicalBlog,
+          })
+          if (canonError) {
+            toast.warning(`블로그 정본 저장에 실패했습니다: ${canonError.message}`)
+          }
+        }
+      }
+
       setRows((prev) =>
         prev.map((row) => {
           if (row.siteName !== params.row.siteName) return row
@@ -571,6 +641,7 @@ export default function ShowroomCaseStudioPage() {
               errorMessage: null,
               response: parsed,
             },
+            canonicalBlogPost: savedCanonicalBlog ?? row.canonicalBlogPost,
           }
         })
       )
@@ -617,6 +688,37 @@ export default function ShowroomCaseStudioPage() {
       toast.error(error instanceof Error ? error.message : '콘텐츠 생성 요청에 실패했습니다.')
     } finally {
       setRequestingKey(null)
+    }
+  }
+
+  async function handleApproveCanonicalBlog(row: CaseDraftState) {
+    if (!row.canonicalBlogPost) {
+      toast.error('승인할 블로그 정본이 없습니다.')
+      return
+    }
+    setApprovingBlogSite(row.siteName)
+    try {
+      const now = new Date().toISOString()
+      const next: ShowroomCaseCanonicalBlogPost = {
+        ...row.canonicalBlogPost,
+        status: 'approved',
+        updatedAt: now,
+        approvedAt: now,
+        approvedBy: 'showroom-case-studio',
+      }
+      const { error } = await saveShowroomCaseCanonicalBlogPost({
+        siteName: row.siteName,
+        post: next,
+      })
+      if (error) throw error
+      setRows((prev) =>
+        prev.map((r) => (r.siteName === row.siteName ? { ...r, canonicalBlogPost: next } : r)),
+      )
+      toast.success('블로그 정본을 공개 카드뉴스 상세에서 볼 수 있도록 승인했습니다.')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '승인 저장에 실패했습니다.')
+    } finally {
+      setApprovingBlogSite(null)
     }
   }
 
@@ -824,7 +926,9 @@ export default function ShowroomCaseStudioPage() {
         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">Case Content Studio</p>
         <h1 className="mt-2 text-2xl font-bold text-slate-900 md:text-3xl">비포어/애프터 케이스 작업실</h1>
         <p className="mt-2 text-sm leading-6 text-slate-600">
-          상담용 쇼룸과 분리된 콘텐츠 제작 화면입니다. 비포어/애프터가 완성된 현장만 골라 문제 제기, 해결 방식, 카드뉴스형 요약을 만듭니다.
+          비포어/애프터 현장별로{' '}
+          <span className="font-medium text-slate-800">핵심 문제·해결 브리프만 적고 LLM·n8n으로 카드뉴스·블로그 초안을 받은 뒤</span>, 필요하면 6장 카드만 손보는 흐름입니다.
+          상담용 쇼룸 화면과 분리되어 있습니다.
         </p>
         <div className="mt-4">
           <Link to="/showroom#showroom-before-after-section">
@@ -980,6 +1084,65 @@ export default function ShowroomCaseStudioPage() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={blogViewer !== null} onOpenChange={(open) => !open && setBlogViewer(null)}>
+        <DialogContent className="flex max-h-[min(92vh,880px)] w-[min(100vw-1.5rem,42rem)] flex-col gap-0 overflow-hidden border-0 p-0 shadow-xl sm:max-w-2xl">
+          <DialogHeader className="shrink-0 border-b border-slate-200 bg-slate-50 px-5 py-4 text-left">
+            <DialogTitle className="text-base font-semibold text-slate-900">블로그 화면 미리보기</DialogTitle>
+            <p className="mt-1 text-xs text-slate-500">
+              {blogViewer?.displayLabel ? (
+                <>
+                  <span className="font-medium text-slate-700">{blogViewer.displayLabel}</span>
+                  <span className="text-slate-400"> · </span>
+                </>
+              ) : null}
+              승인 후 공개 카드뉴스 상세와 비슷한 레이아웃으로 봅니다. (이미지·본문 모두 포함)
+            </p>
+          </DialogHeader>
+          <div className="min-h-0 flex-1 overflow-y-auto bg-gradient-to-b from-slate-100/90 to-slate-50 px-4 py-6 sm:px-6">
+            {blogViewer ? (
+              <article className="mx-auto max-w-prose rounded-2xl border border-slate-200 bg-white px-6 py-8 shadow-sm sm:px-10 sm:py-10">
+                <header className="border-b border-slate-100 pb-6">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">쇼룸 사례 블로그</p>
+                  <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900 sm:text-[1.65rem] sm:leading-snug">
+                    {blogViewer.post.seo.title}
+                  </h1>
+                  {blogViewer.post.structured?.featuredAnswer ? (
+                    <p className="mt-4 text-sm leading-relaxed text-slate-600">{blogViewer.post.structured.featuredAnswer}</p>
+                  ) : null}
+                </header>
+                {(() => {
+                  const extra = filterCanonicalBlogImagesNotInBodyHtml(blogViewer.html, blogViewer.post.images)
+                  return extra.length > 0 ? (
+                    <div className="mt-8 space-y-4">
+                      {extra.map((img) => (
+                        <figure key={img.id} className="overflow-hidden rounded-xl border border-slate-100 bg-slate-50">
+                          <img
+                            src={img.url}
+                            alt={img.alt}
+                            className="w-full max-h-[min(28rem,70vh)] object-cover"
+                            loading="lazy"
+                            decoding="async"
+                          />
+                          {img.caption ? (
+                            <figcaption className="border-t border-slate-100 bg-white px-3 py-2 text-center text-xs text-slate-600">
+                              {img.caption}
+                            </figcaption>
+                          ) : null}
+                        </figure>
+                      ))}
+                    </div>
+                  ) : null
+                })()}
+                <div
+                  className="showroom-canonical-blog-viewer mt-8 max-w-none text-[15px] leading-[1.7] text-slate-800 [&_article]:max-w-none [&_figure]:my-6 [&_figure]:mx-auto [&_h2]:mb-3 [&_h2]:mt-8 [&_h2]:text-lg [&_h2]:font-semibold [&_h2]:text-slate-900 [&_img]:max-h-[min(28rem,70vh)] [&_img]:w-full [&_img]:rounded-xl [&_img]:object-cover [&_p]:mb-4 [&_p]:leading-[1.7]"
+                  dangerouslySetInnerHTML={{ __html: blogViewer.html }}
+                />
+              </article>
+            ) : null}
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <div className="space-y-6">
         {cards.map((row) => (
           <section
@@ -1037,15 +1200,17 @@ export default function ShowroomCaseStudioPage() {
                   const activePreviewSlide = previewSlides[previewSlideIndex] ?? previewSlides[0] ?? null
                   const n8nPayload = buildShowroomCaseN8nPayload(deriveStudioSeedFromSlides(row), {
                     cardNewsPackage: studioRowToCardPackage(row),
+                    projectImages,
                   })
                   return (
                     <div className="grid gap-3">
                       <div className="rounded-2xl border border-slate-200 bg-white p-4 md:p-5">
                         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
                           <div>
-                            <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">카드뉴스 6장</p>
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">LLM·n8n 자동 작성</p>
                             <p className="mt-1 text-sm text-slate-500">
-                              문제 인식, 해결 접근, 변화 포인트 모두 템플릿을 불러와 초안을 만들 수 있습니다. 각 카드에서 불러온 뒤 제목·본문을 계속 손편집할 수 있습니다.
+                              아래 <span className="font-medium text-slate-700">자동 작성용 브리프</span>만 채워도 요청 페이로드에 반영됩니다. 이미지·현장 메타는 함께 실립니다.
+                              카드 6장은 초안 생성 후 필요할 때 펼쳐서 고치면 됩니다.
                             </p>
                             <div className="mt-3 flex flex-wrap gap-2 text-xs">
                               <span className={`rounded-full px-2.5 py-1 font-medium ${getGenerationStatusTone(row.cardNewsGeneration.status)}`}>
@@ -1121,7 +1286,73 @@ export default function ShowroomCaseStudioPage() {
                             </Button>
                           </div>
                         </div>
-                        <div className="space-y-3">
+
+                        <div className="mb-4 space-y-3 rounded-2xl border border-emerald-200 bg-emerald-50/40 p-4 md:p-5">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-900">자동 작성용 브리프</p>
+                          <p className="text-xs leading-relaxed text-slate-600">
+                            여기 내용과 이미지·현장 메타가 n8n 페이로드로 나갑니다. 웹훅 응답으로 6장·블로그 초안을 채운 뒤, 필요하면 아래 접는 영역에서만 수정하세요.
+                          </p>
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <div>
+                              <label className="text-xs font-medium text-slate-800" htmlFor={`brief-problem-${row.siteName}`}>
+                                현장 핵심 문제 / 과제
+                              </label>
+                              <textarea
+                                id={`brief-problem-${row.siteName}`}
+                                value={row.problemDetail}
+                                onChange={(event) => updateRow(row.siteName, 'problemDetail', event.target.value)}
+                                rows={4}
+                                placeholder="예: 동선 혼잡·수납 부족 등 가장 시급했던 점 (사실 중심)"
+                                className="mt-1 w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm leading-relaxed text-slate-800 shadow-sm"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs font-medium text-slate-800" htmlFor={`brief-solution-${row.siteName}`}>
+                                우리의 해결 / 접근 (사실만)
+                              </label>
+                              <textarea
+                                id={`brief-solution-${row.siteName}`}
+                                value={row.solutionDetail}
+                                onChange={(event) => updateRow(row.siteName, 'solutionDetail', event.target.value)}
+                                rows={4}
+                                placeholder="예: 어떤 제품·구성으로 어떻게 풀었는지 요지만"
+                                className="mt-1 w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm leading-relaxed text-slate-800 shadow-sm"
+                              />
+                            </div>
+                          </div>
+                          <div>
+                            <label className="text-xs font-medium text-slate-800" htmlFor={`brief-hook-${row.siteName}`}>
+                              한 줄 훅 (선택)
+                            </label>
+                            <input
+                              id={`brief-hook-${row.siteName}`}
+                              value={row.headlineHook}
+                              onChange={(event) => updateRow(row.siteName, 'headlineHook', event.target.value)}
+                              placeholder="비우면 브리프·카드 내용 기반으로 자동 제안"
+                              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-xs font-medium text-slate-800" htmlFor={`brief-evidence-${row.siteName}`}>
+                              변화·근거 포인트 (줄바꿈으로 구분, 선택)
+                            </label>
+                            <textarea
+                              id={`brief-evidence-${row.siteName}`}
+                              value={row.evidencePoints}
+                              onChange={(event) => updateRow(row.siteName, 'evidencePoints', event.target.value)}
+                              rows={3}
+                              placeholder={'실측 기반 재배치\n교사 피드백 반영'}
+                              className="mt-1 w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm leading-relaxed text-slate-800 shadow-sm"
+                            />
+                          </div>
+                        </div>
+
+                        <details className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50/40">
+                          <summary className="cursor-pointer list-none px-4 py-3.5 text-center text-sm font-semibold text-slate-800 hover:bg-slate-100 md:text-left">
+                            6장 카드 직접 편집 (선택 · 생성 후 수정)
+                          </summary>
+                          <div className="border-t border-slate-200 p-4">
+                            <div className="space-y-3">
                           {previewSlides.map((slide, index) => {
                             const isDraggingHere = studioDrag?.siteName === row.siteName && studioDrag.index === index
                             return (
@@ -1346,7 +1577,9 @@ export default function ShowroomCaseStudioPage() {
                               </div>
                             )
                           })}
-                        </div>
+                            </div>
+                          </div>
+                        </details>
                         <Dialog open={previewSiteName === row.siteName} onOpenChange={(open) => {
                           if (!open) {
                             setPreviewSiteName(null)
@@ -1494,6 +1727,95 @@ export default function ShowroomCaseStudioPage() {
                           </div>
                           </div>
                         </details>
+                        {row.canonicalBlogPost ? (
+                          <details className="mt-4 w-full overflow-hidden rounded-xl border border-emerald-200 bg-emerald-50/50 text-sm">
+                            <summary className="cursor-pointer list-none px-4 py-3.5 text-center text-sm font-semibold text-emerald-900 hover:bg-emerald-100/60">
+                              블로그 정본 미리보기 · 상태 {row.canonicalBlogPost.status}
+                            </summary>
+                            <div className="border-t border-emerald-200 px-4 py-3 space-y-3">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <p className="text-xs text-slate-600">
+                                  SEO 제목: <span className="font-medium text-slate-800">{row.canonicalBlogPost.seo.title}</span>
+                                </p>
+                                <div className="flex flex-wrap items-center gap-2">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="gap-1.5"
+                                  onClick={() =>
+                                    setBlogViewer({
+                                      displayLabel: getShowroomCasePublicDisplayName(deriveStudioSeedFromSlides(row)),
+                                      post: row.canonicalBlogPost,
+                                      html: buildBlogPreviewHtmlForRow(row),
+                                    })
+                                  }
+                                >
+                                  <Eye className="h-4 w-4" aria-hidden />
+                                  화면 미리보기
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="secondary"
+                                  className="gap-2"
+                                  disabled={
+                                    row.canonicalBlogPost.status === 'approved' || approvingBlogSite === row.siteName
+                                  }
+                                  onClick={() => void handleApproveCanonicalBlog(row)}
+                                >
+                                  {approvingBlogSite === row.siteName ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : null}
+                                  공개 상세에 노출 승인
+                                </Button>
+                                </div>
+                              </div>
+                              <p className="text-[11px] leading-relaxed text-slate-500">
+                                공개 카드뉴스 상세(`/public/showroom/cardnews/...`)에는 승인(approved)된 정본만 노출됩니다.
+                              </p>
+                              {(() => {
+                                const previewHtml = buildBlogPreviewHtmlForRow(row)
+                                const extraImages = filterCanonicalBlogImagesNotInBodyHtml(
+                                  previewHtml,
+                                  row.canonicalBlogPost.images,
+                                )
+                                return extraImages.length > 0 ? (
+                                  <div className="rounded-xl border border-slate-200 bg-slate-50/90 p-3">
+                                    <p className="mb-2 text-[11px] font-medium text-slate-500">
+                                      정본 이미지(본문 HTML에 없는 컷만 표시 · 비포·애프 등)
+                                    </p>
+                                    <div className="grid gap-3 sm:grid-cols-2">
+                                      {extraImages.map((img) => (
+                                        <figure
+                                          key={img.id}
+                                          className="overflow-hidden rounded-lg border border-slate-100 bg-white shadow-sm"
+                                        >
+                                          <img
+                                            src={img.url}
+                                            alt={img.alt}
+                                            className="max-h-80 w-full object-cover"
+                                            loading="lazy"
+                                            decoding="async"
+                                          />
+                                          {img.caption ? (
+                                            <figcaption className="px-2 py-1.5 text-xs text-slate-600">
+                                              {img.caption}
+                                            </figcaption>
+                                          ) : null}
+                                        </figure>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ) : null
+                              })()}
+                              <div
+                                className="showroom-canonical-blog-preview rounded-xl border border-slate-200 bg-white p-4 text-sm leading-relaxed text-slate-800 [&_img]:max-h-80 [&_img]:w-full [&_img]:rounded-lg [&_img]:object-cover"
+                                dangerouslySetInnerHTML={{ __html: buildBlogPreviewHtmlForRow(row) }}
+                              />
+                            </div>
+                          </details>
+                        ) : null}
                       </div>
                       <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-4">
                         <Button
