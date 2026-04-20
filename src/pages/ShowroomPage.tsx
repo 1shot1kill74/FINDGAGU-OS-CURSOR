@@ -845,6 +845,9 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
 
   const detailStoryHref = useMemo(() => {
     if (detailImages.length === 0) return null
+    const hasBefore = detailImages.some((image) => image.before_after_role === 'before')
+    const hasAfter = detailImages.some((image) => image.before_after_role === 'after')
+    if (!hasBefore || !hasAfter) return null
     const siteName = getPreferredShowroomSiteName(detailImages).trim()
     if (!siteName || siteName === '미지정') return null
     return `/public/showroom/case/${encodeURIComponent(siteName)}`

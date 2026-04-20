@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { ArrowRight, ChevronLeft, ChevronRight, Copy, Download, Eye, Hash, Loader2, Send } from 'lucide-react'
+import { ArrowRight, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, Download, Eye, Hash, Loader2, Send } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -89,6 +89,7 @@ export default function ShowroomCaseStudioPage() {
   const [solutionTemplateDrafts, setSolutionTemplateDrafts] = useState<FrameTemplateEditorState[]>([])
   const [evidenceTemplateDrafts, setEvidenceTemplateDrafts] = useState<FrameTemplateEditorState[]>([])
   const [rows, setRows] = useState<CaseDraftState[]>([])
+  const [cardEditorOpenBySite, setCardEditorOpenBySite] = useState<Record<string, boolean>>({})
   const [approvingBlogSite, setApprovingBlogSite] = useState<string | null>(null)
   const [blogViewer, setBlogViewer] = useState<{ displayLabel: string; post: ShowroomCaseCanonicalBlogPost; html: string } | null>(null)
   const [naverPackageState, setNaverPackageState] = useState<{
@@ -450,86 +451,6 @@ export default function ShowroomCaseStudioPage() {
     setEvidenceTemplates(nextEvidence)
     setTemplateManagerOpen(false)
     toast.success('프레임 템플릿을 저장했습니다.')
-  }
-
-  const applyEvidenceSelectionsToSlide = (siteName: string, labels: string[]) => {
-    const picked = evidenceTemplates.filter((item) => labels.includes(item.label))
-    const body = picked.map((item) => `- ${item.label}`).join('\n')
-    setRows((prev) =>
-      prev.map((row) => {
-        if (row.siteName !== siteName) return row
-        return {
-          ...row,
-          evidencePoints: body,
-          cardNewsSlides: row.cardNewsSlides.map((slide) =>
-            slide.key !== 'evidence'
-              ? slide
-              : {
-                  ...slide,
-                  body: body || slide.body,
-                }
-          ),
-        }
-      })
-    )
-  }
-
-  const toggleSpecificProblemSelection = (siteName: string, label: string) => {
-    setRows((prev) =>
-      prev.map((row) => {
-        if (row.siteName !== siteName) return row
-        const slide = row.cardNewsSlides.find((item) => item.key === 'specific-problem')
-        const current = (slide?.body ?? '')
-          .split('\n')
-          .map((line) => line.replace(/^-\s*/, '').trim())
-          .filter(Boolean)
-        const next = current.includes(label)
-          ? current.filter((item) => item !== label)
-          : [...current, label]
-        const body = next.map((item) => `- ${item}`).join('\n')
-        return {
-          ...row,
-          problemDetail: body,
-          cardNewsSlides: row.cardNewsSlides.map((item) =>
-            item.key !== 'specific-problem'
-              ? item
-              : {
-                  ...item,
-                  body,
-                }
-          ),
-        }
-      })
-    )
-  }
-
-  const toggleEvidenceSelection = (siteName: string, label: string) => {
-    setRows((prev) =>
-      prev.map((row) => {
-        if (row.siteName !== siteName) return row
-        const slide = row.cardNewsSlides.find((item) => item.key === 'evidence')
-        const current = (slide?.body ?? '')
-          .split('\n')
-          .map((line) => line.replace(/^-\s*/, '').trim())
-          .filter(Boolean)
-        const next = current.includes(label)
-          ? current.filter((item) => item !== label)
-          : [...current, label]
-        const body = next.map((item) => `- ${item}`).join('\n')
-        return {
-          ...row,
-          evidencePoints: body,
-          cardNewsSlides: row.cardNewsSlides.map((item) =>
-            item.key !== 'evidence'
-              ? item
-              : {
-                  ...item,
-                  body,
-                }
-          ),
-        }
-      })
-    )
   }
 
   const reorderCardNewsSlides = (siteName: string, from: number, to: number) => {
@@ -1577,7 +1498,30 @@ export default function ShowroomCaseStudioPage() {
                         </div>
 
                         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50/40">
-                          <div className="p-4">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setCardEditorOpenBySite((prev) => ({
+                                ...prev,
+                                [row.siteName]: !(
+                                  prev[row.siteName]
+                                  ?? (focusedSiteName === row.siteName && focusedContent === 'cardnews')
+                                ),
+                              }))
+                            }
+                            className="flex w-full items-center justify-between px-4 py-3 text-left text-sm font-semibold text-slate-800 transition hover:bg-slate-100/80"
+                          >
+                            <span>6장 카드 직접 편집</span>
+                            {(cardEditorOpenBySite[row.siteName]
+                              ?? (focusedSiteName === row.siteName && focusedContent === 'cardnews')) ? (
+                              <ChevronUp className="h-4 w-4 text-slate-500" />
+                            ) : (
+                              <ChevronDown className="h-4 w-4 text-slate-500" />
+                            )}
+                          </button>
+                          {(cardEditorOpenBySite[row.siteName]
+                            ?? (focusedSiteName === row.siteName && focusedContent === 'cardnews')) && (
+                          <div className="border-t border-slate-200 p-4">
                             <div className="space-y-3">
                           {previewSlides.map((slide, index) => {
                             const isDraggingHere = studioDrag?.siteName === row.siteName && studioDrag.index === index
@@ -1691,47 +1635,6 @@ export default function ShowroomCaseStudioPage() {
                                       ))}
                                     </select>
                                   ) : null}
-                                  {slide.key === 'specific-problem' ? (
-                                    <div className="mb-2">
-                                      <p className="mb-1 text-[11px] font-medium text-amber-700">구체 문제 템플릿 선택</p>
-                                      <div className="rounded-lg border border-amber-200 bg-amber-50 p-2">
-                                        <div className="max-h-32 space-y-1 overflow-y-auto">
-                                          {specificProblemTemplates.map((template) => {
-                                            const selected = slide.body
-                                              .split('\n')
-                                              .map((line) => line.replace(/^-\s*/, '').trim())
-                                              .filter(Boolean)
-                                              .includes(template.label)
-                                            return (
-                                              <label key={template.id} className="flex cursor-pointer items-start gap-2 rounded-md px-2 py-1 text-xs text-amber-800 hover:bg-amber-100">
-                                                <input
-                                                  type="checkbox"
-                                                  checked={selected}
-                                                  onChange={() => toggleSpecificProblemSelection(row.siteName, template.label)}
-                                                  className="mt-0.5 h-3.5 w-3.5 rounded border-amber-300 text-amber-600"
-                                                />
-                                                <span>{template.label}</span>
-                                              </label>
-                                            )
-                                          })}
-                                        </div>
-                                        <div className="mt-2 flex flex-wrap gap-1.5">
-                                          {slide.body
-                                            .split('\n')
-                                            .map((line) => line.replace(/^-\s*/, '').trim())
-                                            .filter(Boolean)
-                                            .map((label, selectedIndex) => (
-                                              <span
-                                                key={`${label}-${selectedIndex}`}
-                                                className="inline-flex items-center rounded-full bg-white px-2 py-1 text-[11px] font-medium text-amber-700 ring-1 ring-amber-200"
-                                              >
-                                                {selectedIndex + 1}. {label}
-                                              </span>
-                                            ))}
-                                        </div>
-                                      </div>
-                                    </div>
-                                  ) : null}
                                   {slide.key === 'solution' ? (
                                     <select
                                       value=""
@@ -1751,47 +1654,6 @@ export default function ShowroomCaseStudioPage() {
                                       ))}
                                     </select>
                                   ) : null}
-                                  {slide.key === 'evidence' ? (
-                                    <div className="mb-2">
-                                      <p className="mb-1 text-[11px] font-medium text-violet-700">변화 포인트 템플릿 선택</p>
-                                      <div className="rounded-lg border border-violet-200 bg-violet-50 p-2">
-                                        <div className="max-h-32 space-y-1 overflow-y-auto">
-                                          {evidenceTemplates.map((template) => {
-                                            const selected = slide.body
-                                              .split('\n')
-                                              .map((line) => line.replace(/^-\s*/, '').trim())
-                                              .filter(Boolean)
-                                              .includes(template.label)
-                                            return (
-                                              <label key={template.id} className="flex cursor-pointer items-start gap-2 rounded-md px-2 py-1 text-xs text-violet-800 hover:bg-violet-100">
-                                                <input
-                                                  type="checkbox"
-                                                  checked={selected}
-                                                  onChange={() => toggleEvidenceSelection(row.siteName, template.label)}
-                                                  className="mt-0.5 h-3.5 w-3.5 rounded border-violet-300 text-violet-600"
-                                                />
-                                                <span>{template.label}</span>
-                                              </label>
-                                            )
-                                          })}
-                                        </div>
-                                        <div className="mt-2 flex flex-wrap gap-1.5">
-                                          {slide.body
-                                            .split('\n')
-                                            .map((line) => line.replace(/^-\s*/, '').trim())
-                                            .filter(Boolean)
-                                            .map((label, selectedIndex) => (
-                                              <span
-                                                key={`${label}-${selectedIndex}`}
-                                                className="inline-flex items-center rounded-full bg-white px-2 py-1 text-[11px] font-medium text-violet-700 ring-1 ring-violet-200"
-                                              >
-                                                {selectedIndex + 1}. {label}
-                                              </span>
-                                            ))}
-                                        </div>
-                                      </div>
-                                    </div>
-                                  ) : null}
                                   <textarea
                                     value={slide.body}
                                     onChange={(event) => patchCardNewsSlide(row.siteName, slide.id, { body: event.target.value })}
@@ -1805,6 +1667,7 @@ export default function ShowroomCaseStudioPage() {
                           })}
                             </div>
                           </div>
+                          )}
                         </div>
                         <Dialog open={previewSiteName === row.siteName} onOpenChange={(open) => {
                           if (!open) {
