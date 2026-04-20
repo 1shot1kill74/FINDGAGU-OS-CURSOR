@@ -4,6 +4,7 @@
 import type { ShowroomImageAsset } from '@/lib/imageAssetService'
 import { fetchShowroomImageAssets } from '@/lib/imageAssetService'
 import { loadPublicShowroomCardNewsBundle } from '@/lib/publicShowroomCardNewsService'
+import { collectShowroomAliasNamesFromImages } from '@/lib/showroomCaseAlias'
 import { groupBeforeAfterAssets } from '@/lib/showroomImageAssetGrouping'
 import { fetchPublicShowroomAssets } from '@/lib/showroomShareService'
 import { broadenPublicDisplayName } from '@/lib/showroomShareService'
@@ -18,7 +19,7 @@ function getPreferredShowroomSiteName(images: ShowroomImageAsset[]): string {
   for (const image of sorted) {
     const canonical = image.canonical_site_name?.trim()
     if (canonical) return canonical
-    const sn = image.site_name?.trim()
+    const sn = image.raw_site_name?.trim() || image.space_display_name?.trim() || image.site_name?.trim()
     if (sn) return sn
   }
   return '미지정'
@@ -35,22 +36,7 @@ function getPreferredExternalLabel(images: ShowroomImageAsset[]): string | null 
 }
 
 function getDraftLookupNames(images: ShowroomImageAsset[], query: string): string[] {
-  const values = new Set<string>()
-  const push = (value: string | null | undefined) => {
-    const normalized = value?.trim()
-    if (normalized) values.add(normalized)
-  }
-
-  push(query)
-  for (const image of images) {
-    push(image.canonical_site_name)
-    push(image.site_name)
-    push(image.external_display_name)
-    push(image.broad_external_display_name)
-    push(broadenPublicDisplayName(image.external_display_name?.trim() ?? null))
-  }
-
-  return Array.from(values)
+  return Array.from(new Set([query.trim(), ...collectShowroomAliasNamesFromImages(images)].filter(Boolean)))
 }
 
 export type ShowroomCaseApproachBundle = {

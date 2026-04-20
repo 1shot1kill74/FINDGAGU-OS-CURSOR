@@ -46,6 +46,7 @@ import {
   fetchPublishedShowroomCaseProfileDrafts,
   fetchShowroomCaseProfileDrafts,
 } from '@/lib/showroomCaseProfileService'
+import { collectShowroomAliasNamesFromImages } from '@/lib/showroomCaseAlias'
 import { validateBeforeAfterSelection } from '@/lib/showroomShorts'
 
 import {
@@ -571,7 +572,9 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
   }, [beforeAfterGroups, detailKey, detailOpen, showInternalControls, siteGroups])
 
   useEffect(() => {
-    const siteNames = beforeAfterGroups.map((group) => group.siteName)
+    const siteNames = Array.from(new Set(
+      beforeAfterGroups.flatMap((group) => collectShowroomAliasNamesFromImages(group.images))
+    ))
     if (siteNames.length === 0) return
 
     let cancelled = false
@@ -1193,7 +1196,17 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
 
   const getBeforeAfterProfileDraft = useCallback((group: SiteGroup): ShowroomCaseProfileDraftState => {
     const publicLabel = getGroupPublicLabel(group)
-    return caseProfileDraftBySite[group.siteName]
+    const aliases = Array.from(new Set([
+      group.siteName,
+      publicLabel,
+      group.externalDisplayName ?? '',
+      ...collectShowroomAliasNamesFromImages(group.images),
+    ].filter(Boolean)))
+    const matched = aliases
+      .map((key) => caseProfileDraftBySite[key])
+      .find(Boolean)
+    return matched
+      ?? caseProfileDraftBySite[group.siteName]
       ?? (group.externalDisplayName ? caseProfileDraftBySite[group.externalDisplayName] : undefined)
       ?? (publicLabel ? caseProfileDraftBySite[publicLabel] : undefined)
       ?? {

@@ -39,7 +39,7 @@ export function getPreferredShowroomSiteName(images: ShowroomImageAsset[]): stri
   for (const image of sorted) {
     const canonical = image.canonical_site_name?.trim()
     if (canonical) return canonical
-    const siteName = image.site_name?.trim()
+    const siteName = image.raw_site_name?.trim() || image.space_display_name?.trim() || image.site_name?.trim()
     if (siteName) return siteName
   }
   return '미지정'

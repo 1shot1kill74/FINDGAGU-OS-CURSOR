@@ -9,11 +9,13 @@ export interface ShowroomImageAsset {
   cloudinary_url: string
   thumbnail_url: string | null
   public_watermark_status?: string | null
+  raw_site_name?: string | null
   site_name: string | null
   public_group_key?: string | null
   industry_site_order?: number | null
   before_after_site_order?: number | null
   canonical_site_name?: string | null
+  space_display_name?: string | null
   external_display_name?: string | null
   broad_external_display_name?: string | null
   space_id?: string | null
@@ -40,6 +42,8 @@ export function getShowroomAssetGroupKey(asset: ShowroomImageAsset): string {
   if (beforeAfterGroupId) return `before-after:${beforeAfterGroupId}`
   const canonicalSiteName = asset.canonical_site_name?.trim()
   if (canonicalSiteName) return `site:${canonicalSiteName}`
+  const rawSiteName = asset.raw_site_name?.trim()
+  if (rawSiteName) return `site:${rawSiteName}`
   const siteName = asset.site_name?.trim()
   if (siteName) return `site:${siteName}`
   return 'site:미지정'
@@ -65,7 +69,7 @@ export function collectConsultationImagesForSiteRow(
       if (getShowroomAssetGroupKey(a) === gk) push(a)
     }
   }
-  const label = (a: ShowroomImageAsset) => a.canonical_site_name?.trim() || a.site_name?.trim() || ''
+  const label = (a: ShowroomImageAsset) => a.canonical_site_name?.trim() || a.raw_site_name?.trim() || a.site_name?.trim() || ''
   for (const a of allAssets) {
     if (label(a) === siteName) push(a)
   }
@@ -111,7 +115,9 @@ export function mapPublicShowroomRpcRowToShowroomAsset(r: Record<string, unknown
     before_after_role: beforeAfterRole,
     before_after_group_id: beforeAfter.groupId,
     before_after_site_order: beforeAfterSiteOrder,
+    raw_site_name: r.site_name != null ? String(r.site_name) : null,
     canonical_site_name: meta.canonicalSiteName,
+    space_display_name: meta.spaceDisplayName,
     external_display_name: meta.externalDisplayName,
     broad_external_display_name: meta.broadExternalDisplayName,
     space_id: meta.spaceId,
@@ -163,7 +169,9 @@ export async function fetchShowroomImageAssets(): Promise<ShowroomImageAsset[]> 
       return {
         before_after_role: beforeAfter.role,
         before_after_group_id: beforeAfter.groupId,
+        raw_site_name: r.site_name != null ? String(r.site_name) : null,
         canonical_site_name: meta.canonicalSiteName,
+        space_display_name: meta.spaceDisplayName,
         external_display_name: meta.externalDisplayName,
         broad_external_display_name: meta.broadExternalDisplayName,
         space_id: meta.spaceId,

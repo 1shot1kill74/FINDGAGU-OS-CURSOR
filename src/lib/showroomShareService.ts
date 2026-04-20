@@ -35,6 +35,7 @@ function mapToProtectedPublicShowroomAsset(asset: ShowroomImageAsset): ShowroomI
   const isWatermarkReady = asset.public_watermark_status === 'ready'
   return {
     ...asset,
+    raw_site_name: asset.raw_site_name?.trim() || asset.site_name,
     site_name: broadenPublicDisplayName(asset.site_name) ?? asset.site_name,
     cloudinary_url: isWatermarkReady ? asset.cloudinary_url : buildPublicShowroomImageProxyUrl(asset.id, 'full'),
     thumbnail_url: isWatermarkReady ? (asset.thumbnail_url || asset.cloudinary_url) : buildPublicShowroomImageProxyUrl(asset.id, 'thumb'),
