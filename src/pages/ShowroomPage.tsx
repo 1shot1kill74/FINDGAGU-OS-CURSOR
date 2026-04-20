@@ -197,6 +197,27 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
     updateShowroomParams({ concern: value })
   }
 
+  const buildIndustryAwareDisplayName = useCallback((siteName: string | null | undefined, industry: string | null | undefined) => {
+    const base = getBroadPublicLabel(siteName, null).trim()
+    const normalizedIndustry = (industry ?? '').trim()
+    if (!base || !normalizedIndustry) return base
+    if (base.includes(normalizedIndustry)) return base
+
+    const displayIndustryTokens = ['관리형', '학원', '스터디카페', '학교', '아파트', '기타']
+    for (const token of displayIndustryTokens) {
+      if (token !== normalizedIndustry && base.includes(token)) {
+        return base.replace(token, normalizedIndustry)
+      }
+    }
+
+    const parts = base.split(' ')
+    const last = parts.length > 0 ? parts[parts.length - 1] ?? '' : ''
+    if (/^\d{4}$/.test(last) && parts.length >= 2) {
+      return [...parts.slice(0, -1), normalizedIndustry, last].join(' ')
+    }
+    return `${base} ${normalizedIndustry}`.trim()
+  }, [])
+
   const loadShowroomData = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
     if (refreshInFlightRef.current) return
 
@@ -588,11 +609,15 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
           mergedRows.forEach((row) => {
             const publicSiteName = getBroadPublicLabel(row.siteName, null)
             const publicCanonicalSiteName = getBroadPublicLabel(row.canonicalSiteName, null)
+            const industryAwareSiteName = buildIndustryAwareDisplayName(row.siteName, row.industry)
+            const industryAwareCanonicalSiteName = buildIndustryAwareDisplayName(row.canonicalSiteName, row.industry)
             const keys = Array.from(new Set([
               row.siteName.trim(),
               row.canonicalSiteName?.trim() ?? '',
               publicSiteName,
               publicCanonicalSiteName,
+              industryAwareSiteName,
+              industryAwareCanonicalSiteName,
             ].filter(Boolean)))
             const value = {
               painPoint: row.painPoint ?? '',
@@ -615,7 +640,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
     return () => {
       cancelled = true
     }
-  }, [beforeAfterGroups])
+  }, [beforeAfterGroups, buildIndustryAwareDisplayName])
   const detailImageFrameRef = useRef<HTMLDivElement | null>(null)
   const detailAnimatedImageIdRef = useRef<string | null>(null)
   const detailTransitionDirectionRef = useRef<'next' | 'prev'>('next')
@@ -1169,7 +1194,11 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
   }, [])
 
   const getBeforeAfterProfileDraft = useCallback((group: SiteGroup): ShowroomCaseProfileDraftState => {
-    return caseProfileDraftBySite[group.siteName] ?? {
+    const publicLabel = getGroupPublicLabel(group)
+    return caseProfileDraftBySite[group.siteName]
+      ?? (group.externalDisplayName ? caseProfileDraftBySite[group.externalDisplayName] : undefined)
+      ?? (publicLabel ? caseProfileDraftBySite[publicLabel] : undefined)
+      ?? {
       painPoint: '',
       headlineHook: '',
       cardNewsPublication: {
