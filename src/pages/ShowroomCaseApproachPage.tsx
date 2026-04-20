@@ -257,43 +257,32 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
     () => getGeneratedCardNewsSlides(bundle?.profile?.cardNewsGeneration?.response),
     [bundle?.profile?.cardNewsGeneration?.response]
   )
+  const resolvedBundle: ShowroomCaseApproachBundle = bundle ?? {
+    siteName: '',
+    externalLabel: null,
+    businessTypes: [],
+    beforeImage: null,
+    afterImage: null,
+    profile: null,
+  }
   const cardNewsPackage = useMemo(() => buildShowroomCaseCardNewsPackage({
-    siteName: bundle?.siteName ?? '',
-    externalLabel: bundle?.externalLabel ?? null,
-    industry: bundle?.businessTypes[0] ?? null,
-    headlineHook: bundle?.profile?.headlineHook?.trim() || bundle?.profile?.painPoint?.trim() || '',
-    painPoint: bundle?.profile?.painPoint?.trim() || '',
-    problemDetail: bundle?.profile?.problemDetail?.trim() || '',
-    solutionPoint: bundle?.profile?.solutionPoint?.trim() || '',
-    solutionDetail: bundle?.profile?.solutionDetail?.trim() || '',
-    evidencePoints: bundle?.profile?.evidencePoints?.filter((item) => item.trim()) ?? [],
-  }), [bundle])
+    siteName: resolvedBundle.siteName,
+    externalLabel: resolvedBundle.externalLabel,
+    industry: resolvedBundle.businessTypes[0] ?? null,
+    headlineHook: resolvedBundle.profile?.headlineHook?.trim() || resolvedBundle.profile?.painPoint?.trim() || '',
+    painPoint: resolvedBundle.profile?.painPoint?.trim() || '',
+    problemDetail: resolvedBundle.profile?.problemDetail?.trim() || '',
+    solutionPoint: resolvedBundle.profile?.solutionPoint?.trim() || '',
+    solutionDetail: resolvedBundle.profile?.solutionDetail?.trim() || '',
+    evidencePoints: resolvedBundle.profile?.evidencePoints?.filter((item) => item.trim()) ?? [],
+  }), [resolvedBundle])
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-neutral-50 flex items-center justify-center px-4">
-        <p className="text-sm text-neutral-600">사례를 불러오는 중…</p>
-      </div>
-    )
-  }
-
-  if (error || !bundle) {
-    return (
-      <div className="min-h-screen bg-neutral-50 flex flex-col items-center justify-center gap-4 px-4">
-        <p className="text-sm text-neutral-700 text-center max-w-md">{error ?? '표시할 수 없습니다.'}</p>
-        <Button asChild variant="outline">
-          <Link to={backHref}>돌아가기</Link>
-        </Button>
-      </div>
-    )
-  }
-
-  const pain = bundle.profile?.painPoint?.trim() || (bundle.profile?.problemCode ? PROBLEM_FRAME_SUMMARY[bundle.profile.problemCode] ?? '' : '')
-  const solution = bundle.profile?.solutionPoint?.trim() || (bundle.profile?.solutionCode ? SOLUTION_FRAME_SUMMARY[bundle.profile.solutionCode] ?? '' : '')
-  const displayName = bundle.externalLabel?.trim() || bundle.siteName
-  const headlineHook = bundle.profile?.headlineHook?.trim() || pain || '이 공간은 무엇이 달라졌을까요?'
-  const problemDetail = bundle.profile?.problemDetail?.trim()
-  const solutionDetail = bundle.profile?.solutionDetail?.trim()
+  const pain = resolvedBundle.profile?.painPoint?.trim() || (resolvedBundle.profile?.problemCode ? PROBLEM_FRAME_SUMMARY[resolvedBundle.profile.problemCode] ?? '' : '')
+  const solution = resolvedBundle.profile?.solutionPoint?.trim() || (resolvedBundle.profile?.solutionCode ? SOLUTION_FRAME_SUMMARY[resolvedBundle.profile.solutionCode] ?? '' : '')
+  const displayName = resolvedBundle.externalLabel?.trim() || resolvedBundle.siteName
+  const headlineHook = resolvedBundle.profile?.headlineHook?.trim() || pain || '이 공간은 무엇이 달라졌을까요?'
+  const problemDetail = resolvedBundle.profile?.problemDetail?.trim()
+  const solutionDetail = resolvedBundle.profile?.solutionDetail?.trim()
   const normalizedPain = normalizeComparableText(pain)
   const normalizedProblemDetail = normalizeComparableText(problemDetail)
   const normalizedSolution = normalizeComparableText(solution)
@@ -304,7 +293,7 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
   const shouldShowProblemDetail = Boolean(problemDetail) && normalizedPain !== normalizedProblemDetail
   const shouldShowSolutionSummary = Boolean(solution) && !isSolutionPreview
   const shouldShowSolutionDetail = Boolean(solutionDetail) && normalizedSolution !== normalizedSolutionDetail
-  const evidencePoints = bundle.profile?.evidencePoints?.filter((item) => item.trim()) ?? []
+  const evidencePoints = resolvedBundle.profile?.evidencePoints?.filter((item) => item.trim()) ?? []
   const hasCopy = Boolean(pain || solution)
   const generatedDisplaySlides = generatedCardNewsSlides.length > 0
     ? generatedCardNewsSlides.map((slide, index) => {
@@ -357,8 +346,8 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
   }))
   const activeSlide = displaySlides[activeSlideIndex] ?? displaySlides[0]
   const totalSlides = displaySlides.length
-  const beforeHeroUrl = bundle.beforeImage?.thumbnail_url || bundle.beforeImage?.cloudinary_url || ''
-  const afterHeroUrl = bundle.afterImage?.thumbnail_url || bundle.afterImage?.cloudinary_url || ''
+  const beforeHeroUrl = resolvedBundle.beforeImage?.thumbnail_url || resolvedBundle.beforeImage?.cloudinary_url || ''
+  const afterHeroUrl = resolvedBundle.afterImage?.thumbnail_url || resolvedBundle.afterImage?.cloudinary_url || ''
   const hasBeforeAfterImages = Boolean(beforeHeroUrl.trim() && afterHeroUrl.trim())
   const activeSlideImageUrl = getSlideImageUrl({
     role: activeSlide?.role,
@@ -376,7 +365,7 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
   const goToPreviousSlide = () => setActiveSlideIndex((prev) => (prev - 1 + totalSlides) % totalSlides)
   const goToNextSlide = () => setActiveSlideIndex((prev) => (prev + 1) % totalSlides)
 
-  const canonicalBlog = bundle.profile?.canonicalBlogPost ?? null
+  const canonicalBlog = resolvedBundle.profile?.canonicalBlogPost ?? null
   const showCanonicalBlogSection =
     canonicalBlog !== null && (mode === 'internal' || canonicalBlog.status === 'approved')
   const isStoryLayout = mode === 'public' && entry === 'case'
@@ -384,11 +373,11 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
   const showRelatedCases = mode === 'public' && entry === 'case' && Boolean(canonicalBlog?.status === 'approved')
   const relatedCases = useRelatedApprovedBlogCases({
     enabled: showRelatedCases,
-    currentSiteName: bundle.siteName,
-    currentIndustry: bundle.profile?.industry ?? null,
-    currentProblemCode: bundle.profile?.problemCode ?? null,
-    currentSolutionCode: bundle.profile?.solutionCode ?? null,
-    currentBusinessTypes: bundle.businessTypes,
+    currentSiteName: resolvedBundle.siteName,
+    currentIndustry: resolvedBundle.profile?.industry ?? null,
+    currentProblemCode: resolvedBundle.profile?.problemCode ?? null,
+    currentSolutionCode: resolvedBundle.profile?.solutionCode ?? null,
+    currentBusinessTypes: resolvedBundle.businessTypes,
   })
 
   const seoTitle = canonicalBlog?.seo.title?.trim() || `${displayName} — 파인드가구 온라인 쇼룸 사례`
@@ -471,6 +460,25 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
     canonicalUrl,
     jsonLd: pageJsonLd,
   })
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-neutral-50 flex items-center justify-center px-4">
+        <p className="text-sm text-neutral-600">사례를 불러오는 중…</p>
+      </div>
+    )
+  }
+
+  if (error || !bundle) {
+    return (
+      <div className="min-h-screen bg-neutral-50 flex flex-col items-center justify-center gap-4 px-4">
+        <p className="text-sm text-neutral-700 text-center max-w-md">{error ?? '표시할 수 없습니다.'}</p>
+        <Button asChild variant="outline">
+          <Link to={backHref}>돌아가기</Link>
+        </Button>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-neutral-50">
