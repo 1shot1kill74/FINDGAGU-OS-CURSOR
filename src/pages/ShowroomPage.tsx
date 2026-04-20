@@ -40,7 +40,6 @@ import {
   saveShowroomBasicShortsDraft,
   type ShowroomBasicShortsDraftRecord,
 } from '@/lib/showroomBasicShortsDrafts'
-import { formatShowroomCardTextForDisplay } from '@/lib/showroomCaseContentPackage'
 import { openShowroomBlogTeaserLine } from '@/lib/showroomCaseCanonicalBlog'
 import {
   fetchApprovedBlogShowroomCaseProfileDrafts,
@@ -69,7 +68,6 @@ import {
   getPreferredExternalDisplayName,
   getPreferredShowroomSiteName,
   getPrimaryIndustryLabel,
-  getPublicCardNewsHref,
   getPublicLabelsFromImages,
   isConcernTag,
   moveIdBefore,
@@ -1461,7 +1459,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
         <button
           type="button"
           onClick={() => openDetail('beforeAfter', group.siteName)}
-          className="w-full flex-1 text-left"
+          className="flex w-full flex-1 flex-col text-left"
         >
           <div className="grid grid-cols-2">
             <div className="relative aspect-[4/3] bg-neutral-100">
@@ -1489,8 +1487,8 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
               </span>
             </div>
           </div>
-          <div className="p-4">
-            <h4 className="font-semibold text-neutral-900">{showInternalControls ? group.siteName : publicLabel}</h4>
+          <div className={showInternalControls ? 'p-4' : 'flex min-h-[5.5rem] items-start p-4'}>
+            <h4 className="font-semibold leading-snug text-neutral-900">{showInternalControls ? group.siteName : publicLabel}</h4>
             {showInternalControls && group.externalDisplayName && group.externalDisplayName !== group.siteName && (
               <div className="mt-1 flex items-center gap-2 min-w-0">
                 {group.businessTypes[0] && (
@@ -1501,42 +1499,17 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                 <p className="min-w-0 truncate text-[12px] leading-tight text-amber-600">{group.externalDisplayName}</p>
               </div>
             )}
-            {!!caseProfileDraft.painPoint?.trim() && (
-              <div className="mt-2 space-y-1.5 text-sm text-neutral-600">
-                <p className="whitespace-pre-wrap leading-relaxed">
-                  {formatShowroomCardTextForDisplay({
-                    text: caseProfileDraft.painPoint,
-                    role: 'problem',
-                  })}
-                </p>
-              </div>
-            )}
           </div>
         </button>
         <div className="border-t border-emerald-100 bg-emerald-50/50 px-3 py-2">
           <div className="flex flex-col gap-2">
             {!showInternalControls && (
               <div className="rounded-xl bg-white px-3 py-2.5 shadow-sm ring-1 ring-emerald-200/90">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">
-                  {caseProfileDraft.blogTeaserLine?.trim() ? '블로그 소개' : '카드뉴스 제목'}
-                </p>
-                <p className="mt-1 text-sm leading-relaxed text-slate-600">
-                  {(caseProfileDraft.blogTeaserLine ?? '').trim()
-                    || (caseProfileDraft.headlineHook ?? '').trim()
-                    || (caseProfileDraft.painPoint ?? '').trim()
-                    || publicLabel}
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">블로그 소개</p>
+                <p className="mt-1 min-h-[7.5rem] text-sm leading-relaxed text-slate-600 line-clamp-4">
+                  {(caseProfileDraft.blogTeaserLine ?? '').trim()}
                 </p>
               </div>
-            )}
-            {!showInternalControls && caseProfileDraft.cardNewsPublication.isPublished && (
-              <Link
-                to={getPublicCardNewsHref(caseProfileDraft.cardNewsPublication.siteKey || group.siteName)}
-                className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-emerald-700 px-3 py-2 text-sm font-medium text-white transition hover:bg-emerald-800"
-                onClick={(e) => e.stopPropagation()}
-              >
-                카드뉴스 보기
-                <ArrowRight className="h-4 w-4 shrink-0" aria-hidden />
-              </Link>
             )}
           </div>
         </div>
