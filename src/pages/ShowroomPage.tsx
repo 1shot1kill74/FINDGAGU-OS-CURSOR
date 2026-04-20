@@ -46,7 +46,7 @@ import {
   fetchPublishedShowroomCaseProfileDrafts,
   fetchShowroomCaseProfileDrafts,
 } from '@/lib/showroomCaseProfileService'
-import { collectShowroomAliasNamesFromImages } from '@/lib/showroomCaseAlias'
+import { collectShowroomAliasNamesFromImages, collectShowroomIdentityKeys } from '@/lib/showroomCaseAlias'
 import { validateBeforeAfterSelection } from '@/lib/showroomShorts'
 
 import {
@@ -215,6 +215,19 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
       return [...parts.slice(0, -1), normalizedIndustry, last].join(' ')
     }
     return `${base} ${normalizedIndustry}`.trim()
+  }, [])
+
+  const readGeneratedDisplayName = useCallback((response: unknown): string | null => {
+    if (!response || typeof response !== 'object' || Array.isArray(response)) return null
+    const record = response as Record<string, unknown>
+    const direct = typeof record.displayName === 'string' ? record.displayName.trim() : ''
+    if (direct) return direct
+    const request = record.request
+    if (!request || typeof request !== 'object' || Array.isArray(request)) return null
+    const nested = typeof (request as Record<string, unknown>).displayName === 'string'
+      ? ((request as Record<string, unknown>).displayName as string).trim()
+      : ''
+    return nested || null
   }, [])
 
   const loadShowroomData = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
@@ -612,14 +625,27 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
             const publicCanonicalSiteName = getBroadPublicLabel(row.canonicalSiteName, null)
             const industryAwareSiteName = buildIndustryAwareDisplayName(row.siteName, row.industry)
             const industryAwareCanonicalSiteName = buildIndustryAwareDisplayName(row.canonicalSiteName, row.industry)
-            const keys = Array.from(new Set([
+            const canonicalBlogTitle = row.canonicalBlogPost?.title?.trim() ?? ''
+            const canonicalBlogSeoTitle = row.canonicalBlogPost?.seo.title?.trim() ?? ''
+            const cardNewsDisplayName = readGeneratedDisplayName(row.cardNewsGeneration.response)
+            const blogDisplayName = readGeneratedDisplayName(row.blogGeneration.response)
+            const aliasKeys = [
               row.siteName.trim(),
               row.canonicalSiteName?.trim() ?? '',
               publicSiteName,
               publicCanonicalSiteName,
               industryAwareSiteName,
               industryAwareCanonicalSiteName,
-            ].filter(Boolean)))
+              canonicalBlogTitle,
+              canonicalBlogSeoTitle,
+              cardNewsDisplayName ?? '',
+              blogDisplayName ?? '',
+            ].filter(Boolean)
+            const identityKeys = collectShowroomIdentityKeys(aliasKeys)
+            const keys = Array.from(new Set([
+              ...aliasKeys,
+              ...identityKeys,
+            ]))
             const value = {
               painPoint: row.painPoint ?? '',
               headlineHook: row.headlineHook ?? '',
@@ -641,7 +667,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
     return () => {
       cancelled = true
     }
-  }, [beforeAfterGroups, buildIndustryAwareDisplayName])
+  }, [beforeAfterGroups, buildIndustryAwareDisplayName, readGeneratedDisplayName])
   const detailImageFrameRef = useRef<HTMLDivElement | null>(null)
   const detailAnimatedImageIdRef = useRef<string | null>(null)
   const detailTransitionDirectionRef = useRef<'next' | 'prev'>('next')
@@ -1196,11 +1222,18 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
 
   const getBeforeAfterProfileDraft = useCallback((group: SiteGroup): ShowroomCaseProfileDraftState => {
     const publicLabel = getGroupPublicLabel(group)
+    const imageAliases = collectShowroomAliasNamesFromImages(group.images)
     const aliases = Array.from(new Set([
       group.siteName,
       publicLabel,
       group.externalDisplayName ?? '',
-      ...collectShowroomAliasNamesFromImages(group.images),
+      ...imageAliases,
+      ...collectShowroomIdentityKeys([
+        group.siteName,
+        publicLabel,
+        group.externalDisplayName ?? '',
+        ...imageAliases,
+      ]),
     ].filter(Boolean)))
     const matched = aliases
       .map((key) => caseProfileDraftBySite[key])

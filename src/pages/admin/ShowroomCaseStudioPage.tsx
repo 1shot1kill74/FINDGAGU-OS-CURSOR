@@ -1314,7 +1314,13 @@ export default function ShowroomCaseStudioPage() {
                     }
                   })
                   const activePreviewSlide = previewSlides[previewSlideIndex] ?? previewSlides[0] ?? null
-                  const n8nPayload = buildShowroomCaseN8nPayload(deriveStudioSeedFromSlides(row), {
+                  const generationSeed = deriveStudioSeedFromSlides(row)
+                  const cardNewsGenerationPayload = buildShowroomCaseN8nPayload(generationSeed, {
+                    // 새 카드뉴스 생성은 현재 편집 슬라이드보다 "한줄 훅"과 시드값을 우선한다.
+                    cardNewsPackage: buildShowroomCaseCardNewsPackage(generationSeed),
+                    projectImages,
+                  })
+                  const blogGenerationPayload = buildShowroomCaseN8nPayload(generationSeed, {
                     cardNewsPackage: studioRowToCardPackage(row),
                     projectImages,
                   })
@@ -1416,7 +1422,7 @@ export default function ShowroomCaseStudioPage() {
                                 void requestContentGeneration({
                                   row,
                                   channel: 'cardnews',
-                                  payload: n8nPayload,
+                                  payload: cardNewsGenerationPayload,
                                 })
                               }}
                             >
@@ -1457,7 +1463,7 @@ export default function ShowroomCaseStudioPage() {
                                 void requestContentGeneration({
                                   row,
                                   channel: 'blog',
-                                  payload: n8nPayload,
+                                  payload: blogGenerationPayload,
                                 })
                               }}
                             >
@@ -1570,18 +1576,8 @@ export default function ShowroomCaseStudioPage() {
                           </div>
                         </div>
 
-                        <details
-                          className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50/40"
-                          open={
-                            focusedSiteName === row.siteName && focusedContent === 'cardnews'
-                              ? true
-                              : undefined
-                          }
-                        >
-                          <summary className="cursor-pointer list-none px-4 py-3.5 text-center text-sm font-semibold text-slate-800 hover:bg-slate-100 md:text-left">
-                            6장 카드 직접 편집 (선택 · 생성 후 수정)
-                          </summary>
-                          <div className="border-t border-slate-200 p-4">
+                        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50/40">
+                          <div className="p-4">
                             <div className="space-y-3">
                           {previewSlides.map((slide, index) => {
                             const isDraggingHere = studioDrag?.siteName === row.siteName && studioDrag.index === index
@@ -1809,7 +1805,7 @@ export default function ShowroomCaseStudioPage() {
                           })}
                             </div>
                           </div>
-                        </details>
+                        </div>
                         <Dialog open={previewSiteName === row.siteName} onOpenChange={(open) => {
                           if (!open) {
                             setPreviewSiteName(null)

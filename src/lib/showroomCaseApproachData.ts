@@ -4,7 +4,7 @@
 import type { ShowroomImageAsset } from '@/lib/imageAssetService'
 import { fetchShowroomImageAssets } from '@/lib/imageAssetService'
 import { loadPublicShowroomCardNewsBundle } from '@/lib/publicShowroomCardNewsService'
-import { collectShowroomAliasNamesFromImages } from '@/lib/showroomCaseAlias'
+import { collectShowroomAliasNamesFromImages, collectShowroomIdentityKeys } from '@/lib/showroomCaseAlias'
 import { groupBeforeAfterAssets } from '@/lib/showroomImageAssetGrouping'
 import { fetchPublicShowroomAssets } from '@/lib/showroomShareService'
 import { broadenPublicDisplayName } from '@/lib/showroomShareService'
@@ -36,7 +36,23 @@ function getPreferredExternalLabel(images: ShowroomImageAsset[]): string | null 
 }
 
 function getDraftLookupNames(images: ShowroomImageAsset[], query: string): string[] {
-  return Array.from(new Set([query.trim(), ...collectShowroomAliasNamesFromImages(images)].filter(Boolean)))
+  const aliases = [query.trim(), ...collectShowroomAliasNamesFromImages(images)].filter(Boolean)
+  return Array.from(new Set([...aliases, ...collectShowroomIdentityKeys(aliases)]))
+}
+
+function getImageIdentityKeys(images: ShowroomImageAsset[], extraValues: string[] = []): string[] {
+  return collectShowroomIdentityKeys([
+    ...extraValues,
+    ...collectShowroomAliasNamesFromImages(images),
+    ...images.flatMap((image) => [
+      image.site_name?.trim() ?? '',
+      image.raw_site_name?.trim() ?? '',
+      image.space_display_name?.trim() ?? '',
+      image.canonical_site_name?.trim() ?? '',
+      image.external_display_name?.trim() ?? '',
+      image.broad_external_display_name?.trim() ?? '',
+    ]),
+  ])
 }
 
 export type ShowroomCaseApproachBundle = {
@@ -123,10 +139,13 @@ export async function loadShowroomCaseApproachBundle(
       const internalGroups = groupBeforeAfterAssets(internalAssets)
       const publicSiteName = getPreferredShowroomSiteName(matched)
       const publicExternalLabel = getPreferredExternalLabel(matched)
+      const publicIdentityKeys = new Set(getImageIdentityKeys(matched, [query, publicSiteName, publicExternalLabel ?? '']))
 
       for (const [, internalImages] of internalGroups) {
         const internalSiteName = getPreferredShowroomSiteName(internalImages)
         const internalExternalLabel = getPreferredExternalLabel(internalImages)
+        const internalIdentityKeys = getImageIdentityKeys(internalImages, [internalSiteName, internalExternalLabel ?? ''])
+        const sharesIdentityKey = internalIdentityKeys.some((key) => publicIdentityKeys.has(key))
         const matchesPublicGroup =
           internalSiteName === query
           || internalSiteName === publicSiteName
@@ -150,6 +169,7 @@ export async function loadShowroomCaseApproachBundle(
             || broadenPublicDisplayName(image.external_display_name?.trim() ?? null) === publicSiteName
             || (publicExternalLabel ? broadenPublicDisplayName(image.external_display_name?.trim() ?? null) === publicExternalLabel : false)
           )
+          || sharesIdentityKey
 
         if (matchesPublicGroup) {
           draftLookupNames = getDraftLookupNames(internalImages, query)

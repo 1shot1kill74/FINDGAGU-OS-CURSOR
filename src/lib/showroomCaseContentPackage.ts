@@ -68,7 +68,7 @@ function sortBeforeAfterRole(
 }
 
 /**
- * 훅·애프터 / 문제 인식·비포어 / 구체 문제·비포어 / 해결·애프터 / 변화·애프터 / CTA·브랜드 시그니처
+ * 훅·애프터 / 문제 인식·비포어 / 구체 문제·애프터 / 해결·애프터 / 변화·애프터 / CTA·브랜드 시그니처
  */
 export function buildDefaultCardNewsImageRefs(
   images: ShowroomImageAsset[] | undefined | null,
@@ -78,7 +78,7 @@ export function buildDefaultCardNewsImageRefs(
   const mainAfter = afters.find((i) => i.is_main) ?? afters[0]
   const hook = mainAfter ? makeCardNewsAssetImageRef(mainAfter.id) : 'after'
   const problem = befores[0] ? makeCardNewsAssetImageRef(befores[0]!.id) : 'before'
-  const specificProblem = befores[1] ? makeCardNewsAssetImageRef(befores[1]!.id) : befores[0] ? makeCardNewsAssetImageRef(befores[0]!.id) : 'before'
+  const specificProblem = afters[1] ? makeCardNewsAssetImageRef(afters[1]!.id) : mainAfter ? makeCardNewsAssetImageRef(mainAfter.id) : 'after'
   const solution = afters[1] ? makeCardNewsAssetImageRef(afters[1]!.id) : mainAfter ? makeCardNewsAssetImageRef(mainAfter.id) : 'after'
   const evidence = afters[2] ? makeCardNewsAssetImageRef(afters[2]!.id) : mainAfter ? makeCardNewsAssetImageRef(mainAfter.id) : 'after'
   const cta: CardNewsSlideImageRef = 'signature'
