@@ -42,7 +42,11 @@ import {
 } from '@/lib/showroomBasicShortsDrafts'
 import { formatShowroomCardTextForDisplay } from '@/lib/showroomCaseContentPackage'
 import { openShowroomBlogTeaserLine } from '@/lib/showroomCaseCanonicalBlog'
-import { fetchShowroomCaseProfileDrafts } from '@/lib/showroomCaseProfileService'
+import {
+  fetchApprovedBlogShowroomCaseProfileDrafts,
+  fetchPublishedShowroomCaseProfileDrafts,
+  fetchShowroomCaseProfileDrafts,
+} from '@/lib/showroomCaseProfileService'
 import { validateBeforeAfterSelection } from '@/lib/showroomShorts'
 
 import {
@@ -552,15 +556,43 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
     if (siteNames.length === 0) return
 
     let cancelled = false
-    void fetchShowroomCaseProfileDrafts(siteNames)
-      .then((rows) => {
+    void Promise.all([
+      fetchShowroomCaseProfileDrafts(siteNames),
+      fetchPublishedShowroomCaseProfileDrafts(),
+      fetchApprovedBlogShowroomCaseProfileDrafts(),
+    ])
+      .then(([exactRows, publishedRows, approvedBlogRows]) => {
         if (cancelled) return
         setCaseProfileDraftBySite((prev) => {
           const next = { ...prev }
-          rows.forEach((row) => {
+          const mergedRows = new Map<string, typeof exactRows[number]>()
+          ;[...exactRows, ...publishedRows, ...approvedBlogRows].forEach((row) => {
+            const siteName = row.siteName.trim()
+            if (!siteName) return
+            const existing = mergedRows.get(siteName)
+            if (!existing) {
+              mergedRows.set(siteName, row)
+              return
+            }
+            mergedRows.set(siteName, {
+              ...existing,
+              painPoint: existing.painPoint ?? row.painPoint,
+              headlineHook: existing.headlineHook ?? row.headlineHook,
+              cardNewsPublication: row.cardNewsPublication.isPublished
+                ? row.cardNewsPublication
+                : existing.cardNewsPublication,
+              canonicalBlogPost: existing.canonicalBlogPost ?? row.canonicalBlogPost,
+            })
+          })
+
+          mergedRows.forEach((row) => {
+            const publicSiteName = getBroadPublicLabel(row.siteName, null)
+            const publicCanonicalSiteName = getBroadPublicLabel(row.canonicalSiteName, null)
             const keys = Array.from(new Set([
               row.siteName.trim(),
               row.canonicalSiteName?.trim() ?? '',
+              publicSiteName,
+              publicCanonicalSiteName,
             ].filter(Boolean)))
             const value = {
               painPoint: row.painPoint ?? '',
