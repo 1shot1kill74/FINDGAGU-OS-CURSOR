@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && npm run build:sitemap && npm run build:prerender",
+    "build:sitemap": "tsx scripts/buildSitemap.ts",
+    "build:prerender": "tsx scripts/prerenderShowroomCases.ts",
     "lint": "eslint .",
     "preview": "vite preview",
     "migrate:preview": "tsx scripts/migrate-data.ts --mode preview",

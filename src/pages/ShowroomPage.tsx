@@ -41,6 +41,7 @@ import {
   type ShowroomBasicShortsDraftRecord,
 } from '@/lib/showroomBasicShortsDrafts'
 import { formatShowroomCardTextForDisplay } from '@/lib/showroomCaseContentPackage'
+import { openShowroomBlogTeaserLine } from '@/lib/showroomCaseCanonicalBlog'
 import { fetchShowroomCaseProfileDrafts } from '@/lib/showroomCaseProfileService'
 import { validateBeforeAfterSelection } from '@/lib/showroomShorts'
 
@@ -85,7 +86,6 @@ import type {
   SiteGroup,
   ViewMode,
 } from '@/pages/showroom/showroomPageTypes'
-
 
 export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
   const showInternalControls = mode === 'internal'
@@ -564,10 +564,12 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
             ].filter(Boolean)))
             const value = {
               painPoint: row.painPoint ?? '',
+              headlineHook: row.headlineHook ?? '',
               cardNewsPublication: {
                 isPublished: row.cardNewsPublication.isPublished,
                 siteKey: row.cardNewsPublication.siteKey,
               },
+              blogTeaserLine: openShowroomBlogTeaserLine(row.canonicalBlogPost),
             }
             keys.forEach((key) => {
               next[key] = value
@@ -1137,10 +1139,12 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
   const getBeforeAfterProfileDraft = useCallback((group: SiteGroup): ShowroomCaseProfileDraftState => {
     return caseProfileDraftBySite[group.siteName] ?? {
       painPoint: '',
+      headlineHook: '',
       cardNewsPublication: {
         isPublished: false,
         siteKey: null,
       },
+      blogTeaserLine: null,
     }
   }, [caseProfileDraftBySite])
 
@@ -1384,6 +1388,8 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
     const isPriorityEditorOpen = priorityEditorOpenByKey[priorityKey] === true
     const caseProfileDraft = getBeforeAfterProfileDraft(group)
     const publicLabel = getGroupPublicLabel(group)
+    const cardNewsStudioHref = `/admin/showroom-case-studio?site=${encodeURIComponent(group.siteName)}&focus=cardnews`
+    const blogStudioHref = `/admin/showroom-case-studio?site=${encodeURIComponent(group.siteName)}&focus=blog`
     if (!beforeImage || !afterImage) return null
 
     return (
@@ -1434,7 +1440,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                 <p className="min-w-0 truncate text-[12px] leading-tight text-amber-600">{group.externalDisplayName}</p>
               </div>
             )}
-            {caseProfileDraft.painPoint.trim() && (
+            {!!caseProfileDraft.painPoint?.trim() && (
               <div className="mt-2 space-y-1.5 text-sm text-neutral-600">
                 <p className="whitespace-pre-wrap leading-relaxed">
                   {formatShowroomCardTextForDisplay({
@@ -1448,16 +1454,19 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
         </button>
         <div className="border-t border-emerald-100 bg-emerald-50/50 px-3 py-2">
           <div className="flex flex-col gap-2">
-            <Link
-              to={showInternalControls
-                ? `/admin/showroom-case-studio?site=${encodeURIComponent(group.siteName)}`
-                : `/public/showroom/case/${encodeURIComponent(group.siteName)}`}
-              className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-white px-3 py-2 text-sm font-medium text-emerald-900 shadow-sm ring-1 ring-emerald-200/90 transition hover:bg-emerald-50"
-              onClick={(e) => e.stopPropagation()}
-            >
-              {showInternalControls ? '케이스 작업실에서 편집' : '기획 방식 자세히 보기'}
-              <ArrowRight className="h-4 w-4 shrink-0" aria-hidden />
-            </Link>
+            {!showInternalControls && (
+              <div className="rounded-xl bg-white px-3 py-2.5 shadow-sm ring-1 ring-emerald-200/90">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">
+                  {caseProfileDraft.blogTeaserLine?.trim() ? '블로그 소개' : '카드뉴스 제목'}
+                </p>
+                <p className="mt-1 text-sm leading-relaxed text-slate-600">
+                  {(caseProfileDraft.blogTeaserLine ?? '').trim()
+                    || (caseProfileDraft.headlineHook ?? '').trim()
+                    || (caseProfileDraft.painPoint ?? '').trim()
+                    || publicLabel}
+                </p>
+              </div>
+            )}
             {!showInternalControls && caseProfileDraft.cardNewsPublication.isPublished && (
               <Link
                 to={getPublicCardNewsHref(caseProfileDraft.cardNewsPublication.siteKey || group.siteName)}
@@ -1475,6 +1484,20 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
             <p className="text-xs text-neutral-500">
               이 쇼룸은 직원과 고객이 같은 화면으로 사례를 설명하는 용도입니다. 콘텐츠 작성·수정은 케이스 작업실에서 진행하세요.
             </p>
+            <div className="grid grid-cols-2 gap-2">
+              <Link to={cardNewsStudioHref}>
+                <Button type="button" variant="outline" className="h-10 w-full gap-1.5 text-sm">
+                  <FileText className="h-4 w-4" />
+                  카드뉴스 제작
+                </Button>
+              </Link>
+              <Link to={blogStudioHref}>
+                <Button type="button" variant="outline" className="h-10 w-full gap-1.5 text-sm">
+                  <FileCheck className="h-4 w-4" />
+                  블로그 제작
+                </Button>
+              </Link>
+            </div>
             <div className="rounded-xl border border-neutral-200 bg-white px-3 py-2.5">
               <div className="flex items-center justify-between gap-2">
                 <p className="text-xs font-medium text-neutral-800">현장 노출 순서</p>

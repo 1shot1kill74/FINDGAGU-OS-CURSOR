@@ -540,7 +540,43 @@ function parseMarkdownChunks(block: string): MarkdownChunk[] {
   return chunks
 }
 
-function renderMarkdownBlockHtml(block: string): string {
+type ImageLabelKind = 'before' | 'after' | null
+
+function detectImageLabelFromAlt(alt: string): ImageLabelKind {
+  const a = String(alt ?? '').toLowerCase()
+  if (!a) return null
+  if (/(비포|before|리모델링\s*전|시공\s*전|이전\s*모습|기존\s*모습)/i.test(a)) return 'before'
+  if (/(애프터|after|리모델링\s*후|시공\s*후|이후\s*모습|변화된|새롭게|리뉴얼\s*후)/i.test(a)) return 'after'
+  return null
+}
+
+function buildLabeledFigureHtml(safeUrl: string, alt: string, label: 'Before' | 'After'): string {
+  const srcEsc = escapeHtmlForCanonicalBlog(safeUrl)
+  const altEsc = escapeHtmlForCanonicalBlog(alt)
+  const badgeBg = label === 'Before' ? 'bg-slate-900/85' : 'bg-emerald-700/90'
+  return (
+    `<figure class="my-6 mx-auto max-w-3xl">` +
+    `<img src="${srcEsc}" alt="${altEsc}" class="w-full rounded-lg object-cover" loading="lazy" decoding="async" />` +
+    `<figcaption class="mt-2 flex justify-center">` +
+    `<span class="inline-flex items-center rounded-full ${badgeBg} px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-white">${label}</span>` +
+    `</figcaption>` +
+    `</figure>`
+  )
+}
+
+function buildPlainFigureHtml(safeUrl: string, alt: string): string {
+  const srcEsc = escapeHtmlForCanonicalBlog(safeUrl)
+  const altEsc = escapeHtmlForCanonicalBlog(alt)
+  return `<figure class="my-6 mx-auto max-w-3xl"><img src="${srcEsc}" alt="${altEsc}" class="w-full rounded-lg object-cover" loading="lazy" decoding="async" /></figure>`
+}
+
+type ArticleRenderState = {
+  beforeLabeled: boolean
+  afterLabeled: boolean
+  imageIndex: number
+}
+
+function renderMarkdownBlockHtml(block: string, state: ArticleRenderState): string {
   const trimmed = block.trim()
   if (!trimmed) return ''
   const chunks = parseMarkdownChunks(trimmed)
@@ -559,15 +595,30 @@ function renderMarkdownBlockHtml(block: string): string {
     }
     flushText()
     const safeUrl = sanitizeCanonicalBlogHttpsUrl(ch.urlRaw)
-    if (safeUrl) {
-      const srcEsc = escapeHtmlForCanonicalBlog(safeUrl)
-      const altEsc = escapeHtmlForCanonicalBlog(ch.alt)
-      pieces.push(
-        `<figure class="my-6 mx-auto max-w-3xl"><img src="${srcEsc}" alt="${altEsc}" class="w-full rounded-lg object-cover" loading="lazy" decoding="async" /></figure>`,
-      )
-    } else {
+    if (!safeUrl) {
       textBuf += `![${ch.alt}](${ch.urlRaw})`
+      continue
     }
+    const detected = detectImageLabelFromAlt(ch.alt)
+    const isHeadArea = state.imageIndex < 2
+    let figureHtml: string
+    if (detected === 'before' && !state.beforeLabeled && isHeadArea) {
+      figureHtml = buildLabeledFigureHtml(safeUrl, ch.alt, 'Before')
+      state.beforeLabeled = true
+    } else if (detected === 'after' && !state.afterLabeled && isHeadArea) {
+      figureHtml = buildLabeledFigureHtml(safeUrl, ch.alt, 'After')
+      state.afterLabeled = true
+    } else if (!state.beforeLabeled && state.imageIndex === 0) {
+      figureHtml = buildLabeledFigureHtml(safeUrl, ch.alt, 'Before')
+      state.beforeLabeled = true
+    } else if (!state.afterLabeled && state.imageIndex === 1) {
+      figureHtml = buildLabeledFigureHtml(safeUrl, ch.alt, 'After')
+      state.afterLabeled = true
+    } else {
+      figureHtml = buildPlainFigureHtml(safeUrl, ch.alt)
+    }
+    pieces.push(figureHtml)
+    state.imageIndex += 1
   }
   flushText()
   return pieces.join('')
@@ -578,14 +629,119 @@ export function plainMarkdownToSafeArticleHtml(markdown: string): string {
   const t = String(markdown ?? '').trim()
   if (!t) return '<article class="showroom-canonical-blog"></article>'
   const blocks = t.split(/\n\n+/).filter(Boolean)
-  const inner = blocks.map(renderMarkdownBlockHtml).join('')
+  const state: ArticleRenderState = { beforeLabeled: false, afterLabeled: false, imageIndex: 0 }
+  const inner = blocks.map((b) => renderMarkdownBlockHtml(b, state)).join('')
   return `<article class="showroom-canonical-blog space-y-1 max-w-none">${inner}</article>`
+}
+
+const OPEN_SHOWROOM_TEASER_MAX = 360
+
+function clampOpenShowroomTeaser(text: string): string {
+  const t = text.trim()
+  if (!t) return ''
+  return t.length > OPEN_SHOWROOM_TEASER_MAX ? `${t.slice(0, OPEN_SHOWROOM_TEASER_MAX - 1)}…` : t
+}
+
+/**
+ * 블로그 마크다운에서 첫 번째 본문 문단(제목·이미지 블록 제외)을 평문으로 추출한다.
+ * 오픈 쇼룸 카드 등 짧은 티저용.
+ */
+export function extractFirstPlainParagraphFromBlogMarkdown(markdown: string): string | null {
+  const raw = String(markdown ?? '').trim()
+  if (!raw) return null
+  const blocks = raw.split(/\n\n+/).map((b) => b.trim()).filter(Boolean)
+  for (const block of blocks) {
+    const oneLine = block.replace(/\s*\n\s*/g, ' ').trim()
+    if (/^#{1,6}\s/.test(oneLine)) continue
+    if (/^!\[/.test(block)) continue
+    if (/^<[a-z]/i.test(block.trim())) continue
+    let t = oneLine.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    t = t.replace(/\*\*([^*]+)\*\*/g, '$1')
+    t = t.replace(/\*([^*]+)\*/g, '$1')
+    t = t.replace(/^#{1,6}\s+/, '').trim()
+    if (t.length >= 8) return t
+  }
+  return null
+}
+
+/**
+ * 공개 오픈 쇼룸 카드 하단에 넣을 한 줄 소개.
+ * 우선순위: 승인된 정본만 — 본문 첫 문단 → SEO 설명 → 핵심 요약(featuredAnswer).
+ */
+export function openShowroomBlogTeaserLine(post: ShowroomCaseCanonicalBlogPost | null): string | null {
+  if (!post || post.status !== 'approved') return null
+  const md = post.bodyMarkdown?.trim()
+  if (md) {
+    const fromBody = extractFirstPlainParagraphFromBlogMarkdown(md)
+    if (fromBody) return clampOpenShowroomTeaser(fromBody)
+  }
+  const seo = post.seo?.seoDescription?.trim()
+  if (seo) return clampOpenShowroomTeaser(seo)
+  const fa = post.structured?.featuredAnswer?.trim()
+  if (fa) return clampOpenShowroomTeaser(fa)
+  return null
 }
 
 export type N8nShowroomCaseBlogPayload = {
   title: string
   summary: string
   bodyMarkdown: string
+  seo?: {
+    seoTitle?: string | null
+    seoDescription?: string | null
+    ogTitle?: string | null
+    ogDescription?: string | null
+    keywords?: string[] | null
+    canonicalPath?: string | null
+  } | null
+  structured?: {
+    featuredAnswer?: string | null
+    faqItems?: Array<{ question: string; answer: string }> | null
+    geoPoints?: string[] | null
+  } | null
+}
+
+function readObj(record: Record<string, unknown>, key: string): Record<string, unknown> | null {
+  const v = record[key]
+  return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null
+}
+
+function readStr(record: Record<string, unknown> | null, ...keys: string[]): string | null {
+  if (!record) return null
+  for (const k of keys) {
+    const v = record[k]
+    if (typeof v === 'string' && v.trim()) return v.trim()
+  }
+  return null
+}
+
+function readStringArray(record: Record<string, unknown> | null, ...keys: string[]): string[] {
+  if (!record) return []
+  for (const k of keys) {
+    const v = record[k]
+    if (Array.isArray(v)) {
+      return v.map((x) => (typeof x === 'string' ? x.trim() : '')).filter((s) => s.length > 0)
+    }
+  }
+  return []
+}
+
+function readFaqArray(record: Record<string, unknown> | null, ...keys: string[]): Array<{ question: string; answer: string }> {
+  if (!record) return []
+  for (const k of keys) {
+    const v = record[k]
+    if (!Array.isArray(v)) continue
+    const out: Array<{ question: string; answer: string }> = []
+    for (const item of v) {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) continue
+      const r = item as Record<string, unknown>
+      const q = readStr(r, 'question', 'q', 'Q')
+      const a = readStr(r, 'answer', 'a', 'A')
+      if (q && a) out.push({ question: q, answer: a })
+    }
+    return out
+  }
+  return []
 }
 
 /** 쇼룸 케이스 n8n 웹훅 응답에서 블로그 JSON을 꺼냅니다 (`블로그 결과 정리` 노드 출력 형식). */
@@ -611,10 +767,34 @@ export function extractN8nShowroomCaseBlogPayload(parsed: unknown): N8nShowroomC
 
   if (!title || !bodyMarkdown) return null
 
+  const seoRaw = readObj(blog, 'seo') ?? readObj(blog, 'SEO')
+  const structuredRaw = readObj(blog, 'structured') ?? readObj(blog, 'aeo') ?? readObj(blog, 'AEO')
+
+  const seo = seoRaw
+    ? {
+        seoTitle: readStr(seoRaw, 'seo_title', 'seoTitle', 'title'),
+        seoDescription: readStr(seoRaw, 'seo_description', 'seoDescription', 'description'),
+        ogTitle: readStr(seoRaw, 'og_title', 'ogTitle'),
+        ogDescription: readStr(seoRaw, 'og_description', 'ogDescription'),
+        keywords: readStringArray(seoRaw, 'keywords', 'seo_keywords'),
+        canonicalPath: readStr(seoRaw, 'canonical_path', 'canonicalPath'),
+      }
+    : null
+
+  const structured = structuredRaw
+    ? {
+        featuredAnswer: readStr(structuredRaw, 'featured_answer', 'featuredAnswer'),
+        faqItems: readFaqArray(structuredRaw, 'faq_items', 'faqItems', 'faq'),
+        geoPoints: readStringArray(structuredRaw, 'geo_points', 'geoPoints'),
+      }
+    : null
+
   return {
     title,
     summary,
     bodyMarkdown,
+    seo,
+    structured,
   }
 }
 
@@ -658,83 +838,6 @@ export function stripBrokenBlogImageTailLines(markdown: string): string {
     .replace(/\n{3,}/g, '\n\n')
     .trim()
   return out
-}
-
-type InjectFigure = { url: string; alt: string }
-
-/** 본문 HTML에 아직 없는 URL을 `</article>` 직전에 figure/img로 삽입한다. */
-function injectMissingImageFiguresIntoArticleHtml(
-  bodyHtml: string,
-  figures: InjectFigure[],
-): string {
-  let html = String(bodyHtml ?? '')
-  const pieces: string[] = []
-  const seen = new Set<string>()
-  for (const fig of figures) {
-    const url = fig.url?.trim()
-    if (!url || !/^https:\/\//i.test(url)) continue
-    if (seen.has(url)) continue
-    seen.add(url)
-    const srcEsc = escapeHtmlForCanonicalBlog(url)
-    if (html.includes(`src="${srcEsc}"`) || html.includes(srcEsc)) continue
-    const altEsc = escapeHtmlForCanonicalBlog(fig.alt)
-    pieces.push(
-      `<figure class="my-6 mx-auto max-w-3xl"><img src="${srcEsc}" alt="${altEsc}" class="w-full rounded-lg object-cover" loading="lazy" decoding="async" /></figure>`,
-    )
-  }
-  if (pieces.length === 0) return html
-  const inject = pieces.join('')
-  const closeIdx = html.lastIndexOf('</article>')
-  if (closeIdx !== -1) return `${html.slice(0, closeIdx)}${inject}${html.slice(closeIdx)}`
-  return `${html}${inject}`
-}
-
-function buildInjectFiguresFromContextAndHeroes(params: {
-  imageContext: ShowroomCaseN8nImageContextItem[] | undefined | null
-  siteName: string
-  beforeUrl?: string | null
-  afterUrl?: string | null
-}): InjectFigure[] {
-  const out: InjectFigure[] = []
-  const bu = params.beforeUrl?.trim()
-  const au = params.afterUrl?.trim()
-  const sn = params.siteName.trim()
-  if (bu && /^https:\/\//i.test(bu)) {
-    out.push({ url: bu, alt: `${sn} 비포 현장` })
-  }
-  if (au && /^https:\/\//i.test(au)) {
-    out.push({ url: au, alt: `${sn} 애프터 현장` })
-  }
-  const ctx = Array.isArray(params.imageContext) ? params.imageContext : []
-  for (const row of ctx) {
-    const url = row.url?.trim()
-    if (!url || !/^https:\/\//i.test(url)) continue
-    out.push({ url, alt: altFromImageContextRow(row) })
-  }
-  return out
-}
-
-/**
- * n8n `body_markdown`에 `![…](https…)`가 빠졌거나 깨져도, 작업실에서 보낸 `imageContext` URL로 본문을 보강한다.
- * 이미 본문에 포함된 URL은 중복 삽입하지 않는다.
- */
-export function mergeBlogBodyMarkdownWithImageContext(
-  bodyMarkdown: string,
-  imageContext: ShowroomCaseN8nImageContextItem[] | undefined | null,
-): string {
-  const base = String(bodyMarkdown ?? '').trim()
-  const items = Array.isArray(imageContext) ? imageContext : []
-  const additions: string[] = []
-  for (const row of items) {
-    const url = row.url?.trim()
-    if (!url || !/^https:\/\//i.test(url)) continue
-    if (base.includes(url)) continue
-    if (additions.some((block) => block.includes(url))) continue
-    const alt = altFromImageContextRow(row).replace(/\]/g, '］').replace(/\[/g, '［')
-    additions.push(`![${alt}](${url})`)
-  }
-  if (additions.length === 0) return base
-  return [base, ...additions].filter(Boolean).join('\n\n')
 }
 
 /**
@@ -790,38 +893,51 @@ export function buildCanonicalBlogPostFromN8nBlogResponse(params: BuildCanonical
   }
 
   const cleanedMarkdown = stripBrokenBlogImageTailLines(extracted.bodyMarkdown)
-  const mergedMarkdown = mergeBlogBodyMarkdownWithImageContext(cleanedMarkdown, ctx)
-  let bodyHtml = plainMarkdownToSafeArticleHtml(mergedMarkdown)
-  bodyHtml = injectMissingImageFiguresIntoArticleHtml(
-    bodyHtml,
-    buildInjectFiguresFromContextAndHeroes({
-      imageContext: ctx,
-      siteName: params.siteName,
-      beforeUrl: params.beforeImageUrl,
-      afterUrl: params.afterImageUrl,
-    }),
-  )
+  const bodyHtml = plainMarkdownToSafeArticleHtml(cleanedMarkdown)
   const summaryForSeo = extracted.summary.trim()
-  const seoDescription =
+  const fallbackDescription =
     summaryForSeo.length > 160 ? `${summaryForSeo.slice(0, 157)}…` : summaryForSeo || `${extracted.title} — 파인드가구 온라인 쇼룸 사례`
+
+  const llmSeo = extracted.seo ?? null
+  const llmStructured = extracted.structured ?? null
+
+  const seoTitle = (llmSeo?.seoTitle ?? '').trim() || extracted.title
+  const seoDescription = (llmSeo?.seoDescription ?? '').trim() || fallbackDescription
+  const ogTitle = (llmSeo?.ogTitle ?? '').trim() || seoTitle
+  const ogDescription = (llmSeo?.ogDescription ?? '').trim() || seoDescription
+  const keywords = (llmSeo?.keywords ?? []).filter((s) => s && s.trim().length > 0)
+  const canonicalPath = (llmSeo?.canonicalPath ?? '').trim() || null
+
+  const featuredAnswer = (llmStructured?.featuredAnswer ?? '').trim() || summaryForSeo || null
+  const faqItems = (llmStructured?.faqItems ?? []).filter((q) => q.question.trim() && q.answer.trim())
+  const geoPoints = (llmStructured?.geoPoints ?? []).filter((g) => g && g.trim().length > 0)
+
+  const structured =
+    featuredAnswer || faqItems.length > 0 || geoPoints.length > 0
+      ? {
+          featuredAnswer: featuredAnswer ?? null,
+          faqItems,
+          geoPoints,
+        }
+      : null
 
   return {
     schemaVersion: 1,
     status: 'draft',
     siteName: params.siteName.trim(),
     title: extracted.title,
-    bodyMarkdown: mergedMarkdown,
+    bodyMarkdown: cleanedMarkdown,
     bodyHtml,
     images,
     seo: {
-      title: extracted.title,
+      title: seoTitle,
       seoDescription,
-      ogTitle: extracted.title,
-      ogDescription: seoDescription,
+      ogTitle,
+      ogDescription,
+      ...(keywords.length ? { keywords } : {}),
+      canonicalPath,
     },
-    structured: summaryForSeo
-      ? { featuredAnswer: summaryForSeo }
-      : null,
+    structured,
     cardNewsGenerationRef: null,
     createdAt,
     updatedAt: now,

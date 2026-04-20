@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { ArrowLeft, ChevronLeft, ChevronRight, FileText, Images, MessageCircle } from 'lucide-react'
+import { ArrowLeft, ChevronLeft, ChevronRight, FileText, Images } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { usePublicShowroomChannelTalk } from '@/hooks/usePublicShowroomChannelTalk'
 import { buildShowroomCaseCardNewsPackage, formatShowroomCardTextForDisplay, normalizeShowroomCardNewsSlides, resolveCardNewsSlideImageUrl } from '@/lib/showroomCaseContentPackage'
-import { filterCanonicalBlogImagesNotInBodyHtml, renderCanonicalBlogPostHtml } from '@/lib/showroomCaseCanonicalBlog'
+import { renderCanonicalBlogPostHtml } from '@/lib/showroomCaseCanonicalBlog'
+import { usePageHead, type PageHeadJsonLd, type PageHeadMetaTag } from '@/lib/usePageHead'
 import {
   loadShowroomCaseApproachBundle,
   type ShowroomCaseApproachBundle,
 } from '@/lib/showroomCaseApproachData'
+import { fetchApprovedBlogShowroomCaseProfileDrafts, type ShowroomCaseProfileDraft } from '@/lib/showroomCaseProfileService'
 
 const PROBLEM_FRAME_SUMMARY: Record<string, string> = {
   'focus-fatigue': '오래 머물기 어렵고 집중이 쉽게 끊기는 구조입니다.',
@@ -110,6 +112,94 @@ function getSlideImageUrl(params: {
   })
 }
 
+type RelatedCase = {
+  siteName: string
+  externalLabel: string | null
+  industry: string | null
+  title: string
+  summary: string
+  href: string
+  score: number
+}
+
+type UseRelatedApprovedBlogCasesParams = {
+  enabled: boolean
+  currentSiteName: string
+  currentIndustry: string | null
+  currentProblemCode: string | null
+  currentSolutionCode: string | null
+  currentBusinessTypes: string[]
+}
+
+function useRelatedApprovedBlogCases(params: UseRelatedApprovedBlogCasesParams): RelatedCase[] {
+  const {
+    enabled,
+    currentSiteName,
+    currentIndustry,
+    currentProblemCode,
+    currentSolutionCode,
+    currentBusinessTypes,
+  } = params
+  const [drafts, setDrafts] = useState<ShowroomCaseProfileDraft[]>([])
+
+  useEffect(() => {
+    if (!enabled) {
+      setDrafts([])
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      try {
+        const rows = await fetchApprovedBlogShowroomCaseProfileDrafts()
+        if (!cancelled) setDrafts(rows)
+      } catch {
+        if (!cancelled) setDrafts([])
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [enabled])
+
+  return useMemo<RelatedCase[]>(() => {
+    if (!enabled || drafts.length === 0) return []
+    const myTypes = new Set(currentBusinessTypes.map((t) => t.trim()).filter(Boolean))
+    const scored = drafts
+      .filter((d) => d.siteName.trim() !== currentSiteName.trim())
+      .map((d) => {
+        let score = 0
+        if (currentIndustry && d.industry && d.industry === currentIndustry) score += 3
+        if (currentProblemCode && d.problemCode && d.problemCode === currentProblemCode) score += 2
+        if (currentSolutionCode && d.solutionCode && d.solutionCode === currentSolutionCode) score += 1
+        const summary =
+          d.canonicalBlogPost?.structured?.featuredAnswer?.trim()
+          || d.canonicalBlogPost?.seo?.seoDescription?.trim()
+          || d.painPoint?.trim()
+          || d.solutionPoint?.trim()
+          || ''
+        const title = d.canonicalBlogPost?.seo?.title?.trim() || d.canonicalBlogPost?.title?.trim() || d.siteName
+        const externalLabel = d.canonicalSiteName ?? null
+        const candidateType = (d.industry ?? '').trim()
+        if (candidateType && myTypes.has(candidateType)) score += 1
+        return {
+          siteName: d.siteName,
+          externalLabel,
+          industry: d.industry ?? null,
+          title,
+          summary: summary.length > 140 ? `${summary.slice(0, 137)}…` : summary,
+          href: `/public/showroom/case/${encodeURIComponent(d.siteName)}`,
+          score,
+        }
+      })
+      .filter((r) => r.score > 0 || (currentIndustry == null && currentProblemCode == null))
+      .sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score
+        return a.title.localeCompare(b.title, 'ko')
+      })
+    return scored.slice(0, 4)
+  }, [enabled, drafts, currentSiteName, currentIndustry, currentProblemCode, currentSolutionCode, currentBusinessTypes])
+}
+
 export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'case' }: { mode?: Mode; entry?: EntryType }) {
   usePublicShowroomChannelTalk(mode === 'public')
 
@@ -163,12 +253,6 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
     }
   }, [siteKey, mode, entry])
 
-  const contactHref = bundle
-    ? `/contact?${new URLSearchParams({
-        site_name: bundle.siteName,
-        showroom_context: 'case_approach',
-      }).toString()}`
-    : '/contact'
   const generatedCardNewsSlides = useMemo(
     () => getGeneratedCardNewsSlides(bundle?.profile?.cardNewsGeneration?.response),
     [bundle?.profile?.cardNewsGeneration?.response]
@@ -296,6 +380,97 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
   const showCanonicalBlogSection =
     canonicalBlog !== null && (mode === 'internal' || canonicalBlog.status === 'approved')
   const isStoryLayout = mode === 'public' && entry === 'case'
+
+  const showRelatedCases = mode === 'public' && entry === 'case' && Boolean(canonicalBlog?.status === 'approved')
+  const relatedCases = useRelatedApprovedBlogCases({
+    enabled: showRelatedCases,
+    currentSiteName: bundle.siteName,
+    currentIndustry: bundle.profile?.industry ?? null,
+    currentProblemCode: bundle.profile?.problemCode ?? null,
+    currentSolutionCode: bundle.profile?.solutionCode ?? null,
+    currentBusinessTypes: bundle.businessTypes,
+  })
+
+  const seoTitle = canonicalBlog?.seo.title?.trim() || `${displayName} — 파인드가구 온라인 쇼룸 사례`
+  const seoDescription = canonicalBlog?.seo.seoDescription?.trim() || pain || solution || ''
+  const ogTitle = canonicalBlog?.seo.ogTitle?.trim() || seoTitle
+  const ogDescription = canonicalBlog?.seo.ogDescription?.trim() || seoDescription
+  const featuredAnswer = canonicalBlog?.structured?.featuredAnswer?.trim() || ''
+  const faqItems = (canonicalBlog?.structured?.faqItems ?? []).filter(
+    (q): q is { question: string; answer: string } =>
+      Boolean(q && typeof q.question === 'string' && typeof q.answer === 'string' && q.question.trim() && q.answer.trim()),
+  )
+  const geoPoints = (canonicalBlog?.structured?.geoPoints ?? []).filter(
+    (g): g is string => typeof g === 'string' && g.trim().length > 0,
+  )
+  const heroImageForOg = afterHeroUrl || beforeHeroUrl || ''
+  const canonicalUrl =
+    typeof window !== 'undefined' && mode === 'public' && canonicalBlog?.status === 'approved'
+      ? (canonicalBlog?.seo.canonicalPath?.trim()
+          ? new URL(canonicalBlog.seo.canonicalPath.trim(), window.location.origin).toString()
+          : `${window.location.origin}${window.location.pathname}`)
+      : null
+
+  const pageMetas = useMemo<PageHeadMetaTag[]>(() => {
+    const list: PageHeadMetaTag[] = []
+    if (seoDescription) list.push({ kind: 'name', name: 'description', content: seoDescription })
+    if (ogTitle) list.push({ kind: 'property', property: 'og:title', content: ogTitle })
+    if (ogDescription) list.push({ kind: 'property', property: 'og:description', content: ogDescription })
+    list.push({ kind: 'property', property: 'og:type', content: 'article' })
+    if (heroImageForOg) list.push({ kind: 'property', property: 'og:image', content: heroImageForOg })
+    if (typeof window !== 'undefined' && mode === 'public') {
+      list.push({ kind: 'property', property: 'og:url', content: window.location.href })
+    }
+    list.push({ kind: 'name', name: 'twitter:card', content: heroImageForOg ? 'summary_large_image' : 'summary' })
+    if (ogTitle) list.push({ kind: 'name', name: 'twitter:title', content: ogTitle })
+    if (ogDescription) list.push({ kind: 'name', name: 'twitter:description', content: ogDescription })
+    if (heroImageForOg) list.push({ kind: 'name', name: 'twitter:image', content: heroImageForOg })
+    if (mode === 'internal' || (canonicalBlog && canonicalBlog.status !== 'approved')) {
+      list.push({ kind: 'name', name: 'robots', content: 'noindex, nofollow' })
+    }
+    return list
+  }, [seoDescription, ogTitle, ogDescription, heroImageForOg, mode, canonicalBlog])
+
+  const pageJsonLd = useMemo<PageHeadJsonLd[]>(() => {
+    const list: PageHeadJsonLd[] = []
+    if (canonicalBlog && canonicalBlog.status === 'approved') {
+      const article: PageHeadJsonLd = {
+        '@context': 'https://schema.org',
+        '@type': 'Article',
+        headline: seoTitle,
+        inLanguage: 'ko',
+        author: { '@type': 'Organization', name: '파인드가구' },
+        publisher: { '@type': 'Organization', name: '파인드가구' },
+      }
+      if (seoDescription) article.description = seoDescription
+      if (heroImageForOg) article.image = [heroImageForOg]
+      const datePublished = canonicalBlog.approvedAt || canonicalBlog.createdAt
+      if (datePublished) article.datePublished = datePublished
+      if (canonicalBlog.updatedAt) article.dateModified = canonicalBlog.updatedAt
+      if (canonicalUrl) article.mainEntityOfPage = canonicalUrl
+      list.push(article)
+
+      if (faqItems.length > 0) {
+        list.push({
+          '@context': 'https://schema.org',
+          '@type': 'FAQPage',
+          mainEntity: faqItems.map((q) => ({
+            '@type': 'Question',
+            name: q.question.trim(),
+            acceptedAnswer: { '@type': 'Answer', text: q.answer.trim() },
+          })),
+        })
+      }
+    }
+    return list
+  }, [canonicalBlog, seoTitle, seoDescription, heroImageForOg, faqItems, canonicalUrl])
+
+  usePageHead({
+    title: seoTitle,
+    metas: pageMetas,
+    canonicalUrl,
+    jsonLd: pageJsonLd,
+  })
 
   return (
     <div className="min-h-screen bg-neutral-50">
@@ -431,38 +606,78 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
             {(() => {
               const previewHtml = renderCanonicalBlogPostHtml(canonicalBlog)
               return (
-            <div className="rounded-2xl border border-neutral-200 bg-white p-5 text-neutral-800">
-              {(() => {
-                const extraImages = filterCanonicalBlogImagesNotInBodyHtml(previewHtml, canonicalBlog.images)
-                return extraImages.length > 0 ? (
-                  <div className="mb-5 rounded-xl border border-neutral-100 bg-neutral-50 p-4">
-                    <p className="mb-3 text-[11px] font-medium text-neutral-500">현장 이미지</p>
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      {extraImages.map((img) => (
-                        <figure key={img.id} className="overflow-hidden rounded-xl border border-neutral-100 bg-white">
-                          <img
-                            src={img.url}
-                            alt={img.alt}
-                            className="max-h-96 w-full object-cover"
-                            loading="lazy"
-                            decoding="async"
-                          />
-                          {img.caption ? (
-                            <figcaption className="px-2 py-2 text-xs text-neutral-600">{img.caption}</figcaption>
-                          ) : null}
-                        </figure>
-                      ))}
-                    </div>
-                  </div>
-                ) : null
-              })()}
-              <div
-                className="showroom-canonical-blog-public max-w-none text-sm leading-relaxed [&_img]:max-h-96 [&_img]:w-full [&_img]:rounded-xl [&_img]:object-cover [&_p]:mb-4"
-                dangerouslySetInnerHTML={{ __html: previewHtml }}
-              />
-            </div>
+                <div className="rounded-2xl border border-neutral-200 bg-white p-5 text-neutral-800">
+                  {featuredAnswer ? (
+                    <aside
+                      aria-label="핵심 요약"
+                      className="mb-5 rounded-xl border border-emerald-100 bg-emerald-50/60 px-4 py-3 text-sm leading-relaxed text-emerald-900"
+                    >
+                      <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-emerald-700">핵심 요약</p>
+                      <p className="whitespace-pre-wrap">{featuredAnswer}</p>
+                    </aside>
+                  ) : null}
+                  <div
+                    className="showroom-canonical-blog-public max-w-none text-sm leading-relaxed [&_img]:max-h-96 [&_img]:w-full [&_img]:rounded-xl [&_img]:object-cover [&_p]:mb-4"
+                    dangerouslySetInnerHTML={{ __html: previewHtml }}
+                  />
+                  {faqItems.length > 0 ? (
+                    <section aria-label="자주 묻는 질문" className="mt-8 border-t border-neutral-100 pt-6">
+                      <h3 className="mb-3 text-base font-semibold text-neutral-900">자주 묻는 질문</h3>
+                      <ul className="space-y-3">
+                        {faqItems.map((qa, idx) => (
+                          <li key={`${idx}-${qa.question}`} className="rounded-xl border border-neutral-100 bg-neutral-50/60 px-4 py-3">
+                            <p className="text-sm font-semibold text-neutral-900">Q. {qa.question}</p>
+                            <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-neutral-700">A. {qa.answer}</p>
+                          </li>
+                        ))}
+                      </ul>
+                    </section>
+                  ) : null}
+                  {geoPoints.length > 0 ? (
+                    <section aria-label="지역 정보" className="mt-6 border-t border-neutral-100 pt-6">
+                      <h3 className="mb-2 text-sm font-semibold text-neutral-900">지역 · 위치 메모</h3>
+                      <ul className="flex flex-wrap gap-2">
+                        {geoPoints.map((g, idx) => (
+                          <li
+                            key={`${idx}-${g}`}
+                            className="inline-flex rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs text-neutral-700"
+                          >
+                            {g}
+                          </li>
+                        ))}
+                      </ul>
+                    </section>
+                  ) : null}
+                </div>
               )
             })()}
+          </section>
+        ) : null}
+
+        {showRelatedCases && relatedCases.length > 0 ? (
+          <section className="space-y-3" aria-labelledby="related-cases">
+            <div className="flex items-center gap-2 text-neutral-900">
+              <Images className="h-5 w-5 text-emerald-700" aria-hidden />
+              <h2 id="related-cases" className="text-lg font-semibold">관련 사례 더 보기</h2>
+            </div>
+            <ul className="grid gap-3 sm:grid-cols-2">
+              {relatedCases.map((c) => (
+                <li key={c.siteName}>
+                  <Link
+                    to={c.href}
+                    className="block h-full rounded-2xl border border-neutral-200 bg-white p-4 transition hover:border-emerald-300 hover:bg-emerald-50/40"
+                  >
+                    {c.industry ? (
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">{c.industry}</p>
+                    ) : null}
+                    <p className="mt-1 text-sm font-semibold text-neutral-900">{c.title}</p>
+                    {c.summary ? (
+                      <p className="mt-2 line-clamp-3 text-xs leading-relaxed text-neutral-600">{c.summary}</p>
+                    ) : null}
+                  </Link>
+                </li>
+              ))}
+            </ul>
           </section>
         ) : null}
 
@@ -582,12 +797,6 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
                 {mode === 'public'
                   ? (entry === 'cardnews' ? '카드뉴스 더 보기' : '쇼룸 더 보기')
                   : '작업실로 돌아가기'}
-              </Link>
-            </Button>
-            <Button asChild className="gap-1.5 bg-emerald-700 hover:bg-emerald-800">
-              <Link to={contactHref}>
-                <MessageCircle className="h-4 w-4" />
-                문의하기
               </Link>
             </Button>
           </div>

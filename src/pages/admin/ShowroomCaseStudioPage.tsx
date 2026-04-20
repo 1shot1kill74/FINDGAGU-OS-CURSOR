@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { ArrowRight, ChevronLeft, ChevronRight, Copy, Eye, Loader2, Save } from 'lucide-react'
+import { ArrowRight, ChevronLeft, ChevronRight, Eye, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -34,9 +34,9 @@ import {
   saveShowroomCaseFrameTemplates,
   type ShowroomCaseFrameTemplate,
 } from '@/lib/showroomCaseFrameTemplates'
+import { requestDeployHookTrigger } from '@/lib/triggerVercelDeployHook'
 import {
   buildCanonicalBlogPostFromN8nBlogResponse,
-  filterCanonicalBlogImagesNotInBodyHtml,
   repairCanonicalBlogBodyHtmlForPreview,
   renderCanonicalBlogPostHtml,
   type ShowroomCaseCanonicalBlogPost,
@@ -45,7 +45,6 @@ import {
   fetchShowroomCaseProfileDrafts,
   saveShowroomCaseCanonicalBlogPost,
   saveShowroomCaseCardNewsPublication,
-  saveShowroomCaseConsultationCardDraft,
   saveShowroomCaseGenerationState,
   saveShowroomCaseProfileDraft,
   type ShowroomCaseCardNewsPublication,
@@ -70,10 +69,7 @@ export default function ShowroomCaseStudioPage() {
   const showroomCaseContentWebhookUrl = (import.meta.env.VITE_SHOWROOM_CASE_CONTENT_WEBHOOK_URL as string | undefined)?.trim() ?? ''
   const [searchParams] = useSearchParams()
   const [loading, setLoading] = useState(true)
-  const [savingId, setSavingId] = useState<string | null>(null)
-  const [draftSavingId, setDraftSavingId] = useState<string | null>(null)
   const [publicationSavingId, setPublicationSavingId] = useState<string | null>(null)
-  const [copiedPublicLinkId, setCopiedPublicLinkId] = useState<string | null>(null)
   const [requestingKey, setRequestingKey] = useState<string | null>(null)
   const [studioDrag, setStudioDrag] = useState<{ siteName: string; index: number } | null>(null)
   const [previewSiteName, setPreviewSiteName] = useState<string | null>(null)
@@ -91,8 +87,10 @@ export default function ShowroomCaseStudioPage() {
   const [approvingBlogSite, setApprovingBlogSite] = useState<string | null>(null)
   const [blogViewer, setBlogViewer] = useState<{ displayLabel: string; post: ShowroomCaseCanonicalBlogPost; html: string } | null>(null)
   const sectionRefs = useRef<Record<string, HTMLElement | null>>({})
-  const didAutoFocusSiteRef = useRef(false)
+  const studioPanelRefs = useRef<Record<string, HTMLElement | null>>({})
+  const lastAutoFocusKeyRef = useRef('')
   const focusedSiteName = searchParams.get('site')?.trim() ?? ''
+  const focusedContent = searchParams.get('focus')?.trim() ?? ''
 
   useEffect(() => {
     setProblemTemplates(loadShowroomCaseFrameTemplates('problem'))
@@ -226,12 +224,16 @@ export default function ShowroomCaseStudioPage() {
   }, [])
 
   useEffect(() => {
-    if (!focusedSiteName || loading || rows.length === 0 || didAutoFocusSiteRef.current) return
-    const target = sectionRefs.current[focusedSiteName]
-    if (!target) return
-    target.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    didAutoFocusSiteRef.current = true
-  }, [focusedSiteName, loading, rows.length])
+    const focusKey = `${focusedSiteName}:${focusedContent}`
+    if (!focusedSiteName || loading || rows.length === 0 || lastAutoFocusKeyRef.current === focusKey) return
+    const section = sectionRefs.current[focusedSiteName]
+    if (!section) return
+    const wantsStudioPanel = focusedContent === 'cardnews' || focusedContent === 'blog'
+    const panel = studioPanelRefs.current[focusedSiteName]
+    const scrollTarget = wantsStudioPanel ? panel ?? section : section
+    scrollTarget.scrollIntoView({ behavior: 'smooth', block: wantsStudioPanel ? 'nearest' : 'start' })
+    lastAutoFocusKeyRef.current = focusKey
+  }, [focusedContent, focusedSiteName, loading, rows.length])
 
   const count = rows.length
 
@@ -714,6 +716,7 @@ export default function ShowroomCaseStudioPage() {
       setRows((prev) =>
         prev.map((r) => (r.siteName === row.siteName ? { ...r, canonicalBlogPost: next } : r)),
       )
+      requestDeployHookTrigger(`blog-approved:${row.siteName}`)
       toast.success('블로그 정본을 공개 카드뉴스 상세에서 볼 수 있도록 승인했습니다.')
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '승인 저장에 실패했습니다.')
@@ -753,42 +756,6 @@ export default function ShowroomCaseStudioPage() {
     return { response, derived }
   }
 
-  /** 프로필 저장 + 앱 카드뉴스 반영을 한 번에 처리합니다. */
-  const saveCaseAndPublishCardNews = async (row: CaseDraftState) => {
-    setSavingId(row.siteName)
-    try {
-      const { response, derived } = await persistStudioCardNews(row)
-      setRows((prev) =>
-        prev.map((item) =>
-          item.siteName === row.siteName
-            ? {
-                ...item,
-                problemFrameLabel: item.cardNewsSlides.find((slide) => slide.key === 'problem')?.title ?? item.problemFrameLabel,
-                solutionFrameLabel: item.cardNewsSlides.find((slide) => slide.key === 'solution')?.title ?? item.solutionFrameLabel,
-                headlineHook: derived.headlineHook ?? '',
-                problemDetail: derived.problemDetail ?? '',
-                solutionDetail: derived.solutionDetail ?? '',
-                evidencePoints: (derived.evidencePoints ?? []).join('\n'),
-                cardNewsGeneration: {
-                  ...item.cardNewsGeneration,
-                  status: 'completed',
-                  requestedAt: new Date().toISOString(),
-                  completedAt: new Date().toISOString(),
-                  errorMessage: null,
-                  response,
-                },
-              }
-            : item
-        )
-      )
-      toast.success(`${row.siteName} 케이스를 저장하고 카드뉴스를 반영했습니다.`)
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : '저장·반영에 실패했습니다.')
-    } finally {
-      setSavingId(null)
-    }
-  }
-
   const publishCardNews = async (row: CaseDraftState) => {
     setPublicationSavingId(row.siteName)
     try {
@@ -825,6 +792,7 @@ export default function ShowroomCaseStudioPage() {
             : item
         )
       )
+      requestDeployHookTrigger(`cardnews-published:${row.siteName}`)
       toast.success('카드뉴스를 공개 발행했습니다.')
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '공개 발행에 실패했습니다.')
@@ -854,56 +822,12 @@ export default function ShowroomCaseStudioPage() {
             : item
         )
       )
+      requestDeployHookTrigger(`cardnews-unpublished:${row.siteName}`)
       toast.success('카드뉴스 공개를 중지했습니다.')
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '공개 중지에 실패했습니다.')
     } finally {
       setPublicationSavingId(null)
-    }
-  }
-
-  const copyPublicCardNewsLink = async (row: CaseDraftState) => {
-    const path = buildPublicCardNewsPath(row.cardNewsPublication.siteKey || row.siteName)
-    const url = `${window.location.origin}${path}`
-    try {
-      await navigator.clipboard.writeText(url)
-      setCopiedPublicLinkId(row.siteName)
-      window.setTimeout(() => {
-        setCopiedPublicLinkId((prev) => (prev === row.siteName ? null : prev))
-      }, 1500)
-      toast.success('공개 링크를 복사했습니다.')
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : '공개 링크 복사에 실패했습니다.')
-    }
-  }
-
-  const saveConsultationCardDraft = async (row: CaseDraftState) => {
-    setDraftSavingId(row.siteName)
-    try {
-      const { error } = await saveShowroomCaseConsultationCardDraft({
-        siteName: row.siteName,
-        headlineHook: row.headlineHook,
-        problemCode: row.problemCode,
-        solutionCode: row.solutionCode,
-        problemFrameLabel: row.cardNewsSlides.find((slide) => slide.key === 'problem')?.title ?? row.problemFrameLabel,
-        solutionFrameLabel: row.cardNewsSlides.find((slide) => slide.key === 'solution')?.title ?? row.solutionFrameLabel,
-        problemDetail: row.problemDetail,
-        solutionDetail: row.solutionDetail,
-        evidencePoints: row.evidencePoints.split('\n').map((item) => item.trim()).filter(Boolean),
-        cardNewsSlides: row.cardNewsSlides.map((slide) => ({
-          key: slide.key,
-          title: slide.title,
-          body: slide.body,
-          imageRef: slide.imageRef,
-          imageUrl: slide.imageUrl ?? null,
-        })),
-      })
-      if (error) throw error
-      toast.success('상담카드 임시저장을 완료했습니다.')
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : '상담카드 임시저장에 실패했습니다.')
-    } finally {
-      setDraftSavingId(null)
     }
   }
 
@@ -940,9 +864,6 @@ export default function ShowroomCaseStudioPage() {
         </div>
         <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-slate-500">
           <span className="rounded-full bg-slate-100 px-3 py-1">{count}개 케이스</span>
-          <Button type="button" variant="outline" size="sm" onClick={openTemplateManager}>
-            카드 템플릿 관리
-          </Button>
         </div>
       </section>
 
@@ -1110,29 +1031,6 @@ export default function ShowroomCaseStudioPage() {
                     <p className="mt-4 text-sm leading-relaxed text-slate-600">{blogViewer.post.structured.featuredAnswer}</p>
                   ) : null}
                 </header>
-                {(() => {
-                  const extra = filterCanonicalBlogImagesNotInBodyHtml(blogViewer.html, blogViewer.post.images)
-                  return extra.length > 0 ? (
-                    <div className="mt-8 space-y-4">
-                      {extra.map((img) => (
-                        <figure key={img.id} className="overflow-hidden rounded-xl border border-slate-100 bg-slate-50">
-                          <img
-                            src={img.url}
-                            alt={img.alt}
-                            className="w-full max-h-[min(28rem,70vh)] object-cover"
-                            loading="lazy"
-                            decoding="async"
-                          />
-                          {img.caption ? (
-                            <figcaption className="border-t border-slate-100 bg-white px-3 py-2 text-center text-xs text-slate-600">
-                              {img.caption}
-                            </figcaption>
-                          ) : null}
-                        </figure>
-                      ))}
-                    </div>
-                  ) : null
-                })()}
                 <div
                   className="showroom-canonical-blog-viewer mt-8 max-w-none text-[15px] leading-[1.7] text-slate-800 [&_article]:max-w-none [&_figure]:my-6 [&_figure]:mx-auto [&_h2]:mb-3 [&_h2]:mt-8 [&_h2]:text-lg [&_h2]:font-semibold [&_h2]:text-slate-900 [&_img]:max-h-[min(28rem,70vh)] [&_img]:w-full [&_img]:rounded-xl [&_img]:object-cover [&_p]:mb-4 [&_p]:leading-[1.7]"
                   dangerouslySetInnerHTML={{ __html: blogViewer.html }}
@@ -1204,7 +1102,17 @@ export default function ShowroomCaseStudioPage() {
                   })
                   return (
                     <div className="grid gap-3">
-                      <div className="rounded-2xl border border-slate-200 bg-white p-4 md:p-5">
+                      <div
+                        ref={(node) => {
+                          studioPanelRefs.current[row.siteName] = node
+                        }}
+                        className={`rounded-2xl border bg-white p-4 md:p-5 ${
+                          focusedSiteName === row.siteName &&
+                          (focusedContent === 'cardnews' || focusedContent === 'blog')
+                            ? 'border-emerald-400 ring-2 ring-emerald-100'
+                            : 'border-slate-200'
+                        }`}
+                      >
                         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
                           <div>
                             <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">LLM·n8n 자동 작성</p>
@@ -1258,11 +1166,20 @@ export default function ShowroomCaseStudioPage() {
                           <div className="flex shrink-0 flex-wrap gap-2">
                             <Button
                               type="button"
-                              variant="outline"
+                              variant="default"
                               size="sm"
-                              onClick={() => regenerateCardSlidesFromTemplate(row.siteName)}
+                              className="gap-2"
+                              disabled={requestingKey === `${row.siteName}:cardnews`}
+                              onClick={() => {
+                                void requestContentGeneration({
+                                  row,
+                                  channel: 'cardnews',
+                                  payload: n8nPayload,
+                                })
+                              }}
                             >
-                              프레임으로 카드 다시 생성
+                              {requestingKey === `${row.siteName}:cardnews` ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                              카드뉴스 만들기
                             </Button>
                             <Button
                               type="button"
@@ -1273,16 +1190,68 @@ export default function ShowroomCaseStudioPage() {
                                 setPreviewSlideIndex(0)
                               }}
                             >
-                              카드뉴스 미리보기
+                              카드뉴스 확인
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="default"
+                              size="sm"
+                              disabled={publicationSavingId === row.siteName}
+                              onClick={() => void publishCardNews(row)}
+                            >
+                              {publicationSavingId === row.siteName
+                                ? '발행 중…'
+                                : row.cardNewsPublication.isPublished
+                                  ? '카드뉴스 다시 발행'
+                                  : '카드뉴스 발행'}
                             </Button>
                             <Button
                               type="button"
                               variant="outline"
                               size="sm"
-                              className="shrink-0"
-                              onClick={() => resetCardSlidesToTemplate(row.siteName)}
+                              className="gap-2"
+                              disabled={requestingKey === `${row.siteName}:blog`}
+                              onClick={() => {
+                                void requestContentGeneration({
+                                  row,
+                                  channel: 'blog',
+                                  payload: n8nPayload,
+                                })
+                              }}
                             >
-                              기본 템플릿으로 카드 초기화
+                              {requestingKey === `${row.siteName}:blog` ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                              블로그 만들기
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="gap-1.5"
+                              disabled={!row.canonicalBlogPost}
+                              onClick={() => {
+                                if (!row.canonicalBlogPost) return
+                                setBlogViewer({
+                                  displayLabel: getShowroomCasePublicDisplayName(deriveStudioSeedFromSlides(row)),
+                                  post: row.canonicalBlogPost,
+                                  html: buildBlogPreviewHtmlForRow(row),
+                                })
+                              }}
+                            >
+                              <Eye className="h-4 w-4" aria-hidden />
+                              블로그 확인
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="default"
+                              size="sm"
+                              className="gap-2"
+                              disabled={!row.canonicalBlogPost || row.canonicalBlogPost.status === 'approved' || approvingBlogSite === row.siteName}
+                              onClick={() => void handleApproveCanonicalBlog(row)}
+                            >
+                              {approvingBlogSite === row.siteName ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : null}
+                              블로그 발행
                             </Button>
                           </div>
                         </div>
@@ -1347,7 +1316,14 @@ export default function ShowroomCaseStudioPage() {
                           </div>
                         </div>
 
-                        <details className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50/40">
+                        <details
+                          className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50/40"
+                          open={
+                            focusedSiteName === row.siteName && focusedContent === 'cardnews'
+                              ? true
+                              : undefined
+                          }
+                        >
                           <summary className="cursor-pointer list-none px-4 py-3.5 text-center text-sm font-semibold text-slate-800 hover:bg-slate-100 md:text-left">
                             6장 카드 직접 편집 (선택 · 생성 후 수정)
                           </summary>
@@ -1667,210 +1643,25 @@ export default function ShowroomCaseStudioPage() {
                             </div>
                           </DialogContent>
                         </Dialog>
-                        <details className="mt-4 w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-50 text-sm">
-                          <summary className="cursor-pointer list-none px-4 py-3.5 text-center text-sm font-semibold text-slate-800 hover:bg-slate-100">
-                            외부 자동화 (n8n)·블로그
-                          </summary>
-                          <div className="border-t border-slate-200 px-4 py-3">
-                          <p className="text-xs text-slate-500">
-                            웹훅 URL이 설정된 경우에만 외부 생성 요청이 동작합니다. 앱만 쓸 때는 펼치지 않아도 됩니다.
-                          </p>
-                          <div className="mt-3 flex flex-wrap justify-center gap-2 md:justify-start">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="gap-2"
-                              onClick={() => {
-                                void navigator.clipboard.writeText(JSON.stringify(n8nPayload, null, 2)).then(
-                                  () => toast.success('n8n 입력 JSON을 복사했습니다.'),
-                                  (error) => toast.error(error instanceof Error ? error.message : 'n8n 입력 JSON 복사에 실패했습니다.')
-                                )
-                              }}
-                            >
-                              n8n 입력 복사
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="gap-2"
-                              disabled={requestingKey === `${row.siteName}:cardnews`}
-                              onClick={() => {
-                                void requestContentGeneration({
-                                  row,
-                                  channel: 'cardnews',
-                                  payload: n8nPayload,
-                                })
-                              }}
-                            >
-                              {requestingKey === `${row.siteName}:cardnews` ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                              카드뉴스 생성 요청
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="gap-2"
-                              disabled={requestingKey === `${row.siteName}:blog`}
-                              onClick={() => {
-                                void requestContentGeneration({
-                                  row,
-                                  channel: 'blog',
-                                  payload: n8nPayload,
-                                })
-                              }}
-                            >
-                              {requestingKey === `${row.siteName}:blog` ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                              블로그 생성 요청
-                            </Button>
-                          </div>
-                          </div>
-                        </details>
-                        {row.canonicalBlogPost ? (
-                          <details className="mt-4 w-full overflow-hidden rounded-xl border border-emerald-200 bg-emerald-50/50 text-sm">
-                            <summary className="cursor-pointer list-none px-4 py-3.5 text-center text-sm font-semibold text-emerald-900 hover:bg-emerald-100/60">
-                              블로그 정본 미리보기 · 상태 {row.canonicalBlogPost.status}
-                            </summary>
-                            {(() => {
-                              const canonicalBlogPost = row.canonicalBlogPost
-                              if (!canonicalBlogPost) return null
-                              return (
-                            <div className="border-t border-emerald-200 px-4 py-3 space-y-3">
-                              <div className="flex flex-wrap items-center justify-between gap-2">
-                                <p className="text-xs text-slate-600">
-                                  SEO 제목: <span className="font-medium text-slate-800">{canonicalBlogPost.seo.title}</span>
-                                </p>
-                                <div className="flex flex-wrap items-center gap-2">
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="outline"
-                                  className="gap-1.5"
-                                  onClick={() =>
-                                    setBlogViewer({
-                                      displayLabel: getShowroomCasePublicDisplayName(deriveStudioSeedFromSlides(row)),
-                                      post: canonicalBlogPost,
-                                      html: buildBlogPreviewHtmlForRow(row),
-                                    })
-                                  }
-                                >
-                                  <Eye className="h-4 w-4" aria-hidden />
-                                  화면 미리보기
-                                </Button>
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="secondary"
-                                  className="gap-2"
-                                  disabled={
-                                    canonicalBlogPost.status === 'approved' || approvingBlogSite === row.siteName
-                                  }
-                                  onClick={() => void handleApproveCanonicalBlog(row)}
-                                >
-                                  {approvingBlogSite === row.siteName ? (
-                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                  ) : null}
-                                  공개 상세에 노출 승인
-                                </Button>
-                                </div>
-                              </div>
-                              <p className="text-[11px] leading-relaxed text-slate-500">
-                                공개 카드뉴스 상세(`/public/showroom/cardnews/...`)에는 승인(approved)된 정본만 노출됩니다.
-                              </p>
-                              {(() => {
-                                const previewHtml = buildBlogPreviewHtmlForRow(row)
-                                const extraImages = filterCanonicalBlogImagesNotInBodyHtml(
-                                  previewHtml,
-                                  canonicalBlogPost.images,
-                                )
-                                return extraImages.length > 0 ? (
-                                  <div className="rounded-xl border border-slate-200 bg-slate-50/90 p-3">
-                                    <p className="mb-2 text-[11px] font-medium text-slate-500">
-                                      정본 이미지(본문 HTML에 없는 컷만 표시 · 비포·애프 등)
-                                    </p>
-                                    <div className="grid gap-3 sm:grid-cols-2">
-                                      {extraImages.map((img) => (
-                                        <figure
-                                          key={img.id}
-                                          className="overflow-hidden rounded-lg border border-slate-100 bg-white shadow-sm"
-                                        >
-                                          <img
-                                            src={img.url}
-                                            alt={img.alt}
-                                            className="max-h-80 w-full object-cover"
-                                            loading="lazy"
-                                            decoding="async"
-                                          />
-                                          {img.caption ? (
-                                            <figcaption className="px-2 py-1.5 text-xs text-slate-600">
-                                              {img.caption}
-                                            </figcaption>
-                                          ) : null}
-                                        </figure>
-                                      ))}
-                                    </div>
-                                  </div>
-                                ) : null
-                              })()}
-                              <div
-                                className="showroom-canonical-blog-preview rounded-xl border border-slate-200 bg-white p-4 text-sm leading-relaxed text-slate-800 [&_img]:max-h-80 [&_img]:w-full [&_img]:rounded-lg [&_img]:object-cover"
-                                dangerouslySetInnerHTML={{ __html: buildBlogPreviewHtmlForRow(row) }}
-                              />
-                            </div>
-                              )
-                            })()}
-                          </details>
-                        ) : null}
                       </div>
-                      <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-4">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          disabled={draftSavingId === row.siteName}
-                          onClick={() => void saveConsultationCardDraft(row)}
-                        >
-                          {draftSavingId === row.siteName ? '임시저장 중…' : '상담카드 임시저장'}
-                        </Button>
-                        <Button
-                          type="button"
-                          className="gap-2 bg-slate-900 text-white hover:bg-slate-800"
-                          disabled={savingId === row.siteName}
-                          onClick={() => void saveCaseAndPublishCardNews(row)}
-                        >
-                          {savingId === row.siteName ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                          {savingId === row.siteName ? '저장 중…' : '카드뉴스 반영'}
-                        </Button>
-                        <Button
-                          type="button"
-                          variant={row.cardNewsPublication.isPublished ? 'outline' : 'default'}
-                          disabled={publicationSavingId === row.siteName}
-                          onClick={() => void publishCardNews(row)}
-                        >
-                          {publicationSavingId === row.siteName && row.cardNewsPublication.isPublished === false
-                            ? '발행 중…'
-                            : '공개 발행'}
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          disabled={!row.cardNewsPublication.isPublished || publicationSavingId === row.siteName}
-                          onClick={() => void unpublishCardNews(row)}
-                        >
-                          {publicationSavingId === row.siteName && row.cardNewsPublication.isPublished
-                            ? '중지 중…'
-                            : '공개 중지'}
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="gap-2"
-                          disabled={!row.cardNewsPublication.isPublished}
-                          onClick={() => void copyPublicCardNewsLink(row)}
-                        >
-                          <Copy className="h-4 w-4" />
-                          {copiedPublicLinkId === row.siteName ? '링크 복사됨' : '공개 링크 복사'}
-                        </Button>
+                      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4">
+                        <div className="text-xs text-slate-500">
+                          {row.cardNewsPublication.isPublished ? (
+                            <span>
+                              발행 완료.{' '}
+                              <Link
+                                to={buildPublicCardNewsPath(row.cardNewsPublication.siteKey || row.siteName)}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="font-medium text-emerald-700 underline underline-offset-2"
+                              >
+                                고객 페이지 열기
+                              </Link>
+                            </span>
+                          ) : (
+                            <span>카드뉴스 확인 후 공개 발행하면 고객 페이지에 바로 반영됩니다.</span>
+                          )}
+                        </div>
                       </div>
                     </div>
                   )

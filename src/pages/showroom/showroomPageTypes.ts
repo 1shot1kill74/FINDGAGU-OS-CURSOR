@@ -59,10 +59,13 @@ export interface PaginatedIndustrySection extends IndustrySection {
 
 export interface ShowroomCaseProfileDraftState {
   painPoint: string
+  headlineHook: string
   cardNewsPublication: {
     isPublished: boolean
     siteKey: string | null
   }
+  /** 승인된 블로그 정본 기준 티저 한 줄 (없으면 null) */
+  blogTeaserLine: string | null
 }
 
 export type ShowroomPageProps = {
