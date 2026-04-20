@@ -451,7 +451,7 @@ export function repairCanonicalBlogBodyHtmlForPreview(
 
   const remaining = uniqueFigures.filter((fig) => !usedUrls.has(fig.url))
   if (remaining.length === 0) return html
-  const inject = remaining.map(buildCanonicalBlogPreviewFigureHtml).join('')
+  const inject = remaining.map((figure) => buildCanonicalBlogPreviewFigureHtml(figure)).join('')
   const closeIdx = html.lastIndexOf('</article>')
   if (closeIdx !== -1) return `${html.slice(0, closeIdx)}${inject}${html.slice(closeIdx)}`
   return `${html}${inject}`

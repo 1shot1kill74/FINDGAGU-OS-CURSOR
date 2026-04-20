@@ -1732,10 +1732,14 @@ export default function ShowroomCaseStudioPage() {
                             <summary className="cursor-pointer list-none px-4 py-3.5 text-center text-sm font-semibold text-emerald-900 hover:bg-emerald-100/60">
                               블로그 정본 미리보기 · 상태 {row.canonicalBlogPost.status}
                             </summary>
+                            {(() => {
+                              const canonicalBlogPost = row.canonicalBlogPost
+                              if (!canonicalBlogPost) return null
+                              return (
                             <div className="border-t border-emerald-200 px-4 py-3 space-y-3">
                               <div className="flex flex-wrap items-center justify-between gap-2">
                                 <p className="text-xs text-slate-600">
-                                  SEO 제목: <span className="font-medium text-slate-800">{row.canonicalBlogPost.seo.title}</span>
+                                  SEO 제목: <span className="font-medium text-slate-800">{canonicalBlogPost.seo.title}</span>
                                 </p>
                                 <div className="flex flex-wrap items-center gap-2">
                                 <Button
@@ -1746,7 +1750,7 @@ export default function ShowroomCaseStudioPage() {
                                   onClick={() =>
                                     setBlogViewer({
                                       displayLabel: getShowroomCasePublicDisplayName(deriveStudioSeedFromSlides(row)),
-                                      post: row.canonicalBlogPost,
+                                      post: canonicalBlogPost,
                                       html: buildBlogPreviewHtmlForRow(row),
                                     })
                                   }
@@ -1760,7 +1764,7 @@ export default function ShowroomCaseStudioPage() {
                                   variant="secondary"
                                   className="gap-2"
                                   disabled={
-                                    row.canonicalBlogPost.status === 'approved' || approvingBlogSite === row.siteName
+                                    canonicalBlogPost.status === 'approved' || approvingBlogSite === row.siteName
                                   }
                                   onClick={() => void handleApproveCanonicalBlog(row)}
                                 >
@@ -1778,7 +1782,7 @@ export default function ShowroomCaseStudioPage() {
                                 const previewHtml = buildBlogPreviewHtmlForRow(row)
                                 const extraImages = filterCanonicalBlogImagesNotInBodyHtml(
                                   previewHtml,
-                                  row.canonicalBlogPost.images,
+                                  canonicalBlogPost.images,
                                 )
                                 return extraImages.length > 0 ? (
                                   <div className="rounded-xl border border-slate-200 bg-slate-50/90 p-3">
@@ -1814,6 +1818,8 @@ export default function ShowroomCaseStudioPage() {
                                 dangerouslySetInnerHTML={{ __html: buildBlogPreviewHtmlForRow(row) }}
                               />
                             </div>
+                              )
+                            })()}
                           </details>
                         ) : null}
                       </div>
