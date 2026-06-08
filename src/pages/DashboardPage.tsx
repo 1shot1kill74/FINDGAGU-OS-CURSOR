@@ -4,6 +4,8 @@ import { differenceInCalendarDays, endOfMonth, formatDistanceToNow, startOfMonth
 import { ko } from 'date-fns/locale'
 import {
   ArrowRight,
+  ChevronLeft,
+  ChevronRight,
   ClipboardList,
   Clock3,
   ExternalLink,
@@ -119,6 +121,16 @@ function getNeglectDaysLabel(value: string | null | undefined, fallback?: string
   return `${days}일 방치`
 }
 
+const QUICK_NAV_COLLAPSED_KEY = 'dashboard-quick-nav-collapsed'
+
+function readQuickNavCollapsed(): boolean {
+  try {
+    return localStorage.getItem(QUICK_NAV_COLLAPSED_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
 function getOpenShowroomUrl() {
   const configured = (import.meta.env.VITE_PUBLIC_SHOWROOM_BASE_URL ?? '').toString().trim()
   if (configured) {
@@ -143,7 +155,20 @@ export default function DashboardPage() {
   const { consultations, loading: consultationsLoading } = useConsultations(true)
   const [showroomAssets, setShowroomAssets] = useState<ShowroomImageAsset[]>([])
   const [assetsLoading, setAssetsLoading] = useState(true)
+  const [quickNavCollapsed, setQuickNavCollapsed] = useState(readQuickNavCollapsed)
   const openShowroomUrl = getOpenShowroomUrl()
+
+  const toggleQuickNav = () => {
+    setQuickNavCollapsed((prev) => {
+      const next = !prev
+      try {
+        localStorage.setItem(QUICK_NAV_COLLAPSED_KEY, next ? '1' : '0')
+      } catch {
+        // ignore storage errors
+      }
+      return next
+    })
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -302,7 +327,108 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-neutral-50">
-      <div className="mx-auto flex max-w-7xl flex-col gap-8 px-4 py-8 md:px-8">
+      <div className="mx-auto flex max-w-7xl gap-4 px-4 py-8 md:gap-6 md:px-8">
+        <aside
+          className={`sticky top-8 hidden shrink-0 self-start overflow-visible transition-[width] duration-200 lg:block ${
+            quickNavCollapsed ? 'w-[4.5rem]' : 'w-72'
+          }`}
+        >
+          <div className="overflow-visible rounded-3xl border border-neutral-200 bg-white shadow-sm">
+            <div
+              className={`flex items-center border-b border-neutral-100 ${
+                quickNavCollapsed ? 'justify-center px-2 py-3' : 'justify-between gap-2 px-4 py-3'
+              }`}
+            >
+              {!quickNavCollapsed ? (
+                <div className="min-w-0">
+                  <h2 className="text-sm font-semibold text-neutral-900">빠른 이동</h2>
+                  <p className="mt-0.5 text-xs text-neutral-500">자주 쓰는 화면</p>
+                </div>
+              ) : null}
+              <button
+                type="button"
+                onClick={toggleQuickNav}
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-neutral-200 text-neutral-500 transition-colors hover:border-neutral-300 hover:bg-neutral-50 hover:text-neutral-800"
+                aria-label={quickNavCollapsed ? '빠른 이동 펼치기' : '빠른 이동 접기'}
+                aria-expanded={!quickNavCollapsed}
+              >
+                {quickNavCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+              </button>
+            </div>
+            <nav className={`space-y-1 ${quickNavCollapsed ? 'p-2' : 'p-3'}`}>
+              {quickActions.map((item) => {
+                const Icon = item.icon
+                return (
+                  <Link
+                    key={item.to}
+                    to={item.to}
+                    className={`group relative flex items-center rounded-2xl border border-transparent text-neutral-700 transition-colors hover:border-neutral-200 hover:bg-neutral-50 ${
+                      quickNavCollapsed ? 'justify-center p-2.5' : 'gap-3 px-3 py-2.5'
+                    }`}
+                  >
+                    <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-neutral-900 text-white">
+                      <Icon className="h-4 w-4" />
+                    </span>
+                    {!quickNavCollapsed ? (
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium text-neutral-900">{item.title}</span>
+                        <span className="mt-0.5 block text-xs leading-4 text-neutral-500">{item.description}</span>
+                      </span>
+                    ) : (
+                      <span className="pointer-events-none absolute left-full top-1/2 z-50 -translate-y-1/2 pl-2 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-visible:pointer-events-auto group-focus-visible:opacity-100">
+                        <span className="block whitespace-nowrap rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm font-medium text-neutral-900 shadow-md">
+                          {item.title}
+                        </span>
+                      </span>
+                    )}
+                  </Link>
+                )
+              })}
+            </nav>
+          </div>
+        </aside>
+
+        <div className="min-w-0 flex-1 space-y-8">
+        <section className="rounded-3xl border border-neutral-200 bg-white p-6 shadow-sm md:p-8 lg:hidden">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-neutral-900">빠른 이동</h2>
+              <p className="mt-1 text-sm text-neutral-500">자주 쓰는 화면을 한 번에 엽니다.</p>
+            </div>
+            <button
+              type="button"
+              onClick={toggleQuickNav}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-neutral-200 text-neutral-500"
+              aria-label={quickNavCollapsed ? '빠른 이동 펼치기' : '빠른 이동 접기'}
+              aria-expanded={!quickNavCollapsed}
+            >
+              {quickNavCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+            </button>
+          </div>
+          {!quickNavCollapsed ? (
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              {quickActions.map((item) => {
+                const Icon = item.icon
+                return (
+                  <Link
+                    key={item.to}
+                    to={item.to}
+                    className="group flex items-start gap-3 rounded-2xl border border-neutral-200 bg-neutral-50 p-4 transition-colors hover:border-neutral-300 hover:bg-white"
+                  >
+                    <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-neutral-900 text-white">
+                      <Icon className="h-5 w-5" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block font-medium text-neutral-900">{item.title}</span>
+                      <span className="mt-1 block text-sm leading-5 text-neutral-500">{item.description}</span>
+                    </span>
+                  </Link>
+                )
+              })}
+            </div>
+          ) : null}
+        </section>
+
         <section className="rounded-3xl border border-neutral-200 bg-white p-6 shadow-sm md:p-8">
           <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
             <div className="space-y-3">
@@ -468,72 +594,36 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        <section className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
-          <div className="rounded-3xl border border-neutral-200 bg-white p-6 shadow-sm">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h2 className="text-lg font-semibold text-neutral-900">빠른 이동</h2>
-                <p className="mt-1 text-sm text-neutral-500">자주 쓰는 화면을 한 번에 엽니다.</p>
+        <section className="rounded-3xl border border-neutral-200 bg-white p-6 shadow-sm">
+          <h2 className="text-lg font-semibold text-neutral-900">데이터 점검</h2>
+          <p className="mt-1 text-sm text-neutral-500">운영 전에 확인할 항목만 모아봤습니다.</p>
+          <div className="mt-5 grid gap-3 md:grid-cols-3">
+            <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4">
+              <div className="flex items-center gap-2 text-sm font-medium text-neutral-800">
+                <Sparkles className="h-4 w-4 text-amber-600" />
+                외부 표시명 누락
               </div>
+              <p className="mt-2 text-2xl font-semibold text-neutral-900">{dashboardStats.missingDisplayNameCount}</p>
+              <p className="mt-1 text-xs text-neutral-500">고객용 외부 디스플레이 네임이 비어 있는 이미지 수</p>
             </div>
-            <div className="mt-5 grid gap-3 md:grid-cols-2">
-              {quickActions.map((item) => {
-                const Icon = item.icon
-                return (
-                  <Link
-                    key={item.to}
-                    to={item.to}
-                    className="group rounded-2xl border border-neutral-200 bg-neutral-50 p-4 transition-colors hover:border-neutral-300 hover:bg-white"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="space-y-2">
-                        <div className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-neutral-900 text-white">
-                          <Icon className="h-5 w-5" />
-                        </div>
-                        <div>
-                          <p className="font-medium text-neutral-900">{item.title}</p>
-                          <p className="mt-1 text-sm leading-5 text-neutral-500">{item.description}</p>
-                        </div>
-                      </div>
-                      <ArrowRight className="h-4 w-4 shrink-0 text-neutral-400 transition-transform group-hover:translate-x-0.5" />
-                    </div>
-                  </Link>
-                )
-              })}
+            <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4">
+              <div className="flex items-center gap-2 text-sm font-medium text-neutral-800">
+                <FolderOpen className="h-4 w-4 text-sky-600" />
+                스페이스 미매칭
+              </div>
+              <p className="mt-2 text-2xl font-semibold text-neutral-900">{dashboardStats.unmatchedSpaceCount}</p>
+              <p className="mt-1 text-xs text-neutral-500">`space_id` 없이 남아 있는 상담용 이미지 수</p>
             </div>
-          </div>
-
-          <div className="rounded-3xl border border-neutral-200 bg-white p-6 shadow-sm">
-            <h2 className="text-lg font-semibold text-neutral-900">데이터 점검</h2>
-            <p className="mt-1 text-sm text-neutral-500">운영 전에 확인할 항목만 모아봤습니다.</p>
-            <div className="mt-5 space-y-3">
-              <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4">
-                <div className="flex items-center gap-2 text-sm font-medium text-neutral-800">
-                  <Sparkles className="h-4 w-4 text-amber-600" />
-                  외부 표시명 누락
-                </div>
-                <p className="mt-2 text-2xl font-semibold text-neutral-900">{dashboardStats.missingDisplayNameCount}</p>
-                <p className="mt-1 text-xs text-neutral-500">고객용 외부 디스플레이 네임이 비어 있는 이미지 수</p>
+            <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4">
+              <div className="flex items-center gap-2 text-sm font-medium text-neutral-800">
+                <TriangleAlert className="h-4 w-4 text-rose-600" />
+                Before/After 상태
               </div>
-              <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4">
-                <div className="flex items-center gap-2 text-sm font-medium text-neutral-800">
-                  <FolderOpen className="h-4 w-4 text-sky-600" />
-                  스페이스 미매칭
-                </div>
-                <p className="mt-2 text-2xl font-semibold text-neutral-900">{dashboardStats.unmatchedSpaceCount}</p>
-                <p className="mt-1 text-xs text-neutral-500">`space_id` 없이 남아 있는 상담용 이미지 수</p>
-              </div>
-              <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4">
-                <div className="flex items-center gap-2 text-sm font-medium text-neutral-800">
-                  <TriangleAlert className="h-4 w-4 text-rose-600" />
-                  Before/After 상태
-                </div>
-                <p className="mt-2 text-2xl font-semibold text-neutral-900">
-                  {dashboardStats.completedBeforeAfterCount}
-                  <span className="ml-2 text-base font-medium text-neutral-400">완성 / {dashboardStats.incompleteBeforeAfterCount} 보완 필요</span>
-                </p>
-                <p className="mt-1 text-xs text-neutral-500">비포어/애프터 묶음 기준 집계</p>
-              </div>
+              <p className="mt-2 text-2xl font-semibold text-neutral-900">
+                {dashboardStats.completedBeforeAfterCount}
+                <span className="ml-2 text-base font-medium text-neutral-400">완성 / {dashboardStats.incompleteBeforeAfterCount} 보완 필요</span>
+              </p>
+              <p className="mt-1 text-xs text-neutral-500">비포어/애프터 묶음 기준 집계</p>
             </div>
           </div>
         </section>
@@ -554,6 +644,7 @@ export default function DashboardPage() {
             <Link to="/admin/test-console"><Button variant="outline">채널톡 시뮬레이터</Button></Link>
           </div>
         </section>
+        </div>
       </div>
     </div>
   )
