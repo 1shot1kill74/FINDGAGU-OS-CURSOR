@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:competitor": "vite --open /admin/competitor-monitor",
     "build": "tsc -b && vite build && npm run build:sitemap && npm run build:prerender",
     "build:sitemap": "tsx scripts/buildSitemap.ts",
     "build:prerender": "tsx scripts/prerenderShowroomCases.ts",
@@ -18,7 +19,10 @@
     "handout:products": "node scripts/generate-product-handout.mjs",
     "handout:oldei": "node scripts/generate-oldei-handout-from-metadata.mjs",
     "handout:oldei:folders": "node scripts/generate-product-handout.mjs --올데이",
-    "handout:oldei:all-assets": "node scripts/generate-oldei-handout-from-metadata.mjs --all-assets"
+    "handout:oldei:all-assets": "node scripts/generate-oldei-handout-from-metadata.mjs --all-assets",
+    "setup:youtube-key": "node scripts/setupYoutubeDataApiKey.mjs",
+    "setup:apify-token": "node scripts/setupApifyToken.mjs",
+    "setup:competitor-cron": "node scripts/setupCompetitorMonitorCron.mjs"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

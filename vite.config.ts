@@ -13,7 +13,7 @@ export default defineConfig(({ mode }) => {
 
   return {
     server: {
-      host: '127.0.0.1',
+      host: true,
       port: 5180,
       strictPort: true,
       proxy: {

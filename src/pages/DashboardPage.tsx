@@ -14,6 +14,7 @@ import {
   LogOut,
   MonitorCog,
   Sparkles,
+  Target,
   TriangleAlert,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -289,6 +290,12 @@ export default function DashboardPage() {
       to: '/image-assets/upload',
       icon: ImagePlus,
     },
+    {
+      title: '경쟁사 모니터링',
+      description: '완내스 유튜브·인스타·블로그·키워드 수집 현황을 확인합니다.',
+      to: '/admin/competitor-monitor',
+      icon: Target,
+    },
   ] as const
 
   const loading = consultationsLoading || assetsLoading
@@ -543,6 +550,7 @@ export default function DashboardPage() {
             <Link to="/homepage-concept"><Button variant="outline">홈페이지 컨셉</Button></Link>
             <Link to="/admin/migration"><Button variant="outline">데이터 통합 마이그레이션</Button></Link>
             <Link to="/admin/archive"><Button variant="outline">숨긴 상담 아카이브</Button></Link>
+            <Link to="/admin/competitor-monitor"><Button variant="outline">경쟁사 모니터링</Button></Link>
             <Link to="/admin/test-console"><Button variant="outline">채널톡 시뮬레이터</Button></Link>
           </div>
         </section>

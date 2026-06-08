@@ -67,12 +67,21 @@ Railway 대시보드에서 아래 값 입력:
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `SHOWROOM_SHORTS_WORKER_TOKEN`
+- 선택: `SHOWROOM_SHORTS_POLL_INTERVAL_MS`
+- 선택: `SHOWROOM_SHORTS_POLL_BATCH_SIZE`
 - 선택: `SHOWROOM_SHORTS_BGM_URL`
 
 `SHOWROOM_SHORTS_BGM_URL` 미설정 시 기본값:
 
 ```text
 https://findgagu-os-cursor.vercel.app/assets/bgm/bright-lines-new-light-sample-b-24-34.mp3
+```
+
+자동 Kling 완료 감지 기본값:
+
+```text
+SHOWROOM_SHORTS_POLL_INTERVAL_MS=15000
+SHOWROOM_SHORTS_POLL_BATCH_SIZE=10
 ```
 
 ## 5. 워커 합성 테스트

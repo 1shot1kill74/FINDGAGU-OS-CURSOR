@@ -143,18 +143,33 @@ export default function ShowroomShortsPage() {
   }, [])
 
   useEffect(() => {
+    const generatingJobIds = jobs
+      .filter((job) => job.status === 'generating')
+      .map((job) => job.id)
     const hasActiveWork = jobs.some((job) =>
-      job.status === 'composition_queued'
+      job.status === 'generating'
+      || job.status === 'composition_queued'
       || job.status === 'composition_processing'
       || hasActivePublish(job)
     )
     if (!hasActiveWork) return
 
+    let cancelled = false
+
     const timer = window.setInterval(() => {
-      void load(false)
+      void (async () => {
+        if (generatingJobIds.length > 0) {
+          await Promise.allSettled(generatingJobIds.map((jobId) => pollShowroomShortsJob(jobId)))
+        }
+        if (cancelled) return
+        await load(false)
+      })()
     }, 8_000)
 
-    return () => window.clearInterval(timer)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
   }, [jobs])
 
   const handleRequestGeneration = async (jobId: string) => {

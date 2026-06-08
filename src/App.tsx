@@ -29,6 +29,7 @@ const ShowroomCaseStudioPage = lazy(() => import('@/pages/admin/ShowroomCaseStud
 const ShowroomShortsPage = lazy(() => import('@/pages/admin/ShowroomShortsPage'))
 const ShowroomBasicShortsQueuePage = lazy(() => import('@/pages/admin/ShowroomBasicShortsQueuePage'))
 const ShowroomAdsDashboardPage = lazy(() => import('@/pages/admin/ShowroomAdsDashboardPage'))
+const CompetitorMonitorPage = lazy(() => import('@/pages/admin/CompetitorMonitorPage'))
 const TestConsole = lazy(() => import('@/pages/admin/TestConsole'))
 
 function RouteFallback() {
@@ -106,6 +107,7 @@ function App() {
             <Route path="/admin/showroom-shorts" element={<ShowroomShortsPage />} />
             <Route path="/admin/showroom-basic-shorts" element={<ShowroomBasicShortsQueuePage />} />
             <Route path="/admin/showroom-ads" element={<ShowroomAdsDashboardPage />} />
+            <Route path="/admin/competitor-monitor" element={<CompetitorMonitorPage />} />
             <Route path="/admin/test-console" element={<TestConsole />} />
           </Route>
         </Routes>
