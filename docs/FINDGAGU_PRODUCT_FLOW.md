@@ -55,7 +55,10 @@ flowchart LR
   shorts -.-> instagram["Instagram"]
   showroom -.-> contentReuse["추후 확장: 콘텐츠 파생"]
   consultation -.-> automation["추후 확장: 후속 자동화"]
+  automation -.-> reviewLoop["고객 후기 수집 (D+7)"]
 ```
+
+> 고객 후기 수집 상세: `docs/CUSTOMER_REVIEW_COLLECTION_BLUEPRINT.md`
 
 ### 표현 포인트
 - `이미지 -> 자산` 전환이 핵심입니다.

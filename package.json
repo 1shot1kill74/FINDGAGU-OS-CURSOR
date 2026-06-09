@@ -4,7 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --open /dashboard",
+    "dev:showroom": "vite --open /showroom",
+    "dev:public-showroom": "vite --open /public/showroom",
     "dev:competitor": "vite --open /admin/competitor-monitor",
     "build": "tsc -b && vite build && npm run build:sitemap && npm run build:prerender",
     "build:sitemap": "tsx scripts/buildSitemap.ts",

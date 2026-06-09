@@ -42,7 +42,7 @@ export const INDUSTRY_PRESETS: Record<string, CaseProfilePreset> = {
     painPoint: '예쁘기만 하고 차별점이 부족해, 경쟁 매장과 비교될 때 설득 포인트가 약했습니다.',
     solutionPoint: '좌석 유형을 명확히 나누고, 집중감이 드러나는 분위기로 리뉴얼 포인트를 만들었습니다.',
     operatorReview: '리뉴얼 이유를 사진으로 설명하기 쉬워지고, 방문 상담 때 반응이 빨라졌다는 평가가 있었습니다.',
-    recommendedFor: '스터디카페 리뉴얼, 관리형 스타일 전환, 상권 내 차별화가 필요한 현장',
+    recommendedFor: '스터디카페를 관리형으로 전환, 상권 내 차별화·엑시트 전략이 필요한 현장',
   },
   학교: {
     seatCountBand: '25~60석',
@@ -83,5 +83,15 @@ export const SITE_OVERRIDES: Record<string, Partial<ShowroomCaseProfile>> = {
     budgetBand: '중상 예산대',
     painPoint: '관리형다운 밀도와 완성도를 보여줘야 했고, 상담 시 첫인상 차별화가 중요했습니다.',
     solutionPoint: '집중 좌석과 브랜딩 톤을 함께 잡아 관리형 프리미엄 이미지를 명확히 만들었습니다.',
+  },
+  '2505 경기권 관리형 6888': {
+    painPoint: '오래된 스터디카페를 인수한 뒤 매출 부진이 이어졌고, 경쟁 매장과 차별화되는 관리형 인상을 다시 만들어야 했습니다.',
+    solutionPoint: '좌석 구성·동선·분위기를 관리형 기준으로 재설계해 리뉴얼이 아닌 전환 스토리가 보이게 했습니다.',
+    recommendedFor: '스터디카페를 관리형으로 전환, 인수·리뉴얼 후 차별화가 필요한 현장',
+  },
+  '2512 전북권 관리형 8450': {
+    painPoint: '기존 스터디카페형 인상으로는 상권 내 프리미엄을 설명하기 어려웠고, 관리형 운영 구조에 맞는 공간 재정의가 필요했습니다.',
+    solutionPoint: '관리형 스터디카페 톤으로 좌석·동선을 정리해 운영자와 방문자 모두가 읽기 쉬운 구조로 바꿨습니다.',
+    recommendedFor: '스터디카페를 관리형으로 전환, 전북·지방 상권 내 차별화·엑시트 전략',
   },
 }

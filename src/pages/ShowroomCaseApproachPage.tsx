@@ -1,16 +1,29 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, ChevronLeft, ChevronRight, FileText, Images } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 import { usePublicShowroomChannelTalk } from '@/hooks/usePublicShowroomChannelTalk'
 import { buildShowroomCaseCardNewsPackage, formatShowroomCardTextForDisplay, normalizeShowroomCardNewsSlides, resolveCardNewsSlideImageUrl } from '@/lib/showroomCaseContentPackage'
 import { renderCanonicalBlogPostHtml } from '@/lib/showroomCaseCanonicalBlog'
 import { usePageHead, type PageHeadJsonLd, type PageHeadMetaTag } from '@/lib/usePageHead'
 import {
   loadShowroomCaseApproachBundle,
+  resolvePublicShowroomCaseHref,
   type ShowroomCaseApproachBundle,
 } from '@/lib/showroomCaseApproachData'
 import { fetchApprovedBlogShowroomCaseProfileDrafts, type ShowroomCaseProfileDraft } from '@/lib/showroomCaseProfileService'
+import { fetchPublicShowroomAssets } from '@/lib/showroomShareService'
+import { fetchShowroomImageAssets, type ShowroomImageAsset } from '@/lib/imageAssetService'
+import { ShowroomStoryStickyMiniCta } from '@/pages/showroom/ShowroomStoryStickyMiniCta'
+import { ShowroomCaseConsultationCta } from '@/pages/showroom/ShowroomCaseConsultationCta'
+import { getBroadPublicLabel } from '@/pages/showroom/showroomPageGrouping'
+import {
+  appendShowroomConcernQuery,
+  buildShowroomStoryBackHref,
+  resolveShowroomStoryCta,
+} from '@/pages/showroom/showroomStoryCta'
+import { trackShowroomAbmEvent } from '@/lib/showroomAbmTracking'
 
 const PROBLEM_FRAME_SUMMARY: Record<string, string> = {
   'focus-fatigue': '오래 머물기 어렵고 집중이 쉽게 끊기는 구조입니다.',
@@ -141,19 +154,35 @@ function useRelatedApprovedBlogCases(params: UseRelatedApprovedBlogCasesParams):
     currentBusinessTypes,
   } = params
   const [drafts, setDrafts] = useState<ShowroomCaseProfileDraft[]>([])
+  const [publicAssets, setPublicAssets] = useState<ShowroomImageAsset[]>([])
+  const [internalAssets, setInternalAssets] = useState<ShowroomImageAsset[]>([])
 
   useEffect(() => {
     if (!enabled) {
       setDrafts([])
+      setPublicAssets([])
+      setInternalAssets([])
       return
     }
     let cancelled = false
     void (async () => {
       try {
-        const rows = await fetchApprovedBlogShowroomCaseProfileDrafts()
-        if (!cancelled) setDrafts(rows)
+        const [rows, publicRows, internalRows] = await Promise.all([
+          fetchApprovedBlogShowroomCaseProfileDrafts(),
+          fetchPublicShowroomAssets(),
+          fetchShowroomImageAssets(),
+        ])
+        if (!cancelled) {
+          setDrafts(rows)
+          setPublicAssets(publicRows)
+          setInternalAssets(internalRows)
+        }
       } catch {
-        if (!cancelled) setDrafts([])
+        if (!cancelled) {
+          setDrafts([])
+          setPublicAssets([])
+          setInternalAssets([])
+        }
       }
     })()
     return () => {
@@ -187,7 +216,7 @@ function useRelatedApprovedBlogCases(params: UseRelatedApprovedBlogCasesParams):
           industry: d.industry ?? null,
           title,
           summary: summary.length > 140 ? `${summary.slice(0, 137)}…` : summary,
-          href: `/public/showroom/case/${encodeURIComponent(d.siteName)}`,
+          href: resolvePublicShowroomCaseHref(d, publicAssets, internalAssets),
           score,
         }
       })
@@ -197,20 +226,24 @@ function useRelatedApprovedBlogCases(params: UseRelatedApprovedBlogCasesParams):
         return a.title.localeCompare(b.title, 'ko')
       })
     return scored.slice(0, 4)
-  }, [enabled, drafts, currentSiteName, currentIndustry, currentProblemCode, currentSolutionCode, currentBusinessTypes])
+  }, [enabled, drafts, publicAssets, internalAssets, currentSiteName, currentIndustry, currentProblemCode, currentSolutionCode, currentBusinessTypes])
 }
 
 export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'case' }: { mode?: Mode; entry?: EntryType }) {
   usePublicShowroomChannelTalk(mode === 'public')
 
   const { siteKey } = useParams<{ siteKey: string }>()
+  const [searchParams] = useSearchParams()
+  const storyConcern = resolveShowroomStoryCta(searchParams.get('concern')).concern
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [bundle, setBundle] = useState<ShowroomCaseApproachBundle | null>(null)
   const [activeSlideIndex, setActiveSlideIndex] = useState(0)
 
   const backHref = mode === 'public'
-    ? (entry === 'cardnews' ? '/public/showroom/cardnews' : '/public/showroom#showroom-before-after-section')
+    ? (entry === 'cardnews'
+      ? '/public/showroom/cardnews'
+      : buildShowroomStoryBackHref(storyConcern))
     : '/admin/showroom-case-studio'
 
   useEffect(() => {
@@ -234,6 +267,14 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
       if (cancelled) return
       setLoading(false)
       if (!result.ok) {
+        if (mode === 'public') {
+          trackShowroomAbmEvent({
+            eventName: 'abm_case_open_fail',
+            siteName: siteKey,
+            concern: storyConcern,
+            metadata: { reason: result.reason ?? 'unknown', entry },
+          })
+        }
         if (result.reason === 'not_found') {
           setError(entry === 'cardnews' ? '해당 공개 카드뉴스를 찾을 수 없습니다.' : '해당 전후 비교 사례를 찾을 수 없습니다.')
         } else if (result.reason === 'incomplete') {
@@ -244,6 +285,15 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
         setBundle(null)
         return
       }
+      if (mode === 'public') {
+        trackShowroomAbmEvent({
+          eventName: 'abm_case_open',
+          siteName: result.data.siteName,
+          concern: storyConcern,
+          industry: result.data.businessTypes[0] ?? null,
+          metadata: { entry },
+        })
+      }
       setBundle(result.data)
       setActiveSlideIndex(0)
     })()
@@ -251,7 +301,7 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
     return () => {
       cancelled = true
     }
-  }, [siteKey, mode, entry])
+  }, [siteKey, mode, entry, storyConcern])
 
   const generatedCardNewsSlides = useMemo(
     () => getGeneratedCardNewsSlides(bundle?.profile?.cardNewsGeneration?.response),
@@ -280,6 +330,8 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
   const pain = resolvedBundle.profile?.painPoint?.trim() || (resolvedBundle.profile?.problemCode ? PROBLEM_FRAME_SUMMARY[resolvedBundle.profile.problemCode] ?? '' : '')
   const solution = resolvedBundle.profile?.solutionPoint?.trim() || (resolvedBundle.profile?.solutionCode ? SOLUTION_FRAME_SUMMARY[resolvedBundle.profile.solutionCode] ?? '' : '')
   const displayName = resolvedBundle.externalLabel?.trim() || resolvedBundle.siteName
+  const publicDisplayName = getBroadPublicLabel(resolvedBundle.siteName, resolvedBundle.externalLabel)
+  const headlineName = mode === 'public' ? publicDisplayName : displayName
   const headlineHook = resolvedBundle.profile?.headlineHook?.trim() || pain || '이 공간은 무엇이 달라졌을까요?'
   const problemDetail = resolvedBundle.profile?.problemDetail?.trim()
   const solutionDetail = resolvedBundle.profile?.solutionDetail?.trim()
@@ -380,7 +432,7 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
     currentBusinessTypes: resolvedBundle.businessTypes,
   })
 
-  const seoTitle = canonicalBlog?.seo.title?.trim() || `${displayName} — 파인드가구 온라인 쇼룸 사례`
+  const seoTitle = canonicalBlog?.seo.title?.trim() || `${headlineName} — 파인드가구 온라인 쇼룸 사례`
   const seoDescription = canonicalBlog?.seo.seoDescription?.trim() || pain || solution || ''
   const ogTitle = canonicalBlog?.seo.ogTitle?.trim() || seoTitle
   const ogDescription = canonicalBlog?.seo.ogDescription?.trim() || seoDescription
@@ -496,7 +548,7 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
             <p className="text-xs font-medium uppercase tracking-wide text-emerald-700">
               {entry === 'cardnews' ? '공개 카드뉴스' : isStoryLayout ? '이 현장의 이야기' : '현장 기획 방식'}
             </p>
-            <h1 className="mt-1 text-2xl font-bold text-neutral-900 md:text-3xl">{displayName}</h1>
+            <h1 className="mt-1 text-2xl font-bold text-neutral-900 md:text-3xl">{headlineName}</h1>
             {bundle.businessTypes.length > 0 && (
               <div className="mt-3 flex flex-wrap gap-2">
                 {bundle.businessTypes.slice(0, 4).map((t) => (
@@ -513,13 +565,13 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
         </div>
       </header>
 
-      <main className="mx-auto max-w-3xl space-y-10 px-4 py-8 md:px-6 md:py-10">
+      <main className={cn('mx-auto max-w-3xl space-y-10 px-4 py-8 md:px-6 md:py-10', isStoryLayout && 'pb-24')}>
         {isStoryLayout ? (
           <section className="space-y-2">
             <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">카드뉴스</p>
-            <h2 className="text-xl font-semibold text-neutral-900">사진을 보며 이 현장의 핵심 변화를 빠르게 확인해보세요.</h2>
+            <h2 className="text-xl font-semibold text-neutral-900">짧게 훑어보는 핵심 이야기</h2>
             <p className="text-sm leading-relaxed text-neutral-600">
-              먼저 카드뉴스로 문제와 해결 흐름을 훑고, 아래에서 블로그로 더 자세한 비하인드 스토리를 읽을 수 있습니다.
+              바쁘실 때는 카드뉴스만 보셔도 이 현장의 문제와 해결 흐름을 파악하실 수 있습니다.
             </p>
           </section>
         ) : null}
@@ -598,17 +650,34 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
           </div>
         </section>
 
+        {isStoryLayout && showCanonicalBlogSection ? (
+          <div className="rounded-2xl border border-dashed border-neutral-200 bg-neutral-50/80 px-4 py-4 md:px-5">
+            <p className="text-sm leading-relaxed text-neutral-700">
+              <span className="font-semibold text-neutral-900">더 자세히 알고 싶으시다면</span>{' '}
+              아래 블로그 글을 참고해 주세요. 카드뉴스는 핵심만 빠르게, 블로그는 현장 배경·설계 이유·디테일을
+              길게 풀어 쓴 글입니다. 시간이 부족하시면 카드뉴스만으로도 충분합니다.
+            </p>
+          </div>
+        ) : null}
+
         {showCanonicalBlogSection && canonicalBlog ? (
           <section className="space-y-3" aria-labelledby="canonical-blog-article">
-            <div className="flex flex-wrap items-center gap-2 text-neutral-900">
-              <FileText className="h-5 w-5 text-emerald-700" aria-hidden />
-              <h2 id="canonical-blog-article" className="text-lg font-semibold">
-                {isStoryLayout ? '이 현장의 블로그 이야기' : '사례 블로그 글'}
-              </h2>
-              {mode === 'internal' && canonicalBlog.status !== 'approved' ? (
-                <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-medium text-amber-900">
-                  미승인 정본은 공개 사용자에게 숨김 · 작업실에서 승인 필요
-                </span>
+            <div className="space-y-1">
+              <div className="flex flex-wrap items-center gap-2 text-neutral-900">
+                <FileText className="h-5 w-5 text-emerald-700" aria-hidden />
+                <h2 id="canonical-blog-article" className="text-lg font-semibold">
+                  {isStoryLayout ? '더 깊게 읽는 블로그' : '사례 블로그 글'}
+                </h2>
+                {mode === 'internal' && canonicalBlog.status !== 'approved' ? (
+                  <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-medium text-amber-900">
+                    미승인 정본은 공개 사용자에게 숨김 · 작업실에서 승인 필요
+                  </span>
+                ) : null}
+              </div>
+              {isStoryLayout ? (
+                <p className="text-sm leading-relaxed text-neutral-600">
+                  카드뉴스에서 훑은 내용을 바탕으로, 궁금한 점을 더 알고 싶을 때 이어서 읽어 보세요.
+                </p>
               ) : null}
             </div>
             {(() => {
@@ -662,6 +731,15 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
           </section>
         ) : null}
 
+        {isStoryLayout ? (
+          <ShowroomCaseConsultationCta
+            concern={storyConcern}
+            siteDisplayName={headlineName}
+            siteName={resolvedBundle.siteName}
+            surface="case_inline"
+          />
+        ) : null}
+
         {showRelatedCases && relatedCases.length > 0 ? (
           <section className="space-y-3" aria-labelledby="related-cases">
             <div className="flex items-center gap-2 text-neutral-900">
@@ -672,7 +750,7 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
               {relatedCases.map((c) => (
                 <li key={c.siteName}>
                   <Link
-                    to={c.href}
+                    to={appendShowroomConcernQuery(c.href, storyConcern)}
                     className="block h-full rounded-2xl border border-neutral-200 bg-white p-4 transition hover:border-emerald-300 hover:bg-emerald-50/40"
                   >
                     {c.industry ? (
@@ -795,7 +873,9 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
         <section className="flex flex-col gap-3 rounded-2xl border border-emerald-200 bg-emerald-50/60 p-5 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-neutral-700">
             {isStoryLayout
-              ? '비슷한 변화 사례를 더 보고 싶다면 오픈 쇼룸으로 돌아가거나, 바로 상담으로 이어갈 수 있습니다.'
+              ? (storyConcern
+                ? '같은 고민의 다른 성공 사례를 더 보고 싶다면 쇼룸으로 돌아갈 수 있습니다.'
+                : '다른 성공 사례를 더 보고 싶다면 쇼룸으로 돌아갈 수 있습니다.')
               : '같은 형태로 우리 공간을 상담받고 싶다면 문의로 연결해 주세요.'}
           </p>
           <div className="flex flex-wrap gap-2">
@@ -803,13 +883,23 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
               <Link to={backHref}>
                 <Images className="h-4 w-4" />
                 {mode === 'public'
-                  ? (entry === 'cardnews' ? '카드뉴스 더 보기' : '쇼룸 더 보기')
+                  ? (entry === 'cardnews'
+                    ? '카드뉴스 더 보기'
+                    : (storyConcern ? '같은 고민 사례 더 보기' : '쇼룸 더 보기'))
                   : '작업실로 돌아가기'}
               </Link>
             </Button>
           </div>
         </section>
       </main>
+      {isStoryLayout ? (
+        <ShowroomStoryStickyMiniCta
+          enabled
+          concern={storyConcern}
+          siteDisplayName={headlineName}
+          siteName={resolvedBundle.siteName}
+        />
+      ) : null}
     </div>
   )
 }

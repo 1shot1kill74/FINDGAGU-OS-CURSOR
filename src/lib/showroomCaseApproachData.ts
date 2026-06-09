@@ -64,6 +64,131 @@ export type ShowroomCaseApproachBundle = {
   profile: ShowroomCaseProfileDraft | null
 }
 
+type ShowroomCaseHrefDraft = Pick<
+  ShowroomCaseProfileDraft,
+  'siteName' | 'canonicalSiteName' | 'cardNewsPublication' | 'canonicalBlogPost'
+>
+
+function getDraftLookupAliases(draft: ShowroomCaseHrefDraft): string[] {
+  return Array.from(new Set([
+    draft.siteName.trim(),
+    draft.canonicalSiteName?.trim() ?? '',
+    draft.cardNewsPublication.siteKey?.trim() ?? '',
+    draft.canonicalBlogPost?.siteName?.trim() ?? '',
+  ].filter(Boolean)))
+}
+
+function getPublicCaseUrlKeyFromImages(images: ShowroomImageAsset[]): string | null {
+  const urlKey = getPreferredExternalLabel(images) || getPreferredShowroomSiteName(images)
+  return urlKey && urlKey !== '미지정' ? urlKey : null
+}
+
+function findBeforeAfterGroupForQuery(query: string, assets: ShowroomImageAsset[]): ShowroomImageAsset[] | null {
+  const trimmed = query.trim()
+  if (!trimmed) return null
+
+  const groups = groupBeforeAfterAssets(assets)
+  for (const [, images] of groups) {
+    if (
+      getPreferredShowroomSiteName(images) === trimmed
+      || getPreferredExternalLabel(images) === trimmed
+    ) {
+      return images
+    }
+  }
+
+  for (const [, images] of groups) {
+    const hit = images.some(
+      (image) =>
+        image.site_name?.trim() === trimmed
+        || image.canonical_site_name?.trim() === trimmed
+        || image.external_display_name?.trim() === trimmed
+        || image.broad_external_display_name?.trim() === trimmed
+        || broadenPublicDisplayName(image.external_display_name?.trim() ?? null) === trimmed
+        || broadenPublicDisplayName(image.site_name?.trim() ?? null) === trimmed
+    )
+    if (hit) return images
+  }
+
+  return null
+}
+
+function draftMatchesBeforeAfterGroup(draft: ShowroomCaseHrefDraft, images: ShowroomImageAsset[]): boolean {
+  const draftAliases = getDraftLookupAliases(draft)
+  const draftAliasSet = new Set(draftAliases)
+  const imageAliases = collectShowroomAliasNamesFromImages(images)
+  if (imageAliases.some((alias) => draftAliasSet.has(alias))) return true
+
+  const draftIdentity = new Set(collectShowroomIdentityKeys(draftAliases))
+  const groupIdentity = collectShowroomIdentityKeys(imageAliases)
+  return groupIdentity.some((key) => draftIdentity.has(key))
+}
+
+function findPublicCaseUrlKeyForDraft(
+  draft: ShowroomCaseHrefDraft,
+  publicAssets: ShowroomImageAsset[],
+  internalAssets: ShowroomImageAsset[] = [],
+): string | null {
+  const publicGroups = groupBeforeAfterAssets(publicAssets)
+  const internalGroups = groupBeforeAfterAssets(internalAssets)
+
+  for (const [, images] of publicGroups) {
+    if (!draftMatchesBeforeAfterGroup(draft, images)) continue
+    const urlKey = getPublicCaseUrlKeyFromImages(images)
+    if (urlKey) return urlKey
+  }
+
+  for (const [, internalImages] of internalGroups) {
+    if (!draftMatchesBeforeAfterGroup(draft, internalImages)) continue
+
+    const internalIdentity = new Set(getImageIdentityKeys(internalImages, getDraftLookupAliases(draft)))
+    for (const [, publicImages] of publicGroups) {
+      const publicIdentity = getImageIdentityKeys(publicImages, [])
+      if (!publicIdentity.some((key) => internalIdentity.has(key))) continue
+      const urlKey = getPublicCaseUrlKeyFromImages(publicImages)
+      if (urlKey) return urlKey
+    }
+
+    const internalKey = getPublicCaseUrlKeyFromImages(internalImages)
+    if (internalKey) return internalKey
+  }
+
+  for (const candidate of getDraftLookupAliases(draft)) {
+    const matched = findBeforeAfterGroupForQuery(candidate, publicAssets)
+    if (!matched) continue
+    const urlKey = getPublicCaseUrlKeyFromImages(matched)
+    if (urlKey) return urlKey
+  }
+
+  for (const candidate of getDraftLookupAliases(draft)) {
+    const matched = findBeforeAfterGroupForQuery(candidate, internalAssets)
+    if (!matched) continue
+    const urlKey = getPublicCaseUrlKeyFromImages(matched)
+    if (urlKey) return urlKey
+  }
+
+  return null
+}
+
+/** 승인 블로그·관련 사례 카드 등에서 공개 case URL 키를 image_assets 기준으로 맞춘다. */
+export function resolvePublicShowroomCaseHref(
+  draft: ShowroomCaseHrefDraft,
+  publicAssets: ShowroomImageAsset[],
+  internalAssets: ShowroomImageAsset[] = [],
+): string {
+  const resolved = findPublicCaseUrlKeyForDraft(draft, publicAssets, internalAssets)
+  if (resolved) {
+    return `/public/showroom/case/${encodeURIComponent(resolved)}`
+  }
+
+  const fallback =
+    draft.canonicalSiteName?.trim()
+    || draft.cardNewsPublication.siteKey?.trim()
+    || draft.canonicalBlogPost?.siteName?.trim()
+    || draft.siteName.trim()
+  return `/public/showroom/case/${encodeURIComponent(fallback)}`
+}
+
 function pickBeforeAfterPair(images: ShowroomImageAsset[]): {
   before: ShowroomImageAsset | null
   after: ShowroomImageAsset | null
@@ -73,6 +198,31 @@ function pickBeforeAfterPair(images: ShowroomImageAsset[]): {
   const before = beforeImages[0] ?? null
   const after = afterImages.find((i) => i.is_main) ?? afterImages[0] ?? null
   return { before, after }
+}
+
+function hasApprovedCanonicalBlog(profile: ShowroomCaseProfileDraft | null | undefined): boolean {
+  const post = profile?.canonicalBlogPost
+  if (!post || post.status !== 'approved') return false
+  return Boolean(post.bodyMarkdown?.trim() || post.bodyHtml?.trim())
+}
+
+async function loadShowroomCaseApproachBundleFromProfileQuery(
+  query: string,
+): Promise<ShowroomCaseApproachBundle | null> {
+  const drafts = await fetchShowroomCaseProfileDrafts([query])
+  const profile = drafts.find(
+    (draft) => draft.siteName === query || draft.canonicalSiteName === query,
+  ) ?? drafts[0] ?? null
+  if (!hasApprovedCanonicalBlog(profile)) return null
+
+  return {
+    siteName: profile!.siteName,
+    externalLabel: profile!.canonicalSiteName?.trim() || profile!.siteName,
+    businessTypes: profile!.industry?.trim() ? [profile!.industry.trim()] : [],
+    beforeImage: null,
+    afterImage: null,
+    profile: profile!,
+  }
 }
 
 /**
@@ -99,40 +249,19 @@ export async function loadShowroomCaseApproachBundle(
     const [assets, internalAssets] = source === 'public'
       ? await Promise.all([fetchPublicShowroomAssets(), fetchShowroomImageAssets()])
       : [await fetchShowroomImageAssets(), null]
-    const groups = groupBeforeAfterAssets(assets)
 
-    let matched: ShowroomImageAsset[] | null = null
-    for (const [, images] of groups) {
-      if (
-        getPreferredShowroomSiteName(images) === query
-        || getPreferredExternalLabel(images) === query
-      ) {
-        matched = images
-        break
-      }
-    }
-    if (!matched) {
-      for (const [, images] of groups) {
-        const hit = images.some(
-          (i) =>
-            (i.site_name?.trim() === query) ||
-            (i.canonical_site_name?.trim() === query) ||
-            (i.external_display_name?.trim() === query) ||
-            (i.broad_external_display_name?.trim() === query) ||
-            (broadenPublicDisplayName(i.external_display_name?.trim() ?? null) === query)
-        )
-        if (hit) {
-          matched = images
-          break
-        }
-      }
+    let matched = findBeforeAfterGroupForQuery(query, assets)
+    if (!matched?.length && source === 'public' && internalAssets) {
+      matched = findBeforeAfterGroupForQuery(query, internalAssets)
     }
 
-    if (!matched?.length) return { ok: false, reason: 'not_found' }
-
-    const hasBefore = matched.some((i) => i.before_after_role === 'before')
-    const hasAfter = matched.some((i) => i.before_after_role === 'after')
-    if (!hasBefore || !hasAfter) return { ok: false, reason: 'incomplete' }
+    if (!matched?.length) {
+      const profileBundle = await loadShowroomCaseApproachBundleFromProfileQuery(query)
+      if (profileBundle) {
+        return { ok: true, data: profileBundle }
+      }
+      return { ok: false, reason: 'not_found' }
+    }
 
     let draftLookupNames = getDraftLookupNames(matched, query)
     if (source === 'public' && internalAssets) {
@@ -178,6 +307,11 @@ export async function loadShowroomCaseApproachBundle(
       }
     }
 
+    const drafts = await fetchShowroomCaseProfileDrafts(draftLookupNames)
+    const profile = drafts[0] ?? null
+
+    const hasApprovedBlog = hasApprovedCanonicalBlog(profile)
+
     const siteName = getPreferredShowroomSiteName(matched)
     const { before, after } = pickBeforeAfterPair(matched)
 
@@ -193,14 +327,6 @@ export async function loadShowroomCaseApproachBundle(
         break
       }
     }
-
-    const drafts = await fetchShowroomCaseProfileDrafts(draftLookupNames)
-    const profile = drafts[0] ?? null
-
-    // 비포/애프터 메타 부착이 누락된 사례라도 approved 블로그 정본이 있으면
-    // 블로그 섹션만이라도 노출되도록 fallback을 허용한다.
-    const hasApprovedBlog = profile?.canonicalBlogPost?.status === 'approved'
-      && (profile?.canonicalBlogPost?.bodyMarkdown?.trim().length ?? 0) > 0
 
     if ((!before || !after) && !hasApprovedBlog) {
       return { ok: false, reason: 'incomplete' }

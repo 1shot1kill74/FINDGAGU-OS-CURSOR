@@ -1,7 +1,12 @@
 import type { ShowroomImageAsset, ShowroomSiteOverride, ShowroomSiteOverrideSectionKey } from '@/lib/imageAssetService'
 import { getShowroomAssetGroupKey } from '@/lib/imageAssetService'
 import { broadenPublicDisplayName } from '@/lib/showroomShareService'
-import { CONCERN_CARDS, INDUSTRY_PREFERRED_ORDER } from '@/pages/showroom/showroomPageConstants'
+import {
+  compareShowroomProductSeriesNames,
+  CONCERN_CARDS,
+  CONCERN_FEATURED_BEFORE_AFTER_SITES,
+  INDUSTRY_PREFERRED_ORDER,
+} from '@/pages/showroom/showroomPageConstants'
 import type { ColorGroup, ProductGroup, SiteGroup } from '@/pages/showroom/showroomPageTypes'
 
 export function getPublicCardNewsHref(siteKey: string) {
@@ -343,7 +348,7 @@ export function buildProductGroups(assets: ShowroomImageAsset[]): ProductGroup[]
       const bHasSeries = bSeries.seriesSuffix ? 1 : 0
       if (aHasSeries !== bHasSeries) return bHasSeries - aHasSeries
 
-      const baseCompare = aSeries.baseName.localeCompare(bSeries.baseName, 'ko')
+      const baseCompare = compareShowroomProductSeriesNames(aSeries.baseName, bSeries.baseName)
       if (baseCompare !== 0) return baseCompare
 
       const seriesCompare = compareSeriesSuffix(aSeries.seriesSuffix, bSeries.seriesSuffix)
@@ -526,7 +531,113 @@ export function moveIdByOffset(ids: string[], targetId: string, direction: -1 | 
   return next
 }
 
+const LEGACY_CONCERN_TAG_MAP: Record<string, string> = {
+  '스터디카페를 관리형 스타일로': '스터디카페를 관리형으로 전환',
+  '스터디카페 → 관리형 전환': '스터디카페를 관리형으로 전환',
+}
+
+function normalizeConcernIndustryFilter(industryFilter: string): string {
+  const trimmed = industryFilter.trim().toLowerCase()
+  if (trimmed === '관리형전환' || trimmed === '스터디카페리뉴얼') return '관리형'
+  return trimmed
+}
+
 export function isConcernTag(value: string | null | undefined): value is string {
   if (!value) return false
   return CONCERN_CARDS.some((card) => card.tag === value)
+}
+
+export function normalizeConcernTag(value: string | null | undefined): string | null {
+  if (!value) return null
+  const candidate = LEGACY_CONCERN_TAG_MAP[value] ?? value
+  return isConcernTag(candidate) ? candidate : null
+}
+
+export function getConcernIndustryFilter(concernTag: string | null | undefined): string | null {
+  const normalizedTag = normalizeConcernTag(concernTag)
+  if (!normalizedTag) return null
+  const card = CONCERN_CARDS.find((item) => item.tag === normalizedTag)
+  return card?.industryFilter ?? null
+}
+
+export function getConcernIndustryDisplayLabel(industryFilter: string | null | undefined): string {
+  if (!industryFilter?.trim()) return '관련'
+  if (industryFilter.trim() === '관리형전환') return '스터디카페의 관리형전환'
+  if (industryFilter.trim() === '스터디카페리뉴얼') return '스터디카페'
+  return industryFilter.trim()
+}
+
+export function groupMatchesConcernIndustryFilter(
+  group: Pick<SiteGroup, 'businessTypes'>,
+  industryFilter: string | null | undefined
+): boolean {
+  if (!industryFilter?.trim()) return true
+  const normalizedFilter = normalizeConcernIndustryFilter(industryFilter)
+  return group.businessTypes.some((businessType) =>
+    (businessType || '').toLowerCase().includes(normalizedFilter)
+  )
+}
+
+function collectConcernFeaturedSiteHaystacks(
+  group: Pick<SiteGroup, 'siteName' | 'externalDisplayName' | 'images'>
+): string[] {
+  return [
+    group.siteName,
+    group.externalDisplayName ?? '',
+    ...group.images.flatMap((image) => [
+      image.external_display_name ?? '',
+      image.broad_external_display_name ?? '',
+      image.canonical_site_name ?? '',
+      image.site_name ?? '',
+      image.space_display_name ?? '',
+      image.raw_site_name ?? '',
+    ]),
+  ]
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean)
+}
+
+export function groupMatchesConcernFeaturedSite(
+  group: Pick<SiteGroup, 'siteName' | 'externalDisplayName' | 'images'>,
+  featuredKey: string
+): boolean {
+  const needle = featuredKey.trim().toLowerCase()
+  if (!needle) return false
+
+  const haystacks = collectConcernFeaturedSiteHaystacks(group)
+  if (haystacks.some((haystack) => haystack.includes(needle))) return true
+
+  const projectCode = needle.match(/\d{4}$/)?.[0]
+  if (!projectCode) return false
+
+  return haystacks.some((haystack) => haystack.includes(projectCode))
+}
+
+export function filterConcernFeaturedBeforeAfterGroups(
+  groups: SiteGroup[],
+  concernTag: string | null | undefined
+): SiteGroup[] {
+  if (!concernTag) return []
+
+  const featuredKeys = CONCERN_FEATURED_BEFORE_AFTER_SITES[concernTag]
+  if (!featuredKeys?.length) return []
+
+  return featuredKeys
+    .map((featuredKey) => groups.find((group) => groupMatchesConcernFeaturedSite(group, featuredKey)))
+    .filter((group): group is SiteGroup => Boolean(group))
+}
+
+export function resolveConcernBeforeAfterGroups(
+  groups: SiteGroup[],
+  concernTag: string | null | undefined,
+  industryFilter: string | null | undefined
+): SiteGroup[] {
+  if (!industryFilter) return []
+
+  const featuredKeys = concernTag ? CONCERN_FEATURED_BEFORE_AFTER_SITES[concernTag] : undefined
+  if (featuredKeys?.length) {
+    return filterConcernFeaturedBeforeAfterGroups(groups, concernTag)
+  }
+
+  return groups.filter((group) => groupMatchesConcernIndustryFilter(group, industryFilter))
 }

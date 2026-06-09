@@ -23,6 +23,7 @@ export function describeInternalRoute(path: string) {
   if (normalized.startsWith('/admin/showroom-shorts')) return '쇼룸 숏츠 검수'
   if (normalized.startsWith('/admin/showroom-basic-shorts')) return '기본 쇼츠 작업대기'
   if (normalized.startsWith('/admin/showroom-ads')) return '쇼룸 광고 대시보드'
+  if (normalized.startsWith('/admin/showroom-abm')) return '쇼룸 ABM 퍼널'
   if (normalized.startsWith('/admin/competitor-monitor')) return '경쟁사 모니터링'
   if (normalized.startsWith('/admin/test-console')) return '테스트 콘솔'
   if (normalized.startsWith('/login')) return '로그인'

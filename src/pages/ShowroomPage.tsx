@@ -25,7 +25,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useColorChips } from '@/hooks/useColorChips'
 import { cn } from '@/lib/utils'
-import { Search, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Package, Images, Sparkles, FileText, MousePointerClick, MessageCircle, FileCheck, Users, Wrench, ClipboardCheck, ArrowRight, ArrowLeft, Copy, Check, Video, BarChart3 } from 'lucide-react'
+import { Search, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Package, Images, FileText, MousePointerClick, MessageCircle, FileCheck, Users, Wrench, ClipboardCheck, ArrowRight, ArrowLeft, Copy, Check, Video, BarChart3, Building2, Palette } from 'lucide-react'
 import { toast } from 'sonner'
 import { shareGalleryKakao } from '@/lib/kakaoShare'
 import { createSharedGallery, snapshotShowroomImageAsset } from '@/lib/sharedGalleryService'
@@ -47,30 +47,42 @@ import {
   fetchShowroomCaseProfileDrafts,
 } from '@/lib/showroomCaseProfileService'
 import { collectShowroomAliasNamesFromImages, collectShowroomIdentityKeys } from '@/lib/showroomCaseAlias'
+import { appendShowroomConcernQuery, openShowroomConsultationChat } from '@/pages/showroom/showroomStoryCta'
+import { trackShowroomAbmEvent } from '@/lib/showroomAbmTracking'
 import { validateBeforeAfterSelection } from '@/lib/showroomShorts'
 
 import {
   CONCERN_CARDS,
+  formatShowroomProductSeriesOptionLabel,
+  getShowroomProductSeriesDescription,
+  compareShowroomProductSeriesNames,
   INDUSTRY_PAGE_SIZE,
   INDUSTRY_PREFERRED_ORDER,
   SWIPE_THRESHOLD_PX,
 } from '@/pages/showroom/showroomPageConstants'
 import { highlightKeywords } from '@/pages/showroom/showroomHighlightKeywords'
+import { ShowroomLightboxSlide } from '@/pages/showroom/ShowroomLightboxSlide'
+import {
+  prefetchShowroomLightboxNeighbors,
+  prefetchShowroomLightboxThumbnails,
+} from '@/pages/showroom/showroomLightboxImages'
 import {
   buildBasicShortsPlan,
   buildColorGroups,
   buildProductGroups,
-  buildShowroomContactUrl,
   buildShowroomSiteKey,
   buildSiteGroups,
   collectUniqueLabels,
   getBroadPublicLabel,
+  getConcernIndustryDisplayLabel,
+  getConcernIndustryFilter,
   getGroupPublicLabel,
   getPreferredExternalDisplayName,
+  resolveConcernBeforeAfterGroups,
   getPreferredShowroomSiteName,
   getPrimaryIndustryLabel,
   getPublicLabelsFromImages,
-  isConcernTag,
+  normalizeConcernTag,
   moveIdBefore,
   moveIdByOffset,
   orderImagesByIdList,
@@ -79,6 +91,7 @@ import {
   sortBeforeAfterImages,
   summarizeTopLabels,
 } from '@/pages/showroom/showroomPageGrouping'
+import { ShowroomExpertConsultationButton } from '@/pages/showroom/ShowroomExpertConsultationButton'
 import type {
   ColorGroup,
   IndustrySection,
@@ -107,10 +120,9 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
   const [selectedColorFilter, setSelectedColorFilter] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState(() => searchParams.get('q') ?? '')
   const [selectedConcernTag, setSelectedConcernTag] = useState<string | null>(() => {
-    const concern = searchParams.get('concern')
-    if (isConcernTag(concern)) return concern
-    const legacyTag = searchParams.get('tag')
-    return isConcernTag(legacyTag) ? legacyTag : null
+    const concern = normalizeConcernTag(searchParams.get('concern'))
+    if (concern) return concern
+    return normalizeConcernTag(searchParams.get('tag'))
   })
   const [detailOpen, setDetailOpen] = useState<'site' | 'product' | 'color' | 'beforeAfter' | null>(null)
   const [detailKey, setDetailKey] = useState<string | null>(null)
@@ -145,6 +157,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
   const lastAutoRefreshAtRef = useRef(0)
   const priorityEditorOpenByKeyRef = useRef(priorityEditorOpenByKey)
   const trackedPublicEntryRef = useRef(false)
+  const trackedAbmEnterRef = useRef(false)
   const originalArchivePath = showInternalControls ? '/showroom/original' : '/public/showroom/original'
 
   priorityEditorOpenByKeyRef.current = priorityEditorOpenByKey
@@ -154,8 +167,8 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
     const q = searchParams.get('q')
     const concern = searchParams.get('concern')
     const legacyTag = searchParams.get('tag')
-    setSearchQuery(q ?? (isConcernTag(legacyTag) ? '' : (legacyTag ?? '')))
-    setSelectedConcernTag(isConcernTag(concern) ? concern : (isConcernTag(legacyTag) ? legacyTag : null))
+    setSearchQuery(q ?? (normalizeConcernTag(legacyTag) ? '' : (legacyTag ?? '')))
+    setSelectedConcernTag(normalizeConcernTag(concern) ?? normalizeConcernTag(legacyTag))
   }, [searchParams])
 
   useEffect(() => {
@@ -171,6 +184,21 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
       landingQuery: window.location.search,
     }).catch((error) => {
       console.error('showroom_cta_visit_track_failed', error)
+    })
+  }, [mode, searchParams])
+
+  useEffect(() => {
+    if (mode !== 'public' || trackedAbmEnterRef.current) return
+    trackedAbmEnterRef.current = true
+
+    const concern = searchParams.get('concern')
+    trackShowroomAbmEvent({
+      eventName: 'abm_showroom_enter',
+      concern: normalizeConcernTag(concern),
+      metadata: {
+        landingPath: window.location.pathname,
+        landingQuery: window.location.search,
+      },
     })
   }, [mode, searchParams])
 
@@ -194,6 +222,12 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
   const setConcernTagAndUrl = (value: string | null) => {
     setSelectedConcernTag(value)
     updateShowroomParams({ concern: value })
+    if (mode === 'public' && value) {
+      trackShowroomAbmEvent({
+        eventName: 'abm_concern_select',
+        concern: value,
+      })
+    }
   }
 
   const buildIndustryAwareDisplayName = useCallback((siteName: string | null | undefined, industry: string | null | undefined) => {
@@ -379,11 +413,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
           return a.localeCompare(b, 'ko')
         }),
       }))
-      .sort((a, b) => {
-        if (a.seriesName === '기타' && b.seriesName !== '기타') return 1
-        if (a.seriesName !== '기타' && b.seriesName === '기타') return -1
-        return a.seriesName.localeCompare(b.seriesName, 'ko')
-      })
+      .sort((a, b) => compareShowroomProductSeriesNames(a.seriesName, b.seriesName))
   }, [productOptions])
   const currentSeriesProducts = useMemo(
     () => productSeriesOptions.find((option) => option.seriesName === selectedProductSeries)?.products ?? [],
@@ -391,7 +421,11 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
   )
   const searchTrim = searchQuery.trim()
   const searchLower = searchTrim.toLowerCase()
-  const industryFilterForTag = useMemo<string | null>(() => null, [])
+  const concernIndustryFilter = useMemo(
+    () => getConcernIndustryFilter(selectedConcernTag),
+    [selectedConcernTag]
+  )
+  const industryFilterForTag = concernIndustryFilter
 
   const filteredSiteGroups = useMemo(() => {
     if (!searchTrim) return siteGroups
@@ -539,10 +573,26 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
   }, [industrySections, industryPageBySection])
 
   const visibleBeforeAfterGroups = useMemo(() => beforeAfterGroups, [beforeAfterGroups])
+  const concernBeforeAfterGroups = useMemo(
+    () => resolveConcernBeforeAfterGroups(beforeAfterGroups, selectedConcernTag, concernIndustryFilter),
+    [beforeAfterGroups, concernIndustryFilter, selectedConcernTag]
+  )
   const featuredBeforeAfterGroups = useMemo(
     () => visibleBeforeAfterGroups.slice(0, 3),
     [visibleBeforeAfterGroups]
   )
+  const concernBeforeAfterTotalPages = useMemo(
+    () => Math.max(1, Math.ceil(concernBeforeAfterGroups.length / INDUSTRY_PAGE_SIZE)),
+    [concernBeforeAfterGroups.length]
+  )
+  const currentConcernBeforeAfterPage = Math.min(
+    Math.max(beforeAfterPage, 1),
+    concernBeforeAfterTotalPages
+  )
+  const pagedConcernBeforeAfterGroups = useMemo(() => {
+    const startIndex = (currentConcernBeforeAfterPage - 1) * INDUSTRY_PAGE_SIZE
+    return concernBeforeAfterGroups.slice(startIndex, startIndex + INDUSTRY_PAGE_SIZE)
+  }, [concernBeforeAfterGroups, currentConcernBeforeAfterPage])
   const beforeAfterTotalPages = useMemo(
     () => Math.max(1, Math.ceil(visibleBeforeAfterGroups.length / INDUSTRY_PAGE_SIZE)),
     [visibleBeforeAfterGroups.length]
@@ -583,6 +633,16 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
     }
     return detailKey
   }, [beforeAfterGroups, detailKey, detailOpen, showInternalControls, siteGroups])
+
+  useEffect(() => {
+    if (detailOpen === null || detailImages.length === 0) return
+    prefetchShowroomLightboxThumbnails(detailImages)
+  }, [detailOpen, detailKey, detailImages])
+
+  useEffect(() => {
+    if (detailOpen === null || internalDetailViewMode !== 'image' || detailImages.length === 0) return
+    prefetchShowroomLightboxNeighbors(detailImages, lightboxIndex, 2)
+  }, [detailOpen, detailImages, internalDetailViewMode, lightboxIndex])
 
   useEffect(() => {
     const siteNames = Array.from(new Set(
@@ -673,6 +733,18 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
   const detailTransitionDirectionRef = useRef<'next' | 'prev'>('next')
 
   const openDetail = (mode: 'site' | 'product' | 'color' | 'beforeAfter', key: string) => {
+    if (!showInternalControls) {
+      trackShowroomAbmEvent({
+        eventName: 'abm_gallery_open',
+        concern: selectedConcernTag,
+        siteName: mode === 'site' || mode === 'beforeAfter' ? key : null,
+        metadata: {
+          galleryMode: mode,
+          viewMode,
+          detailKey: key,
+        },
+      })
+    }
     detailAnimatedImageIdRef.current = null
     detailTransitionDirectionRef.current = 'next'
     setSelectedImageIds(new Set())
@@ -842,16 +914,6 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
       .filter((asset): asset is ShowroomImageAsset => asset != null),
     [selectedImageIds, assets]
   )
-
-  const detailStoryHref = useMemo(() => {
-    if (detailImages.length === 0) return null
-    const hasBefore = detailImages.some((image) => image.before_after_role === 'before')
-    const hasAfter = detailImages.some((image) => image.before_after_role === 'after')
-    if (!hasBefore || !hasAfter) return null
-    const siteName = getPreferredShowroomSiteName(detailImages).trim()
-    if (!siteName || siteName === '미지정') return null
-    return `/public/showroom/case/${encodeURIComponent(siteName)}`
-  }, [detailImages])
 
   const shortsSelection = useMemo(
     () => validateBeforeAfterSelection(selectedImages),
@@ -1256,6 +1318,21 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
     }
   }, [caseProfileDraftBySite])
 
+  const getBeforeAfterStoryHref = useCallback((group: SiteGroup) => {
+    const candidates = [
+      group.externalDisplayName?.trim(),
+      getPreferredShowroomSiteName(group.images).trim(),
+      getGroupPublicLabel(group),
+      group.siteName.trim(),
+    ].filter((value): value is string => Boolean(value) && value !== '미지정')
+    const siteName = candidates[0]
+    if (!siteName) return null
+    return appendShowroomConcernQuery(
+      `/public/showroom/case/${encodeURIComponent(siteName)}`,
+      selectedConcernTag,
+    )
+  }, [selectedConcernTag])
+
   const moveIndustryPage = useCallback((industry: string, nextPage: number) => {
     setIndustryPageBySection((prev) => ({
       ...prev,
@@ -1277,11 +1354,35 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
     scrollToSectionWithOffset(`showroom-industry-${industry}`)
   }, [scrollToSectionWithOffset])
 
+  const jumpToGalleryView = useCallback((mode: ViewMode) => {
+    if (!showInternalControls) {
+      trackShowroomAbmEvent({
+        eventName: 'abm_gallery_browse',
+        concern: selectedConcernTag,
+        metadata: { viewMode: mode },
+      })
+    }
+    setViewMode(mode)
+    requestAnimationFrame(() => {
+      scrollToSectionWithOffset('showroom-gallery-browse')
+    })
+  }, [scrollToSectionWithOffset, selectedConcernTag, showInternalControls])
+
+  useEffect(() => {
+    setBeforeAfterPage(1)
+  }, [selectedConcernTag])
+
   useEffect(() => {
     if (beforeAfterPage > beforeAfterTotalPages) {
       setBeforeAfterPage(beforeAfterTotalPages)
     }
   }, [beforeAfterPage, beforeAfterTotalPages])
+
+  useEffect(() => {
+    if (beforeAfterPage > concernBeforeAfterTotalPages) {
+      setBeforeAfterPage(concernBeforeAfterTotalPages)
+    }
+  }, [beforeAfterPage, concernBeforeAfterTotalPages])
 
   const scrollToBeforeAfterSection = useCallback(() => {
     setViewMode('industry')
@@ -1485,7 +1586,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
     )
   }
 
-  const renderBeforeAfterCard = (group: SiteGroup) => {
+  const renderBeforeAfterCard = (group: SiteGroup, options?: { linkToStory?: boolean }) => {
     const beforeImages = group.images.filter((image) => image.before_after_role === 'before')
     const afterImages = group.images.filter((image) => image.before_after_role === 'after')
     const beforeImage = beforeImages[0] ?? null
@@ -1498,70 +1599,103 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
     const publicLabel = getGroupPublicLabel(group)
     const cardNewsStudioHref = `/admin/showroom-case-studio?site=${encodeURIComponent(group.siteName)}&focus=cardnews`
     const blogStudioHref = `/admin/showroom-case-studio?site=${encodeURIComponent(group.siteName)}&focus=blog`
+    const storyHref = !showInternalControls && options?.linkToStory ? getBeforeAfterStoryHref(group) : null
     if (!beforeImage || !afterImage) return null
+
+    const beforeAfterPreview = (
+      <>
+        <div className="grid grid-cols-2">
+          <div className="relative aspect-[4/3] bg-neutral-100">
+            <img
+              src={beforeImage.thumbnail_url || beforeImage.cloudinary_url}
+              alt={`${showInternalControls ? group.siteName : publicLabel} before`}
+              className="w-full h-full object-cover"
+              loading="lazy"
+              decoding="async"
+            />
+            <span className="absolute left-2 top-2 rounded-full bg-black/75 px-2 py-1 text-[11px] font-semibold text-white">
+              Before
+            </span>
+          </div>
+          <div className="relative aspect-[4/3] bg-neutral-100">
+            <img
+              src={afterImage.thumbnail_url || afterImage.cloudinary_url}
+              alt={`${showInternalControls ? group.siteName : publicLabel} after`}
+              className="w-full h-full object-cover"
+              loading="lazy"
+              decoding="async"
+            />
+            <span className="absolute left-2 top-2 rounded-full bg-emerald-600/90 px-2 py-1 text-[11px] font-semibold text-white">
+              After
+            </span>
+          </div>
+        </div>
+        <div className={showInternalControls ? 'p-4' : 'flex min-h-[5.5rem] items-start p-4'}>
+          <h4 className="font-semibold leading-snug text-neutral-900">{showInternalControls ? group.siteName : publicLabel}</h4>
+          {showInternalControls && group.externalDisplayName && group.externalDisplayName !== group.siteName && (
+            <div className="mt-1 flex items-center gap-2 min-w-0">
+              {group.businessTypes[0] && (
+                <span className="shrink-0 rounded-full bg-neutral-100 px-2.5 py-1 text-[11px] font-medium text-neutral-600">
+                  {group.businessTypes[0]}
+                </span>
+              )}
+              <p className="min-w-0 truncate text-[12px] leading-tight text-amber-600">{group.externalDisplayName}</p>
+            </div>
+          )}
+        </div>
+      </>
+    )
+
+    const publicBlogTeaser = !showInternalControls ? (
+      <div className="border-t border-emerald-100 bg-emerald-50/50 px-3 py-2">
+        <div className="rounded-xl bg-white px-3 py-2.5 shadow-sm ring-1 ring-emerald-200/90">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">블로그 소개</p>
+          <p className="mt-1 min-h-[7.5rem] text-sm leading-relaxed text-slate-600 line-clamp-4">
+            {(caseProfileDraft.blogTeaserLine ?? '').trim()}
+          </p>
+          {storyHref && (
+            <p className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-emerald-700">
+              블로그·카드뉴스에서 자세히 보기
+              <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+            </p>
+          )}
+        </div>
+      </div>
+    ) : null
 
     return (
       <div
         key={`before-after-${group.siteName}`}
         className="flex h-full flex-col overflow-hidden rounded-2xl border border-emerald-200 bg-white text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
       >
-        <button
-          type="button"
-          onClick={() => openDetail('beforeAfter', group.siteName)}
-          className="flex w-full flex-1 flex-col text-left"
-        >
-          <div className="grid grid-cols-2">
-            <div className="relative aspect-[4/3] bg-neutral-100">
-              <img
-                src={beforeImage.thumbnail_url || beforeImage.cloudinary_url}
-                alt={`${showInternalControls ? group.siteName : publicLabel} before`}
-                className="w-full h-full object-cover"
-                loading="lazy"
-                decoding="async"
-              />
-              <span className="absolute left-2 top-2 rounded-full bg-black/75 px-2 py-1 text-[11px] font-semibold text-white">
-                Before
-              </span>
-            </div>
-            <div className="relative aspect-[4/3] bg-neutral-100">
-              <img
-                src={afterImage.thumbnail_url || afterImage.cloudinary_url}
-                alt={`${showInternalControls ? group.siteName : publicLabel} after`}
-                className="w-full h-full object-cover"
-                loading="lazy"
-                decoding="async"
-              />
-              <span className="absolute left-2 top-2 rounded-full bg-emerald-600/90 px-2 py-1 text-[11px] font-semibold text-white">
-                After
-              </span>
-            </div>
-          </div>
-          <div className={showInternalControls ? 'p-4' : 'flex min-h-[5.5rem] items-start p-4'}>
-            <h4 className="font-semibold leading-snug text-neutral-900">{showInternalControls ? group.siteName : publicLabel}</h4>
-            {showInternalControls && group.externalDisplayName && group.externalDisplayName !== group.siteName && (
-              <div className="mt-1 flex items-center gap-2 min-w-0">
-                {group.businessTypes[0] && (
-                  <span className="shrink-0 rounded-full bg-neutral-100 px-2.5 py-1 text-[11px] font-medium text-neutral-600">
-                    {group.businessTypes[0]}
-                  </span>
-                )}
-                <p className="min-w-0 truncate text-[12px] leading-tight text-amber-600">{group.externalDisplayName}</p>
-              </div>
-            )}
-          </div>
-        </button>
-        <div className="border-t border-emerald-100 bg-emerald-50/50 px-3 py-2">
-          <div className="flex flex-col gap-2">
-            {!showInternalControls && (
-              <div className="rounded-xl bg-white px-3 py-2.5 shadow-sm ring-1 ring-emerald-200/90">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">블로그 소개</p>
-                <p className="mt-1 min-h-[7.5rem] text-sm leading-relaxed text-slate-600 line-clamp-4">
-                  {(caseProfileDraft.blogTeaserLine ?? '').trim()}
-                </p>
-              </div>
-            )}
-          </div>
-        </div>
+        {storyHref ? (
+          <Link
+            to={storyHref}
+            className="flex w-full flex-1 flex-col text-left"
+            onClick={() => {
+              trackShowroomAbmEvent({
+                eventName: 'abm_ba_story_click',
+                concern: selectedConcernTag,
+                siteName: group.siteName,
+                industry: group.businessTypes[0] ?? null,
+              })
+            }}
+          >
+            {beforeAfterPreview}
+            {publicBlogTeaser}
+          </Link>
+        ) : (
+          <>
+            <button
+              type="button"
+              onClick={() => openDetail('beforeAfter', group.siteName)}
+              className="flex w-full flex-1 flex-col text-left"
+            >
+              {beforeAfterPreview}
+            </button>
+            {publicBlogTeaser}
+          </>
+        )}
         {showInternalControls && (
           <div className="space-y-3 border-t border-neutral-100 bg-neutral-50/50 p-3">
             <p className="text-xs text-neutral-500">
@@ -1651,6 +1785,215 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
     )
   }
 
+  const mugwortSelectedFillClass =
+    'border border-[#455240] bg-gradient-to-b from-[#5f7058] to-[#4a5744] shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_1px_2px_rgba(45,55,40,0.18)]'
+
+  const selectedBrowseButtonClass = cn(
+    mugwortSelectedFillClass,
+    'font-semibold text-white hover:from-[#667a60] hover:to-[#505f4a] hover:text-white',
+  )
+
+  const gallerySegmentPillClass = cn(
+    'pointer-events-none absolute top-1 bottom-1 left-1 rounded-lg transition-transform duration-200 ease-out',
+    mugwortSelectedFillClass,
+  )
+
+  const galleryViewModeIndex = viewMode === 'industry' ? 0 : viewMode === 'product' ? 1 : 2
+
+  const handleGalleryViewModeChange = (mode: ViewMode) => {
+    if (!showInternalControls) {
+      trackShowroomAbmEvent({
+        eventName: 'abm_gallery_browse',
+        concern: selectedConcernTag,
+        metadata: { viewMode: mode },
+      })
+    }
+    setViewMode(mode)
+  }
+
+  const renderGalleryViewModeButton = (
+    mode: ViewMode,
+    label: string,
+    Icon: typeof Building2,
+  ) => {
+    const isActive = viewMode === mode
+    return (
+      <Button
+        type="button"
+        variant="ghost"
+        role="tab"
+        aria-selected={isActive}
+        className={cn(
+          'relative z-10 h-10 min-w-0 flex-1 gap-2 rounded-lg border-0 bg-transparent px-3 shadow-none sm:px-4',
+          'hover:bg-transparent hover:shadow-none focus-visible:ring-[#5f7058]/35',
+          isActive ? 'font-semibold text-white' : 'text-neutral-600 hover:text-neutral-900',
+        )}
+        onClick={() => handleGalleryViewModeChange(mode)}
+      >
+        <Icon className="h-4 w-4 shrink-0" />
+        <span className="truncate">{label}</span>
+      </Button>
+    )
+  }
+
+  const renderGalleryBrowseControls = () => (
+    <>
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="space-y-2">
+          <div
+            className="relative inline-flex w-full max-w-2xl rounded-xl border border-neutral-200/80 bg-gradient-to-b from-slate-50 to-slate-100/90 p-1 shadow-[inset_0_1px_2px_rgba(15,23,42,0.06)]"
+            role="tablist"
+            aria-label="사례 사진 보기 기준"
+          >
+            <span
+              aria-hidden
+              className={gallerySegmentPillClass}
+              style={{
+                width: 'calc((100% - 8px) / 3)',
+                transform: `translateX(calc(${galleryViewModeIndex} * 100%))`,
+              }}
+            />
+            {renderGalleryViewModeButton('industry', '업종별로 보기', Building2)}
+            {renderGalleryViewModeButton('product', '제품별로 보기', Package)}
+            {renderGalleryViewModeButton('color', '색상별로 보기', Palette)}
+          </div>
+          <p className="text-sm leading-relaxed text-neutral-600">
+            {showInternalControls
+              ? '버튼을 누르면 아래 목록을 보는 기준이 바뀝니다. (업종 · 제품 · 색상)'
+              : '업종 · 제품 · 색상 기준으로 사례 사진을 바로 찾을 수 있습니다.'}
+          </p>
+        </div>
+        <div className="relative w-full max-w-md lg:shrink-0">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-400" />
+          <Input
+            placeholder={
+              viewMode === 'product'
+                ? '제품명 검색 (예: 아카시아, 원목)'
+                : viewMode === 'color'
+                  ? '색상명 검색 (예: 백색, 모번)'
+                  : '업종, 현장명, 지역, 제품명 검색'
+            }
+            value={searchQuery}
+            onChange={(e) => setSearchQueryAndUrl(e.target.value)}
+            className="pl-9 h-10 bg-white border-neutral-200 rounded-lg"
+          />
+        </div>
+      </div>
+      {viewMode === 'product' && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-neutral-500 shrink-0">시리즈 선택</span>
+          <div className="w-full sm:w-56">
+            <select
+              value={selectedProductSeries ?? ''}
+              onChange={(e) => {
+                setSelectedProductSeries(e.target.value || null)
+                setSelectedProductFilter(null)
+              }}
+              className="h-10 w-full rounded-lg border border-neutral-200 bg-white px-3 text-sm text-neutral-700 outline-none transition-colors focus:border-neutral-400"
+            >
+              <option value="">전체 시리즈</option>
+              {productSeriesOptions.map((series) => (
+                <option key={series.seriesName} value={series.seriesName}>
+                  {formatShowroomProductSeriesOptionLabel(series.seriesName)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <span className="text-xs text-neutral-500 shrink-0">세부 제품</span>
+          <div className="w-full sm:w-80">
+            <select
+              value={selectedProductFilter ?? ''}
+              onChange={(e) => setSelectedProductFilter(e.target.value || null)}
+              className="h-10 w-full rounded-lg border border-neutral-200 bg-white px-3 text-sm text-neutral-700 outline-none transition-colors focus:border-neutral-400"
+            >
+              <option value="">{selectedProductSeries ? '전체 세부 제품' : '전체 제품'}</option>
+              {(selectedProductSeries ? currentSeriesProducts : productOptions).map((product) => (
+                <option key={product} value={product}>
+                  {product}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
+      {viewMode === 'color' && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-neutral-500 shrink-0">색상 선택</span>
+          <div className="w-full sm:w-80">
+            <select
+              value={selectedColorFilter ?? ''}
+              onChange={(e) => setSelectedColorFilter(e.target.value || null)}
+              disabled={colorLoading}
+              className="h-10 w-full rounded-lg border border-neutral-200 bg-white px-3 text-sm text-neutral-700 outline-none transition-colors focus:border-neutral-400"
+            >
+              <option value="">전체 색상</option>
+              {colorOptionsByGroup.Standard.length > 0 ? (
+                <optgroup label="기본 컬러 (Standard)">
+                  {colorOptionsByGroup.Standard.map((color) => (
+                    <option key={color} value={color}>
+                      {color}
+                    </option>
+                  ))}
+                </optgroup>
+              ) : null}
+              {colorOptionsByGroup.Special.length > 0 ? (
+                <optgroup label="스페셜 컬러 (Special)">
+                  {colorOptionsByGroup.Special.map((color) => (
+                    <option key={color} value={color}>
+                      {color}
+                    </option>
+                  ))}
+                </optgroup>
+              ) : null}
+              {colorOptionsByGroup.Other.length > 0 ? (
+                <optgroup label="기타">
+                  {colorOptionsByGroup.Other.map((color) => (
+                    <option key={color} value={color}>
+                      {color}
+                    </option>
+                  ))}
+                </optgroup>
+              ) : null}
+            </select>
+          </div>
+        </div>
+      )}
+      {viewMode === 'industry' && paginatedIndustrySections.length > 0 && (
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            {paginatedIndustrySections.map((section) => (
+              <Button
+                key={`industry-nav-${section.industry}`}
+                type="button"
+                variant="outline"
+                size="sm"
+                className="shrink-0 rounded-full"
+                onClick={() => scrollToIndustrySection(section.industry)}
+              >
+                {section.industry}
+              </Button>
+            ))}
+          </div>
+          {showInternalControls && visibleBeforeAfterGroups.length > 0 && (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="gap-2 shrink-0 rounded-full"
+                onClick={scrollToBeforeAfterSection}
+                aria-label="전후 비교와 문제·솔루션 사례 섹션으로 이동"
+              >
+                <FileCheck className="h-4 w-4" />
+                전후·솔루션
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+    </>
+  )
+
   if (loading) {
     return (
       <div className="min-h-screen bg-neutral-50 flex items-center justify-center">
@@ -1679,16 +2022,6 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                 </Link>
               )}
             </div>
-            {!showInternalControls && (
-              <div className="flex items-center gap-2">
-                <Link to="/public/showroom/cardnews">
-                  <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
-                    <FileText className="h-4 w-4" />
-                    카드뉴스 모아보기
-                  </Button>
-                </Link>
-              </div>
-            )}
             {showInternalControls && (
               <div className="flex items-center gap-2">
                 <Link to={originalArchivePath}>
@@ -1701,6 +2034,12 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                   <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
                     <BarChart3 className="h-4 w-4" />
                     광고 대시보드
+                  </Button>
+                </Link>
+                <Link to="/admin/showroom-abm">
+                  <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
+                    <BarChart3 className="h-4 w-4" />
+                    ABM 퍼널
                   </Button>
                 </Link>
                 <Link to="/admin/showroom-shorts">
@@ -1729,163 +2068,9 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
               </div>
             )}
           </div>
-          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-            <div className="flex rounded-lg border border-neutral-200 p-0.5 bg-neutral-100/80">
-              <button
-                type="button"
-                onClick={() => setViewMode('industry')}
-                className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors ${
-                  viewMode === 'industry' ? 'bg-white text-neutral-900 shadow-sm' : 'text-neutral-600 hover:text-neutral-900'
-                }`}
-              >
-                업종별로 보기
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode('product')}
-                className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors ${
-                  viewMode === 'product' ? 'bg-white text-neutral-900 shadow-sm' : 'text-neutral-600 hover:text-neutral-900'
-                }`}
-              >
-                <Package className="h-4 w-4" />
-                제품별로 보기
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode('color')}
-                className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors ${
-                  viewMode === 'color' ? 'bg-white text-neutral-900 shadow-sm' : 'text-neutral-600 hover:text-neutral-900'
-                }`}
-              >
-                색상별로 보기
-              </button>
-            </div>
-            <div className="relative flex-1 max-w-md">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-400" />
-              <Input
-                placeholder={
-                  viewMode === 'product'
-                    ? '제품명 검색 (예: 아카시아, 원목)'
-                    : viewMode === 'color'
-                      ? '색상명 검색 (예: 백색, 모번)'
-                      : '업종, 현장명, 지역, 제품명 검색'
-                }
-                value={searchQuery}
-                onChange={(e) => setSearchQueryAndUrl(e.target.value)}
-                className="pl-9 h-10 bg-white border-neutral-200 rounded-lg"
-              />
-            </div>
-          </div>
-          {viewMode === 'product' && (
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs text-neutral-500 shrink-0">시리즈 선택</span>
-              <div className="w-full sm:w-56">
-                <select
-                  value={selectedProductSeries ?? ''}
-                  onChange={(e) => {
-                    setSelectedProductSeries(e.target.value || null)
-                    setSelectedProductFilter(null)
-                  }}
-                  className="h-10 w-full rounded-lg border border-neutral-200 bg-white px-3 text-sm text-neutral-700 outline-none transition-colors focus:border-neutral-400"
-                >
-                  <option value="">전체 시리즈</option>
-                  {productSeriesOptions.map((series) => (
-                    <option key={series.seriesName} value={series.seriesName}>
-                      {series.seriesName}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <span className="text-xs text-neutral-500 shrink-0">세부 제품</span>
-              <div className="w-full sm:w-80">
-                <select
-                  value={selectedProductFilter ?? ''}
-                  onChange={(e) => setSelectedProductFilter(e.target.value || null)}
-                  className="h-10 w-full rounded-lg border border-neutral-200 bg-white px-3 text-sm text-neutral-700 outline-none transition-colors focus:border-neutral-400"
-                >
-                  <option value="">{selectedProductSeries ? '전체 세부 제품' : '전체 제품'}</option>
-                  {(selectedProductSeries ? currentSeriesProducts : productOptions).map((product) => (
-                    <option key={product} value={product}>
-                      {product}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          )}
-          {viewMode === 'color' && (
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs text-neutral-500 shrink-0">색상 선택</span>
-              <div className="w-full sm:w-80">
-                <select
-                  value={selectedColorFilter ?? ''}
-                  onChange={(e) => setSelectedColorFilter(e.target.value || null)}
-                  disabled={colorLoading}
-                  className="h-10 w-full rounded-lg border border-neutral-200 bg-white px-3 text-sm text-neutral-700 outline-none transition-colors focus:border-neutral-400"
-                >
-                  <option value="">전체 색상</option>
-                  {colorOptionsByGroup.Standard.length > 0 ? (
-                    <optgroup label="기본 컬러 (Standard)">
-                      {colorOptionsByGroup.Standard.map((color) => (
-                        <option key={color} value={color}>
-                          {color}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ) : null}
-                  {colorOptionsByGroup.Special.length > 0 ? (
-                    <optgroup label="스페셜 컬러 (Special)">
-                      {colorOptionsByGroup.Special.map((color) => (
-                        <option key={color} value={color}>
-                          {color}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ) : null}
-                  {colorOptionsByGroup.Other.length > 0 ? (
-                    <optgroup label="기타">
-                      {colorOptionsByGroup.Other.map((color) => (
-                        <option key={color} value={color}>
-                          {color}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ) : null}
-                </select>
-              </div>
-            </div>
-          )}
-          {viewMode === 'industry' && paginatedIndustrySections.length > 0 && (
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                {paginatedIndustrySections.map((section) => (
-                  <Button
-                    key={`industry-nav-${section.industry}`}
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="shrink-0 rounded-full"
-                    onClick={() => scrollToIndustrySection(section.industry)}
-                  >
-                    {section.industry}
-                  </Button>
-                ))}
-              </div>
-              {visibleBeforeAfterGroups.length > 0 && (
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="gap-2 shrink-0 rounded-full"
-                    onClick={scrollToBeforeAfterSection}
-                    aria-label="전후 비교와 문제·솔루션 사례 섹션으로 이동"
-                  >
-                    <FileCheck className="h-4 w-4" />
-                    전후·솔루션
-                  </Button>
-                </div>
-              )}
+          {showInternalControls && (
+            <div className="flex flex-col gap-4">
+              {renderGalleryBrowseControls()}
             </div>
           )}
         </div>
@@ -1963,47 +2148,81 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
             <>
               <p className="text-neutral-600 text-base md:text-lg">대표님의 공간, 어떤 변화가 필요하신가요?</p>
               <p className="text-xs md:text-sm text-neutral-500 mt-2">
-                내부 직원과 같은 흐름으로 시공사례를 탐색할 수 있는 공통 쇼룸입니다. 필요한 정보는 하단 채널톡이나 문의 흐름으로 이어서 안내받으실 수 있습니다.
+                내부 직원과 같은 흐름으로 시공사례를 탐색할 수 있는 공통 쇼룸입니다. 궁금한 점은 화면 하단 상담 버튼으로 바로 문의하실 수 있습니다.
               </p>
             </>
           )}
         </section>
 
-        {viewMode === 'industry' && featuredBeforeAfterGroups.length > 0 && (
-          <section className="mb-8 rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4 md:p-5">
-            <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-              <div>
-                <h2 className="text-base font-semibold text-neutral-900">대표 Before/After 사례</h2>
-                <p className="text-sm text-neutral-600">
-                  전후 컷과 함께, 현장 과제(문제 제기)와 적용 방향(해결)을 한 세트로 보여줍니다. 더 많은 사례는 아래 전후·솔루션 섹션으로 이동하세요.
-                </p>
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                className="gap-2 shrink-0"
-                onClick={scrollToBeforeAfterSection}
-                aria-label="전체 전후 비교 및 문제·솔루션 사례 섹션으로 이동"
-              >
-                <FileCheck className="h-4 w-4" />
-                전후·솔루션 전체 보기
-              </Button>
-            </div>
-            <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
-              {featuredBeforeAfterGroups.map((group) => renderBeforeAfterCard(group))}
-            </div>
-          </section>
-        )}
-
         {/* 전문가가 먼저 질문하는 공감 카드: 말풍선 + 핵심어 하이라이트 + 성공 사례 보기 CTA */}
-        {false && (
+        {!showInternalControls && (
         <section className="mb-8" aria-labelledby="showroom-concern-heading">
-          <h2 id="showroom-concern-heading" className="sr-only">고민별 시공사례 보기</h2>
+          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h2 id="showroom-concern-heading" className="text-lg font-semibold text-neutral-900">
+                고민별로 맞춤 사례 보기
+              </h2>
+              <p className="mt-1 text-sm text-neutral-600">
+                우리 상황에 가까운 질문을 고르면 전문가 코멘트와 Before/After 사례를 이어서 보여 드립니다.
+              </p>
+            </div>
+            <div
+              className="shrink-0 w-full sm:max-w-sm rounded-xl border border-amber-200/90 bg-amber-50 p-3.5 shadow-sm ring-1 ring-amber-100/80"
+              aria-label="사례 사진 바로 탐색"
+            >
+              <div className="flex items-start gap-2.5">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-amber-200/80 bg-white text-amber-700">
+                  <Images className="h-4 w-4" aria-hidden />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-neutral-900">설명 없이 사례 사진만 보기</p>
+                  <p className="mt-0.5 text-xs text-neutral-500">
+                    {siteGroups.length}개 현장 · 사진{' '}
+                    {siteGroups.reduce((total, group) => total + group.images.length, 0)}장 바로 탐색
+                  </p>
+                </div>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1.5 border-amber-200/80 bg-white/95 px-3 text-xs hover:bg-amber-100/60 hover:text-amber-950"
+                  onClick={() => jumpToGalleryView('industry')}
+                >
+                  <Building2 className="h-3.5 w-3.5" />
+                  업종별
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1.5 border-amber-200/80 bg-white/95 px-3 text-xs hover:bg-amber-100/60 hover:text-amber-950"
+                  onClick={() => jumpToGalleryView('product')}
+                >
+                  <Package className="h-3.5 w-3.5" />
+                  제품별
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1.5 border-amber-200/80 bg-white/95 px-3 text-xs hover:bg-amber-100/60 hover:text-amber-950"
+                  onClick={() => jumpToGalleryView('color')}
+                >
+                  <Palette className="h-3.5 w-3.5" />
+                  색상별
+                </Button>
+              </div>
+            </div>
+          </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {CONCERN_CARDS.map((card) => {
               const isSelected = selectedConcernTag === card.tag
               const handleCardClick = () => {
-                setConcernTagAndUrl(selectedConcernTag === card.tag ? null : card.tag)
+                if (selectedConcernTag !== card.tag) {
+                  setConcernTagAndUrl(card.tag)
+                }
                 requestAnimationFrame(() => {
                   document.getElementById('showroom-concern-result-anchor')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
                 })
@@ -2013,12 +2232,8 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                   key={card.tag}
                   type="button"
                   onClick={handleCardClick}
-                  className="group relative flex flex-col gap-3 text-left rounded-2xl p-4 bg-white border-2 border-neutral-200 shadow-sm hover:shadow-xl hover:border-amber-300 hover:-translate-y-1 active:scale-[0.99] transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-2 min-h-[88px] cursor-pointer"
+                  className="group flex flex-col gap-3 text-left rounded-2xl p-4 bg-white border-2 border-neutral-200 shadow-sm hover:shadow-xl hover:border-amber-300 hover:-translate-y-1 active:scale-[0.99] transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-2 min-h-[88px] cursor-pointer"
                 >
-                  <span className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity duration-200 inline-flex items-center gap-1 rounded-full bg-amber-500 text-white text-xs font-semibold px-3 py-1.5 shadow-md">
-                    <MousePointerClick className="h-3.5 w-3.5" />
-                    성공 사례 보기
-                  </span>
                   <div className="flex items-center gap-3 flex-1 min-h-0">
                     <div className="flex shrink-0 self-center flex-col items-center justify-center gap-2">
                       <span
@@ -2031,13 +2246,20 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                           card.emoji
                         )}
                       </span>
-                      <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-700 ring-1 ring-slate-200">
-                        {card.industryFilter}
+                      <span className="inline-flex flex-col items-center rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold leading-tight text-slate-700 ring-1 ring-slate-200">
+                        {card.industryFilter === '관리형전환' ? (
+                          <>
+                            <span>스터디카페의</span>
+                            <span>관리형전환</span>
+                          </>
+                        ) : (
+                          getConcernIndustryDisplayLabel(card.industryFilter)
+                        )}
                       </span>
                     </div>
                     <div className="flex-1 min-w-0">
                       <div
-                        className={`pr-8 rounded-xl rounded-tl-none px-4 py-3 border border-neutral-100 group-hover:bg-amber-50/50 group-hover:border-amber-100 transition-colors ${
+                        className={`rounded-xl rounded-tl-none px-4 py-3 border border-neutral-100 group-hover:bg-amber-50/50 group-hover:border-amber-100 transition-colors ${
                           isSelected ? 'bg-amber-50/80 border-amber-200' : ''
                         }`}
                         style={{ boxShadow: '0 1px 2px rgba(0,0,0,0.04)' }}
@@ -2048,6 +2270,10 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                       </div>
                     </div>
                   </div>
+                  <span className="inline-flex items-center gap-1 self-end rounded-full bg-amber-500 text-white text-xs font-semibold px-3 py-1.5 shadow-md">
+                    <MousePointerClick className="h-3.5 w-3.5" />
+                    성공 사례 보기
+                  </span>
                 </button>
               )
             })}
@@ -2056,7 +2282,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
         )}
         <div id="showroom-concern-result-anchor" className="h-px scroll-mt-28 md:scroll-mt-32" aria-hidden />
         {/* 전문가 코멘트: 해당 카드 클릭 시에만 표시 — 왼쪽 코멘트, 오른쪽 전문가 이미지(답하는 느낌) */}
-        {false && selectedConcernTag === '관리형 창업 또는 전환' && (
+        {!showInternalControls && selectedConcernTag === '관리형 창업 또는 전환' && (
           <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
             <div className="flex-1 min-w-0 py-5 px-5">
               <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
@@ -2072,12 +2298,9 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                 </p>
               </div>
               <div className="mt-4 pt-4 border-t border-slate-200">
-                <Link
-                  to="/contact?category=관리형%20창업%20문의"
-                  className="inline-flex items-center justify-center rounded-xl px-4 py-3 bg-slate-700 hover:bg-slate-800 text-white text-sm font-semibold transition-colors"
-                >
+                <ShowroomExpertConsultationButton concern={selectedConcernTag}>
                   관리형 맞춤형 레이아웃 상담하기
-                </Link>
+                </ShowroomExpertConsultationButton>
               </div>
             </div>
             <div className="sm:w-40 shrink-0 flex items-center justify-center sm:justify-end pr-4 pb-2">
@@ -2091,7 +2314,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
             </div>
           </section>
         )}
-        {false && selectedConcernTag === '매출 향상 스터디카페 리뉴얼' && (
+        {!showInternalControls && selectedConcernTag === '매출 향상 스터디카페 리뉴얼' && (
           <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
             <div className="flex-1 min-w-0 py-5 px-5">
               <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
@@ -2108,12 +2331,9 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                 </p>
               </div>
               <div className="mt-4 pt-4 border-t border-slate-200">
-                <Link
-                  to="/contact?category=매출%20향상%20스터디카페%20리뉴얼"
-                  className="inline-flex items-center justify-center rounded-xl px-4 py-3 bg-slate-700 hover:bg-slate-800 text-white text-sm font-semibold transition-colors"
-                >
+                <ShowroomExpertConsultationButton concern={selectedConcernTag}>
                   스터디카페 리뉴얼 맞춤형 상담하기
-                </Link>
+                </ShowroomExpertConsultationButton>
               </div>
             </div>
             <div className="sm:w-40 shrink-0 flex items-center justify-center sm:justify-end pr-4 pb-2">
@@ -2127,33 +2347,26 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
             </div>
           </section>
         )}
-        {false && selectedConcernTag === '스터디카페를 관리형 스타일로' && (
+        {!showInternalControls && selectedConcernTag === '스터디카페를 관리형으로 전환' && (
           <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
             <div className="flex-1 min-w-0 py-5 px-5">
               <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
               <p className="text-slate-700 text-sm font-medium mb-3">같은 스터디카페처럼 보여서는 나중에 프리미엄을 받기 어렵습니다.</p>
               <div className="text-slate-600 text-sm leading-relaxed space-y-3">
                 <p>
-                  지금 운영 중인 스터디카페라도, 공간의 인상과 동선을 <span className="font-bold text-slate-800">관리형 스타일로 재설계</span>하면 기존 매장과의 차별화가 훨씬 선명해집니다.
+                  지금 운영 중인 스터디카페라도, 공간·동선·운영 구조를 <span className="font-bold text-slate-800">관리형으로 전환</span>하면 기존 매장과의 차별화가 훨씬 선명해집니다.
                 </p>
                 <p>
                   이것은 단순히 예쁘게 바꾸는 리뉴얼이 아닙니다. 고객이 느끼는 프리미엄을 높이고, 향후 관리형 오픈을 고민하는 인수자에게도 <span className="font-bold text-slate-800">더 설득력 있는 매장 자산</span>으로 보이게 만드는 전략입니다.
                 </p>
                 <p>
-                  결국 잘된 리뉴얼은 현재의 경쟁력을 만들고, 나중의 엑시트 가능성까지 바꿉니다. 파인드가구는 그 흐름까지 고려해 공간을 제안합니다.
+                  결국 잘된 전환은 현재의 경쟁력을 만들고, 나중의 엑시트 가능성까지 바꿉니다. 파인드가구는 그 흐름까지 고려해 공간을 제안합니다.
                 </p>
               </div>
               <div className="mt-4 pt-4 border-t border-slate-200">
-                <Link
-                  to={buildShowroomContactUrl({
-                    category: '스터디카페 관리형 스타일 리뉴얼',
-                    showroomContext: '관리형 스타일 전환과 엑시트 전략을 염두에 두고 문의한 고객',
-                    showroomEntryLabel: '스터디카페를 관리형 스타일로',
-                  })}
-                  className="inline-flex items-center justify-center rounded-xl px-4 py-3 bg-slate-700 hover:bg-slate-800 text-white text-sm font-semibold transition-colors"
-                >
-                  관리형 스타일 리뉴얼 상담하기
-                </Link>
+                <ShowroomExpertConsultationButton concern={selectedConcernTag}>
+                  스터디카페를 관리형으로 전환 상담하기
+                </ShowroomExpertConsultationButton>
               </div>
             </div>
             <div className="sm:w-40 shrink-0 flex items-center justify-center sm:justify-end pr-4 pb-2">
@@ -2167,7 +2380,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
             </div>
           </section>
         )}
-        {false && selectedConcernTag === '스터디카페 같은 학원 자습실' && (
+        {!showInternalControls && selectedConcernTag === '스터디카페 같은 학원 자습실' && (
           <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
             <div className="flex-1 min-w-0 py-5 px-5">
               <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
@@ -2184,12 +2397,9 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                 </p>
               </div>
               <div className="mt-4 pt-4 border-t border-slate-200">
-                <Link
-                  to="/contact?category=학원%20자습실%20문의"
-                  className="inline-flex items-center justify-center rounded-xl px-4 py-3 bg-slate-700 hover:bg-slate-800 text-white text-sm font-semibold transition-colors"
-                >
+                <ShowroomExpertConsultationButton concern={selectedConcernTag}>
                   우리 학원 맞춤형 자습실 예산 상담하기
-                </Link>
+                </ShowroomExpertConsultationButton>
               </div>
             </div>
             <div className="sm:w-40 shrink-0 flex items-center justify-center sm:justify-end pr-4 pb-2">
@@ -2204,7 +2414,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
           </section>
         )}
 
-        {false && selectedConcernTag === '고교학점제 자습공간 구축' && (
+        {!showInternalControls && selectedConcernTag === '고교학점제 자습공간 구축' && (
           <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
             <div className="flex-1 min-w-0 py-5 px-5">
               <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
@@ -2223,12 +2433,9 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                 </p>
               </div>
               <div className="mt-4 pt-4 border-t border-slate-200">
-                <Link
-                  to="/contact?category=고교학점제%20행정%20상담"
-                  className="inline-flex items-center justify-center rounded-xl px-4 py-3 bg-slate-700 hover:bg-slate-800 text-white text-sm font-semibold transition-colors"
-                >
+                <ShowroomExpertConsultationButton concern={selectedConcernTag}>
                   우리 학교 맞춤형 제안서 및 견적 상담하기
-                </Link>
+                </ShowroomExpertConsultationButton>
               </div>
             </div>
             <div className="sm:w-40 shrink-0 flex items-center justify-center sm:justify-end pr-4 pb-2">
@@ -2243,7 +2450,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
           </section>
         )}
 
-        {false && selectedConcernTag === '아파트 독서실 리뉴얼' && (
+        {!showInternalControls && selectedConcernTag === '아파트 독서실 리뉴얼' && (
           <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
             <div className="flex-1 min-w-0 py-5 px-5">
               <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
@@ -2271,12 +2478,9 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                 <span className="flex items-center gap-1 shrink-0"><ClipboardCheck className="h-3.5 w-3.5" aria-hidden /> 사후관리</span>
               </div>
               <div className="mt-4 pt-4 border-t border-slate-200">
-                <Link
-                  to="/contact?category=아파트%20리뉴얼%20제안서"
-                  className="inline-flex items-center justify-center rounded-xl px-4 py-3 bg-slate-700 hover:bg-slate-800 text-white text-sm font-semibold transition-colors"
-                >
+                <ShowroomExpertConsultationButton concern={selectedConcernTag}>
                   우리 아파트 맞춤형 리뉴얼 제안서 요청하기
-                </Link>
+                </ShowroomExpertConsultationButton>
               </div>
             </div>
             <div className="sm:w-40 shrink-0 flex items-center justify-center sm:justify-end pr-4 pb-2">
@@ -2291,12 +2495,136 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
           </section>
         )}
 
+        {!showInternalControls && selectedConcernTag && (
+          <section
+            id="showroom-concern-before-after-section"
+            className="mb-8 rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4 md:p-5 scroll-mt-28"
+          >
+            <div className="flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
+              <div>
+                <h2 className="text-base font-semibold text-neutral-900">
+                  {getConcernIndustryDisplayLabel(concernIndustryFilter)} Before/After 사례
+                </h2>
+                <p className="text-sm text-neutral-600">
+                  선택하신 고민과 같은 업종의 전후 비교 사례입니다. 카드를 누르면 블로그·카드뉴스에서 사례 스토리와 사진을 이어서 볼 수 있습니다.
+                </p>
+              </div>
+              {concernBeforeAfterGroups.length > 0 && (
+                <p className="text-xs text-neutral-500">{concernBeforeAfterGroups.length}개 현장</p>
+              )}
+            </div>
+            {concernBeforeAfterGroups.length === 0 ? (
+              <p className="mt-4 text-sm text-neutral-500">
+                이 고민에 맞는 전후 비교 사례를 준비 중입니다. 아래 시공사례 갤러리에서 비슷한 업종 사례를 먼저 확인해 보세요.
+              </p>
+            ) : (
+              <>
+                <div className="mt-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {pagedConcernBeforeAfterGroups.map((group) => renderBeforeAfterCard(group, { linkToStory: true }))}
+                </div>
+                {concernBeforeAfterTotalPages > 1 && (
+                  <div className="mt-4 flex flex-wrap items-center justify-center gap-2 pt-1">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="gap-1.5"
+                      disabled={currentConcernBeforeAfterPage <= 1}
+                      onClick={() => setBeforeAfterPage(currentConcernBeforeAfterPage - 1)}
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                      이전
+                    </Button>
+                    <div className="flex flex-wrap items-center justify-center gap-1">
+                      {Array.from({ length: concernBeforeAfterTotalPages }, (_, index) => {
+                        const pageNumber = index + 1
+                        const isCurrent = pageNumber === currentConcernBeforeAfterPage
+                        return (
+                          <Button
+                            key={`concern-before-after-page-${pageNumber}`}
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className={cn('min-w-9 px-0', isCurrent && selectedBrowseButtonClass)}
+                            onClick={() => setBeforeAfterPage(pageNumber)}
+                          >
+                            {pageNumber}
+                          </Button>
+                        )
+                      })}
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="gap-1.5"
+                      disabled={currentConcernBeforeAfterPage >= concernBeforeAfterTotalPages}
+                      onClick={() => setBeforeAfterPage(currentConcernBeforeAfterPage + 1)}
+                    >
+                      다음
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                )}
+              </>
+            )}
+          </section>
+        )}
+
+        {showInternalControls && viewMode === 'industry' && featuredBeforeAfterGroups.length > 0 && (
+          <section className="mb-8 rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4 md:p-5">
+            <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+              <div>
+                <h2 className="text-base font-semibold text-neutral-900">대표 Before/After 사례</h2>
+                <p className="text-sm text-neutral-600">
+                  전후 컷과 함께, 현장 과제(문제 제기)와 적용 방향(해결)을 한 세트로 보여줍니다. 더 많은 사례는 아래 전후·솔루션 섹션으로 이동하세요.
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                className="gap-2 shrink-0"
+                onClick={scrollToBeforeAfterSection}
+                aria-label="전체 전후 비교 및 문제·솔루션 사례 섹션으로 이동"
+              >
+                <FileCheck className="h-4 w-4" />
+                전후·솔루션 전체 보기
+              </Button>
+            </div>
+            <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+              {featuredBeforeAfterGroups.map((group) => renderBeforeAfterCard(group))}
+            </div>
+          </section>
+        )}
+
+        {!showInternalControls && (
+          <section
+            id="showroom-gallery-browse"
+            className="mt-12 border-t border-neutral-200 pt-10 scroll-mt-24 md:scroll-mt-28"
+            aria-labelledby="showroom-gallery-browse-heading"
+          >
+            <div className="mb-6">
+              <h2 id="showroom-gallery-browse-heading" className="text-lg font-semibold text-neutral-900">
+                시공 사례 사진 바로 찾기
+              </h2>
+              <p className="mt-1 text-sm text-neutral-600">
+                고민 선택 없이 업종 · 제품 · 색상 기준으로 사례 사진을 둘러보실 수 있습니다.
+              </p>
+            </div>
+            <div className="flex flex-col gap-4">{renderGalleryBrowseControls()}</div>
+          </section>
+        )}
+
         {viewMode === 'product' && (
           <div id="showroom-gallery" className="grid grid-cols-2 lg:grid-cols-3 gap-6 items-stretch">
             {productFilteredGroups.map((group) => {
               const mainImg = group.mainImage
               const imageUrl = mainImg?.thumbnail_url || mainImg?.cloudinary_url || ''
               const visibleSiteLabels = showInternalControls ? group.siteNames : getPublicLabelsFromImages(group.images)
+              const parsedSeries = parseProductSeries(group.productName)
+              const seriesDescription = parsedSeries.seriesSuffix
+                ? getShowroomProductSeriesDescription(parsedSeries.baseName)
+                : null
               return (
                 <div
                   key={group.productName}
@@ -2342,6 +2670,9 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                     </div>
                     <div className="p-4 flex-1 flex flex-col min-h-0">
                       <h3 className="font-semibold text-neutral-900 leading-snug">{group.productName}</h3>
+                      {seriesDescription ? (
+                        <p className="mt-0.5 text-xs leading-snug text-neutral-500">{seriesDescription}</p>
+                      ) : null}
                       <dl className="text-xs text-neutral-500 mt-1.5 space-y-0.5">
                         {visibleSiteLabels.length > 0 && (
                           <div className="flex gap-1.5 items-start">
@@ -2569,9 +2900,9 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                             <Button
                               key={`${section.industry}-page-${pageNumber}`}
                               type="button"
-                              variant={isCurrent ? 'default' : 'outline'}
+                              variant="outline"
                               size="sm"
-                              className="min-w-9 px-0"
+                              className={cn('min-w-9 px-0', isCurrent && selectedBrowseButtonClass)}
                               onClick={() => moveIndustryPage(section.industry, pageNumber)}
                             >
                               {pageNumber}
@@ -2596,7 +2927,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
               ))}
             </div>
 
-            {visibleBeforeAfterGroups.length > 0 && (
+            {showInternalControls && visibleBeforeAfterGroups.length > 0 && (
               <section
                 id="showroom-before-after-section"
                 className="mt-10 rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4 md:p-5 scroll-mt-28"
@@ -2636,9 +2967,9 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                           <Button
                             key={`before-after-page-${pageNumber}`}
                             type="button"
-                            variant={isCurrent ? 'default' : 'outline'}
+                            variant="outline"
                             size="sm"
-                            className="min-w-9 px-0"
+                            className={cn('min-w-9 px-0', isCurrent && selectedBrowseButtonClass)}
                             onClick={() => setBeforeAfterPage(pageNumber)}
                           >
                             {pageNumber}
@@ -2814,11 +3145,9 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                     style={{ touchAction: 'pan-y' }}
                     ref={detailImageFrameRef}
                   >
-                    <img
-                      src={detailImages[lightboxIndex]?.cloudinary_url ?? detailImages[lightboxIndex]?.thumbnail_url ?? ''}
-                      alt=""
-                      className="max-w-full max-h-[70vh] object-contain rounded-lg block"
-                      draggable={false}
+                    <ShowroomLightboxSlide
+                      key={detailImages[lightboxIndex]?.id ?? lightboxIndex}
+                      image={detailImages[lightboxIndex]}
                     />
                     {(() => {
                       const current = detailImages[lightboxIndex]
@@ -2919,24 +3248,20 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                 </div>
               </>
             ) : !showInternalControls ? (
-              detailStoryHref ? (
-                <Link
-                  to={detailStoryHref}
-                  className="flex items-center justify-center gap-2 w-full rounded-xl py-3.5 bg-amber-500 hover:bg-amber-600 text-neutral-900 font-semibold text-sm transition-colors shadow-md"
-                >
-                  <Sparkles className="h-4 w-4" />
-                  이 현장의 이야기 보기
-                </Link>
-              ) : (
-                <button
-                  type="button"
-                  disabled
-                  className="flex items-center justify-center gap-2 w-full rounded-xl py-3.5 bg-neutral-700 text-neutral-300 font-semibold text-sm"
-                >
-                  <Sparkles className="h-4 w-4" />
-                  이 현장의 이야기 준비 중
-                </button>
-              )
+              <button
+                type="button"
+                onClick={() => {
+                  openShowroomConsultationChat({
+                    surface: 'gallery_modal',
+                    concern: selectedConcernTag,
+                    siteName: detailKey,
+                  })
+                }}
+                className="flex items-center justify-center gap-2 w-full rounded-xl py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-sm transition-colors shadow-md"
+              >
+                <MessageCircle className="h-4 w-4" />
+                비슷한 공간 상담 문의
+              </button>
             ) : null}
           </div>
         </DialogContent>

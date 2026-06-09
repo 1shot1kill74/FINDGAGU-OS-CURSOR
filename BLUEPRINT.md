@@ -27,6 +27,7 @@
 2. 쇼룸형 홈페이지 고도화
 3. 채널톡 후속 정보 레이어 정리
 4. 공개 동선과 내부 운영 동선 분리 유지
+5. **고객 후기 수집·승인 파이프라인** (시공완료 D+7 → 카톡/채널톡 → 웹 폼 → `owner_quote`) — 상세: `docs/CUSTOMER_REVIEW_COLLECTION_BLUEPRINT.md`
 
 ## 3. 핵심 도메인 모델
 
@@ -113,6 +114,14 @@
 - 초기 도입은 AI 대화형보다 폼 기반 질문 수집을 우선합니다.
 - 채널톡은 쇼룸 링크 재전송보다 `관심 사례 기준 후속 정보`를 제공하는 레이어로 봅니다.
 
+### 고객 후기 수집 (계획)
+
+- 시공완료 **D+7**에 후기 요청 링크를 보내고, **3문항 웹 폼**으로 `owner_quote`를 수집합니다.
+- 발송: **채널톡 API**(기존) → **카카오 알림톡**(전화번호 fallback) → Admin 수동 카톡.
+- Admin **승인 후**만 `showroom_case_profiles.owner_quote` 및 콘텐츠·쇼룸에 반영합니다.
+- 제출 후 **네이버·구글 후기 버튼**(선택)으로 외부 플랫폼 후기를 유도합니다.
+- 실행 설계: `docs/CUSTOMER_REVIEW_COLLECTION_BLUEPRINT.md`
+
 ## 7. 기술 전제
 
 - 프론트엔드: `React`, `Vite`, `TypeScript`
@@ -125,5 +134,6 @@
 
 - `CONTEXT.md`: 왜 이 방향으로 운영하는가
 - `JOURNAL.md`: 최근에 무엇이 바뀌었는가
+- `docs/CUSTOMER_REVIEW_COLLECTION_BLUEPRINT.md`: 고객 후기 수집·카톡/채널톡·승인·콘텐츠 연동 실행 설계
 - `docs/history/blueprint-history.md`: 과거 상세 설계와 이동된 세부 규칙
 - `docs/history/journal-2026-q1.md`: 오래된 결정 로그

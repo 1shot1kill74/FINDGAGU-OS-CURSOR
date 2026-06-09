@@ -5,6 +5,14 @@ export type ShowroomEventName =
   | 'showroom_view_case'
   | 'showroom_view_before_after'
   | 'showroom_reply_intent'
+  | 'abm_showroom_enter'
+  | 'abm_concern_select'
+  | 'abm_ba_story_click'
+  | 'abm_case_open'
+  | 'abm_case_open_fail'
+  | 'abm_consultation_click'
+  | 'abm_gallery_open'
+  | 'abm_gallery_browse'
 
 type ShowroomEventRecord = {
   sessionKey: string

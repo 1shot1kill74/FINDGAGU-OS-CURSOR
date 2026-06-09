@@ -46,6 +46,12 @@ export function bootPublicShowroomChannelTalk() {
   window.ChannelIO?.('boot', { pluginKey })
 }
 
+export function openPublicShowroomChannelTalk(): boolean {
+  if (typeof window === 'undefined' || !window.ChannelIO) return false
+  window.ChannelIO('show')
+  return true
+}
+
 export function shutdownPublicShowroomChannelTalk() {
   if (typeof window === 'undefined' || publicShowroomMountCount === 0) return
 

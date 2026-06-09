@@ -16,6 +16,7 @@ export default defineConfig(({ mode }) => {
       host: true,
       port: 5180,
       strictPort: true,
+      open: '/dashboard',
       proxy: {
         '/api/showroom-shorts-worker': {
           target: showroomShortsProxyTarget,
