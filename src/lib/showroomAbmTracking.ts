@@ -1,4 +1,5 @@
 import { trackShowroomEvent, type ShowroomEventName } from '@/lib/showroomEngagementService'
+import { getShowroomAbmTrackingContext } from '@/lib/showroomAbmTraffic'
 
 export type ShowroomAbmEventName = Extract<
   ShowroomEventName,
@@ -40,6 +41,7 @@ export function trackShowroomAbmEvent(input: ShowroomAbmTrackInput): void {
     siteName: input.siteName,
     industry: input.industry,
     metadata: {
+      ...getShowroomAbmTrackingContext(),
       ...(input.concern ? { concern: input.concern } : {}),
       ...(input.metadata ?? {}),
     },

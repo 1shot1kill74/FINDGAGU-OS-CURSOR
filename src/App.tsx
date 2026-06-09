@@ -17,7 +17,7 @@ const ShareRedirect = lazy(() => import('@/pages/ShareRedirect'))
 const PublicShowroomPage = lazy(() => import('@/pages/PublicShowroomPage'))
 const PublicShowroomCardNewsPage = lazy(() => import('@/pages/PublicShowroomCardNewsPage'))
 const ShowroomCaseApproachPage = lazy(() => import('@/pages/ShowroomCaseApproachPage'))
-const ShowroomPage = lazy(() => import('@/pages/ShowroomPage'))
+const InternalShowroomPage = lazy(() => import('@/pages/InternalShowroomPage'))
 const OriginalShowroomPage = lazy(() => import('@/pages/OriginalShowroomPage'))
 const ContactPage = lazy(() => import('@/pages/ContactPage'))
 const DashboardPage = lazy(() => import('@/pages/DashboardPage'))
@@ -98,7 +98,7 @@ function App() {
             <Route path="/measurement/upload" element={<MeasurementUpload />} />
             <Route path="/image-assets" element={<ImageAssetViewer />} />
             <Route path="/image-assets/upload" element={<ImageAssetUpload />} />
-            <Route path="/showroom" element={<ShowroomPage />} />
+            <Route path="/showroom" element={<InternalShowroomPage />} />
             <Route path="/showroom/original" element={<OriginalShowroomPage />} />
             <Route path="/homepage-concept" element={<HomepageConceptPage />} />
             <Route path="/admin/migration" element={<MigrationPage />} />

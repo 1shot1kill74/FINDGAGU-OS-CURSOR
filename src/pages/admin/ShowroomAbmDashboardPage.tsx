@@ -4,6 +4,32 @@ import { ArrowLeft, BarChart3, Filter, MessageCircle, Users } from 'lucide-react
 import { Button } from '@/components/ui/button'
 import { supabase } from '@/lib/supabase'
 import type { ShowroomAbmConsultationSurface } from '@/lib/showroomAbmTracking'
+import {
+  formatAbmHostnameLabel,
+  getAbmTrafficFilterLabel,
+  getShowroomAbmProductionHostnames,
+  matchesShowroomAbmTrafficFilter,
+  readAbmEventHostname,
+  type ShowroomAbmTrafficFilter,
+} from '@/lib/showroomAbmTraffic'
+
+const TRAFFIC_FILTER_OPTIONS: { value: ShowroomAbmTrafficFilter; label: string; description: string }[] = [
+  {
+    value: 'production',
+    label: '프로덕션만',
+    description: 'findgagu-os-cursor.vercel.app 등 운영 도메인만 집계',
+  },
+  {
+    value: 'exclude_local',
+    label: '로컬 제외',
+    description: 'localhost·127.0.0.1 테스트는 제외',
+  },
+  {
+    value: 'all',
+    label: '전체',
+    description: '로컬·프리뷰·구 데이터까지 모두 포함',
+  },
+]
 
 const PERIOD_OPTIONS = [
   { value: 0, label: '오늘' },
@@ -77,8 +103,16 @@ type CaseFailMetric = {
   sessions: number
 }
 
+type HostnameMetric = {
+  hostname: string | null
+  label: string
+  sessions: number
+  events: number
+}
+
 export default function ShowroomAbmDashboardPage() {
   const [periodDays, setPeriodDays] = useState<number>(30)
+  const [trafficFilter, setTrafficFilter] = useState<ShowroomAbmTrafficFilter>('production')
   const [loading, setLoading] = useState(true)
   const [rows, setRows] = useState<AbmEventRow[]>([])
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
@@ -136,7 +170,19 @@ export default function ShowroomAbmDashboardPage() {
     }
   }, [periodDays])
 
-  const metrics = useMemo(() => buildAbmDashboardMetrics(rows), [rows])
+  const filteredRows = useMemo(
+    () => rows.filter((row) => matchesShowroomAbmTrafficFilter(row.metadata, trafficFilter)),
+    [rows, trafficFilter]
+  )
+
+  const hostnameMetrics = useMemo(() => buildHostnameMetrics(rows), [rows])
+  const metrics = useMemo(() => buildAbmDashboardMetrics(filteredRows), [filteredRows])
+  const productionHostnames = useMemo(() => getShowroomAbmProductionHostnames(), [])
+  const hiddenRowCount = rows.length - filteredRows.length
+  const legacyRowCount = useMemo(
+    () => rows.filter((row) => !readAbmEventHostname(row.metadata)).length,
+    [rows]
+  )
 
   return (
     <div className="min-h-screen bg-slate-50 px-4 py-6 md:px-8">
@@ -152,25 +198,63 @@ export default function ShowroomAbmDashboardPage() {
               <h1 className="text-2xl font-semibold tracking-tight text-slate-900">쇼룸 ABM 퍼널</h1>
             </div>
             <p className="max-w-3xl text-sm leading-6 text-slate-600">
-              공개 쇼룸(`/public/showroom`) 실측 이벤트를 기준으로 유입, 이탈, 상담 발생 지점을 확인합니다. 예측·시뮬이 아니라
-              실제 트래픽 감시용 대시보드입니다.
+              공개 쇼룸(`/public/showroom`) 실측 이벤트를 기준으로 유입, 이탈, 상담 발생 지점을 확인합니다. 기본값은{' '}
+              <span className="font-medium text-slate-800">프로덕션 도메인만</span> 집계해 로컬·프리뷰 테스트와 구분합니다.
+            </p>
+            <p className="text-xs text-slate-500">
+              프로덕션 호스트: {productionHostnames.join(', ')}
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            {PERIOD_OPTIONS.map((option) => (
-              <Button
-                key={option.value}
-                type="button"
-                variant={periodDays === option.value ? 'default' : 'outline'}
-                className="h-9"
-                onClick={() => setPeriodDays(option.value)}
-              >
-                {option.label}
-              </Button>
-            ))}
+          <div className="flex flex-col items-stretch gap-3 md:items-end">
+            <div className="flex flex-wrap items-center gap-2">
+              {TRAFFIC_FILTER_OPTIONS.map((option) => (
+                <Button
+                  key={option.value}
+                  type="button"
+                  variant={trafficFilter === option.value ? 'default' : 'outline'}
+                  className="h-9"
+                  onClick={() => setTrafficFilter(option.value)}
+                  title={option.description}
+                >
+                  {option.label}
+                </Button>
+              ))}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {PERIOD_OPTIONS.map((option) => (
+                <Button
+                  key={option.value}
+                  type="button"
+                  variant={periodDays === option.value ? 'default' : 'outline'}
+                  className="h-9"
+                  onClick={() => setPeriodDays(option.value)}
+                >
+                  {option.label}
+                </Button>
+              ))}
+            </div>
           </div>
         </div>
+
+        {!loading && !errorMessage && rows.length > 0 ? (
+          <section className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600 shadow-sm">
+            <span className="font-medium text-slate-900">{getAbmTrafficFilterLabel(trafficFilter)}</span> 기준{' '}
+            <span className="font-medium text-slate-900">{formatNumber(filteredRows.length)}</span>건 표시
+            {hiddenRowCount > 0 ? (
+              <>
+                {' '}
+                · 전체 {formatNumber(rows.length)}건 중 {formatNumber(hiddenRowCount)}건 제외
+              </>
+            ) : null}
+            {legacyRowCount > 0 ? (
+              <>
+                {' '}
+                · 호스트 미기록(구 데이터) {formatNumber(legacyRowCount)}건
+              </>
+            ) : null}
+          </section>
+        ) : null}
 
         <section className="grid gap-4 md:grid-cols-4">
           <SummaryCard
@@ -203,11 +287,28 @@ export default function ShowroomAbmDashboardPage() {
           <p className="text-sm text-slate-500">데이터를 불러오는 중입니다...</p>
         ) : errorMessage ? (
           <p className="text-sm text-rose-600">{errorMessage}</p>
-        ) : rows.length === 0 ? (
+        ) : filteredRows.length === 0 ? (
           <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
             <p className="text-sm text-slate-500">
-              선택 기간에 ABM 이벤트가 없습니다. 공개 쇼룸(`/public/showroom`)에서 고객 행동이 발생하면 여기에 쌓입니다.
+              {rows.length === 0
+                ? '선택 기간에 ABM 이벤트가 없습니다. 공개 쇼룸(`/public/showroom`)에서 고객 행동이 발생하면 여기에 쌓입니다.'
+                : `${getAbmTrafficFilterLabel(trafficFilter)} 조건에 맞는 이벤트가 없습니다. 로컬 테스트만 있었다면 「로컬 제외」 또는 「전체」로 바꿔 보세요.`}
             </p>
+            {rows.length > 0 && hostnameMetrics.length > 0 ? (
+              <div className="mt-4">
+                <SimpleTable
+                  title="호스트별 원본 이벤트"
+                  description="현재 필터와 관계없이 기간 내 전체 분포"
+                  emptyMessage=""
+                  columns={['호스트', '세션', '이벤트']}
+                  rows={hostnameMetrics.map((row) => [
+                    row.label,
+                    formatNumber(row.sessions),
+                    formatNumber(row.events),
+                  ])}
+                />
+              </div>
+            ) : null}
           </section>
         ) : (
           <>
@@ -254,6 +355,16 @@ export default function ShowroomAbmDashboardPage() {
                 rows={metrics.caseFailMetrics.map((row) => [row.reason, formatNumber(row.sessions), formatNumber(row.events)])}
               />
             ) : null}
+
+            {hostnameMetrics.length > 0 ? (
+              <SimpleTable
+                title="호스트별 이벤트"
+                description={`${getAbmTrafficFilterLabel(trafficFilter)} 필터 적용 전·후 비교용`}
+                emptyMessage=""
+                columns={['호스트', '세션', '이벤트']}
+                rows={hostnameMetrics.map((row) => [row.label, formatNumber(row.sessions), formatNumber(row.events)])}
+              />
+            ) : null}
           </>
         )}
 
@@ -261,14 +372,36 @@ export default function ShowroomAbmDashboardPage() {
           <h2 className="text-lg font-semibold text-slate-900">해석 가이드</h2>
           <div className="mt-4 space-y-3 text-sm leading-6 text-slate-600">
             <p>1. 퍼널은 session_key 기준입니다. 같은 사람이 여러 단계를 거치면 각 단계에 1회씩 집계됩니다.</p>
-            <p>2. 빨간 이탈 구간(이전 단계 대비 급격한 감소)부터 UX·카피·CTA를 손보는 것이 우선입니다.</p>
-            <p>3. 상담 surface가 한쪽에만 몰리면, 다른 CTA의 가시성·문구·배치를 조정해 보세요.</p>
-            <p>4. 사례 실패 건은 콘텐츠·링크 품질 문제일 수 있으니 case 작업실과 함께 확인하세요.</p>
+            <p>2. 기본 「프로덕션만」은 운영 도메인 이벤트만 보여 줍니다. 로컬·프리뷰 테스트는 「전체」에서 확인하세요.</p>
+            <p>3. 빨간 이탈 구간(이전 단계 대비 급격한 감소)부터 UX·카피·CTA를 손보는 것이 우선입니다.</p>
+            <p>4. 상담 surface가 한쪽에만 몰리면, 다른 CTA의 가시성·문구·배치를 조정해 보세요.</p>
+            <p>5. 사례 실패 건은 콘텐츠·링크 품질 문제일 수 있으니 case 작업실과 함께 확인하세요.</p>
           </div>
         </section>
       </div>
     </div>
   )
+}
+
+function buildHostnameMetrics(rows: AbmEventRow[]): HostnameMetric[] {
+  const map = new Map<string | null, { sessions: Set<string>; events: number }>()
+
+  for (const row of rows) {
+    const hostname = readAbmEventHostname(row.metadata)
+    const bucket = map.get(hostname) ?? { sessions: new Set<string>(), events: 0 }
+    bucket.sessions.add(row.session_key)
+    bucket.events += 1
+    map.set(hostname, bucket)
+  }
+
+  return [...map.entries()]
+    .map(([hostname, bucket]) => ({
+      hostname,
+      label: formatAbmHostnameLabel(hostname),
+      sessions: bucket.sessions.size,
+      events: bucket.events,
+    }))
+    .sort((a, b) => b.events - a.events || b.sessions - a.sessions)
 }
 
 function buildAbmDashboardMetrics(rows: AbmEventRow[]) {

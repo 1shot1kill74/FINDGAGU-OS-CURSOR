@@ -4,6 +4,7 @@ import { differenceInCalendarDays, endOfMonth, formatDistanceToNow, startOfMonth
 import { ko } from 'date-fns/locale'
 import {
   ArrowRight,
+  BarChart3,
   ChevronLeft,
   ChevronRight,
   ClipboardList,
@@ -308,6 +309,12 @@ export default function DashboardPage() {
       description: '직원용 시공사례 쇼룸과 노출 순서를 점검합니다.',
       to: '/showroom',
       icon: MonitorCog,
+    },
+    {
+      title: '쇼룸 ABM 퍼널',
+      description: '고민 카드·사례·상담 클릭까지 쇼룸 고객 행동을 실측합니다.',
+      to: '/admin/showroom-abm',
+      icon: BarChart3,
     },
     {
       title: '이미지 업로드',
@@ -641,6 +648,7 @@ export default function DashboardPage() {
             <Link to="/admin/migration"><Button variant="outline">데이터 통합 마이그레이션</Button></Link>
             <Link to="/admin/archive"><Button variant="outline">숨긴 상담 아카이브</Button></Link>
             <Link to="/admin/competitor-monitor"><Button variant="outline">경쟁사 모니터링</Button></Link>
+            <Link to="/admin/showroom-abm"><Button variant="outline">쇼룸 ABM 퍼널</Button></Link>
             <Link to="/admin/test-console"><Button variant="outline">채널톡 시뮬레이터</Button></Link>
           </div>
         </section>

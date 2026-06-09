@@ -1,19 +1,14 @@
 /**
- * 쇼룸 공통 구현 (과도기)
- * - /showroom → InternalShowroomPage (컨텐츠 공장)
- * - /public/showroom → PublicShowroomPage (고객 ABM)
- * Phase 2: mode 분기 제거 후 internal/public 각각 독립 페이지로 분리
+ * 공개 쇼룸 전용 화면
+ * - 고객 ABM / 상담 전용 엔트리
+ * - 내부 쇼룸 컨텐츠 공장의 공개 RPC 데이터를 읽어 자동 업데이트
+ * - 내부 운영 UI는 ShowroomPage/InternalShowroomPage에 남김
  */
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom'
 import { Link } from 'react-router-dom'
 import {
-  fetchShowroomSiteOverrides,
-  incrementImageAssetShareCount,
-  saveShowroomSiteOverride,
   type ShowroomImageAsset,
-  type ShowroomSiteOverride,
-  type ShowroomSiteOverrideSectionKey,
 } from '@/lib/imageAssetService'
 import {
   Dialog,
@@ -26,18 +21,7 @@ import { useColorChips } from '@/hooks/useColorChips'
 import { cn } from '@/lib/utils'
 import { Search, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Package, Images, FileText, MousePointerClick, MessageCircle, FileCheck, Users, Wrench, ClipboardCheck, ArrowRight, ArrowLeft, Copy, Check, Video, BarChart3, Building2, Palette } from 'lucide-react'
 import { toast } from 'sonner'
-import { shareGalleryKakao } from '@/lib/kakaoShare'
-import { createSharedGallery, snapshotShowroomImageAsset } from '@/lib/sharedGalleryService'
 import { parseShowroomCtaAttribution, trackShowroomCtaVisit } from '@/lib/showroomCtaTracking'
-import ShowroomShortsCreateDialog from '@/components/showroom/ShowroomShortsCreateDialog'
-import {
-  getShowroomBasicShortsDraftById,
-  listShowroomBasicShortsDrafts,
-  requestShowroomBasicShortsRender,
-  requestShowroomBasicShortsDraftProduction,
-  saveShowroomBasicShortsDraft,
-  type ShowroomBasicShortsDraftRecord,
-} from '@/lib/showroomBasicShortsDrafts'
 import { openShowroomBlogTeaserLine } from '@/lib/showroomCaseCanonicalBlog'
 import {
   fetchApprovedBlogShowroomCaseProfileDrafts,
@@ -47,7 +31,6 @@ import {
 import { collectShowroomAliasNamesFromImages, collectShowroomIdentityKeys } from '@/lib/showroomCaseAlias'
 import { appendShowroomConcernQuery, openShowroomConsultationChat } from '@/pages/showroom/showroomStoryCta'
 import { trackShowroomAbmEvent } from '@/lib/showroomAbmTracking'
-import { validateBeforeAfterSelection } from '@/lib/showroomShorts'
 
 import {
   CONCERN_CARDS,
@@ -65,10 +48,8 @@ import {
   prefetchShowroomLightboxThumbnails,
 } from '@/pages/showroom/showroomLightboxImages'
 import {
-  buildBasicShortsPlan,
   buildColorGroups,
   buildProductGroups,
-  buildShowroomSiteKey,
   buildSiteGroups,
   collectUniqueLabels,
   getBroadPublicLabel,
@@ -81,9 +62,6 @@ import {
   getPrimaryIndustryLabel,
   getPublicLabelsFromImages,
   normalizeConcernTag,
-  moveIdBefore,
-  moveIdByOffset,
-  orderImagesByIdList,
   parseProductSeries,
   compareSeriesSuffix,
   sortBeforeAfterImages,
@@ -97,13 +75,12 @@ import type {
   PaginatedIndustrySection,
   ProductGroup,
   ShowroomCaseProfileDraftState,
-  ShowroomPageProps,
   SiteGroup,
   ViewMode,
 } from '@/pages/showroom/showroomPageTypes'
 
-export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
-  const showInternalControls = mode === 'internal'
+export default function PublicShowroomExperience() {
+  const mode = 'public' as const
   const headerRef = useRef<HTMLElement | null>(null)
   const selectionBarRef = useRef<HTMLDivElement | null>(null)
   const { chips: colorChips, isLoading: colorLoading } = useColorChips()
@@ -111,7 +88,6 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
   const location = useLocation()
   const [searchParams, setSearchParams] = useSearchParams()
   const [assets, setAssets] = useState<ShowroomImageAsset[]>([])
-  const [siteOverrides, setSiteOverrides] = useState<ShowroomSiteOverride[]>([])
   const [loading, setLoading] = useState(true)
   const [viewMode, setViewMode] = useState<ViewMode>('industry')
   const [selectedProductSeries, setSelectedProductSeries] = useState<string | null>(null)
@@ -126,40 +102,16 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
   const [detailOpen, setDetailOpen] = useState<'site' | 'product' | 'color' | 'beforeAfter' | null>(null)
   const [detailKey, setDetailKey] = useState<string | null>(null)
   const [lightboxIndex, setLightboxIndex] = useState(0)
-  const [internalDetailViewMode, setInternalDetailViewMode] = useState<'grid' | 'image'>('grid')
-  const [selectedImageIds, setSelectedImageIds] = useState<Set<string>>(new Set())
+  const [detailViewMode, setDetailViewMode] = useState<'grid' | 'image'>('grid')
   const [industryPageBySection, setIndustryPageBySection] = useState<Record<string, number>>({})
   const [beforeAfterPage, setBeforeAfterPage] = useState(1)
-  const [priorityInputByKey, setPriorityInputByKey] = useState<Record<string, string>>({})
-  const [savingPriorityByKey, setSavingPriorityByKey] = useState<Record<string, boolean>>({})
-  const [priorityEditorOpenByKey, setPriorityEditorOpenByKey] = useState<Record<string, boolean>>({})
   const [caseProfileDraftBySite, setCaseProfileDraftBySite] = useState<Record<string, ShowroomCaseProfileDraftState>>({})
-  const [shortsDialogOpen, setShortsDialogOpen] = useState(false)
-  const [basicShortsDialogOpen, setBasicShortsDialogOpen] = useState(false)
-  const [basicShortsImageOrder, setBasicShortsImageOrder] = useState<string[]>([])
-  const [draggingBasicShortsImageId, setDraggingBasicShortsImageId] = useState<string | null>(null)
-  const [basicShortsScriptDraft, setBasicShortsScriptDraft] = useState({
-    heroLine: '',
-    detailLine: '',
-    detailLine2: '',
-    closingLine: '',
-    endingTitle: '',
-    endingSubtitle: '',
-  })
-  const [basicShortsSavedAt, setBasicShortsSavedAt] = useState<string | null>(null)
-  const [basicShortsSavedDrafts, setBasicShortsSavedDrafts] = useState<ShowroomBasicShortsDraftRecord[]>([])
-  const [basicShortsDraftsLoading, setBasicShortsDraftsLoading] = useState(false)
-  const [basicShortsRequesting, setBasicShortsRequesting] = useState(false)
-  const [basicShortsHydratingDraft, setBasicShortsHydratingDraft] = useState(false)
   const mountedRef = useRef(true)
   const refreshInFlightRef = useRef(false)
   const lastAutoRefreshAtRef = useRef(0)
-  const priorityEditorOpenByKeyRef = useRef(priorityEditorOpenByKey)
   const trackedPublicEntryRef = useRef(false)
   const trackedAbmEnterRef = useRef(false)
-  const originalArchivePath = showInternalControls ? '/showroom/original' : '/public/showroom/original'
-
-  priorityEditorOpenByKeyRef.current = priorityEditorOpenByKey
+  const originalArchivePath = '/public/showroom/original'
 
   // 딥링크: URL ?q, ?concern 변경 시(뒤로가기 등) 상태 동기화. 레거시 ?tag도 지원.
   useEffect(() => {
@@ -270,24 +222,10 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
     if (!background) setLoading(true)
 
     try {
-      const { assets: list, siteOverrides: overrides } = await loadShowroomDataset(
-        showInternalControls ? 'internal' : 'public'
-      )
+      const { assets: list } = await loadShowroomDataset('public')
       if (!mountedRef.current) return
 
       setAssets(list)
-      setSiteOverrides(overrides)
-      setPriorityInputByKey((prev) => {
-        const next = background ? { ...prev } : {}
-        overrides.forEach((override) => {
-          const key = buildShowroomSiteKey(override.section_key, override.industry_label, override.site_name)
-          const nextValue = override.manual_priority != null ? String(override.manual_priority) : ''
-          if (!background || priorityEditorOpenByKeyRef.current[key] !== true || !(key in next)) {
-            next[key] = nextValue
-          }
-        })
-        return next
-      })
     } catch (error) {
       if (!background) {
         toast.error(error instanceof Error ? error.message : '쇼룸 데이터를 불러오지 못했습니다.')
@@ -296,7 +234,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
       if (mountedRef.current) setLoading(false)
       refreshInFlightRef.current = false
     }
-  }, [showInternalControls])
+  }, [])
 
   const refreshShowroomOnReturn = useCallback(() => {
     if (document.visibilityState === 'hidden') return
@@ -329,16 +267,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
     }
   }, [loadShowroomData, refreshShowroomOnReturn])
 
-  const siteOverrideMap = useMemo(
-    () =>
-      new Map(
-        siteOverrides.map((override) => [
-          buildShowroomSiteKey(override.section_key, override.industry_label, override.site_name),
-          override,
-        ] as const)
-      ),
-    [siteOverrides]
-  )
+  const siteOverrideMap = useMemo(() => new Map(), [])
 
   const showroomAssets = useMemo(
     () => assets.filter((asset) => asset.before_after_role !== 'before'),
@@ -618,7 +547,6 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
   }, [detailOpen, detailKey, siteGroups, productGroups, colorGroups, beforeAfterGroups])
   const detailDisplayTitle = useMemo(() => {
     if (!detailKey || detailOpen === null) return ''
-    if (showInternalControls) return detailKey
 
     if (detailOpen === 'site') {
       const group = siteGroups.find((item) => item.siteName === detailKey)
@@ -629,7 +557,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
       return group ? getGroupPublicLabel(group) : detailKey
     }
     return detailKey
-  }, [beforeAfterGroups, detailKey, detailOpen, showInternalControls, siteGroups])
+  }, [beforeAfterGroups, detailKey, detailOpen, siteGroups])
 
   useEffect(() => {
     if (detailOpen === null || detailImages.length === 0) return
@@ -637,9 +565,9 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
   }, [detailOpen, detailKey, detailImages])
 
   useEffect(() => {
-    if (detailOpen === null || internalDetailViewMode !== 'image' || detailImages.length === 0) return
+    if (detailOpen === null || detailViewMode !== 'image' || detailImages.length === 0) return
     prefetchShowroomLightboxNeighbors(detailImages, lightboxIndex, 2)
-  }, [detailOpen, detailImages, internalDetailViewMode, lightboxIndex])
+  }, [detailOpen, detailImages, detailViewMode, lightboxIndex])
 
   useEffect(() => {
     const siteNames = Array.from(new Set(
@@ -730,35 +658,30 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
   const detailTransitionDirectionRef = useRef<'next' | 'prev'>('next')
 
   const openDetail = (mode: 'site' | 'product' | 'color' | 'beforeAfter', key: string) => {
-    if (!showInternalControls) {
-      trackShowroomAbmEvent({
-        eventName: 'abm_gallery_open',
-        concern: selectedConcernTag,
-        siteName: mode === 'site' || mode === 'beforeAfter' ? key : null,
-        metadata: {
-          galleryMode: mode,
-          viewMode,
-          detailKey: key,
-        },
-      })
-    }
+    trackShowroomAbmEvent({
+      eventName: 'abm_gallery_open',
+      concern: selectedConcernTag,
+      siteName: mode === 'site' || mode === 'beforeAfter' ? key : null,
+      metadata: {
+        galleryMode: mode,
+        viewMode,
+        detailKey: key,
+      },
+    })
     detailAnimatedImageIdRef.current = null
     detailTransitionDirectionRef.current = 'next'
-    setSelectedImageIds(new Set())
     setDetailOpen(mode)
     setDetailKey(key)
     setLightboxIndex(0)
-    setInternalDetailViewMode('grid')
   }
 
   const closeDetail = useCallback(() => {
     setDetailOpen(null)
-    setInternalDetailViewMode('grid')
   }, [])
 
-  const openInternalDetailImage = useCallback((index: number) => {
+  const openDetailImage = useCallback((index: number) => {
     setLightboxIndex(index)
-    setInternalDetailViewMode('image')
+    setDetailViewMode('image')
   }, [])
 
   const goPrev = useCallback(() => {
@@ -823,464 +746,8 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
 
   useEffect(() => {
     if (detailOpen === null) {
-      setInternalDetailViewMode('grid')
-    }
+      }
   }, [detailOpen])
-
-  const createShareGalleryUrl = useCallback(async () => {
-    if (selectedImageIds.size === 0) return ''
-    const snapshots = Array.from(selectedImageIds)
-      .map((id) => assets.find((asset) => asset.id === id))
-      .filter((asset): asset is ShowroomImageAsset => asset != null)
-      .map(snapshotShowroomImageAsset)
-
-    if (snapshots.length === 0) {
-      throw new Error('전송할 이미지를 찾을 수 없습니다.')
-    }
-
-    const result = await createSharedGallery({
-      items: snapshots,
-      title: '선별 시공 사례',
-      description: `고객에게 보여줄 참고 이미지 ${snapshots.length}장`,
-      source: 'showroom',
-    })
-    return result.url
-  }, [selectedImageIds, assets])
-
-  const toggleSelectedImage = useCallback((id: string) => {
-    setSelectedImageIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }, [])
-
-  const selectAllDetailImages = useCallback(() => {
-    if (detailImages.length === 0) return
-    setSelectedImageIds((prev) => {
-      const next = new Set(prev)
-      detailImages.forEach((image) => next.add(image.id))
-      return next
-    })
-  }, [detailImages])
-
-  const markSelectedImagesShared = useCallback(() => {
-    selectedImageIds.forEach((id) => {
-      incrementImageAssetShareCount(id).catch(() => {})
-    })
-  }, [selectedImageIds])
-
-  const copyShareLink = useCallback(async () => {
-    if (selectedImageIds.size === 0) {
-      toast.error('먼저 전송할 이미지를 선택하세요.')
-      return
-    }
-    try {
-      const shareGalleryUrl = await createShareGalleryUrl()
-      await navigator.clipboard.writeText(shareGalleryUrl)
-      markSelectedImagesShared()
-      toast.success('선택 이미지 링크를 복사했습니다.')
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : '공유 링크 생성에 실패했습니다.')
-    }
-  }, [selectedImageIds.size, createShareGalleryUrl, markSelectedImagesShared])
-
-  const shareSelectedImagesKakao = useCallback(async () => {
-    if (selectedImageIds.size === 0) {
-      toast.error('먼저 전송할 이미지를 선택하세요.')
-      return
-    }
-    try {
-      const shareGalleryUrl = await createShareGalleryUrl()
-      markSelectedImagesShared()
-      shareGalleryKakao(
-        shareGalleryUrl,
-        '선별 시공 사례',
-        `고객에게 보여줄 참고 이미지 ${selectedImageIds.size}장`,
-        () => toast.success('링크를 복사했습니다. 카카오톡에 붙여 넣어 공유하세요.')
-      )
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : '공유 링크 생성에 실패했습니다.')
-    }
-  }, [selectedImageIds.size, createShareGalleryUrl, markSelectedImagesShared])
-
-  const selectedImages = useMemo(
-    () => Array.from(selectedImageIds)
-      .map((id) => assets.find((asset) => asset.id === id))
-      .filter((asset): asset is ShowroomImageAsset => asset != null),
-    [selectedImageIds, assets]
-  )
-
-  const shortsSelection = useMemo(
-    () => validateBeforeAfterSelection(selectedImages),
-    [selectedImages]
-  )
-
-  const basicShortsPlan = useMemo(
-    () => buildBasicShortsPlan(selectedImages),
-    [selectedImages]
-  )
-
-  const orderedBasicShortsImages = useMemo(
-    () => orderImagesByIdList(basicShortsPlan.orderedImages, basicShortsImageOrder),
-    [basicShortsPlan.orderedImages, basicShortsImageOrder]
-  )
-
-  useEffect(() => {
-    setBasicShortsImageOrder(basicShortsPlan.orderedImages.map((image) => image.id))
-  }, [basicShortsPlan.orderedImages])
-
-  useEffect(() => {
-    setBasicShortsScriptDraft({
-      heroLine: basicShortsPlan.heroLine,
-      detailLine: basicShortsPlan.detailLine,
-      detailLine2: basicShortsPlan.detailLine2,
-      closingLine: basicShortsPlan.closingLine,
-      endingTitle: basicShortsPlan.endingTitle,
-      endingSubtitle: basicShortsPlan.endingSubtitle,
-    })
-  }, [basicShortsPlan.heroLine, basicShortsPlan.detailLine, basicShortsPlan.detailLine2, basicShortsPlan.closingLine, basicShortsPlan.endingTitle, basicShortsPlan.endingSubtitle])
-
-  const resetBasicShortsImageOrder = useCallback(() => {
-    setBasicShortsImageOrder(basicShortsPlan.orderedImages.map((image) => image.id))
-  }, [basicShortsPlan.orderedImages])
-
-  const resetBasicShortsScriptDraft = useCallback(() => {
-    setBasicShortsScriptDraft({
-      heroLine: basicShortsPlan.heroLine,
-      detailLine: basicShortsPlan.detailLine,
-      detailLine2: basicShortsPlan.detailLine2,
-      closingLine: basicShortsPlan.closingLine,
-      endingTitle: basicShortsPlan.endingTitle,
-      endingSubtitle: basicShortsPlan.endingSubtitle,
-    })
-  }, [basicShortsPlan.heroLine, basicShortsPlan.detailLine, basicShortsPlan.detailLine2, basicShortsPlan.closingLine, basicShortsPlan.endingTitle, basicShortsPlan.endingSubtitle])
-
-  const handleBasicShortsDrop = useCallback((targetId: string) => {
-    setBasicShortsImageOrder((prev) => {
-      if (!draggingBasicShortsImageId) return prev
-      return moveIdBefore(prev, draggingBasicShortsImageId, targetId)
-    })
-    setDraggingBasicShortsImageId(null)
-  }, [draggingBasicShortsImageId])
-
-  const moveBasicShortsImage = useCallback((targetId: string, direction: -1 | 1) => {
-    setBasicShortsImageOrder((prev) => moveIdByOffset(prev, targetId, direction))
-  }, [])
-
-  const autoBasicShortsDurationSeconds = useMemo(() => {
-    const imageCount = Math.max(orderedBasicShortsImages.length, selectedImages.length, 1)
-    return imageCount * 2.5 + 2
-  }, [orderedBasicShortsImages.length, selectedImages.length])
-
-  const basicShortsPackageText = useMemo(() => {
-    const orderedLines = orderedBasicShortsImages.map((image, index) => {
-      const title = image.product_name?.trim() || image.site_name?.trim() || `사진 ${index + 1}`
-      const meta = [image.color_name?.trim(), image.business_type?.trim()].filter(Boolean).join(' / ')
-      return `${index + 1}. ${title}${meta ? ` (${meta})` : ''}`
-    })
-
-    return [
-      '[기본 쇼츠 제작 패키지]',
-      `현장명: ${basicShortsPlan.displayName}`,
-      `업종: ${basicShortsPlan.industry}`,
-      `적용 제품: ${basicShortsPlan.productSummary}`,
-      `주요 색상: ${basicShortsPlan.colorSummary}`,
-      `길이: ${autoBasicShortsDurationSeconds}초`,
-      '포맷: 9:16 기본 쇼츠',
-      '',
-      '[스크립트]',
-      `첫 문장: ${basicShortsScriptDraft.heroLine}`,
-      `두번째 문장 1: ${basicShortsScriptDraft.detailLine}`,
-      `두번째 문장 2: ${basicShortsScriptDraft.detailLine2}`,
-      `마지막 문장: ${basicShortsScriptDraft.closingLine}`,
-      `엔딩 1: ${basicShortsScriptDraft.endingTitle}`,
-      `엔딩 2: ${basicShortsScriptDraft.endingSubtitle}`,
-      '',
-      '[사진 순서]',
-      ...orderedLines,
-    ].join('\n')
-  }, [
-    orderedBasicShortsImages,
-    basicShortsPlan.displayName,
-    basicShortsPlan.industry,
-    basicShortsPlan.productSummary,
-    basicShortsPlan.colorSummary,
-    basicShortsScriptDraft.heroLine,
-    basicShortsScriptDraft.detailLine,
-    basicShortsScriptDraft.detailLine2,
-    basicShortsScriptDraft.closingLine,
-    basicShortsScriptDraft.endingTitle,
-    basicShortsScriptDraft.endingSubtitle,
-    autoBasicShortsDurationSeconds,
-  ])
-
-  const copyBasicShortsPackage = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(basicShortsPackageText)
-      toast.success('기본 쇼츠 제작 패키지를 복사했습니다.')
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : '기본 쇼츠 제작 패키지 복사에 실패했습니다.')
-    }
-  }, [basicShortsPackageText])
-
-  const saveBasicShortsDraft = useCallback(() => {
-    return saveShowroomBasicShortsDraft({
-      displayName: basicShortsPlan.displayName,
-      industry: basicShortsPlan.industry,
-      productSummary: basicShortsPlan.productSummary,
-      colorSummary: basicShortsPlan.colorSummary,
-      durationSeconds: autoBasicShortsDurationSeconds,
-      selectedImageIds: selectedImages.map((image) => image.id),
-      imageOrder: basicShortsImageOrder,
-      script: basicShortsScriptDraft,
-      packageText: basicShortsPackageText,
-    })
-      .then((result) => {
-        const savedAt = result.updatedAt
-      setBasicShortsSavedAt(savedAt)
-      toast.success('기본 쇼츠 초안을 저장했습니다.')
-      })
-      .catch((error) => {
-        toast.error(error instanceof Error ? error.message : '기본 쇼츠 초안 저장에 실패했습니다.')
-      })
-  }, [
-    selectedImages,
-    basicShortsPackageText,
-    basicShortsImageOrder,
-    basicShortsScriptDraft,
-    basicShortsPlan.displayName,
-    basicShortsPlan.industry,
-    basicShortsPlan.productSummary,
-    basicShortsPlan.colorSummary,
-    autoBasicShortsDurationSeconds,
-  ])
-
-  useEffect(() => {
-    if (!basicShortsDialogOpen) return
-    setBasicShortsSavedAt(null)
-  }, [basicShortsDialogOpen])
-
-  useEffect(() => {
-    if (!basicShortsDialogOpen) return
-    let cancelled = false
-    setBasicShortsDraftsLoading(true)
-    void listShowroomBasicShortsDrafts(basicShortsPlan.displayName)
-      .then((rows) => {
-        if (cancelled) return
-        setBasicShortsSavedDrafts(rows)
-      })
-      .catch(() => {
-        if (cancelled) return
-        setBasicShortsSavedDrafts([])
-      })
-      .finally(() => {
-        if (cancelled) return
-        setBasicShortsDraftsLoading(false)
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [basicShortsDialogOpen, basicShortsPlan.displayName])
-
-  const applyBasicShortsSavedDraft = useCallback((draft: ShowroomBasicShortsDraftRecord) => {
-    setBasicShortsImageOrder(draft.imageOrder)
-    setBasicShortsScriptDraft({
-      heroLine: draft.script.heroLine,
-      detailLine: draft.script.detailLine,
-      detailLine2: draft.script.detailLine2,
-      closingLine: draft.script.closingLine,
-      endingTitle: draft.script.endingTitle,
-      endingSubtitle: draft.script.endingSubtitle,
-    })
-    setBasicShortsSavedAt(draft.updatedAt)
-    toast.success('저장된 기본 쇼츠 초안을 불러왔습니다.')
-  }, [])
-
-  useEffect(() => {
-    const draftId = searchParams.get('basicShortsDraftId')?.trim()
-    if (!draftId || assets.length === 0 || basicShortsHydratingDraft) return
-
-    let cancelled = false
-    setBasicShortsHydratingDraft(true)
-
-    void getShowroomBasicShortsDraftById(draftId)
-      .then((draft) => {
-        if (cancelled) return
-
-        const matchedImages = draft.selectedImageIds
-          .map((id) => assets.find((asset) => asset.id === id))
-          .filter((asset): asset is ShowroomImageAsset => asset != null)
-
-        if (matchedImages.length === 0) {
-          throw new Error('선택 이미지 정보를 찾지 못했습니다. 이미지 자산 상태를 확인해 주세요.')
-        }
-
-        const firstImage = matchedImages[0]
-        const siteName = firstImage.site_name?.trim() || firstImage.canonical_site_name?.trim()
-        if (siteName) {
-          openDetail('site', siteName)
-        }
-
-        setSelectedImageIds(new Set(draft.selectedImageIds))
-        setBasicShortsImageOrder(draft.imageOrder)
-        setBasicShortsScriptDraft({
-          heroLine: draft.script.heroLine,
-          detailLine: draft.script.detailLine,
-          detailLine2: draft.script.detailLine2,
-          closingLine: draft.script.closingLine,
-          endingTitle: draft.script.endingTitle,
-          endingSubtitle: draft.script.endingSubtitle,
-        })
-        setBasicShortsSavedAt(draft.updatedAt)
-        setBasicShortsDialogOpen(true)
-
-        const params = new URLSearchParams(searchParams)
-        params.delete('basicShortsDraftId')
-        setSearchParams(params, { replace: true })
-
-        toast.success('기본 쇼츠 수정 화면으로 초안을 불러왔습니다.')
-      })
-      .catch((error) => {
-        if (cancelled) return
-        toast.error(error instanceof Error ? error.message : '기본 쇼츠 초안 불러오기에 실패했습니다.')
-      })
-      .finally(() => {
-        if (cancelled) return
-        setBasicShortsHydratingDraft(false)
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [assets, basicShortsHydratingDraft, openDetail, searchParams, setSearchParams])
-
-  const requestBasicShortsProduction = useCallback(() => {
-    if (selectedImages.length === 0) {
-      toast.error('먼저 기본 쇼츠에 사용할 이미지를 선택하세요.')
-      return
-    }
-
-    setBasicShortsRequesting(true)
-    void requestShowroomBasicShortsDraftProduction({
-      displayName: basicShortsPlan.displayName,
-      industry: basicShortsPlan.industry,
-      productSummary: basicShortsPlan.productSummary,
-      colorSummary: basicShortsPlan.colorSummary,
-      durationSeconds: autoBasicShortsDurationSeconds,
-      selectedImageIds: selectedImages.map((image) => image.id),
-      imageOrder: basicShortsImageOrder,
-      script: basicShortsScriptDraft,
-      packageText: basicShortsPackageText,
-    })
-      .then(async (result) => {
-        setBasicShortsSavedAt(result.updatedAt)
-        try {
-          await requestShowroomBasicShortsRender(result.id)
-          toast.success('기본 쇼츠 제작 요청을 저장했고 자동 렌더링을 시작했습니다.')
-        } catch (renderError) {
-          console.error('[showroom-basic-shorts] auto render start failed', renderError)
-          toast.success('기본 쇼츠 제작 요청은 저장했습니다. 렌더링 상태는 작업대기 화면에서 확인하세요.')
-        }
-        setBasicShortsDialogOpen(false)
-        navigate('/admin/showroom-basic-shorts')
-      })
-      .catch((error) => {
-        toast.error(error instanceof Error ? error.message : '기본 쇼츠 제작 요청 저장에 실패했습니다.')
-      })
-      .finally(() => {
-        setBasicShortsRequesting(false)
-      })
-  }, [
-    selectedImages,
-    basicShortsPlan.displayName,
-    basicShortsPlan.industry,
-    basicShortsPlan.productSummary,
-    basicShortsPlan.colorSummary,
-    basicShortsImageOrder,
-    basicShortsScriptDraft,
-    basicShortsPackageText,
-    autoBasicShortsDurationSeconds,
-    navigate,
-  ])
-
-  const reloadSiteOverrides = useCallback(async () => {
-    const overrides = await fetchShowroomSiteOverrides()
-    setSiteOverrides(overrides)
-    setPriorityInputByKey((prev) => {
-      const next = { ...prev }
-      overrides.forEach((override) => {
-        const key = buildShowroomSiteKey(override.section_key, override.industry_label, override.site_name)
-        next[key] = override.manual_priority != null ? String(override.manual_priority) : ''
-      })
-      return next
-    })
-  }, [])
-
-  const handlePriorityInputChange = useCallback((group: SiteGroup, value: string) => {
-    const key = buildShowroomSiteKey(group.sectionKey, group.industryLabel, group.siteName)
-    const normalized = value.replace(/[^\d]/g, '').slice(0, 4)
-    setPriorityInputByKey((prev) => ({
-      ...prev,
-      [key]: normalized,
-    }))
-  }, [])
-
-  const handlePrioritySave = useCallback(async (group: SiteGroup) => {
-    const key = buildShowroomSiteKey(group.sectionKey, group.industryLabel, group.siteName)
-    const rawValue = (priorityInputByKey[key] ?? '').trim()
-    const manualPriority = rawValue ? Number(rawValue) : null
-
-    if (manualPriority != null && (!Number.isInteger(manualPriority) || manualPriority <= 0)) {
-      toast.error('우선순위는 1 이상의 숫자로 입력하세요.')
-      return
-    }
-
-    setSavingPriorityByKey((prev) => ({ ...prev, [key]: true }))
-    const { error } = await saveShowroomSiteOverride(group.siteName, group.industryLabel, manualPriority, group.sectionKey)
-    setSavingPriorityByKey((prev) => ({ ...prev, [key]: false }))
-
-    if (error) {
-      toast.error('우선순위 저장에 실패했습니다.')
-      return
-    }
-
-    await reloadSiteOverrides()
-    toast.success(
-      manualPriority == null
-        ? `${group.siteName} 우선순위를 해제했습니다.`
-        : `${group.siteName} 우선순위를 ${manualPriority}번으로 저장했습니다.`
-    )
-  }, [priorityInputByKey, reloadSiteOverrides])
-
-  const handlePriorityClear = useCallback(async (group: SiteGroup) => {
-    const key = buildShowroomSiteKey(group.sectionKey, group.industryLabel, group.siteName)
-    setPriorityInputByKey((prev) => ({
-      ...prev,
-      [key]: '',
-    }))
-    setSavingPriorityByKey((prev) => ({ ...prev, [key]: true }))
-    const { error } = await saveShowroomSiteOverride(group.siteName, group.industryLabel, null, group.sectionKey)
-    setSavingPriorityByKey((prev) => ({ ...prev, [key]: false }))
-
-    if (error) {
-      toast.error('우선순위 해제에 실패했습니다.')
-      return
-    }
-
-    await reloadSiteOverrides()
-    toast.success(`${group.siteName} 우선순위를 해제했습니다.`)
-  }, [reloadSiteOverrides])
-
-  const togglePriorityEditor = useCallback((group: SiteGroup) => {
-    const key = buildShowroomSiteKey(group.sectionKey, group.industryLabel, group.siteName)
-    setPriorityEditorOpenByKey((prev) => ({
-      ...prev,
-      [key]: !prev[key],
-    }))
-  }, [])
 
   const getBeforeAfterProfileDraft = useCallback((group: SiteGroup): ShowroomCaseProfileDraftState => {
     const publicLabel = getGroupPublicLabel(group)
@@ -1352,18 +819,16 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
   }, [scrollToSectionWithOffset])
 
   const jumpToGalleryView = useCallback((mode: ViewMode) => {
-    if (!showInternalControls) {
-      trackShowroomAbmEvent({
-        eventName: 'abm_gallery_browse',
-        concern: selectedConcernTag,
-        metadata: { viewMode: mode },
-      })
-    }
+    trackShowroomAbmEvent({
+      eventName: 'abm_gallery_browse',
+      concern: selectedConcernTag,
+      metadata: { viewMode: mode },
+    })
     setViewMode(mode)
     requestAnimationFrame(() => {
       scrollToSectionWithOffset('showroom-gallery-browse')
     })
-  }, [scrollToSectionWithOffset, selectedConcernTag, showInternalControls])
+  }, [scrollToSectionWithOffset, selectedConcernTag])
 
   useEffect(() => {
     setBeforeAfterPage(1)
@@ -1409,81 +874,6 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
   ) => {
     const imageUrl = group.mainImage?.thumbnail_url || group.mainImage?.cloudinary_url || ''
     const publicLabel = getGroupPublicLabel(group)
-    const priorityKey = buildShowroomSiteKey(group.sectionKey, group.industryLabel, group.siteName)
-    const priorityValue = priorityInputByKey[priorityKey] ?? (group.manualPriority != null ? String(group.manualPriority) : '')
-    const isSavingPriority = savingPriorityByKey[priorityKey] === true
-    const isPriorityEditorOpen = priorityEditorOpenByKey[priorityKey] === true
-
-    const renderPriorityEditor = () => {
-      if (!options?.showPriorityEditor) return null
-      return (
-        <div className="rounded-xl border border-neutral-200 bg-white px-3 py-2.5">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-xs font-medium text-neutral-800">현장 노출 순서</p>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-7 w-7 shrink-0 p-0 text-neutral-600"
-              onClick={() => togglePriorityEditor(group)}
-              aria-label={isPriorityEditorOpen ? '현장 노출 순서 접기' : '현장 노출 순서 펼치기'}
-            >
-              {isPriorityEditorOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-            </Button>
-          </div>
-          {isPriorityEditorOpen && (
-            <>
-              <p className="mt-2 text-[11px] text-neutral-500">
-                비워두면 자동 대표성 점수 순으로 정렬됩니다.
-              </p>
-              {group.manualPriority != null && (
-                <div className="mt-2">
-                  <span className="rounded-full bg-neutral-100 px-2 py-1 text-[11px] font-medium text-neutral-700">
-                    현재 {group.manualPriority}번
-                  </span>
-                </div>
-              )}
-              <div className="mt-2 flex items-center gap-2">
-                <Input
-                  value={priorityValue}
-                  onChange={(e) => handlePriorityInputChange(group, e.target.value)}
-                  inputMode="numeric"
-                  placeholder="자동"
-                  className="h-9 bg-white"
-                />
-                <Button
-                  type="button"
-                  size="sm"
-                  className="shrink-0"
-                  disabled={isSavingPriority}
-                  onClick={() => void handlePrioritySave(group)}
-                >
-                  저장
-                </Button>
-              </div>
-              <div className="mt-2 flex items-center justify-between gap-2">
-                <p className="text-[11px] text-neutral-400">
-                  자동 점수 {group.representativeScore}
-                </p>
-                {group.manualPriority != null && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 px-2 text-[11px] text-neutral-500"
-                    disabled={isSavingPriority}
-                    onClick={() => void handlePriorityClear(group)}
-                  >
-                    수동 순서 해제
-                  </Button>
-                )}
-              </div>
-            </>
-          )}
-        </div>
-      )
-    }
-
     return (
       <div
         key={group.siteName}
@@ -1497,7 +887,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
           <div className="aspect-[4/3] relative bg-neutral-100 overflow-hidden shrink-0 rounded-t-2xl">
             <img
               src={imageUrl}
-              alt={showInternalControls ? group.siteName : publicLabel}
+              alt={publicLabel}
               className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-300"
               loading="lazy"
               decoding="async"
@@ -1529,17 +919,8 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
           </div>
           <div className="p-4 flex-1 flex flex-col min-h-0">
             <div>
-              <h3 className="font-semibold text-neutral-900 truncate">{showInternalControls ? group.siteName : publicLabel}</h3>
-              {showInternalControls && group.externalDisplayName && group.externalDisplayName !== group.siteName && (
-                <div className="mt-1 flex items-center gap-2 min-w-0">
-                  {group.businessTypes.length > 0 && (
-                    <span className="shrink-0 rounded-full bg-neutral-100 px-2.5 py-1 text-[11px] font-medium text-neutral-600">
-                      {getPrimaryIndustryLabel(group.businessTypes)}
-                    </span>
-                  )}
-                  <p className="min-w-0 truncate text-[12px] leading-tight text-amber-600">{group.externalDisplayName}</p>
-                </div>
-              )}
+              <h3 className="font-semibold text-neutral-900 truncate">{publicLabel}</h3>
+              
             </div>
             <dl className="text-xs text-neutral-500 mt-1.5 space-y-0.5">
               {group.location && (
@@ -1573,12 +954,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
             </p>
           </div>
         </button>
-        {showInternalControls && (
-          <div className="p-3 border-t border-neutral-100 bg-neutral-50/50 space-y-3">
-            <p className="text-xs text-neutral-500">{helperText}</p>
-            {renderPriorityEditor()}
-          </div>
-        )}
+        
       </div>
     )
   }
@@ -1588,15 +964,9 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
     const afterImages = group.images.filter((image) => image.before_after_role === 'after')
     const beforeImage = beforeImages[0] ?? null
     const afterImage = afterImages.find((image) => image.is_main) ?? afterImages[0] ?? null
-    const priorityKey = buildShowroomSiteKey(group.sectionKey, group.industryLabel, group.siteName)
-    const priorityValue = priorityInputByKey[priorityKey] ?? (group.manualPriority != null ? String(group.manualPriority) : '')
-    const isSavingPriority = savingPriorityByKey[priorityKey] === true
-    const isPriorityEditorOpen = priorityEditorOpenByKey[priorityKey] === true
     const caseProfileDraft = getBeforeAfterProfileDraft(group)
     const publicLabel = getGroupPublicLabel(group)
-    const cardNewsStudioHref = `/admin/showroom-case-studio?site=${encodeURIComponent(group.siteName)}&focus=cardnews`
-    const blogStudioHref = `/admin/showroom-case-studio?site=${encodeURIComponent(group.siteName)}&focus=blog`
-    const storyHref = !showInternalControls && options?.linkToStory ? getBeforeAfterStoryHref(group) : null
+    const storyHref = options?.linkToStory ? getBeforeAfterStoryHref(group) : null
     if (!beforeImage || !afterImage) return null
 
     const beforeAfterPreview = (
@@ -1605,7 +975,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
           <div className="relative aspect-[4/3] bg-neutral-100">
             <img
               src={beforeImage.thumbnail_url || beforeImage.cloudinary_url}
-              alt={`${showInternalControls ? group.siteName : publicLabel} before`}
+              alt={`${publicLabel} before`}
               className="w-full h-full object-cover"
               loading="lazy"
               decoding="async"
@@ -1617,7 +987,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
           <div className="relative aspect-[4/3] bg-neutral-100">
             <img
               src={afterImage.thumbnail_url || afterImage.cloudinary_url}
-              alt={`${showInternalControls ? group.siteName : publicLabel} after`}
+              alt={`${publicLabel} after`}
               className="w-full h-full object-cover"
               loading="lazy"
               decoding="async"
@@ -1627,23 +997,14 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
             </span>
           </div>
         </div>
-        <div className={showInternalControls ? 'p-4' : 'flex min-h-[5.5rem] items-start p-4'}>
-          <h4 className="font-semibold leading-snug text-neutral-900">{showInternalControls ? group.siteName : publicLabel}</h4>
-          {showInternalControls && group.externalDisplayName && group.externalDisplayName !== group.siteName && (
-            <div className="mt-1 flex items-center gap-2 min-w-0">
-              {group.businessTypes[0] && (
-                <span className="shrink-0 rounded-full bg-neutral-100 px-2.5 py-1 text-[11px] font-medium text-neutral-600">
-                  {group.businessTypes[0]}
-                </span>
-              )}
-              <p className="min-w-0 truncate text-[12px] leading-tight text-amber-600">{group.externalDisplayName}</p>
-            </div>
-          )}
+        <div className={'flex min-h-[5.5rem] items-start p-4'}>
+          <h4 className="font-semibold leading-snug text-neutral-900">{publicLabel}</h4>
+          
         </div>
       </>
     )
 
-    const publicBlogTeaser = !showInternalControls ? (
+    const publicBlogTeaser = (
       <div className="border-t border-emerald-100 bg-emerald-50/50 px-3 py-2">
         <div className="rounded-xl bg-white px-3 py-2.5 shadow-sm ring-1 ring-emerald-200/90">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">블로그 소개</p>
@@ -1658,7 +1019,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
           )}
         </div>
       </div>
-    ) : null
+    )
 
     return (
       <div
@@ -1693,91 +1054,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
             {publicBlogTeaser}
           </>
         )}
-        {showInternalControls && (
-          <div className="space-y-3 border-t border-neutral-100 bg-neutral-50/50 p-3">
-            <p className="text-xs text-neutral-500">
-              이 쇼룸은 직원과 고객이 같은 화면으로 사례를 설명하는 용도입니다. 콘텐츠 작성·수정은 케이스 작업실에서 진행하세요.
-            </p>
-            <div className="grid grid-cols-2 gap-2">
-              <Link to={cardNewsStudioHref}>
-                <Button type="button" variant="outline" className="h-10 w-full gap-1.5 text-sm">
-                  <FileText className="h-4 w-4" />
-                  카드뉴스 제작
-                </Button>
-              </Link>
-              <Link to={blogStudioHref}>
-                <Button type="button" variant="outline" className="h-10 w-full gap-1.5 text-sm">
-                  <FileCheck className="h-4 w-4" />
-                  블로그 제작
-                </Button>
-              </Link>
-            </div>
-            <div className="rounded-xl border border-neutral-200 bg-white px-3 py-2.5">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-xs font-medium text-neutral-800">현장 노출 순서</p>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 w-7 shrink-0 p-0 text-neutral-600"
-                  onClick={() => togglePriorityEditor(group)}
-                  aria-label={isPriorityEditorOpen ? '현장 노출 순서 접기' : '현장 노출 순서 펼치기'}
-                >
-                  {isPriorityEditorOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                </Button>
-              </div>
-              {isPriorityEditorOpen && (
-                <>
-                  <p className="mt-2 text-[11px] text-neutral-500">
-                    비워두면 자동 대표성 점수 순으로 정렬됩니다.
-                  </p>
-                  {group.manualPriority != null && (
-                    <div className="mt-2">
-                      <span className="rounded-full bg-neutral-100 px-2 py-1 text-[11px] font-medium text-neutral-700">
-                        현재 {group.manualPriority}번
-                      </span>
-                    </div>
-                  )}
-                  <div className="mt-2 flex items-center gap-2">
-                    <Input
-                      value={priorityValue}
-                      onChange={(e) => handlePriorityInputChange(group, e.target.value)}
-                      inputMode="numeric"
-                      placeholder="자동"
-                      className="h-9 bg-white"
-                    />
-                    <Button
-                      type="button"
-                      size="sm"
-                      className="shrink-0"
-                      disabled={isSavingPriority}
-                      onClick={() => void handlePrioritySave(group)}
-                    >
-                      저장
-                    </Button>
-                  </div>
-                  <div className="mt-2 flex items-center justify-between gap-2">
-                    <p className="text-[11px] text-neutral-400">
-                      자동 점수 {group.representativeScore}
-                    </p>
-                    {group.manualPriority != null && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 px-2 text-[11px] text-neutral-500"
-                        disabled={isSavingPriority}
-                        onClick={() => void handlePriorityClear(group)}
-                      >
-                        수동 순서 해제
-                      </Button>
-                    )}
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-        )}
+        
       </div>
     )
   }
@@ -1798,13 +1075,11 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
   const galleryViewModeIndex = viewMode === 'industry' ? 0 : viewMode === 'product' ? 1 : 2
 
   const handleGalleryViewModeChange = (mode: ViewMode) => {
-    if (!showInternalControls) {
-      trackShowroomAbmEvent({
-        eventName: 'abm_gallery_browse',
-        concern: selectedConcernTag,
-        metadata: { viewMode: mode },
-      })
-    }
+    trackShowroomAbmEvent({
+      eventName: 'abm_gallery_browse',
+      concern: selectedConcernTag,
+      metadata: { viewMode: mode },
+    })
     setViewMode(mode)
   }
 
@@ -1855,9 +1130,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
             {renderGalleryViewModeButton('color', '색상별로 보기', Palette)}
           </div>
           <p className="text-sm leading-relaxed text-neutral-600">
-            {showInternalControls
-              ? '버튼을 누르면 아래 목록을 보는 기준이 바뀝니다. (업종 · 제품 · 색상)'
-              : '업종 · 제품 · 색상 기준으로 사례 사진을 바로 찾을 수 있습니다.'}
+            업종 · 제품 · 색상 기준으로 사례 사진을 바로 찾을 수 있습니다.
           </p>
         </div>
         <div className="relative w-full max-w-md lg:shrink-0">
@@ -1971,21 +1244,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
               </Button>
             ))}
           </div>
-          {showInternalControls && visibleBeforeAfterGroups.length > 0 && (
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="gap-2 shrink-0 rounded-full"
-                onClick={scrollToBeforeAfterSection}
-                aria-label="전후 비교와 문제·솔루션 사례 섹션으로 이동"
-              >
-                <FileCheck className="h-4 w-4" />
-                전후·솔루션
-              </Button>
-            </div>
-          )}
+          
         </div>
       )}
     </>
@@ -2007,124 +1266,21 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
           <div className="flex items-center justify-between gap-3">
             <div>
               <h1 className="text-xl md:text-2xl font-semibold text-neutral-900 tracking-tight">
-                {showInternalControls ? '내부용 시공사례 쇼룸' : '시공사례 쇼룸'}
+                {'시공사례 쇼룸'}
               </h1>
-              {showInternalControls && (
-                <Link
-                  to={originalArchivePath}
-                  className="mt-1 inline-flex items-center gap-1.5 text-sm font-medium text-amber-700 transition hover:text-amber-800"
-                >
-                  원자료 보기
-                  <ArrowRight className="h-4 w-4" />
-                </Link>
-              )}
+              
             </div>
-            {showInternalControls && (
-              <div className="flex items-center gap-2">
-                <Link to={originalArchivePath}>
-                  <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
-                    <Images className="h-4 w-4" />
-                    원자료 보기
-                  </Button>
-                </Link>
-                <Link to="/admin/showroom-ads">
-                  <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
-                    <BarChart3 className="h-4 w-4" />
-                    광고 대시보드
-                  </Button>
-                </Link>
-                <Link to="/admin/showroom-abm">
-                  <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
-                    <BarChart3 className="h-4 w-4" />
-                    ABM 퍼널
-                  </Button>
-                </Link>
-                <Link to="/admin/showroom-shorts">
-                  <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
-                    <Video className="h-4 w-4" />
-                    B/A 검수 대기
-                  </Button>
-                </Link>
-                <Link to="/admin/showroom-basic-shorts">
-                  <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
-                    <Images className="h-4 w-4" />
-                    기본 쇼츠 대기
-                  </Button>
-                </Link>
-                <Link to="/consultation">
-                  <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
-                    <Users className="h-4 w-4" />
-                    상담 관리
-                  </Button>
-                </Link>
-                <Link to="/image-assets">
-                  <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
-                    이미지 자산 관리
-                  </Button>
-                </Link>
-              </div>
-            )}
+            
           </div>
-          {showInternalControls && (
-            <div className="flex flex-col gap-4">
-              {renderGalleryBrowseControls()}
-            </div>
-          )}
+          
         </div>
       </header>
-
-      {showInternalControls && selectedImageIds.size > 0 && (
-        <div ref={selectionBarRef} className="sticky top-[88px] z-10 border-b border-neutral-200 bg-white/95 backdrop-blur px-4 py-3 md:px-8">
-          <div className="max-w-6xl mx-auto flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-medium text-neutral-900">{selectedImageIds.size}장 선택됨</p>
-              <p className="text-xs text-neutral-500">고객에게 보여주거나 전송할 이미지를 모아둔 상태입니다.</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" className="gap-1.5" onClick={copyShareLink}>
-                <Copy className="h-4 w-4" />
-                링크 복사
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5"
-                onClick={() => {
-                  setBasicShortsDialogOpen(true)
-                }}
-              >
-                <Images className="h-4 w-4" />
-                기본 쇼츠
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5"
-                disabled={!shortsSelection.ok}
-                onClick={() => {
-                  if (!shortsSelection.ok) {
-                    toast.error(shortsSelection.message)
-                    return
-                  }
-                  setShortsDialogOpen(true)
-                }}
-              >
-                <Video className="h-4 w-4" />
-                비포어/애프터 숏츠
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => setSelectedImageIds(new Set())}>
-                선택 해제
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
 
       <main className="max-w-6xl mx-auto px-4 py-8 md:px-8">
         {/* 메인 카피: 강렬한 헤드라인 */}
         <section className="mb-8" aria-labelledby="showroom-main-heading">
           <h1 id="showroom-main-heading" className="text-2xl md:text-3xl font-bold text-neutral-900 leading-tight mb-1">
-            {showInternalControls ? (
+            {false ? (
               <>
                 고객과 함께 보며 <span className="text-amber-600">설명하고 전송하는</span> 내부용 쇼룸
               </>
@@ -2134,7 +1290,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
               </>
             )}
           </h1>
-          {showInternalControls ? (
+          {false ? (
             <>
               <p className="text-neutral-600 text-base md:text-lg">현장에서 사례를 탐색하고, 필요한 이미지를 바로 선별해 공유하세요.</p>
               <p className="text-xs md:text-sm text-neutral-500 mt-2">
@@ -2152,7 +1308,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
         </section>
 
         {/* 전문가가 먼저 질문하는 공감 카드: 말풍선 + 핵심어 하이라이트 + 성공 사례 보기 CTA */}
-        {!showInternalControls && (
+        { (
         <section className="mb-8" aria-labelledby="showroom-concern-heading">
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
@@ -2279,7 +1435,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
         )}
         <div id="showroom-concern-result-anchor" className="h-px scroll-mt-28 md:scroll-mt-32" aria-hidden />
         {/* 전문가 코멘트: 해당 카드 클릭 시에만 표시 — 왼쪽 코멘트, 오른쪽 전문가 이미지(답하는 느낌) */}
-        {!showInternalControls && selectedConcernTag === '관리형 창업 또는 전환' && (
+        { selectedConcernTag === '관리형 창업 또는 전환' && (
           <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
             <div className="flex-1 min-w-0 py-5 px-5">
               <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
@@ -2311,7 +1467,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
             </div>
           </section>
         )}
-        {!showInternalControls && selectedConcernTag === '매출 향상 스터디카페 리뉴얼' && (
+        { selectedConcernTag === '매출 향상 스터디카페 리뉴얼' && (
           <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
             <div className="flex-1 min-w-0 py-5 px-5">
               <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
@@ -2344,7 +1500,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
             </div>
           </section>
         )}
-        {!showInternalControls && selectedConcernTag === '스터디카페를 관리형으로 전환' && (
+        { selectedConcernTag === '스터디카페를 관리형으로 전환' && (
           <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
             <div className="flex-1 min-w-0 py-5 px-5">
               <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
@@ -2377,7 +1533,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
             </div>
           </section>
         )}
-        {!showInternalControls && selectedConcernTag === '스터디카페 같은 학원 자습실' && (
+        { selectedConcernTag === '스터디카페 같은 학원 자습실' && (
           <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
             <div className="flex-1 min-w-0 py-5 px-5">
               <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
@@ -2411,7 +1567,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
           </section>
         )}
 
-        {!showInternalControls && selectedConcernTag === '고교학점제 자습공간 구축' && (
+        { selectedConcernTag === '고교학점제 자습공간 구축' && (
           <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
             <div className="flex-1 min-w-0 py-5 px-5">
               <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
@@ -2447,7 +1603,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
           </section>
         )}
 
-        {!showInternalControls && selectedConcernTag === '아파트 독서실 리뉴얼' && (
+        { selectedConcernTag === '아파트 독서실 리뉴얼' && (
           <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
             <div className="flex-1 min-w-0 py-5 px-5">
               <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
@@ -2492,7 +1648,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
           </section>
         )}
 
-        {!showInternalControls && selectedConcernTag && (
+        { selectedConcernTag && (
           <section
             id="showroom-concern-before-after-section"
             className="mb-8 rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4 md:p-5 scroll-mt-28"
@@ -2568,33 +1724,9 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
           </section>
         )}
 
-        {showInternalControls && viewMode === 'industry' && featuredBeforeAfterGroups.length > 0 && (
-          <section className="mb-8 rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4 md:p-5">
-            <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-              <div>
-                <h2 className="text-base font-semibold text-neutral-900">대표 Before/After 사례</h2>
-                <p className="text-sm text-neutral-600">
-                  전후 컷과 함께, 현장 과제(문제 제기)와 적용 방향(해결)을 한 세트로 보여줍니다. 더 많은 사례는 아래 전후·솔루션 섹션으로 이동하세요.
-                </p>
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                className="gap-2 shrink-0"
-                onClick={scrollToBeforeAfterSection}
-                aria-label="전체 전후 비교 및 문제·솔루션 사례 섹션으로 이동"
-              >
-                <FileCheck className="h-4 w-4" />
-                전후·솔루션 전체 보기
-              </Button>
-            </div>
-            <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
-              {featuredBeforeAfterGroups.map((group) => renderBeforeAfterCard(group))}
-            </div>
-          </section>
-        )}
+        
 
-        {!showInternalControls && (
+        { (
           <section
             id="showroom-gallery-browse"
             className="mt-12 border-t border-neutral-200 pt-10 scroll-mt-24 md:scroll-mt-28"
@@ -2617,7 +1749,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
             {productFilteredGroups.map((group) => {
               const mainImg = group.mainImage
               const imageUrl = mainImg?.thumbnail_url || mainImg?.cloudinary_url || ''
-              const visibleSiteLabels = showInternalControls ? group.siteNames : getPublicLabelsFromImages(group.images)
+              const visibleSiteLabels = getPublicLabelsFromImages(group.images)
               const parsedSeries = parseProductSeries(group.productName)
               const seriesDescription = parsedSeries.seriesSuffix
                 ? getShowroomProductSeriesDescription(parsedSeries.baseName)
@@ -2716,11 +1848,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                       </p>
                     </div>
                   </button>
-                  {showInternalControls && (
-                    <div className="p-3 border-t border-neutral-100 bg-neutral-50/50 text-xs text-neutral-500">
-                      관련 제품 이미지를 열어 필요한 컷을 선별하세요.
-                    </div>
-                  )}
+                  
                 </div>
               )
             })}
@@ -2732,7 +1860,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
             {colorFilteredGroups.map((group) => {
               const mainImg = group.mainImage
               const imageUrl = mainImg?.thumbnail_url || mainImg?.cloudinary_url || ''
-              const visibleSiteLabels = showInternalControls ? group.siteNames : getPublicLabelsFromImages(group.images)
+              const visibleSiteLabels = getPublicLabelsFromImages(group.images)
               return (
                 <div
                   key={group.colorName}
@@ -2838,11 +1966,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                       </p>
                     </div>
                   </button>
-                  {showInternalControls && (
-                    <div className="p-3 border-t border-neutral-100 bg-neutral-50/50 text-xs text-neutral-500">
-                      같은 색상 계열의 사례를 모아 비교하고 필요한 컷을 선별하세요.
-                    </div>
-                  )}
+                  
                 </div>
               )
             })}
@@ -2924,71 +2048,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
               ))}
             </div>
 
-            {showInternalControls && visibleBeforeAfterGroups.length > 0 && (
-              <section
-                id="showroom-before-after-section"
-                className="mt-10 rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4 md:p-5 scroll-mt-28"
-              >
-                <div className="flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
-                  <div>
-                    <h3 className="text-base font-semibold text-neutral-900">
-                      전후 비교 · 문제와 솔루션
-                    </h3>
-                    <p className="text-sm text-neutral-600">
-                      리뉴얼 전후를 비교하고, 등록된 현장은 과제(문제)와 적용 방향(솔루션) 요약을 함께 확인할 수 있습니다. 카드를 열면 상세 사진과 설명을 이어갈 수 있습니다.
-                    </p>
-                  </div>
-                  <p className="text-xs text-neutral-500">{visibleBeforeAfterGroups.length}개 현장</p>
-                </div>
-                <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {pagedBeforeAfterGroups.map((group) => renderBeforeAfterCard(group))}
-                </div>
-                {beforeAfterTotalPages > 1 && (
-                  <div className="mt-4 flex flex-wrap items-center justify-center gap-2 pt-1">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="gap-1.5"
-                      disabled={currentBeforeAfterPage <= 1}
-                      onClick={() => setBeforeAfterPage(currentBeforeAfterPage - 1)}
-                    >
-                      <ChevronLeft className="h-4 w-4" />
-                      이전
-                    </Button>
-                    <div className="flex flex-wrap items-center justify-center gap-1">
-                      {Array.from({ length: beforeAfterTotalPages }, (_, index) => {
-                        const pageNumber = index + 1
-                        const isCurrent = pageNumber === currentBeforeAfterPage
-                        return (
-                          <Button
-                            key={`before-after-page-${pageNumber}`}
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className={cn('min-w-9 px-0', isCurrent && selectedBrowseButtonClass)}
-                            onClick={() => setBeforeAfterPage(pageNumber)}
-                          >
-                            {pageNumber}
-                          </Button>
-                        )
-                      })}
-                    </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="gap-1.5"
-                      disabled={currentBeforeAfterPage >= beforeAfterTotalPages}
-                      onClick={() => setBeforeAfterPage(currentBeforeAfterPage + 1)}
-                    >
-                      다음
-                      <ChevronRight className="h-4 w-4" />
-                    </Button>
-                  </div>
-                )}
-              </section>
-            )}
+            
           </>
         )}
 
@@ -3008,7 +2068,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
         <DialogContent
           className={cn(
             'max-h-[90vh] overflow-hidden flex flex-col p-0 bg-neutral-900 border-0',
-            internalDetailViewMode === 'grid' ? 'max-w-6xl' : 'max-w-4xl'
+            detailViewMode === 'grid' ? 'max-w-6xl' : 'max-w-4xl'
           )}
         >
           <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-700">
@@ -3027,12 +2087,12 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
           <div className="flex-1 overflow-auto p-4">
             {detailImages.length === 0 ? (
               <p className="text-neutral-500 text-center py-8">사진이 없습니다.</p>
-            ) : internalDetailViewMode === 'grid' ? (
+            ) : detailViewMode === 'grid' ? (
               <div className="space-y-4">
                 <div className="flex items-center justify-between gap-3 rounded-xl border border-neutral-700 bg-neutral-800/70 px-4 py-3">
                   <div>
                     <p className="text-sm font-medium text-white">
-                      {showInternalControls ? '전체 사진을 먼저 보고 선택하세요.' : '전체 사진을 둘러보세요.'}
+                      {'전체 사진을 둘러보세요.'}
                     </p>
                     <p className="mt-1 text-xs text-neutral-400">
                       썸네일을 누르면 확대해서 확인할 수 있고, 닫으면 다시 전체 목록으로 돌아옵니다.
@@ -3045,7 +2105,6 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                 <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
                   {detailImages.map((image, index) => {
                     const imageUrl = image.thumbnail_url || image.cloudinary_url || ''
-                    const isSelected = selectedImageIds.has(image.id)
                     return (
                       <div
                         key={image.id}
@@ -3053,7 +2112,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                       >
                         <button
                           type="button"
-                          onClick={() => openInternalDetailImage(index)}
+                          onClick={() => openDetailImage(index)}
                           className="block w-full text-left"
                         >
                           <div className="relative aspect-[4/3] bg-neutral-900">
@@ -3069,11 +2128,6 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                                 {image.before_after_role === 'before' ? 'Before' : 'After'}
                               </span>
                             )}
-                            {showInternalControls && isSelected && (
-                              <span className="absolute right-2 top-2 rounded-full bg-emerald-500 px-2 py-1 text-[11px] font-semibold text-white">
-                                선택됨
-                              </span>
-                            )}
                           </div>
                         </button>
                         <div className="p-3">
@@ -3083,23 +2137,11 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                             </p>
                             <p className="truncate text-xs text-neutral-400">
                               {image.color_name?.trim()
-                                || (showInternalControls
-                                  ? image.site_name?.trim()
-                                  : getBroadPublicLabel(image.site_name, image.external_display_name))
+                                || getBroadPublicLabel(image.site_name, image.external_display_name)
                                 || detailDisplayTitle}
                             </p>
                           </div>
-                          {showInternalControls && (
-                            <label className="mt-2 flex items-center gap-2 text-xs text-neutral-300">
-                              <input
-                                type="checkbox"
-                                checked={isSelected}
-                                onChange={() => toggleSelectedImage(image.id)}
-                                className="rounded border-neutral-500 bg-neutral-900"
-                              />
-                              이 사진 선택
-                            </label>
-                          )}
+                          
                         </div>
                       </div>
                     )
@@ -3116,7 +2158,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                     type="button"
                     variant="outline"
                     className="gap-2 border-neutral-700 text-white hover:bg-neutral-800"
-                    onClick={() => setInternalDetailViewMode('grid')}
+                    onClick={() => setDetailViewMode('grid')}
                   >
                     <ArrowLeft className="h-4 w-4" />
                     전체 사진으로 돌아가기
@@ -3179,339 +2221,26 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
               </>
             )}
           </div>
-          {detailImages.length > 0 && internalDetailViewMode === 'image' && (
+          {detailImages.length > 0 && detailViewMode === 'image' && (
             <div className="px-4 py-2 border-t border-neutral-700 text-center text-neutral-500 text-sm">
               {lightboxIndex + 1} / {detailImages.length}
             </div>
           )}
           <div className="px-4 pb-4 pt-3 border-t border-neutral-700 space-y-2">
-            {showInternalControls && internalDetailViewMode === 'grid' ? (
-              <>
-                <div className="flex items-center justify-between gap-3 text-sm">
-                  <div>
-                    <p className="text-neutral-300">{selectedImageIds.size}장 선택됨</p>
-                    <p className="mt-1 text-xs text-neutral-500">{shortsSelection.message}</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {detailImages.length > 0 ? (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 px-2 text-neutral-400 hover:text-white hover:bg-neutral-800"
-                        onClick={selectAllDetailImages}
-                      >
-                        전체 선택
-                      </Button>
-                    ) : null}
-                    {selectedImageIds.size > 0 ? (
-                      <Button variant="ghost" size="sm" className="h-8 px-2 text-neutral-400 hover:text-white hover:bg-neutral-800" onClick={() => setSelectedImageIds(new Set())}>
-                        선택 비우기
-                      </Button>
-                    ) : null}
-                  </div>
-                </div>
-                <div className="flex gap-2">
-                  <Button type="button" variant="outline" className="flex-1 gap-2 border-neutral-600 text-white hover:bg-neutral-800" onClick={copyShareLink}>
-                    <Copy className="h-4 w-4" />
-                    링크 복사
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="flex-1 gap-2 border-neutral-600 text-white hover:bg-neutral-800"
-                    onClick={() => {
-                      setBasicShortsDialogOpen(true)
-                    }}
-                  >
-                    <Images className="h-4 w-4" />
-                    기본 쇼츠
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="flex-1 gap-2 border-neutral-600 text-white hover:bg-neutral-800"
-                    disabled={!shortsSelection.ok}
-                    onClick={() => {
-                      if (!shortsSelection.ok) {
-                        toast.error(shortsSelection.message)
-                        return
-                      }
-                      setShortsDialogOpen(true)
-                    }}
-                  >
-                    <Video className="h-4 w-4" />
-                    비포어/애프터 숏츠
-                  </Button>
-                </div>
-              </>
-            ) : !showInternalControls ? (
-              <button
-                type="button"
-                onClick={() => {
-                  openShowroomConsultationChat({
-                    surface: 'gallery_modal',
-                    concern: selectedConcernTag,
-                    siteName: detailKey,
-                  })
-                }}
-                className="flex items-center justify-center gap-2 w-full rounded-xl py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-sm transition-colors shadow-md"
-              >
-                <MessageCircle className="h-4 w-4" />
-                비슷한 공간 상담 문의
-              </button>
-            ) : null}
-          </div>
-        </DialogContent>
-      </Dialog>
-      <ShowroomShortsCreateDialog
-        open={shortsDialogOpen}
-        onOpenChange={setShortsDialogOpen}
-        selectedImages={selectedImages}
-      />
-      <Dialog open={basicShortsDialogOpen} onOpenChange={setBasicShortsDialogOpen}>
-        <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
-          <div className="space-y-5">
-            <div className="space-y-2">
-              <DialogTitle className="flex items-center gap-2">
-                <Images className="h-5 w-5" />
-                기본 쇼츠 초안
-              </DialogTitle>
-              <p className="text-sm text-neutral-600">
-                내부 쇼룸에서 선택한 사진 메타데이터를 바탕으로 추천 순서와 스크립트 초안을 먼저 확인하는 단계입니다.
-              </p>
-              {basicShortsSavedAt ? (
-                <p className="text-xs text-neutral-500">
-                  최근 저장: {new Date(basicShortsSavedAt).toLocaleString('ko-KR')}
-                </p>
-              ) : null}
-            </div>
-
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4">
-                <p className="text-sm font-semibold text-neutral-900">추천 구성</p>
-                <div className="mt-3 space-y-2 text-sm text-neutral-600">
-                  <p>선택 사진 {selectedImages.length}장</p>
-                  <p>대표 현장 {basicShortsPlan.displayName}</p>
-                  <p>업종 {basicShortsPlan.industry}</p>
-                  <p>적용 제품 {basicShortsPlan.productSummary}</p>
-                  <p>주요 색상 {basicShortsPlan.colorSummary}</p>
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4">
-                <p className="text-sm font-semibold text-neutral-900">고정 브랜드 시그니처</p>
-                <div className="mt-3 rounded-xl border border-neutral-200 bg-white p-4">
-                  <p className="text-base font-semibold text-neutral-950">{basicShortsPlan.endingTitle}</p>
-                  <p className="mt-1 text-sm text-neutral-700">{basicShortsPlan.endingSubtitle}</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-neutral-200 p-4">
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-sm font-semibold text-neutral-900">저장된 초안</p>
-                <span className="text-xs text-neutral-500">현재 현장명 기준 최근 5개</span>
-              </div>
-              <div className="mt-3 space-y-2">
-                {basicShortsDraftsLoading ? (
-                  <p className="text-sm text-neutral-500">불러오는 중...</p>
-                ) : basicShortsSavedDrafts.length === 0 ? (
-                  <p className="text-sm text-neutral-500">아직 저장된 기본 쇼츠 초안이 없습니다.</p>
-                ) : (
-                  basicShortsSavedDrafts.map((draft) => (
-                    <button
-                      key={draft.id}
-                      type="button"
-                      onClick={() => applyBasicShortsSavedDraft(draft)}
-                      className="flex w-full items-center justify-between rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-left transition hover:border-neutral-300 hover:bg-white"
-                    >
-                      <div>
-                        <p className="text-sm font-medium text-neutral-900">{draft.displayName}</p>
-                        <p className="mt-1 text-xs text-neutral-500">
-                          자동 계산 {draft.durationSeconds}초 · {new Date(draft.updatedAt).toLocaleString('ko-KR')}
-                        </p>
-                      </div>
-                      <span className="text-xs font-medium text-neutral-600">불러오기</span>
-                    </button>
-                  ))
-                )}
-              </div>
-            </div>
-
-            <div className="grid gap-4 md:grid-cols-1">
-              <div className="rounded-2xl border border-neutral-200 p-4">
-                <p className="text-sm font-semibold text-neutral-900">기본 제작 설정</p>
-                <div className="mt-3 space-y-3">
-                  <div className="rounded-xl bg-neutral-50 p-4 text-sm text-neutral-700">
-                    <p className="text-xs font-medium text-neutral-500">자동 계산 길이</p>
-                    <p className="mt-2 font-medium text-neutral-900">{autoBasicShortsDurationSeconds}초</p>
-                    <p className="mt-1 text-xs text-neutral-500">
-                      사진당 2.5초 + 엔딩 2초 기준으로 자동 계산됩니다.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-neutral-200 p-4">
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-sm font-semibold text-neutral-900">자동 스크립트 초안</p>
-                <Button type="button" variant="outline" size="sm" onClick={resetBasicShortsScriptDraft}>
-                  추천 문구로 되돌리기
-                </Button>
-              </div>
-              <div className="mt-3 grid gap-3 md:grid-cols-2">
-                <label className="space-y-2 rounded-xl bg-neutral-50 p-4 text-sm text-neutral-700">
-                  <span className="text-xs font-medium text-neutral-500">첫 문장</span>
-                  <Input
-                    value={basicShortsScriptDraft.heroLine}
-                    onChange={(event) => setBasicShortsScriptDraft((prev) => ({ ...prev, heroLine: event.target.value }))}
-                    className="bg-white"
-                  />
-                </label>
-                <label className="space-y-2 rounded-xl bg-neutral-50 p-4 text-sm text-neutral-700">
-                  <span className="text-xs font-medium text-neutral-500">두번째 문장 1</span>
-                  <Input
-                    value={basicShortsScriptDraft.detailLine}
-                    onChange={(event) => setBasicShortsScriptDraft((prev) => ({ ...prev, detailLine: event.target.value }))}
-                    className="bg-white"
-                  />
-                </label>
-                <label className="space-y-2 rounded-xl bg-neutral-50 p-4 text-sm text-neutral-700">
-                  <span className="text-xs font-medium text-neutral-500">두번째 문장 2</span>
-                  <Input
-                    value={basicShortsScriptDraft.detailLine2}
-                    onChange={(event) => setBasicShortsScriptDraft((prev) => ({ ...prev, detailLine2: event.target.value }))}
-                    className="bg-white"
-                  />
-                </label>
-                <label className="space-y-2 rounded-xl bg-neutral-50 p-4 text-sm text-neutral-700">
-                  <span className="text-xs font-medium text-neutral-500">마지막 문장</span>
-                  <Input
-                    value={basicShortsScriptDraft.closingLine}
-                    onChange={(event) => setBasicShortsScriptDraft((prev) => ({ ...prev, closingLine: event.target.value }))}
-                    className="bg-white"
-                  />
-                </label>
-                <label className="space-y-2 rounded-xl bg-neutral-50 p-4 text-sm text-neutral-700">
-                  <span className="text-xs font-medium text-neutral-500">브랜드 엔딩 1</span>
-                  <Input
-                    value={basicShortsScriptDraft.endingTitle}
-                    onChange={(event) => setBasicShortsScriptDraft((prev) => ({ ...prev, endingTitle: event.target.value }))}
-                    className="bg-white"
-                  />
-                </label>
-                <label className="space-y-2 rounded-xl bg-neutral-50 p-4 text-sm text-neutral-700">
-                  <span className="text-xs font-medium text-neutral-500">브랜드 엔딩 2</span>
-                  <Input
-                    value={basicShortsScriptDraft.endingSubtitle}
-                    onChange={(event) => setBasicShortsScriptDraft((prev) => ({ ...prev, endingSubtitle: event.target.value }))}
-                    className="bg-white"
-                  />
-                </label>
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-neutral-200 p-4">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-sm font-semibold text-neutral-900">추천 사진 순서</p>
-                  <p className="mt-1 text-xs text-neutral-500">드래그로 위치를 바꾸면 기본 쇼츠 흐름을 직접 조정할 수 있습니다.</p>
-                </div>
-                <Button type="button" variant="outline" size="sm" onClick={resetBasicShortsImageOrder}>
-                  추천 순서로 되돌리기
-                </Button>
-              </div>
-              <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
-                {orderedBasicShortsImages.map((image, index) => (
-                  <div
-                    key={image.id}
-                    draggable
-                    onDragStart={(event) => {
-                      setDraggingBasicShortsImageId(image.id)
-                      event.dataTransfer.effectAllowed = 'move'
-                      event.dataTransfer.dropEffect = 'move'
-                      event.dataTransfer.setData('text/plain', image.id)
-                    }}
-                    onDragEnd={() => setDraggingBasicShortsImageId(null)}
-                    onDragOver={(event) => event.preventDefault()}
-                    onDragEnter={(event) => event.preventDefault()}
-                    onDrop={() => handleBasicShortsDrop(image.id)}
-                    className={cn(
-                      'overflow-hidden rounded-2xl border border-neutral-200 bg-white cursor-move transition',
-                      draggingBasicShortsImageId === image.id ? 'opacity-50 ring-2 ring-neutral-300' : 'hover:-translate-y-0.5 hover:shadow-md'
-                    )}
-                  >
-                    <div className="relative aspect-[4/3] bg-neutral-100">
-                      <img
-                        src={image.thumbnail_url || image.cloudinary_url}
-                        alt=""
-                        className="h-full w-full object-cover"
-                      />
-                      <span className="absolute left-2 top-2 rounded-full bg-black/75 px-2 py-1 text-[11px] font-semibold text-white">
-                        {index + 1}컷
-                      </span>
-                      <span className="absolute right-2 top-2 rounded-full bg-white/85 px-2 py-1 text-[11px] font-medium text-neutral-800 shadow-sm">
-                        드래그 이동
-                      </span>
-                    </div>
-                    <div className="space-y-1 p-3">
-                      <p className="truncate text-sm font-medium text-neutral-900">
-                        {image.product_name?.trim() || image.site_name?.trim() || `사진 ${index + 1}`}
-                      </p>
-                      <p className="truncate text-xs text-neutral-500">
-                        {image.color_name?.trim() || image.business_type?.trim() || basicShortsPlan.displayName}
-                      </p>
-                      <div className="flex items-center gap-2 pt-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-8 w-8 rounded-full p-0"
-                          disabled={index === 0}
-                          onClick={() => moveBasicShortsImage(image.id, -1)}
-                          aria-label="앞으로 이동"
-                          title="앞으로 이동"
-                        >
-                          <ChevronLeft className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-8 w-8 rounded-full p-0"
-                          disabled={index === orderedBasicShortsImages.length - 1}
-                          onClick={() => moveBasicShortsImage(image.id, 1)}
-                          aria-label="뒤로 이동"
-                          title="뒤로 이동"
-                        >
-                          <ChevronRight className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-              이 단계는 내부 쇼룸에서 기본 쇼츠 제작 설정을 확정하는 단계입니다. 초안 저장으로 임시 보관할 수 있고, 제작 요청을 누르면 현재 선택 이미지와 스크립트 기준으로 제작 대기 상태를 남길 수 있습니다.
-            </div>
-
-            <div className="flex flex-wrap justify-end gap-2">
-              <Button type="button" variant="outline" className="gap-2" onClick={saveBasicShortsDraft}>
-                <Check className="h-4 w-4" />
-                초안 저장
-              </Button>
-              <Button type="button" variant="outline" className="gap-2" onClick={requestBasicShortsProduction} disabled={basicShortsRequesting}>
-                <Video className="h-4 w-4" />
-                제작 요청
-              </Button>
-              <Button type="button" className="gap-2" onClick={copyBasicShortsPackage}>
-                <FileText className="h-4 w-4" />
-                제작 패키지 복사
-              </Button>
-            </div>
+            <button
+              type="button"
+              onClick={() => {
+                openShowroomConsultationChat({
+                  surface: 'gallery_modal',
+                  concern: selectedConcernTag,
+                  siteName: detailKey,
+                })
+              }}
+              className="flex items-center justify-center gap-2 w-full rounded-xl py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-sm transition-colors shadow-md"
+            >
+              <MessageCircle className="h-4 w-4" />
+              비슷한 공간 상담 문의
+            </button>
           </div>
         </DialogContent>
       </Dialog>
