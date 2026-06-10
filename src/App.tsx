@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, useLocation, useParams, Navigate } from '
 import { Toaster } from 'sonner'
 import ProtectedRoute from '@/auth/ProtectedRoute'
 import { describeInternalRoute } from '@/lib/internalRouteLabel'
+import { isPublicShowroomLandingHost } from '@/lib/showroomAbmTraffic'
 import './App.css'
 
 const ConsultationManagement = lazy(() => import('@/pages/ConsultationManagement'))
@@ -68,13 +69,71 @@ function LegacyOpenShowroomCaseDetailRedirect() {
   return <Navigate replace to={`/public/showroom/case/${encodeURIComponent(siteKey)}${location.search}${location.hash}`} />
 }
 
+const SNS_CHANNEL_ALIASES: Record<string, string> = {
+  ig: 'instagram',
+  insta: 'instagram',
+  instagram: 'instagram',
+  kakao: 'kakao',
+  kakaotalk: 'kakao',
+  blog: 'blog',
+  naver: 'blog',
+  youtube: 'youtube',
+  yt: 'youtube',
+}
+
+function normalizeSnsChannel(value: string | undefined): string {
+  const normalized = (value ?? 'sns').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '')
+  return SNS_CHANNEL_ALIASES[normalized] ?? (normalized || 'sns')
+}
+
+function getSnsMedium(channel: string): string {
+  if (channel === 'blog') return 'content'
+  return 'social'
+}
+
+function SnsShowroomRedirect() {
+  const location = useLocation()
+  const { channel } = useParams<{ channel?: string }>()
+  const normalizedChannel = normalizeSnsChannel(channel)
+  const params = new URLSearchParams(location.search)
+
+  if (!params.get('utm_source')) params.set('utm_source', normalizedChannel)
+  if (!params.get('utm_medium')) params.set('utm_medium', getSnsMedium(normalizedChannel))
+  if (!params.get('utm_campaign')) params.set('utm_campaign', 'showroom_abm_202606')
+  params.set('entry', 'sns')
+
+  return <Navigate replace to={`/public/showroom?${params.toString()}${location.hash}`} />
+}
+
+function RootRedirect() {
+  const location = useLocation()
+
+  if (isPublicShowroomLandingHost(window.location.hostname)) {
+    const params = new URLSearchParams(location.search)
+    if (!params.get('utm_source')) params.set('utm_source', 'direct')
+    if (!params.get('utm_medium')) params.set('utm_medium', 'organic')
+    if (!params.get('utm_campaign')) params.set('utm_campaign', 'showroom_abm_202606')
+    if (!params.get('entry')) params.set('entry', 'domain')
+
+    const query = params.toString()
+    return (
+      <Navigate
+        replace
+        to={`/public/showroom${query ? `?${query}` : ''}${location.hash}`}
+      />
+    )
+  }
+
+  return <Navigate replace to={`/dashboard${location.search}${location.hash}`} />
+}
+
 function App() {
   return (
     <BrowserRouter>
       <Toaster position="top-center" richColors closeButton />
       <Suspense fallback={<RouteFallback />}>
         <Routes>
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/" element={<RootRedirect />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/p/estimate/:id" element={<PublicProposalView />} />
           <Route path="/share" element={<ShareRedirect />} />
@@ -90,6 +149,9 @@ function App() {
           <Route path="/open-showroom/case/:siteKey" element={<LegacyOpenShowroomCaseDetailRedirect />} />
           <Route path="/open-showroom" element={<LegacyOpenShowroomRedirect targetPath="/public/showroom" />} />
           <Route path="/open-showroom/original" element={<LegacyOpenShowroomRedirect targetPath="/public/showroom/original" />} />
+          <Route path="/sns" element={<SnsShowroomRedirect />} />
+          <Route path="/sns/:channel" element={<SnsShowroomRedirect />} />
+          <Route path="/s/:channel" element={<SnsShowroomRedirect />} />
           <Route path="/contact" element={<ContactPage />} />
           <Route element={<ProtectedRoute />}>
             <Route path="/dashboard" element={<DashboardPage />} />

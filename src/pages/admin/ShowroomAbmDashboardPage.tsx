@@ -110,6 +110,15 @@ type HostnameMetric = {
   events: number
 }
 
+type ChannelMetric = {
+  source: string
+  medium: string
+  campaign: string
+  sessions: number
+  events: number
+  consultations: number
+}
+
 export default function ShowroomAbmDashboardPage() {
   const [periodDays, setPeriodDays] = useState<number>(30)
   const [trafficFilter, setTrafficFilter] = useState<ShowroomAbmTrafficFilter>('production')
@@ -346,6 +355,21 @@ export default function ShowroomAbmDashboardPage() {
               />
             </section>
 
+            <SimpleTable
+              title="SNS/캠페인별 유입"
+              description="짧은 SNS 링크(`/sns/instagram`, `/sns/kakao`, `/sns/blog`)와 UTM 기준"
+              emptyMessage="채널 데이터가 없습니다."
+              columns={['소스', '매체', '캠페인', '세션', '이벤트', '상담']}
+              rows={metrics.channelMetrics.map((row) => [
+                row.source,
+                row.medium,
+                row.campaign,
+                formatNumber(row.sessions),
+                formatNumber(row.events),
+                formatNumber(row.consultations),
+              ])}
+            />
+
             {metrics.caseFailMetrics.length > 0 ? (
               <SimpleTable
                 title="사례 페이지 실패"
@@ -423,6 +447,7 @@ function buildAbmDashboardMetrics(rows: AbmEventRow[]) {
     galleryFunnel,
     concernMetrics: buildConcernMetrics(rows),
     surfaceMetrics: buildSurfaceMetrics(rows),
+    channelMetrics: buildChannelMetrics(rows),
     caseFailMetrics: buildCaseFailMetrics(rows),
   }
 }
@@ -498,6 +523,38 @@ function buildSurfaceMetrics(rows: AbmEventRow[]): SurfaceMetric[] {
       events: bucket.events,
     }))
     .sort((a, b) => b.sessions - a.sessions || b.events - a.events)
+}
+
+function buildChannelMetrics(rows: AbmEventRow[]): ChannelMetric[] {
+  const map = new Map<string, { sessions: Set<string>; events: number; consultations: Set<string> }>()
+
+  for (const row of rows) {
+    const source = readMetadataString(row.metadata, 'utm_source')
+    if (!source) continue
+
+    const medium = readMetadataString(row.metadata, 'utm_medium') ?? '-'
+    const campaign = readMetadataString(row.metadata, 'utm_campaign') ?? '-'
+    const key = `${source}||${medium}||${campaign}`
+    const bucket = map.get(key) ?? { sessions: new Set<string>(), events: 0, consultations: new Set<string>() }
+    bucket.sessions.add(row.session_key)
+    bucket.events += 1
+    if (row.event_name === 'abm_consultation_click') bucket.consultations.add(row.session_key)
+    map.set(key, bucket)
+  }
+
+  return [...map.entries()]
+    .map(([key, bucket]) => {
+      const [source, medium, campaign] = key.split('||')
+      return {
+        source: source ?? '-',
+        medium: medium ?? '-',
+        campaign: campaign ?? '-',
+        sessions: bucket.sessions.size,
+        events: bucket.events,
+        consultations: bucket.consultations.size,
+      }
+    })
+    .sort((a, b) => b.consultations - a.consultations || b.sessions - a.sessions || b.events - a.events)
 }
 
 function buildCaseFailMetrics(rows: AbmEventRow[]): CaseFailMetric[] {
