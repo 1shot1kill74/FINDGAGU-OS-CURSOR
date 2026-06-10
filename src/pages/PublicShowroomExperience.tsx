@@ -558,6 +558,12 @@ export default function PublicShowroomExperience() {
     }
     return detailKey
   }, [beforeAfterGroups, detailKey, detailOpen, siteGroups])
+  const detailGridClassName = useMemo(() => {
+    if (detailImages.length <= 4) return 'grid grid-cols-2 gap-3 md:grid-cols-4'
+    if (detailImages.length <= 8) return 'grid grid-cols-2 gap-2.5 md:grid-cols-4 xl:grid-cols-5'
+    return 'grid grid-cols-3 gap-2 md:grid-cols-5 xl:grid-cols-6'
+  }, [detailImages.length])
+  const detailThumbAspectClassName = detailImages.length > 8 ? 'aspect-[5/3]' : 'aspect-[4/3]'
 
   useEffect(() => {
     if (detailOpen === null || detailImages.length === 0) return
@@ -1280,35 +1286,15 @@ export default function PublicShowroomExperience() {
         {/* 메인 카피: 강렬한 헤드라인 */}
         <section className="mb-8" aria-labelledby="showroom-main-heading">
           <h1 id="showroom-main-heading" className="text-2xl md:text-3xl font-bold text-neutral-900 leading-tight mb-1">
-            {false ? (
-              <>
-                고객과 함께 보며 <span className="text-amber-600">설명하고 전송하는</span> 내부용 쇼룸
-              </>
-            ) : (
-              <>
-                실패하지 않는 공간 기획, 그 차이는 <span className="text-amber-600">디테일</span>에 있습니다.
-              </>
-            )}
+            실패하지 않는 공간 기획, 그 차이는 <span className="text-amber-600">디테일</span>에 있습니다.
           </h1>
-          {false ? (
-            <>
-              <p className="text-neutral-600 text-base md:text-lg">현장에서 사례를 탐색하고, 필요한 이미지를 바로 선별해 공유하세요.</p>
-              <p className="text-xs md:text-sm text-neutral-500 mt-2">
-                고객용 문의 유도 대신 내부 공유와 설명에 집중한 화면입니다. 이미지를 선택해 링크 복사 또는 카카오톡 공유를 사용할 수 있습니다.
-              </p>
-            </>
-          ) : (
-            <>
-              <p className="text-neutral-600 text-base md:text-lg">대표님의 공간, 어떤 변화가 필요하신가요?</p>
-              <p className="text-xs md:text-sm text-neutral-500 mt-2">
-                내부 직원과 같은 흐름으로 시공사례를 탐색할 수 있는 공통 쇼룸입니다. 궁금한 점은 화면 하단 상담 버튼으로 바로 문의하실 수 있습니다.
-              </p>
-            </>
-          )}
+          <p className="text-neutral-600 text-base md:text-lg">대표님의 공간, 어떤 변화가 필요하신가요?</p>
+          <p className="text-xs md:text-sm text-neutral-500 mt-2">
+            실제 시공 사례와 Before/After를 고민별로 안내해 드립니다. 궁금한 점은 화면 하단 상담 버튼으로 바로 문의하실 수 있습니다.
+          </p>
         </section>
 
         {/* 전문가가 먼저 질문하는 공감 카드: 말풍선 + 핵심어 하이라이트 + 성공 사례 보기 CTA */}
-        { (
         <section className="mb-8" aria-labelledby="showroom-concern-heading">
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
@@ -1432,7 +1418,6 @@ export default function PublicShowroomExperience() {
             })}
           </div>
         </section>
-        )}
         <div id="showroom-concern-result-anchor" className="h-px scroll-mt-28 md:scroll-mt-32" aria-hidden />
         {/* 전문가 코멘트: 해당 카드 클릭 시에만 표시 — 왼쪽 코멘트, 오른쪽 전문가 이미지(답하는 느낌) */}
         { selectedConcernTag === '관리형 창업 또는 전환' && (
@@ -1726,7 +1711,6 @@ export default function PublicShowroomExperience() {
 
         
 
-        { (
           <section
             id="showroom-gallery-browse"
             className="mt-12 border-t border-neutral-200 pt-10 scroll-mt-24 md:scroll-mt-28"
@@ -1740,9 +1724,8 @@ export default function PublicShowroomExperience() {
                 고민 선택 없이 업종 · 제품 · 색상 기준으로 사례 사진을 둘러보실 수 있습니다.
               </p>
             </div>
-            <div className="flex flex-col gap-4">{renderGalleryBrowseControls()}</div>
+            <div className="mb-8 flex flex-col gap-4 md:mb-10">{renderGalleryBrowseControls()}</div>
           </section>
-        )}
 
         {viewMode === 'product' && (
           <div id="showroom-gallery" className="grid grid-cols-2 lg:grid-cols-3 gap-6 items-stretch">
@@ -2088,34 +2071,34 @@ export default function PublicShowroomExperience() {
             {detailImages.length === 0 ? (
               <p className="text-neutral-500 text-center py-8">사진이 없습니다.</p>
             ) : detailViewMode === 'grid' ? (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between gap-3 rounded-xl border border-neutral-700 bg-neutral-800/70 px-4 py-3">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-3 rounded-xl border border-neutral-700 bg-neutral-800/70 px-3 py-2.5">
                   <div>
                     <p className="text-sm font-medium text-white">
                       {'전체 사진을 둘러보세요.'}
                     </p>
-                    <p className="mt-1 text-xs text-neutral-400">
-                      썸네일을 누르면 확대해서 확인할 수 있고, 닫으면 다시 전체 목록으로 돌아옵니다.
-                    </p>
+                    <p className="mt-0.5 text-xs text-neutral-400">사진을 한눈에 보고, 필요한 이미지만 눌러 확대하세요.</p>
                   </div>
                   <span className="shrink-0 rounded-full bg-neutral-700 px-2.5 py-1 text-xs font-medium text-neutral-200">
                     {detailImages.length}장
                   </span>
                 </div>
-                <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
+                <div className={detailGridClassName}>
                   {detailImages.map((image, index) => {
                     const imageUrl = image.thumbnail_url || image.cloudinary_url || ''
+                    const productName = image.product_name?.trim() || `사진 ${index + 1}`
+                    const colorName = image.color_name?.trim()
                     return (
                       <div
                         key={image.id}
-                        className="overflow-hidden rounded-2xl border border-neutral-700 bg-neutral-800 text-left transition hover:-translate-y-0.5 hover:border-neutral-500 hover:shadow-lg"
+                        className="overflow-hidden rounded-xl border border-neutral-700 bg-neutral-800 text-left transition hover:-translate-y-0.5 hover:border-neutral-500 hover:shadow-lg"
                       >
                         <button
                           type="button"
                           onClick={() => openDetailImage(index)}
                           className="block w-full text-left"
                         >
-                          <div className="relative aspect-[4/3] bg-neutral-900">
+                          <div className={cn('relative bg-neutral-900', detailThumbAspectClassName)}>
                             <img
                               src={imageUrl}
                               alt=""
@@ -2123,26 +2106,17 @@ export default function PublicShowroomExperience() {
                               loading="lazy"
                               decoding="async"
                             />
+                            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/35 to-transparent px-2 py-2 text-white">
+                              <p className="truncate text-[11px] font-semibold leading-tight">{productName}</p>
+                              {colorName && <p className="mt-0.5 truncate text-[10px] leading-tight text-white/75">{colorName}</p>}
+                            </div>
                             {image.before_after_role && (
-                              <span className="absolute left-2 top-2 rounded-full bg-black/75 px-2 py-1 text-[11px] font-semibold text-white">
+                              <span className="absolute left-2 top-2 rounded-full bg-black/75 px-2 py-0.5 text-[10px] font-semibold text-white">
                                 {image.before_after_role === 'before' ? 'Before' : 'After'}
                               </span>
                             )}
                           </div>
                         </button>
-                        <div className="p-3">
-                          <div className="space-y-1">
-                            <p className="truncate text-sm font-medium text-white">
-                              {image.product_name?.trim() || `사진 ${index + 1}`}
-                            </p>
-                            <p className="truncate text-xs text-neutral-400">
-                              {image.color_name?.trim()
-                                || getBroadPublicLabel(image.site_name, image.external_display_name)
-                                || detailDisplayTitle}
-                            </p>
-                          </div>
-                          
-                        </div>
                       </div>
                     )
                   })}

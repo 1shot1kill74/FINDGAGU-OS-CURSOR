@@ -265,31 +265,17 @@ async function readExistingMetadata(siteName: string): Promise<Record<string, un
     : {}
 }
 
-export async function fetchShowroomCaseProfileDrafts(siteNames: string[]): Promise<ShowroomCaseProfileDraft[]> {
-  const normalized = Array.from(new Set(siteNames.map((siteName) => siteName.trim()).filter(Boolean)))
-  if (normalized.length === 0) return []
-
-  const [siteNameResult, canonicalNameResult] = await Promise.all([
-    (supabase as any)
-      .from('showroom_case_profiles')
-      .select('site_name, canonical_site_name, industry, pain_point, solution_point, metadata')
-      .in('site_name', normalized),
-    (supabase as any)
-      .from('showroom_case_profiles')
-      .select('site_name, canonical_site_name, industry, pain_point, solution_point, metadata')
-      .in('canonical_site_name', normalized),
-  ])
-
-  if (siteNameResult.error) throw new Error(siteNameResult.error.message)
-  if (canonicalNameResult.error) throw new Error(canonicalNameResult.error.message)
-
+function mapShowroomCaseProfileRows(
+  rows: Array<Record<string, unknown>>,
+  options: { requireApprovedBlog?: boolean } = {},
+): ShowroomCaseProfileDraft[] {
   const seen = new Set<string>()
-  const rows = [...(siteNameResult.data ?? []), ...(canonicalNameResult.data ?? [])] as Array<Record<string, unknown>>
 
   return rows.flatMap((row) => {
     const siteName = String(row.site_name ?? '').trim()
     if (!siteName || seen.has(siteName)) return []
     seen.add(siteName)
+
     const outline = parseOutlineMeta(row.metadata)
     const generation = parseGenerationMeta(row.metadata)
     const consultationCardDraft = parseConsultationCardDraft(row.metadata)
@@ -298,6 +284,8 @@ export async function fetchShowroomCaseProfileDrafts(siteNames: string[]): Promi
       parseCanonicalBlogPostFromMetadata(row.metadata),
       generation.blogGeneration.response,
     )
+    if (options.requireApprovedBlog && (!canonicalBlogPost || canonicalBlogPost.status !== 'approved')) return []
+
     return [{
       siteName,
       canonicalSiteName: typeof row.canonical_site_name === 'string' && row.canonical_site_name.trim()
@@ -325,58 +313,48 @@ export async function fetchShowroomCaseProfileDrafts(siteNames: string[]): Promi
   })
 }
 
+async function fetchPublicShowroomCaseProfileRows(siteNames?: string[]): Promise<Array<Record<string, unknown>>> {
+  const args = siteNames && siteNames.length > 0 ? { site_names: siteNames } : {}
+  const { data, error } = await (supabase as any).rpc('get_public_showroom_case_profiles', args)
+  if (error) throw new Error(error.message)
+  return (data ?? []) as Array<Record<string, unknown>>
+}
+
+export async function fetchShowroomCaseProfileDrafts(siteNames: string[]): Promise<ShowroomCaseProfileDraft[]> {
+  const normalized = Array.from(new Set(siteNames.map((siteName) => siteName.trim()).filter(Boolean)))
+  if (normalized.length === 0) return []
+
+  const [siteNameResult, canonicalNameResult] = await Promise.all([
+    (supabase as any)
+      .from('showroom_case_profiles')
+      .select('site_name, canonical_site_name, industry, pain_point, solution_point, metadata')
+      .in('site_name', normalized),
+    (supabase as any)
+      .from('showroom_case_profiles')
+      .select('site_name, canonical_site_name, industry, pain_point, solution_point, metadata')
+      .in('canonical_site_name', normalized),
+  ])
+
+  if (siteNameResult.error || canonicalNameResult.error) {
+    const publicRows = await fetchPublicShowroomCaseProfileRows(normalized)
+    return mapShowroomCaseProfileRows(publicRows, { requireApprovedBlog: true })
+  }
+
+  const rows = [...(siteNameResult.data ?? []), ...(canonicalNameResult.data ?? [])] as Array<Record<string, unknown>>
+  const drafts = mapShowroomCaseProfileRows(rows)
+  if (drafts.length > 0) return drafts
+
+  const publicRows = await fetchPublicShowroomCaseProfileRows(normalized)
+  return mapShowroomCaseProfileRows(publicRows, { requireApprovedBlog: true })
+}
+
 /**
  * `metadata.canonical_blog_post.status === 'approved'` 인 케이스만 반환한다.
  * 공개 페이지의 "관련 사례" 블록에서 사용한다.
  */
 export async function fetchApprovedBlogShowroomCaseProfileDrafts(): Promise<ShowroomCaseProfileDraft[]> {
-  const { data, error } = await (supabase as any)
-    .from('showroom_case_profiles')
-    .select('site_name, canonical_site_name, industry, pain_point, solution_point, metadata')
-
-  if (error) throw new Error(error.message)
-
-  const rows = (data ?? []) as Array<Record<string, unknown>>
-  return rows.flatMap((row) => {
-    const siteName = typeof row.site_name === 'string' ? row.site_name.trim() : ''
-    if (!siteName) return []
-
-    const generation = parseGenerationMeta(row.metadata)
-    const canonicalBlogPost = hydrateCanonicalBlogPostFromGenerationResponse(
-      parseCanonicalBlogPostFromMetadata(row.metadata),
-      generation.blogGeneration.response,
-    )
-    if (!canonicalBlogPost || canonicalBlogPost.status !== 'approved') return []
-
-    const outline = parseOutlineMeta(row.metadata)
-    const publication = parsePublicationMeta(row.metadata)
-    const consultationCardDraft = parseConsultationCardDraft(row.metadata)
-
-    return [{
-      siteName,
-      canonicalSiteName: typeof row.canonical_site_name === 'string' && row.canonical_site_name.trim()
-        ? row.canonical_site_name.trim()
-        : null,
-      industry: typeof row.industry === 'string' && row.industry.trim()
-        ? row.industry.trim()
-        : null,
-      problemCode: outline.problemCode,
-      solutionCode: outline.solutionCode,
-      problemFrameLabel: outline.problemFrameLabel,
-      solutionFrameLabel: outline.solutionFrameLabel,
-      painPoint: typeof row.pain_point === 'string' ? row.pain_point : null,
-      solutionPoint: typeof row.solution_point === 'string' ? row.solution_point : null,
-      headlineHook: outline.headlineHook,
-      problemDetail: outline.problemDetail,
-      solutionDetail: outline.solutionDetail,
-      evidencePoints: outline.evidencePoints,
-      consultationCardDraft,
-      cardNewsGeneration: generation.cardNewsGeneration,
-      blogGeneration: generation.blogGeneration,
-      cardNewsPublication: publication,
-      canonicalBlogPost,
-    }]
-  }).sort((a, b) => {
+  const rows = await fetchPublicShowroomCaseProfileRows()
+  return mapShowroomCaseProfileRows(rows, { requireApprovedBlog: true }).sort((a, b) => {
     const at = a.canonicalBlogPost?.approvedAt ? new Date(a.canonicalBlogPost.approvedAt).getTime() : 0
     const bt = b.canonicalBlogPost?.approvedAt ? new Date(b.canonicalBlogPost.approvedAt).getTime() : 0
     return bt - at
