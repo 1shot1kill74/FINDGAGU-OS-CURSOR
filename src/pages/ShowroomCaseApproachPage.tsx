@@ -14,7 +14,7 @@ import {
 } from '@/lib/showroomCaseApproachData'
 import { fetchApprovedBlogShowroomCaseProfileDrafts, type ShowroomCaseProfileDraft } from '@/lib/showroomCaseProfileService'
 import { fetchPublicShowroomAssets } from '@/lib/showroomShareService'
-import { fetchShowroomImageAssets, type ShowroomImageAsset } from '@/lib/imageAssetService'
+import type { ShowroomImageAsset } from '@/lib/imageAssetService'
 import { ShowroomStoryStickyMiniCta } from '@/pages/showroom/ShowroomStoryStickyMiniCta'
 import { ShowroomCaseConsultationCta } from '@/pages/showroom/ShowroomCaseConsultationCta'
 import { getBroadPublicLabel } from '@/pages/showroom/showroomPageGrouping'
@@ -155,33 +155,28 @@ function useRelatedApprovedBlogCases(params: UseRelatedApprovedBlogCasesParams):
   } = params
   const [drafts, setDrafts] = useState<ShowroomCaseProfileDraft[]>([])
   const [publicAssets, setPublicAssets] = useState<ShowroomImageAsset[]>([])
-  const [internalAssets, setInternalAssets] = useState<ShowroomImageAsset[]>([])
 
   useEffect(() => {
     if (!enabled) {
       setDrafts([])
       setPublicAssets([])
-      setInternalAssets([])
       return
     }
     let cancelled = false
     void (async () => {
       try {
-        const [rows, publicRows, internalRows] = await Promise.all([
+        const [rows, publicRows] = await Promise.all([
           fetchApprovedBlogShowroomCaseProfileDrafts(),
           fetchPublicShowroomAssets(),
-          fetchShowroomImageAssets(),
         ])
         if (!cancelled) {
           setDrafts(rows)
           setPublicAssets(publicRows)
-          setInternalAssets(internalRows)
         }
       } catch {
         if (!cancelled) {
           setDrafts([])
           setPublicAssets([])
-          setInternalAssets([])
         }
       }
     })()
@@ -216,7 +211,7 @@ function useRelatedApprovedBlogCases(params: UseRelatedApprovedBlogCasesParams):
           industry: d.industry ?? null,
           title,
           summary: summary.length > 140 ? `${summary.slice(0, 137)}…` : summary,
-          href: resolvePublicShowroomCaseHref(d, publicAssets, internalAssets),
+          href: resolvePublicShowroomCaseHref(d, publicAssets),
           score,
         }
       })
@@ -226,7 +221,7 @@ function useRelatedApprovedBlogCases(params: UseRelatedApprovedBlogCasesParams):
         return a.title.localeCompare(b.title, 'ko')
       })
     return scored.slice(0, 4)
-  }, [enabled, drafts, publicAssets, internalAssets, currentSiteName, currentIndustry, currentProblemCode, currentSolutionCode, currentBusinessTypes])
+  }, [enabled, drafts, publicAssets, currentSiteName, currentIndustry, currentProblemCode, currentSolutionCode, currentBusinessTypes])
 }
 
 export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'case' }: { mode?: Mode; entry?: EntryType }) {

@@ -55,6 +55,7 @@ import {
   type ShowroomCaseCardNewsPublication,
   type ShowroomCaseProfileDraft,
 } from '@/lib/showroomCaseProfileService'
+import { supabase } from '@/lib/supabase'
 import { SLIDE_KEY_OPTIONS } from '@/pages/admin/showroomCaseStudio/showroomCaseStudioConstants'
 import type { CaseDraftSeedRow, CaseDraftState, FrameTemplateEditorState, StudioCardNewsSlide } from '@/pages/admin/showroomCaseStudio/showroomCaseStudioTypes'
 import {
@@ -71,7 +72,6 @@ import {
 } from '@/pages/admin/showroomCaseStudio/showroomCaseStudioUtils'
 
 export default function ShowroomCaseStudioPage() {
-  const showroomCaseContentWebhookUrl = (import.meta.env.VITE_SHOWROOM_CASE_CONTENT_WEBHOOK_URL as string | undefined)?.trim() ?? ''
   const [searchParams] = useSearchParams()
   const [loading, setLoading] = useState(true)
   const [publicationSavingId, setPublicationSavingId] = useState<string | null>(null)
@@ -505,15 +505,15 @@ export default function ShowroomCaseStudioPage() {
     channel: 'cardnews' | 'blog'
     payload: ReturnType<typeof buildShowroomCaseN8nPayload>
   }) => {
-    if (!showroomCaseContentWebhookUrl) {
-      toast.error('VITE_SHOWROOM_CASE_CONTENT_WEBHOOK_URL 환경변수가 필요합니다.')
-      return
-    }
-
     const requestKey = `${params.row.siteName}:${params.channel}`
     setRequestingKey(requestKey)
 
     try {
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession()
+      if (sessionError || !sessionData.session?.access_token) {
+        throw new Error('로그인 세션을 확인할 수 없습니다. 다시 로그인한 뒤 시도해 주세요.')
+      }
+
       setRows((prev) =>
         prev.map((row) =>
           row.siteName === params.row.siteName
@@ -551,10 +551,11 @@ export default function ShowroomCaseStudioPage() {
         if (error) throw error
       }
 
-      const response = await fetch(showroomCaseContentWebhookUrl, {
+      const response = await fetch('/api/showroom-case-content', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionData.session.access_token}`,
         },
         body: JSON.stringify({
           ...params.payload,

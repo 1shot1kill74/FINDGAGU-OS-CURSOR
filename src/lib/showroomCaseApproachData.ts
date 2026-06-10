@@ -246,14 +246,11 @@ export async function loadShowroomCaseApproachBundle(
   if (!query) return { ok: false, reason: 'not_found' }
 
   try {
-    const [assets, internalAssets] = source === 'public'
-      ? await Promise.all([fetchPublicShowroomAssets(), fetchShowroomImageAssets()])
-      : [await fetchShowroomImageAssets(), null]
+    const assets = source === 'public'
+      ? await fetchPublicShowroomAssets()
+      : await fetchShowroomImageAssets()
 
     let matched = findBeforeAfterGroupForQuery(query, assets)
-    if (!matched?.length && source === 'public' && internalAssets) {
-      matched = findBeforeAfterGroupForQuery(query, internalAssets)
-    }
 
     if (!matched?.length) {
       const profileBundle = await loadShowroomCaseApproachBundleFromProfileQuery(query)
@@ -263,49 +260,7 @@ export async function loadShowroomCaseApproachBundle(
       return { ok: false, reason: 'not_found' }
     }
 
-    let draftLookupNames = getDraftLookupNames(matched, query)
-    if (source === 'public' && internalAssets) {
-      const internalGroups = groupBeforeAfterAssets(internalAssets)
-      const publicSiteName = getPreferredShowroomSiteName(matched)
-      const publicExternalLabel = getPreferredExternalLabel(matched)
-      const publicIdentityKeys = new Set(getImageIdentityKeys(matched, [query, publicSiteName, publicExternalLabel ?? '']))
-
-      for (const [, internalImages] of internalGroups) {
-        const internalSiteName = getPreferredShowroomSiteName(internalImages)
-        const internalExternalLabel = getPreferredExternalLabel(internalImages)
-        const internalIdentityKeys = getImageIdentityKeys(internalImages, [internalSiteName, internalExternalLabel ?? ''])
-        const sharesIdentityKey = internalIdentityKeys.some((key) => publicIdentityKeys.has(key))
-        const matchesPublicGroup =
-          internalSiteName === query
-          || internalSiteName === publicSiteName
-          || internalExternalLabel === query
-          || internalExternalLabel === publicSiteName
-          || (publicExternalLabel ? internalExternalLabel === publicExternalLabel : false)
-          || internalImages.some((image) =>
-            image.site_name?.trim() === query
-            || image.site_name?.trim() === publicSiteName
-            || image.canonical_site_name?.trim() === query
-            || image.canonical_site_name?.trim() === publicSiteName
-            || image.external_display_name?.trim() === query
-            || image.external_display_name?.trim() === publicSiteName
-            || image.broad_external_display_name?.trim() === query
-            || image.broad_external_display_name?.trim() === publicSiteName
-            || (publicExternalLabel ? image.external_display_name?.trim() === publicExternalLabel : false)
-            || (publicExternalLabel ? image.broad_external_display_name?.trim() === publicExternalLabel : false)
-            || broadenPublicDisplayName(image.site_name?.trim() ?? null) === query
-            || broadenPublicDisplayName(image.site_name?.trim() ?? null) === publicSiteName
-            || broadenPublicDisplayName(image.external_display_name?.trim() ?? null) === query
-            || broadenPublicDisplayName(image.external_display_name?.trim() ?? null) === publicSiteName
-            || (publicExternalLabel ? broadenPublicDisplayName(image.external_display_name?.trim() ?? null) === publicExternalLabel : false)
-          )
-          || sharesIdentityKey
-
-        if (matchesPublicGroup) {
-          draftLookupNames = getDraftLookupNames(internalImages, query)
-          break
-        }
-      }
-    }
+    const draftLookupNames = getDraftLookupNames(matched, query)
 
     const drafts = await fetchShowroomCaseProfileDrafts(draftLookupNames)
     const profile = drafts[0] ?? null

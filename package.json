@@ -9,6 +9,8 @@
     "dev:public-showroom": "vite --open /public/showroom",
     "dev:competitor": "vite --open /admin/competitor-monitor",
     "build": "tsc -b && vite build && npm run build:sitemap && npm run build:prerender",
+    "build:public-showroom": "tsc -b && vite build --config vite.public.config.ts",
+    "dev:public-showroom:isolated": "vite --config vite.public.config.ts --open /public/showroom",
     "build:sitemap": "tsx scripts/buildSitemap.ts",
     "build:prerender": "tsx scripts/prerenderShowroomCases.ts",
     "lint": "eslint .",
