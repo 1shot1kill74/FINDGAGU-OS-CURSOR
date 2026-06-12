@@ -8,7 +8,11 @@ import { collectShowroomAliasNamesFromImages, collectShowroomIdentityKeys } from
 import { groupBeforeAfterAssets } from '@/lib/showroomImageAssetGrouping'
 import { fetchPublicShowroomAssets } from '@/lib/showroomShareService'
 import { broadenPublicDisplayName } from '@/lib/showroomShareService'
-import { fetchShowroomCaseProfileDrafts, type ShowroomCaseProfileDraft } from '@/lib/showroomCaseProfileService'
+import {
+  fetchPublishedShowroomCaseProfileDrafts,
+  fetchShowroomCaseProfileDrafts,
+  type ShowroomCaseProfileDraft,
+} from '@/lib/showroomCaseProfileService'
 
 function getPreferredShowroomSiteName(images: ShowroomImageAsset[]): string {
   const sorted = [...images].sort((a, b) => {
@@ -38,6 +42,36 @@ function getPreferredExternalLabel(images: ShowroomImageAsset[]): string | null 
 function getDraftLookupNames(images: ShowroomImageAsset[], query: string): string[] {
   const aliases = [query.trim(), ...collectShowroomAliasNamesFromImages(images)].filter(Boolean)
   return Array.from(new Set([...aliases, ...collectShowroomIdentityKeys(aliases)]))
+}
+
+function getProfileLookupAliases(profile: Pick<
+  ShowroomCaseProfileDraft,
+  'siteName' | 'canonicalSiteName' | 'cardNewsPublication' | 'canonicalBlogPost'
+>): string[] {
+  return Array.from(new Set([
+    profile.siteName.trim(),
+    profile.canonicalSiteName?.trim() ?? '',
+    profile.cardNewsPublication.siteKey?.trim() ?? '',
+    profile.cardNewsPublication.slug?.trim() ?? '',
+    profile.canonicalBlogPost?.siteName?.trim() ?? '',
+    profile.canonicalBlogPost?.title?.trim() ?? '',
+    profile.canonicalBlogPost?.seo.title?.trim() ?? '',
+  ].filter(Boolean)))
+}
+
+function profileMatchesLookupNames(profile: ShowroomCaseProfileDraft, lookupNames: string[]): boolean {
+  const lookupAliasSet = new Set(lookupNames.map((name) => name.trim()).filter(Boolean))
+  const profileAliases = getProfileLookupAliases(profile)
+  if (profileAliases.some((alias) => lookupAliasSet.has(alias))) return true
+
+  const lookupIdentitySet = new Set(collectShowroomIdentityKeys(lookupNames))
+  if (lookupIdentitySet.size === 0) return false
+  return collectShowroomIdentityKeys(profileAliases).some((key) => lookupIdentitySet.has(key))
+}
+
+async function findPublishedProfileByLookupNames(lookupNames: string[]): Promise<ShowroomCaseProfileDraft | null> {
+  const publishedProfiles = await fetchPublishedShowroomCaseProfileDrafts()
+  return publishedProfiles.find((profile) => profileMatchesLookupNames(profile, lookupNames)) ?? null
 }
 
 function getImageIdentityKeys(images: ShowroomImageAsset[], extraValues: string[] = []): string[] {
@@ -263,7 +297,7 @@ export async function loadShowroomCaseApproachBundle(
     const draftLookupNames = getDraftLookupNames(matched, query)
 
     const drafts = await fetchShowroomCaseProfileDrafts(draftLookupNames)
-    const profile = drafts[0] ?? null
+    const profile = drafts[0] ?? await findPublishedProfileByLookupNames(draftLookupNames)
 
     const hasApprovedBlog = hasApprovedCanonicalBlog(profile)
 

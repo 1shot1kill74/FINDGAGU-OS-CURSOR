@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { usePublicShowroomChannelTalk } from '@/hooks/usePublicShowroomChannelTalk'
 import { buildShowroomCaseCardNewsPackage, formatShowroomCardTextForDisplay, normalizeShowroomCardNewsSlides, resolveCardNewsSlideImageUrl } from '@/lib/showroomCaseContentPackage'
-import { renderCanonicalBlogPostHtml } from '@/lib/showroomCaseCanonicalBlog'
+import { buildCanonicalBlogPostFromN8nBlogResponse, renderCanonicalBlogPostHtml } from '@/lib/showroomCaseCanonicalBlog'
 import { usePageHead, type PageHeadJsonLd, type PageHeadMetaTag } from '@/lib/usePageHead'
 import {
   loadShowroomCaseApproachBundle,
@@ -412,10 +412,25 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
   const goToPreviousSlide = () => setActiveSlideIndex((prev) => (prev - 1 + totalSlides) % totalSlides)
   const goToNextSlide = () => setActiveSlideIndex((prev) => (prev + 1) % totalSlides)
 
-  const canonicalBlog = resolvedBundle.profile?.canonicalBlogPost ?? null
-  const showCanonicalBlogSection =
-    canonicalBlog !== null && (mode === 'internal' || canonicalBlog.status === 'approved')
   const isStoryLayout = mode === 'public' && entry === 'case'
+  const canonicalBlog = resolvedBundle.profile?.canonicalBlogPost ?? null
+  const generatedBlogPreview = useMemo(() => {
+    if (canonicalBlog?.status === 'approved') return null
+    const response = resolvedBundle.profile?.blogGeneration.response
+    if (!response) return null
+    return buildCanonicalBlogPostFromN8nBlogResponse({
+      siteName: resolvedBundle.siteName,
+      n8nResponse: response,
+      beforeImageUrl: beforeHeroUrl,
+      afterImageUrl: afterHeroUrl,
+    })
+  }, [afterHeroUrl, beforeHeroUrl, canonicalBlog?.status, resolvedBundle.profile?.blogGeneration.response, resolvedBundle.siteName])
+  const displayBlog = canonicalBlog && (mode === 'internal' || canonicalBlog.status === 'approved')
+    ? canonicalBlog
+    : isStoryLayout
+      ? generatedBlogPreview
+      : null
+  const showCanonicalBlogSection = displayBlog !== null
 
   const showRelatedCases = mode === 'public' && entry === 'case' && Boolean(canonicalBlog?.status === 'approved')
   const relatedCases = useRelatedApprovedBlogCases({
@@ -431,12 +446,12 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
   const seoDescription = canonicalBlog?.seo.seoDescription?.trim() || pain || solution || ''
   const ogTitle = canonicalBlog?.seo.ogTitle?.trim() || seoTitle
   const ogDescription = canonicalBlog?.seo.ogDescription?.trim() || seoDescription
-  const featuredAnswer = canonicalBlog?.structured?.featuredAnswer?.trim() || ''
-  const faqItems = (canonicalBlog?.structured?.faqItems ?? []).filter(
+  const featuredAnswer = displayBlog?.structured?.featuredAnswer?.trim() || ''
+  const faqItems = (displayBlog?.structured?.faqItems ?? []).filter(
     (q): q is { question: string; answer: string } =>
       Boolean(q && typeof q.question === 'string' && typeof q.answer === 'string' && q.question.trim() && q.answer.trim()),
   )
-  const geoPoints = (canonicalBlog?.structured?.geoPoints ?? []).filter(
+  const geoPoints = (displayBlog?.structured?.geoPoints ?? []).filter(
     (g): g is string => typeof g === 'string' && g.trim().length > 0,
   )
   const heroImageForOg = afterHeroUrl || beforeHeroUrl || ''
@@ -645,25 +660,53 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
           </div>
         </section>
 
-        {isStoryLayout && showCanonicalBlogSection ? (
-          <div className="rounded-2xl border border-dashed border-neutral-200 bg-neutral-50/80 px-4 py-4 md:px-5">
-            <p className="text-sm leading-relaxed text-neutral-700">
-              <span className="font-semibold text-neutral-900">더 자세히 알고 싶으시다면</span>{' '}
-              아래 블로그 글을 참고해 주세요. 카드뉴스는 핵심만 빠르게, 블로그는 현장 배경·설계 이유·디테일을
-              길게 풀어 쓴 글입니다. 시간이 부족하시면 카드뉴스만으로도 충분합니다.
-            </p>
+        {isStoryLayout ? (
+          <div className={cn(
+            'rounded-2xl px-4 py-4 md:px-5',
+            showCanonicalBlogSection
+              ? 'border border-emerald-100 bg-emerald-50/80'
+              : 'border border-dashed border-neutral-200 bg-neutral-50/80',
+          )}>
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="text-sm leading-relaxed text-neutral-700">
+                  <span className="font-semibold text-neutral-900">블로그 더 보기</span>{' '}
+                  {showCanonicalBlogSection
+                    ? '현장 배경·설계 이유·디테일을 이어서 볼 수 있습니다.'
+                    : '이 현장의 상세 블로그 글은 아직 준비 중입니다.'}
+                </p>
+                <p className="mt-1 text-xs text-neutral-500">
+                  {showCanonicalBlogSection
+                    ? '카드뉴스는 핵심 요약, 블로그는 실제 판단 근거를 길게 풀어둔 글입니다.'
+                    : '카드뉴스로 핵심 흐름을 먼저 확인하고, 자세한 상담은 채팅으로 바로 문의할 수 있습니다.'}
+                </p>
+              </div>
+              {showCanonicalBlogSection ? (
+                <Button asChild className="shrink-0 gap-1.5 bg-emerald-700 hover:bg-emerald-600">
+                  <a href="#case-blog-more">
+                    <FileText className="h-4 w-4" />
+                    블로그 더 보기
+                  </a>
+                </Button>
+              ) : (
+                <Button type="button" disabled className="shrink-0 gap-1.5">
+                  <FileText className="h-4 w-4" />
+                  블로그 준비 중
+                </Button>
+              )}
+            </div>
           </div>
         ) : null}
 
-        {showCanonicalBlogSection && canonicalBlog ? (
-          <section className="space-y-3" aria-labelledby="canonical-blog-article">
+        {showCanonicalBlogSection && displayBlog ? (
+          <section id="case-blog-more" className="scroll-mt-24 space-y-3" aria-labelledby="canonical-blog-article">
             <div className="space-y-1">
               <div className="flex flex-wrap items-center gap-2 text-neutral-900">
                 <FileText className="h-5 w-5 text-emerald-700" aria-hidden />
                 <h2 id="canonical-blog-article" className="text-lg font-semibold">
                   {isStoryLayout ? '더 깊게 읽는 블로그' : '사례 블로그 글'}
                 </h2>
-                {mode === 'internal' && canonicalBlog.status !== 'approved' ? (
+                {mode === 'internal' && displayBlog.status !== 'approved' ? (
                   <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-medium text-amber-900">
                     미승인 정본은 공개 사용자에게 숨김 · 작업실에서 승인 필요
                   </span>
@@ -676,7 +719,7 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
               ) : null}
             </div>
             {(() => {
-              const previewHtml = renderCanonicalBlogPostHtml(canonicalBlog)
+              const previewHtml = renderCanonicalBlogPostHtml(displayBlog)
               return (
                 <div className="rounded-2xl border border-neutral-200 bg-white p-5 text-neutral-800">
                   {featuredAnswer ? (
