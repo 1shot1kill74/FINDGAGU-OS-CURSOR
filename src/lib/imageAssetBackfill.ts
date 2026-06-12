@@ -145,6 +145,7 @@ export async function backfillImageAssetSpaceMetadata(): Promise<ImageAssetSpace
       startDate: matched.start_date,
       createdAt: matched.created_at,
       region: row.location?.trim() || null,
+      siteName: canonicalSiteName,
       industry: row.business_type?.trim() || null,
       customerPhone: matched.customer_phone,
     })

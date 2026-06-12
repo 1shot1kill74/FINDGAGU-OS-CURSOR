@@ -83,6 +83,9 @@ const REGION_TOKEN_MAP: Record<string, string> = {
 const REGION_CITY_PREFIXES: Array<[string, string]> = [
   ['남양주', '경기권'],
   ['평택', '경기권'],
+  ['고양', '경기권'],
+  ['일산', '경기권'],
+  ['정발산', '경기권'],
   ['수원', '경기권'],
   ['성남', '경기권'],
   ['용인', '경기권'],

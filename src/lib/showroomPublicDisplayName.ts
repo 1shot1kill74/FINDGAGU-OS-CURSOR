@@ -71,6 +71,9 @@ function inferBroadRegionFromToken(value: string): string | null {
     ['남양주', '경기권'],
     ['화성', '경기권'],
     ['평택', '경기권'],
+    ['고양', '경기권'],
+    ['일산', '경기권'],
+    ['정발산', '경기권'],
     ['의정부', '경기권'],
     ['시흥', '경기권'],
     ['파주', '경기권'],
@@ -122,6 +125,23 @@ function inferBroadRegionFromToken(value: string): string | null {
   return null
 }
 
+export function inferBroadRegionFromDisplayName(value: string | null | undefined): string | null {
+  const normalized = (value ?? '').trim().replace(/\s+/g, ' ')
+  if (!normalized) return null
+
+  const parts = normalized.split(' ')
+  const hasEstimatePrefix = parts[0] === '견적'
+  const prefixCount = hasEstimatePrefix ? 1 : 0
+  const hasMonthPrefix = /^\d{4}$/.test(parts[prefixCount] ?? '')
+  const regionIndex = hasMonthPrefix ? prefixCount + 1 : prefixCount
+  const regionToken = parts[regionIndex] ?? ''
+  const cityToken = parts[regionIndex + 1] ?? ''
+
+  return inferBroadRegionFromToken(`${regionToken} ${cityToken}`)
+    || inferBroadRegionFromToken(regionToken)
+    || inferBroadRegionFromToken(normalized)
+}
+
 export function broadenPublicDisplayName(siteName: string | null): string | null {
   const normalized = (siteName ?? '').trim().replace(/\s+/g, ' ')
   if (!normalized) return null
@@ -133,8 +153,7 @@ export function broadenPublicDisplayName(siteName: string | null): string | null
   const regionIndex = hasMonthPrefix ? prefixCount + 1 : prefixCount
   const regionToken = parts[regionIndex] ?? ''
   const cityToken = parts[regionIndex + 1] ?? ''
-  const broadRegion = inferBroadRegionFromToken(`${regionToken} ${cityToken}`)
-    || inferBroadRegionFromToken(regionToken)
+  const broadRegion = inferBroadRegionFromDisplayName(normalized)
   const shouldReplaceRegion = /^(서울|경기|인천|부산|대구|광주|대전|울산|세종|강원|충북|충남|전북|전남|경북|경남|제주)$/.test(regionToken)
   if (!broadRegion) return normalized
   return [

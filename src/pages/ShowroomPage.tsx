@@ -2004,8 +2004,8 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
       {/* 헤더: 타이틀 + 토글 + 검색 */}
       <header ref={headerRef} className="sticky top-0 z-10 bg-white/90 backdrop-blur border-b border-neutral-200 px-4 py-4 md:px-8">
         <div className="max-w-6xl mx-auto flex flex-col gap-4">
-          <div className="flex items-center justify-between gap-3">
-            <div>
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div className="shrink-0">
               <h1 className="text-xl md:text-2xl font-semibold text-neutral-900 tracking-tight">
                 {showInternalControls ? '내부용 시공사례 쇼룸' : '시공사례 쇼룸'}
               </h1>
@@ -2020,48 +2020,58 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
               )}
             </div>
             {showInternalControls && (
-              <div className="flex items-center gap-2">
-                <Link to={originalArchivePath}>
-                  <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
-                    <Images className="h-4 w-4" />
-                    원자료 보기
-                  </Button>
-                </Link>
-                <Link to="/admin/showroom-ads">
-                  <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
-                    <BarChart3 className="h-4 w-4" />
-                    광고 대시보드
-                  </Button>
-                </Link>
-                <Link to="/admin/showroom-abm">
-                  <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
-                    <BarChart3 className="h-4 w-4" />
-                    ABM 퍼널
-                  </Button>
-                </Link>
-                <Link to="/admin/showroom-shorts">
-                  <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
-                    <Video className="h-4 w-4" />
-                    B/A 검수 대기
-                  </Button>
-                </Link>
-                <Link to="/admin/showroom-basic-shorts">
-                  <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
-                    <Images className="h-4 w-4" />
-                    기본 쇼츠 대기
-                  </Button>
-                </Link>
-                <Link to="/consultation">
-                  <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
-                    <Users className="h-4 w-4" />
-                    상담 관리
-                  </Button>
-                </Link>
-                <Link to="/image-assets">
-                  <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
-                    이미지 자산 관리
-                  </Button>
-                </Link>
+              <div className="flex flex-col gap-2 lg:items-end">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Link to={originalArchivePath}>
+                    <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
+                      <Images className="h-4 w-4" />
+                      원자료 보기
+                    </Button>
+                  </Link>
+                  <Link to="/admin/showroom-case-studio">
+                    <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
+                      <FileText className="h-4 w-4" />
+                      케이스 작업실
+                    </Button>
+                  </Link>
+                  <Link to="/admin/showroom-ads">
+                    <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
+                      <BarChart3 className="h-4 w-4" />
+                      광고 대시보드
+                    </Button>
+                  </Link>
+                  <Link to="/admin/showroom-abm">
+                    <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
+                      <BarChart3 className="h-4 w-4" />
+                      ABM 퍼널
+                    </Button>
+                  </Link>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Link to="/admin/showroom-shorts">
+                    <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
+                      <Video className="h-4 w-4" />
+                      B/A 검수 대기
+                    </Button>
+                  </Link>
+                  <Link to="/admin/showroom-basic-shorts">
+                    <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
+                      <Images className="h-4 w-4" />
+                      기본 쇼츠 대기
+                    </Button>
+                  </Link>
+                  <Link to="/consultation">
+                    <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
+                      <Users className="h-4 w-4" />
+                      상담 관리
+                    </Button>
+                  </Link>
+                  <Link to="/image-assets">
+                    <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
+                      이미지 자산 관리
+                    </Button>
+                  </Link>
+                </div>
               </div>
             )}
           </div>

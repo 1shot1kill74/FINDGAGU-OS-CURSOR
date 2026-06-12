@@ -366,6 +366,7 @@ export function ImageAssetUploadForm({
                 startDate: selectedSpaceOption.start_date,
                 createdAt: selectedSpaceOption.created_at,
                 region: location.trim() || null,
+                siteName: siteTrim,
                 industry: business_type.trim() || null,
                 customerPhone: selectedSpaceOption.customer_phone,
               })

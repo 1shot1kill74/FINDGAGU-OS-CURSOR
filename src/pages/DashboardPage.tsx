@@ -311,6 +311,12 @@ export default function DashboardPage() {
       icon: MonitorCog,
     },
     {
+      title: '케이스 작업실',
+      description: '카드뉴스·블로그 초안 생성과 사례 콘텐츠를 편집합니다.',
+      to: '/admin/showroom-case-studio',
+      icon: Sparkles,
+    },
+    {
       title: '쇼룸 ABM 퍼널',
       description: '고민 카드·사례·상담 클릭까지 쇼룸 고객 행동을 실측합니다.',
       to: '/admin/showroom-abm',
@@ -463,6 +469,11 @@ export default function DashboardPage() {
               <Link to="/showroom">
                 <Button type="button" variant="outline" className="gap-1.5">
                   내부 쇼룸 보기
+                </Button>
+              </Link>
+              <Link to="/admin/showroom-case-studio">
+                <Button type="button" variant="outline" className="gap-1.5">
+                  케이스 작업실
                 </Button>
               </Link>
               <a href={openShowroomUrl} target="_blank" rel="noopener noreferrer">
@@ -648,6 +659,7 @@ export default function DashboardPage() {
             <Link to="/admin/migration"><Button variant="outline">데이터 통합 마이그레이션</Button></Link>
             <Link to="/admin/archive"><Button variant="outline">숨긴 상담 아카이브</Button></Link>
             <Link to="/admin/competitor-monitor"><Button variant="outline">경쟁사 모니터링</Button></Link>
+            <Link to="/admin/showroom-case-studio"><Button variant="outline">케이스 작업실</Button></Link>
             <Link to="/admin/showroom-abm"><Button variant="outline">쇼룸 ABM 퍼널</Button></Link>
             <Link to="/admin/test-console"><Button variant="outline">채널톡 시뮬레이터</Button></Link>
           </div>

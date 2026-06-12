@@ -1,4 +1,4 @@
-import { broadenPublicDisplayName } from '@/lib/showroomPublicDisplayName'
+import { broadenPublicDisplayName, inferBroadRegionFromDisplayName } from '@/lib/showroomPublicDisplayName'
 
 export function parseBeforeAfterMeta(metadata: unknown): {
   role: 'before' | 'after' | null
@@ -65,12 +65,13 @@ export function buildExternalDisplayName(params: {
   startDate?: string | null
   createdAt?: string | null
   region?: string | null
+  siteName?: string | null
   industry?: string | null
   customerPhone?: string | null
 }): string | null {
   const monthCode = formatExternalDisplayNameMonth(params.requestDate, params.startDate, params.createdAt)
   if (!monthCode) return null
-  const region = normalizeDisplayToken(params.region, '미지정')
+  const region = normalizeDisplayToken(params.region || inferBroadRegionFromDisplayName(params.siteName), '미지정')
   const industry = normalizeDisplayToken(params.industry, '기타')
   const phoneSuffix = getExternalDisplayNamePhoneSuffix(params.customerPhone)
   return `${monthCode} ${region} ${industry} ${phoneSuffix}`

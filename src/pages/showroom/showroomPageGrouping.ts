@@ -1,6 +1,6 @@
 import type { ShowroomImageAsset, ShowroomSiteOverride, ShowroomSiteOverrideSectionKey } from '@/lib/imageAssetService'
 import { getShowroomAssetGroupKey } from '@/lib/imageAssetService'
-import { broadenPublicDisplayName } from '@/lib/showroomShareService'
+import { broadenPublicDisplayName } from '@/lib/showroomPublicDisplayName'
 import {
   compareShowroomProductSeriesNames,
   CONCERN_CARDS,
@@ -57,9 +57,20 @@ export function getPreferredExternalDisplayName(images: ShowroomImageAsset[]): s
     return bTime - aTime
   })
   for (const image of sorted) {
+    const broadFromSiteName = broadenPublicDisplayName(
+      image.canonical_site_name?.trim() ||
+      image.raw_site_name?.trim() ||
+      image.space_display_name?.trim() ||
+      image.site_name?.trim() ||
+      null
+    )
     const externalDisplayName = image.broad_external_display_name?.trim()
       || broadenPublicDisplayName(image.external_display_name?.trim() ?? null)
+    if (externalDisplayName?.includes('미지정') && broadFromSiteName && !broadFromSiteName.includes('미지정')) {
+      return broadFromSiteName
+    }
     if (externalDisplayName) return externalDisplayName
+    if (broadFromSiteName) return broadFromSiteName
   }
   return null
 }

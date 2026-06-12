@@ -10,6 +10,8 @@ export default defineConfig(({ mode }) => {
   const showroomShortsProxyTarget =
     env.SHOWROOM_SHORTS_PROXY_TARGET?.trim() || 'https://findgagu-os-cursor.vercel.app'
   const showroomShortsProxyToken = env.SHOWROOM_SHORTS_PROXY_TOKEN?.trim() || ''
+  const showroomCaseContentProxyTarget =
+    env.SHOWROOM_CASE_CONTENT_PROXY_TARGET?.trim() || 'https://www.findgagu.co.kr'
 
   return {
     server: {
@@ -28,6 +30,11 @@ export default defineConfig(({ mode }) => {
               proxyReq.setHeader('Authorization', `Bearer ${showroomShortsProxyToken}`)
             })
           },
+        },
+        '/api/showroom-case-content': {
+          target: showroomCaseContentProxyTarget,
+          changeOrigin: true,
+          secure: true,
         },
       },
     },

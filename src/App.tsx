@@ -21,6 +21,7 @@ const ShowroomCaseApproachPage = lazy(() => import('@/pages/ShowroomCaseApproach
 const InternalShowroomPage = lazy(() => import('@/pages/InternalShowroomPage'))
 const OriginalShowroomPage = lazy(() => import('@/pages/OriginalShowroomPage'))
 const ContactPage = lazy(() => import('@/pages/ContactPage'))
+const PublicCustomerReviewSamplePage = lazy(() => import('@/pages/PublicCustomerReviewSamplePage'))
 const DashboardPage = lazy(() => import('@/pages/DashboardPage'))
 const LoginPage = lazy(() => import('@/pages/LoginPage'))
 const HomepageConceptPage = lazy(() => import('@/pages/HomepageConceptPage'))
@@ -153,6 +154,7 @@ function App() {
           <Route path="/sns/:channel" element={<SnsShowroomRedirect />} />
           <Route path="/s/:channel" element={<SnsShowroomRedirect />} />
           <Route path="/contact" element={<ContactPage />} />
+          <Route path="/review/sample" element={<PublicCustomerReviewSamplePage />} />
           <Route element={<ProtectedRoute />}>
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/consultation" element={<ConsultationManagement />} />
