@@ -452,12 +452,13 @@ export function collectUniqueLabels(values: Array<string | null | undefined>): s
 }
 
 export function getBroadPublicLabel(siteName: string | null | undefined, externalDisplayName?: string | null): string {
+  const normalizedSiteName = siteName?.trim() ?? ''
+  if (normalizedSiteName) return normalizedSiteName
   const external = externalDisplayName?.trim() ?? ''
   const broadExternal = broadenPublicDisplayName(external)
   if (broadExternal) return broadExternal
   if (external) return external
-  const normalizedSiteName = siteName?.trim() ?? ''
-  return broadenPublicDisplayName(normalizedSiteName) ?? normalizedSiteName
+  return ''
 }
 
 export function getGroupPublicLabel(group: Pick<SiteGroup, 'siteName' | 'externalDisplayName'>): string {
@@ -466,7 +467,14 @@ export function getGroupPublicLabel(group: Pick<SiteGroup, 'siteName' | 'externa
 
 export function getPublicLabelsFromImages(images: ShowroomImageAsset[]): string[] {
   return collectUniqueLabels(
-    images.map((image) => getBroadPublicLabel(image.site_name, image.external_display_name))
+    images.map((image) => getBroadPublicLabel(
+      image.canonical_site_name?.trim()
+      || image.raw_site_name?.trim()
+      || image.space_display_name?.trim()
+      || image.site_name?.trim()
+      || null,
+      image.external_display_name
+    ))
   )
 }
 

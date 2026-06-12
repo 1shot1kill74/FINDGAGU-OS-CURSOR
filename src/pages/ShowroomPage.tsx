@@ -1317,10 +1317,10 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
 
   const getBeforeAfterStoryHref = useCallback((group: SiteGroup) => {
     const candidates = [
-      group.externalDisplayName?.trim(),
       getPreferredShowroomSiteName(group.images).trim(),
       getGroupPublicLabel(group),
       group.siteName.trim(),
+      group.externalDisplayName?.trim(),
     ].filter((value): value is string => Boolean(value) && value !== '미지정')
     const siteName = candidates[0]
     if (!siteName) return null
