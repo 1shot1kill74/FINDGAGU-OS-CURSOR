@@ -1,10 +1,9 @@
 /**
  * PDF/JPG 파일 AI 데이터 추출 — Supabase Edge Function (analyze-quote) 연동
  * - 클라이언트: 파일 → base64 또는 PDF 텍스트 추출 후 Edge Function 호출
- * - Edge Function: Gemini 2.0 Flash Vision/Text API로 텍스트 추출 및 구조화 (가격 계산 로직 없음)
+ * - Edge Function: Gemini Flash Vision/Text API로 텍스트 추출 및 구조화 (가격 계산 로직 없음)
  * - PDF.js worker: 로컬 패키지 사용 (CDN 미사용)
  */
-import { toast } from 'sonner'
 import type { EstimateRow } from '@/components/estimate/estimateFormShared'
 import { supabase } from '@/lib/supabase'
 
@@ -122,10 +121,59 @@ interface AnalyzeQuoteResponse {
   result?: { type: 'Estimates'; data: ParsedEstimateFromPDF } | { type: 'VendorPrice'; data: ParsedVendorPrice }
   items?: ParsedUnitPriceItem[]
   error?: string
+  detail?: string
+  stage?: string
+  model?: string
 }
 
 export interface EdgeFunctionError extends Error {
-  context?: { error?: string; detail?: string }
+  context?: { error?: string; detail?: string; stage?: string; model?: string }
+}
+
+function readPayloadField(payload: unknown, field: string): string | undefined {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return undefined
+  const value = (payload as Record<string, unknown>)[field]
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+async function extractEdgeFunctionError(error: unknown): Promise<{ message: string; context: EdgeFunctionError['context'] }> {
+  const fallbackMessage = error instanceof Error ? error.message : 'Edge Function 호출 실패'
+  const fallbackName = error instanceof Error ? error.name : 'EdgeFunctionError'
+  const rawContext = error && typeof error === 'object' ? (error as { context?: unknown }).context : undefined
+
+  if (rawContext instanceof Response) {
+    let payload: unknown = null
+    try {
+      payload = await rawContext.clone().json()
+    } catch {
+      try {
+        const text = await rawContext.clone().text()
+        payload = text ? { detail: text } : null
+      } catch {
+        payload = null
+      }
+    }
+
+    const errorText = readPayloadField(payload, 'error')
+    const detail = readPayloadField(payload, 'detail')
+    const stage = readPayloadField(payload, 'stage')
+    const model = readPayloadField(payload, 'model')
+    const messageParts = [errorText || fallbackMessage, detail && `상세: ${detail}`, stage && `단계: ${stage}`].filter(Boolean)
+
+    return {
+      message: messageParts.join(' / '),
+      context: { error: errorText || fallbackName, detail, stage, model },
+    }
+  }
+
+  const detail = readPayloadField(rawContext, 'detail') || fallbackMessage
+  const stage = readPayloadField(rawContext, 'stage')
+  const model = readPayloadField(rawContext, 'model')
+
+  return {
+    message: fallbackMessage,
+    context: { error: fallbackName, detail, stage, model },
+  }
 }
 
 /** Edge Function analyze-quote 호출 */
@@ -135,8 +183,9 @@ async function invokeAnalyzeQuote(input: AnalyzeQuoteInput): Promise<AnalyzeQuot
   })
 
   if (error) {
-    const err = new Error(error.message || 'Edge Function 호출 실패') as EdgeFunctionError
-    err.context = { error: error.name, detail: error.message }
+    const edgeError = await extractEdgeFunctionError(error)
+    const err = new Error(edgeError.message) as EdgeFunctionError
+    err.context = edgeError.context
     throw err
   }
 
@@ -146,7 +195,7 @@ async function invokeAnalyzeQuote(input: AnalyzeQuoteInput): Promise<AnalyzeQuot
 
   if (data.error) {
     const err = new Error(data.error) as EdgeFunctionError
-    err.context = { error: data.error, detail: (data as any).detail }
+    err.context = { error: data.error, detail: data.detail, stage: data.stage, model: data.model }
     throw err
   }
 
@@ -172,33 +221,27 @@ export async function parseFileWithAI(
 
   const mode: AnalyzeMode = forceEstimates ? 'estimates' : forceVendorPrice ? 'vendor_price' : category === 'Estimates' ? 'estimates' : 'vendor_price'
 
-  try {
-    let response: AnalyzeQuoteResponse
+  let response: AnalyzeQuoteResponse
 
-    if (isPdf) {
-      const text = await extractTextFromPDF(file)
-      if (!text.trim()) throw new Error('PDF에서 텍스트를 추출할 수 없습니다.')
-      response = await invokeAnalyzeQuote({ text: text.slice(0, 15000), fileName: file.name, mode })
-    } else if (isImage) {
-      const base64 = await fileToBase64(file)
-      response = await invokeAnalyzeQuote({ image: base64, fileName: file.name, mode })
-    } else {
-      throw new Error('지원하지 않는 파일 형식입니다. PDF 또는 이미지(png, jpg, webp)만 업로드할 수 있습니다.')
-    }
-
-    if (response.result) {
-      return {
-        category: response.result.type === 'Estimates' ? 'Estimates' : 'VendorPrice',
-        result: response.result,
-      }
-    }
-
-    throw new Error('AI 분석 결과가 비어 있습니다.')
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'AI 분석에 실패했습니다.'
-    toast.error(message)
-    throw err
+  if (isPdf) {
+    const text = await extractTextFromPDF(file)
+    if (!text.trim()) throw new Error('PDF에서 텍스트를 추출할 수 없습니다.')
+    response = await invokeAnalyzeQuote({ text: text.slice(0, 15000), fileName: file.name, mode })
+  } else if (isImage) {
+    const base64 = await fileToBase64(file)
+    response = await invokeAnalyzeQuote({ image: base64, fileName: file.name, mode })
+  } else {
+    throw new Error('지원하지 않는 파일 형식입니다. PDF 또는 이미지(png, jpg, webp)만 업로드할 수 있습니다.')
   }
+
+  if (response.result) {
+    return {
+      category: response.result.type === 'Estimates' ? 'Estimates' : 'VendorPrice',
+      result: response.result,
+    }
+  }
+
+  throw new Error('AI 분석 결과가 비어 있습니다.')
 }
 
 export async function detectIsOurCompanyEstimate(file: File): Promise<boolean> {

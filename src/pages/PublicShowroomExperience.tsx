@@ -19,7 +19,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useColorChips } from '@/hooks/useColorChips'
 import { cn } from '@/lib/utils'
-import { Search, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Package, Images, FileText, MousePointerClick, MessageCircle, FileCheck, Users, Wrench, ClipboardCheck, ArrowRight, ArrowLeft, Copy, Check, Video, BarChart3, Building2, Palette } from 'lucide-react'
+import { Search, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Package, Images, FileText, MousePointerClick, MessageCircle, FileCheck, Users, Wrench, ClipboardCheck, ArrowRight, ArrowLeft, Copy, Check, Video, BarChart3, Building2, Palette, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react'
 import { toast } from 'sonner'
 import { parseShowroomCtaAttribution, trackShowroomCtaVisit } from '@/lib/showroomCtaTracking'
 import { openShowroomBlogTeaserLine } from '@/lib/showroomCaseCanonicalBlog'
@@ -79,6 +79,19 @@ import type {
   ViewMode,
 } from '@/pages/showroom/showroomPageTypes'
 
+const DETAIL_ZOOM_MIN = 1
+const DETAIL_ZOOM_MAX = 4
+const DETAIL_ZOOM_STEP = 0.5
+
+function clampDetailZoom(value: number): number {
+  return Math.min(DETAIL_ZOOM_MAX, Math.max(DETAIL_ZOOM_MIN, Number(value.toFixed(2))))
+}
+
+function getPointerDistance(points: Array<{ x: number; y: number }>): number {
+  if (points.length < 2) return 0
+  return Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y)
+}
+
 export default function PublicShowroomExperience() {
   const mode = 'public' as const
   const headerRef = useRef<HTMLElement | null>(null)
@@ -103,6 +116,8 @@ export default function PublicShowroomExperience() {
   const [detailKey, setDetailKey] = useState<string | null>(null)
   const [lightboxIndex, setLightboxIndex] = useState(0)
   const [detailViewMode, setDetailViewMode] = useState<'grid' | 'image'>('grid')
+  const [detailZoom, setDetailZoom] = useState(DETAIL_ZOOM_MIN)
+  const [detailPan, setDetailPan] = useState({ x: 0, y: 0 })
   const [industryPageBySection, setIndustryPageBySection] = useState<Record<string, number>>({})
   const [beforeAfterPage, setBeforeAfterPage] = useState(1)
   const [caseProfileDraftBySite, setCaseProfileDraftBySite] = useState<Record<string, ShowroomCaseProfileDraftState>>({})
@@ -662,6 +677,9 @@ export default function PublicShowroomExperience() {
   const detailImageFrameRef = useRef<HTMLDivElement | null>(null)
   const detailAnimatedImageIdRef = useRef<string | null>(null)
   const detailTransitionDirectionRef = useRef<'next' | 'prev'>('next')
+  const detailActivePointersRef = useRef(new Map<number, { x: number; y: number }>())
+  const detailPinchStartRef = useRef<{ distance: number; zoom: number } | null>(null)
+  const detailPanStartRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null)
 
   const openDetail = (mode: 'site' | 'product' | 'color' | 'beforeAfter', key: string) => {
     trackShowroomAbmEvent({
@@ -699,29 +717,116 @@ export default function PublicShowroomExperience() {
     setLightboxIndex((i) => (i >= detailImages.length - 1 ? 0 : i + 1))
   }, [detailImages.length])
   const detailPointerStartRef = useRef<{ x: number; y: number } | null>(null)
+
+  const resetDetailZoom = useCallback(() => {
+    setDetailZoom(DETAIL_ZOOM_MIN)
+    setDetailPan({ x: 0, y: 0 })
+    detailPointerStartRef.current = null
+    detailActivePointersRef.current.clear()
+    detailPinchStartRef.current = null
+    detailPanStartRef.current = null
+  }, [])
+
+  const updateDetailZoom = useCallback((nextZoom: number) => {
+    const clamped = clampDetailZoom(nextZoom)
+    setDetailZoom(clamped)
+    if (clamped <= DETAIL_ZOOM_MIN) {
+      setDetailPan({ x: 0, y: 0 })
+    }
+  }, [])
+
+  const zoomDetailIn = useCallback(() => {
+    setDetailZoom((current) => clampDetailZoom(current + DETAIL_ZOOM_STEP))
+  }, [])
+
+  const zoomDetailOut = useCallback(() => {
+    setDetailZoom((current) => {
+      const next = clampDetailZoom(current - DETAIL_ZOOM_STEP)
+      if (next <= DETAIL_ZOOM_MIN) setDetailPan({ x: 0, y: 0 })
+      return next
+    })
+  }, [])
+
   const handleDetailPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    if (!event.isPrimary) {
+    event.currentTarget.setPointerCapture(event.pointerId)
+    detailActivePointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+
+    const pointers = Array.from(detailActivePointersRef.current.values())
+    if (pointers.length >= 2) {
       detailPointerStartRef.current = null
+      detailPanStartRef.current = null
+      detailPinchStartRef.current = { distance: getPointerDistance(pointers), zoom: detailZoom }
       return
     }
-    event.currentTarget.setPointerCapture(event.pointerId)
+
+    detailPinchStartRef.current = null
+    if (detailZoom > DETAIL_ZOOM_MIN) {
+      detailPointerStartRef.current = null
+      detailPanStartRef.current = {
+        x: event.clientX,
+        y: event.clientY,
+        panX: detailPan.x,
+        panY: detailPan.y,
+      }
+      return
+    }
+
+    if (!event.isPrimary) return
     detailPointerStartRef.current = { x: event.clientX, y: event.clientY }
-  }, [])
+  }, [detailPan.x, detailPan.y, detailZoom])
+
+  const handleDetailPointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!detailActivePointersRef.current.has(event.pointerId)) return
+    detailActivePointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+
+    const pointers = Array.from(detailActivePointersRef.current.values())
+    if (pointers.length >= 2 && detailPinchStartRef.current) {
+      const nextDistance = getPointerDistance(pointers)
+      if (nextDistance > 0 && detailPinchStartRef.current.distance > 0) {
+        updateDetailZoom(detailPinchStartRef.current.zoom * (nextDistance / detailPinchStartRef.current.distance))
+      }
+      return
+    }
+
+    if (detailZoom > DETAIL_ZOOM_MIN && detailPanStartRef.current) {
+      setDetailPan({
+        x: detailPanStartRef.current.panX + event.clientX - detailPanStartRef.current.x,
+        y: detailPanStartRef.current.panY + event.clientY - detailPanStartRef.current.y,
+      })
+    }
+  }, [detailZoom, updateDetailZoom])
+
   const handleDetailPointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     const start = detailPointerStartRef.current
     detailPointerStartRef.current = null
-    if (!start || detailImages.length <= 1) return
+    const wasGesture = detailActivePointersRef.current.size > 1 || Boolean(detailPinchStartRef.current) || detailZoom > DETAIL_ZOOM_MIN
+    detailActivePointersRef.current.delete(event.pointerId)
+    detailPinchStartRef.current = null
+    detailPanStartRef.current = null
+
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
     }
+    if (wasGesture || !start || detailImages.length <= 1) return
+
     const deltaX = event.clientX - start.x
     const deltaY = event.clientY - start.y
     if (Math.abs(deltaX) < SWIPE_THRESHOLD_PX || Math.abs(deltaX) <= Math.abs(deltaY)) return
     if (deltaX < 0) goNext()
     else goPrev()
-  }, [detailImages.length, goNext, goPrev])
-  const handleDetailPointerCancel = useCallback(() => {
+  }, [detailImages.length, detailZoom, goNext, goPrev])
+  const handleDetailPointerCancel = useCallback((event?: React.PointerEvent<HTMLDivElement>) => {
     detailPointerStartRef.current = null
+    detailPanStartRef.current = null
+    detailPinchStartRef.current = null
+    if (event) {
+      detailActivePointersRef.current.delete(event.pointerId)
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+      }
+    } else {
+      detailActivePointersRef.current.clear()
+    }
   }, [])
   useEffect(() => {
     const currentImageId = detailImages[lightboxIndex]?.id ?? null
@@ -751,9 +856,8 @@ export default function PublicShowroomExperience() {
   }, [detailImages, lightboxIndex])
 
   useEffect(() => {
-    if (detailOpen === null) {
-      }
-  }, [detailOpen])
+    resetDetailZoom()
+  }, [detailOpen, detailViewMode, lightboxIndex, resetDetailZoom])
 
   const getBeforeAfterProfileDraft = useCallback((group: SiteGroup): ShowroomCaseProfileDraftState => {
     const publicLabel = getGroupPublicLabel(group)
@@ -2059,9 +2163,18 @@ export default function PublicShowroomExperience() {
               {detailDisplayTitle}
             </DialogTitle>
             <Button
+              type="button"
               variant="ghost"
               size="icon"
-              className="text-neutral-400 hover:text-white hover:bg-neutral-800"
+              aria-label="사진 뷰어 닫기"
+              className="relative z-20 h-11 w-11 touch-manipulation text-neutral-400 hover:text-white hover:bg-neutral-800"
+              onPointerDown={(event) => {
+                if (event.pointerType === 'pen' || event.pointerType === 'touch') {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  closeDetail()
+                }
+              }}
               onClick={closeDetail}
             >
               <X className="h-5 w-5" />
@@ -2124,23 +2237,60 @@ export default function PublicShowroomExperience() {
               </div>
             ) : (
               <>
-                <div className="mb-3 flex items-center justify-end gap-3">
-                  <span className="text-xs text-neutral-400">
-                    {lightboxIndex + 1} / {detailImages.length}
-                  </span>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="gap-2 border-neutral-700 text-white hover:bg-neutral-800"
-                    onClick={() => setDetailViewMode('grid')}
-                  >
-                    <ArrowLeft className="h-4 w-4" />
-                    전체 사진으로 돌아가기
-                  </Button>
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-1 rounded-full bg-neutral-800/90 p-1 text-white">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="h-9 w-9 rounded-full text-white hover:bg-neutral-700"
+                      onClick={zoomDetailOut}
+                      disabled={detailZoom <= DETAIL_ZOOM_MIN}
+                      aria-label="사진 축소"
+                    >
+                      <ZoomOut className="h-4 w-4" />
+                    </Button>
+                    <span className="min-w-12 text-center text-xs font-semibold text-neutral-200">
+                      {Math.round(detailZoom * 100)}%
+                    </span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="h-9 w-9 rounded-full text-white hover:bg-neutral-700"
+                      onClick={zoomDetailIn}
+                      disabled={detailZoom >= DETAIL_ZOOM_MAX}
+                      aria-label="사진 확대"
+                    >
+                      <ZoomIn className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="h-9 w-9 rounded-full text-white hover:bg-neutral-700"
+                      onClick={resetDetailZoom}
+                      disabled={detailZoom <= DETAIL_ZOOM_MIN}
+                      aria-label="확대 초기화"
+                    >
+                      <RotateCcw className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <div className="flex items-center justify-end gap-3">
+                    <span className="text-xs text-neutral-400">
+                      {lightboxIndex + 1} / {detailImages.length}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="gap-2 border-neutral-700 text-white hover:bg-neutral-800"
+                      onClick={() => setDetailViewMode('grid')}
+                    >
+                      <ArrowLeft className="h-4 w-4" />
+                      전체 사진으로 돌아가기
+                    </Button>
+                  </div>
                 </div>
                 <div
-                  className="relative flex items-center justify-center min-h-[60vh]"
-                  style={{ touchAction: 'pan-y' }}
+                  className="relative flex items-center justify-center min-h-[60vh] overflow-hidden rounded-lg"
+                  style={{ touchAction: 'none' }}
                 >
                   <button
                     type="button"
@@ -2151,17 +2301,33 @@ export default function PublicShowroomExperience() {
                     <ChevronLeft className="h-6 w-6" />
                   </button>
                   <div
-                    className="relative inline-block max-w-full cursor-grab active:cursor-grabbing"
+                    className={cn(
+                      'relative inline-block max-w-full',
+                      detailZoom > DETAIL_ZOOM_MIN ? 'cursor-move' : 'cursor-grab active:cursor-grabbing',
+                    )}
                     onPointerDown={handleDetailPointerDown}
+                    onPointerMove={handleDetailPointerMove}
                     onPointerUp={handleDetailPointerUp}
                     onPointerCancel={handleDetailPointerCancel}
-                    style={{ touchAction: 'pan-y' }}
+                    onDoubleClick={() => {
+                      if (detailZoom > DETAIL_ZOOM_MIN) resetDetailZoom()
+                      else updateDetailZoom(2)
+                    }}
+                    style={{ touchAction: 'none' }}
                     ref={detailImageFrameRef}
                   >
-                    <ShowroomLightboxSlide
-                      key={detailImages[lightboxIndex]?.id ?? lightboxIndex}
-                      image={detailImages[lightboxIndex]}
-                    />
+                    <div
+                      className="inline-block will-change-transform"
+                      style={{
+                        transform: `translate3d(${detailPan.x}px, ${detailPan.y}px, 0) scale(${detailZoom})`,
+                        transformOrigin: 'center center',
+                      }}
+                    >
+                      <ShowroomLightboxSlide
+                        key={detailImages[lightboxIndex]?.id ?? lightboxIndex}
+                        image={detailImages[lightboxIndex]}
+                      />
+                    </div>
                     {(() => {
                       const current = detailImages[lightboxIndex]
                       const productName = current?.product_name?.trim()

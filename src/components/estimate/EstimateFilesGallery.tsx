@@ -394,8 +394,9 @@ export function EstimateFilesGallery({
         setPreviewVendor(null)
       }
     } catch (err) {
-      setPreviewError(err instanceof Error ? err.message : 'AI 분석 실패')
-      toast.error('AI 분석에 실패했습니다.')
+      const message = err instanceof Error ? err.message : 'AI 분석 실패'
+      setPreviewError(message)
+      toast.error(message)
     } finally {
       setAnalyzing(false)
     }

@@ -1,6 +1,6 @@
 /**
  * analyze-quote — 견적서/원가표 이미지 AI 분석 Edge Function
- * - Gemini 2.0 Flash Vision API로 텍스트 추출 및 구조화만 수행 (가격 계산 로직 없음)
+ * - Gemini Flash Vision API로 텍스트 추출 및 구조화만 수행 (가격 계산 로직 없음)
  * - Input: { image: "base64_string", fileName: "string", mode?: "estimates" | "vendor_price" }
  * - Output: ParsedEstimateFromPDF | ParsedVendorPrice (시스템 metadata 구조와 동일)
  *
@@ -16,7 +16,7 @@ const CORS = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 }
 
-const GEMINI_MODEL = "gemini-2.0-flash"
+const GEMINI_MODEL = Deno.env.get("GOOGLE_GEMINI_MODEL")?.trim() || "gemini-3.5-flash"
 
 /** 견적서 이미지 분석 프롬프트 */
 const VISION_ESTIMATE_PROMPT = `당신은 가구 견적서 이미지 분석 전문가입니다. **반드시 아래 순서대로 검증 후** 추출을 진행하세요.
