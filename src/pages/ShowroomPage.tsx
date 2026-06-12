@@ -1530,16 +1530,6 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
           <div className="p-4 flex-1 flex flex-col min-h-0">
             <div>
               <h3 className="font-semibold text-neutral-900 truncate">{showInternalControls ? group.siteName : publicLabel}</h3>
-              {showInternalControls && group.externalDisplayName && group.externalDisplayName !== group.siteName && (
-                <div className="mt-1 flex items-center gap-2 min-w-0">
-                  {group.businessTypes.length > 0 && (
-                    <span className="shrink-0 rounded-full bg-neutral-100 px-2.5 py-1 text-[11px] font-medium text-neutral-600">
-                      {getPrimaryIndustryLabel(group.businessTypes)}
-                    </span>
-                  )}
-                  <p className="min-w-0 truncate text-[12px] leading-tight text-amber-600">{group.externalDisplayName}</p>
-                </div>
-              )}
             </div>
             <dl className="text-xs text-neutral-500 mt-1.5 space-y-0.5">
               {group.location && (
@@ -1629,16 +1619,6 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
         </div>
         <div className={showInternalControls ? 'p-4' : 'flex min-h-[5.5rem] items-start p-4'}>
           <h4 className="font-semibold leading-snug text-neutral-900">{showInternalControls ? group.siteName : publicLabel}</h4>
-          {showInternalControls && group.externalDisplayName && group.externalDisplayName !== group.siteName && (
-            <div className="mt-1 flex items-center gap-2 min-w-0">
-              {group.businessTypes[0] && (
-                <span className="shrink-0 rounded-full bg-neutral-100 px-2.5 py-1 text-[11px] font-medium text-neutral-600">
-                  {group.businessTypes[0]}
-                </span>
-              )}
-              <p className="min-w-0 truncate text-[12px] leading-tight text-amber-600">{group.externalDisplayName}</p>
-            </div>
-          )}
         </div>
       </>
     )
