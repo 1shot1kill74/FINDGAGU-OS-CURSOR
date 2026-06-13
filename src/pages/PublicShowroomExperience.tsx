@@ -600,10 +600,10 @@ export default function PublicShowroomExperience() {
   }, [beforeAfterGroups, detailKey, detailOpen, siteGroups])
   const detailGridClassName = useMemo(() => {
     if (detailImages.length <= 4) return 'grid grid-cols-2 gap-3 md:grid-cols-4'
-    if (detailImages.length <= 8) return 'grid grid-cols-2 gap-2.5 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5'
+    if (detailImages.length <= 8) return 'grid grid-cols-2 gap-2.5 md:grid-cols-4 xl:grid-cols-5'
     return 'grid grid-cols-3 gap-2 md:grid-cols-5 xl:grid-cols-6'
   }, [detailImages.length])
-  const detailThumbAspectClassName = detailImages.length > 8 ? 'aspect-[5/3] md:aspect-[4/3]' : 'aspect-[4/3] md:aspect-[5/4]'
+  const detailThumbAspectClassName = detailImages.length > 8 ? 'aspect-[5/3]' : 'aspect-[4/3]'
 
   useEffect(() => {
     if (detailOpen === null || detailImages.length === 0) return
@@ -2201,7 +2201,7 @@ export default function PublicShowroomExperience() {
           className={cn(
             'max-h-[90vh] overflow-hidden flex flex-col p-0 bg-neutral-900 border-0',
             detailViewMode === 'grid'
-              ? 'max-w-6xl md:h-[96vh] md:max-h-[96vh] md:w-[min(96vw,72rem)] md:max-w-[min(96vw,72rem)]'
+              ? 'max-w-6xl'
               : 'max-w-4xl md:h-[96vh] md:max-h-[96vh] md:w-[min(96vw,72rem)] md:max-w-[min(96vw,72rem)]',
           )}
         >
@@ -2224,13 +2224,12 @@ export default function PublicShowroomExperience() {
             className={cn(
               'flex-1 overflow-auto p-4 min-h-0',
               detailViewMode === 'image' && 'md:overflow-hidden md:flex md:flex-col md:p-3',
-              detailViewMode === 'grid' && 'md:flex md:flex-col md:p-3',
             )}
           >
             {detailImages.length === 0 ? (
               <p className="text-neutral-500 text-center py-8">사진이 없습니다.</p>
             ) : detailViewMode === 'grid' ? (
-              <div className="space-y-3 md:flex md:min-h-0 md:flex-1 md:flex-col">
+              <div className="space-y-3">
                 <div className="flex items-center justify-between gap-3 rounded-xl border border-neutral-700 bg-neutral-800/70 px-3 py-2.5">
                   <div>
                     <p className="text-sm font-medium text-white">
@@ -2242,7 +2241,7 @@ export default function PublicShowroomExperience() {
                     {detailImages.length}장
                   </span>
                 </div>
-                <div className={cn(detailGridClassName, 'md:flex-1 md:gap-3')}>
+                <div className={detailGridClassName}>
                   {detailImages.map((image, index) => {
                     const imageUrl = image.thumbnail_url || image.cloudinary_url || ''
                     const productName = image.product_name?.trim() || `사진 ${index + 1}`
