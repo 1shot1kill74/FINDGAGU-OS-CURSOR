@@ -92,6 +92,31 @@ function getPointerDistance(points: Array<{ x: number; y: number }>): number {
   return Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y)
 }
 
+function bindPenSafeButtonHandlers(action: () => void) {
+  return {
+    onPointerDown(event: React.PointerEvent<HTMLButtonElement>) {
+      if (event.pointerType === 'pen' || event.pointerType === 'touch') {
+        event.currentTarget.setPointerCapture(event.pointerId)
+      }
+    },
+    onPointerUp(event: React.PointerEvent<HTMLButtonElement>) {
+      if (event.pointerType !== 'pen' && event.pointerType !== 'touch') return
+      if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
+      event.preventDefault()
+      event.stopPropagation()
+      event.currentTarget.releasePointerCapture(event.pointerId)
+      action()
+    },
+    onClick(event: React.MouseEvent<HTMLButtonElement>) {
+      if (event.nativeEvent instanceof PointerEvent) {
+        const pointerType = event.nativeEvent.pointerType
+        if (pointerType === 'pen' || pointerType === 'touch') return
+      }
+      action()
+    },
+  }
+}
+
 export default function PublicShowroomExperience() {
   const mode = 'public' as const
   const headerRef = useRef<HTMLElement | null>(null)
@@ -680,8 +705,10 @@ export default function PublicShowroomExperience() {
   const detailActivePointersRef = useRef(new Map<number, { x: number; y: number }>())
   const detailPinchStartRef = useRef<{ distance: number; zoom: number } | null>(null)
   const detailPanStartRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null)
+  const detailDismissLockRef = useRef(false)
 
   const openDetail = (mode: 'site' | 'product' | 'color' | 'beforeAfter', key: string) => {
+    if (detailDismissLockRef.current) return
     trackShowroomAbmEvent({
       eventName: 'abm_gallery_open',
       concern: selectedConcernTag,
@@ -694,6 +721,7 @@ export default function PublicShowroomExperience() {
     })
     detailAnimatedImageIdRef.current = null
     detailTransitionDirectionRef.current = 'next'
+    setDetailViewMode('grid')
     setDetailOpen(mode)
     setDetailKey(key)
     setLightboxIndex(0)
@@ -701,7 +729,24 @@ export default function PublicShowroomExperience() {
 
   const closeDetail = useCallback(() => {
     setDetailOpen(null)
+    setDetailViewMode('grid')
+    detailDismissLockRef.current = true
+    window.setTimeout(() => {
+      detailDismissLockRef.current = false
+    }, 400)
   }, [])
+
+  const returnDetailToGrid = useCallback(() => {
+    setDetailViewMode('grid')
+  }, [])
+
+  const handleDetailHeaderDismiss = useCallback(() => {
+    if (detailViewMode === 'image') {
+      returnDetailToGrid()
+      return
+    }
+    closeDetail()
+  }, [closeDetail, detailViewMode, returnDetailToGrid])
 
   const openDetailImage = useCallback((index: number) => {
     setLightboxIndex(index)
@@ -2166,16 +2211,9 @@ export default function PublicShowroomExperience() {
               type="button"
               variant="ghost"
               size="icon"
-              aria-label="사진 뷰어 닫기"
+              aria-label={detailViewMode === 'image' ? '전체 사진 목록으로 돌아가기' : '사진 뷰어 닫기'}
               className="relative z-20 h-11 w-11 touch-manipulation text-neutral-400 hover:text-white hover:bg-neutral-800"
-              onPointerDown={(event) => {
-                if (event.pointerType === 'pen' || event.pointerType === 'touch') {
-                  event.preventDefault()
-                  event.stopPropagation()
-                  closeDetail()
-                }
-              }}
-              onClick={closeDetail}
+              {...bindPenSafeButtonHandlers(handleDetailHeaderDismiss)}
             >
               <X className="h-5 w-5" />
             </Button>
@@ -2280,8 +2318,8 @@ export default function PublicShowroomExperience() {
                     <Button
                       type="button"
                       variant="outline"
-                      className="gap-2 border-neutral-700 text-white hover:bg-neutral-800"
-                      onClick={() => setDetailViewMode('grid')}
+                      className="gap-2 border-neutral-700 text-white hover:bg-neutral-800 touch-manipulation"
+                      {...bindPenSafeButtonHandlers(returnDetailToGrid)}
                     >
                       <ArrowLeft className="h-4 w-4" />
                       전체 사진으로 돌아가기
