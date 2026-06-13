@@ -2253,8 +2253,8 @@ export default function PublicShowroomExperience() {
                       >
                         <button
                           type="button"
-                          onClick={() => openDetailImage(index)}
-                          className="block w-full text-left"
+                          className="block w-full touch-manipulation text-left"
+                          {...bindPenSafeButtonHandlers(() => openDetailImage(index))}
                         >
                           <div className={cn('relative bg-neutral-900', detailThumbAspectClassName)}>
                             <img
