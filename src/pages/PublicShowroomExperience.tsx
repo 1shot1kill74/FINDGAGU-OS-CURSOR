@@ -2200,7 +2200,9 @@ export default function PublicShowroomExperience() {
         <DialogContent
           className={cn(
             'max-h-[90vh] overflow-hidden flex flex-col p-0 bg-neutral-900 border-0',
-            detailViewMode === 'grid' ? 'max-w-6xl' : 'max-w-4xl'
+            detailViewMode === 'grid'
+              ? 'max-w-6xl'
+              : 'max-w-4xl md:h-[96vh] md:max-h-[96vh] md:w-[min(96vw,72rem)] md:max-w-[min(96vw,72rem)]',
           )}
         >
           <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-700">
@@ -2218,7 +2220,12 @@ export default function PublicShowroomExperience() {
               <X className="h-5 w-5" />
             </Button>
           </div>
-          <div className="flex-1 overflow-auto p-4">
+          <div
+            className={cn(
+              'flex-1 overflow-auto p-4 min-h-0',
+              detailViewMode === 'image' && 'md:overflow-hidden md:flex md:flex-col md:p-3',
+            )}
+          >
             {detailImages.length === 0 ? (
               <p className="text-neutral-500 text-center py-8">사진이 없습니다.</p>
             ) : detailViewMode === 'grid' ? (
@@ -2274,8 +2281,8 @@ export default function PublicShowroomExperience() {
                 </div>
               </div>
             ) : (
-              <>
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex min-h-0 flex-1 flex-col">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2 shrink-0">
                   <div className="flex items-center gap-1 rounded-full bg-neutral-800/90 p-1 text-white">
                     <Button
                       type="button"
@@ -2327,7 +2334,7 @@ export default function PublicShowroomExperience() {
                   </div>
                 </div>
                 <div
-                  className="relative flex items-center justify-center min-h-[60vh] overflow-hidden rounded-lg"
+                  className="relative flex flex-1 items-center justify-center min-h-[60vh] md:min-h-0 overflow-hidden rounded-lg"
                   style={{ touchAction: 'none' }}
                 >
                   <button
@@ -2364,6 +2371,7 @@ export default function PublicShowroomExperience() {
                       <ShowroomLightboxSlide
                         key={detailImages[lightboxIndex]?.id ?? lightboxIndex}
                         image={detailImages[lightboxIndex]}
+                        className="max-h-[70vh] md:max-h-[calc(96vh-13rem)] md:max-w-full"
                       />
                     </div>
                     {(() => {
@@ -2396,7 +2404,7 @@ export default function PublicShowroomExperience() {
                     <ChevronRight className="h-6 w-6" />
                   </button>
                 </div>
-              </>
+              </div>
             )}
           </div>
           {detailImages.length > 0 && detailViewMode === 'image' && (
