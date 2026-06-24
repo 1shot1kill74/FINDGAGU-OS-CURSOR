@@ -104,6 +104,27 @@ const VARIANT_CONFIG: Record<ShowroomAbmUxVariant, VariantConfig> = {
   },
 }
 
+/** 현재 공개 쇼룸 모바일 UX (사진-first, 갤러리 상단, 메인 Sticky 상담 CTA, 헤더 앵커) */
+const MOBILE_CURRENT_VARIANT_CONFIG: VariantConfig = {
+  concernSelectBase: 0.38,
+  beforeAfterViewRate: 0.76,
+  storyClickRate: 0.44,
+  caseLoadSuccessRate: 0.89,
+  consultationMomentRate: 0.72,
+  storyConsultationClickRate: 0.13,
+  photoGalleryOpenRate: 0.56,
+  photoConsultationClickRate: 0.14,
+}
+
+export type ShowroomAbmSimulationOptions = {
+  mobile?: boolean
+}
+
+function getVariantConfig(variant: ShowroomAbmUxVariant, options?: ShowroomAbmSimulationOptions): VariantConfig {
+  if (variant === 'after' && options?.mobile) return MOBILE_CURRENT_VARIANT_CONFIG
+  return VARIANT_CONFIG[variant]
+}
+
 function mulberry32(seed: number) {
   return () => {
     seed |= 0
@@ -127,10 +148,15 @@ function chance(rng: () => number, probability: number): boolean {
   return rng() < Math.max(0, Math.min(1, probability))
 }
 
-export function createShowroomAbmAgents(count: number, seed = 20260609): ShowroomAbmAgent[] {
+export function createShowroomAbmAgents(
+  count: number,
+  seed = 20260609,
+  options?: ShowroomAbmSimulationOptions,
+): ShowroomAbmAgent[] {
   const rng = mulberry32(seed)
+  const storyRouteRatio = options?.mobile ? 0.58 : 0.68
   return Array.from({ length: count }, (_, index) => {
-    const route: ShowroomAbmAgentRoute = rng() < 0.68 ? 'story' : 'photo'
+    const route: ShowroomAbmAgentRoute = rng() < storyRouteRatio ? 'story' : 'photo'
     const concern = route === 'story' ? pickConcern(rng) : null
     const card = concern ? CONCERN_CARDS.find((item) => item.tag === concern) : null
     return {
@@ -164,8 +190,9 @@ export function simulateShowroomAbmVariant(
   agents: ShowroomAbmAgent[],
   variant: ShowroomAbmUxVariant,
   seed = 20260609,
+  options?: ShowroomAbmSimulationOptions,
 ): ShowroomAbmSimulationResult {
-  const config = VARIANT_CONFIG[variant]
+  const config = getVariantConfig(variant, options)
   const rng = mulberry32(seed + (variant === 'before' ? 11 : 29))
   const funnel = emptyFunnel(agents.length)
 
@@ -225,10 +252,11 @@ export function simulateShowroomAbmVariant(
 export function compareShowroomAbmVariants(
   agentCount = 1000,
   seed = 20260609,
+  options?: ShowroomAbmSimulationOptions,
 ): ShowroomAbmComparison {
-  const agents = createShowroomAbmAgents(agentCount, seed)
-  const before = simulateShowroomAbmVariant(agents, 'before', seed)
-  const after = simulateShowroomAbmVariant(agents, 'after', seed)
+  const agents = createShowroomAbmAgents(agentCount, seed, options)
+  const before = simulateShowroomAbmVariant(agents, 'before', seed, options)
+  const after = simulateShowroomAbmVariant(agents, 'after', seed, options)
 
   return {
     agentCount,
@@ -291,7 +319,10 @@ function buildFunnelSteps(
   })
 }
 
-export function buildShowroomAbmFrictionReport(result: ShowroomAbmSimulationResult): ShowroomAbmFrictionReport {
+export function buildShowroomAbmFrictionReport(
+  result: ShowroomAbmSimulationResult,
+  options?: ShowroomAbmSimulationOptions,
+): ShowroomAbmFrictionReport {
   const { funnel } = result
 
   const storySteps = buildFunnelSteps(
@@ -309,7 +340,7 @@ export function buildShowroomAbmFrictionReport(result: ShowroomAbmSimulationResu
   const photoSteps = buildFunnelSteps(
     [
       { key: 'gallery_open', label: '갤러리/사진 탐색 진입', count: funnel.photoGalleryOpened },
-      { key: 'consult_click', label: '갤러리 상담 클릭', count: funnel.photoConsultationClicked },
+      { key: 'consult_click', label: '상담 클릭(갤러리·Sticky)', count: funnel.photoConsultationClicked },
     ],
     funnel.photoAgents,
   )
@@ -324,7 +355,7 @@ export function buildShowroomAbmFrictionReport(result: ShowroomAbmSimulationResu
     .sort((a, b) => b.dropRate - a.dropRate || b.dropCount - a.dropCount)
 
   const topDropoffs = dropCandidates.slice(0, 4)
-  const frictionNotes = buildFrictionNotes(result, topDropoffs)
+  const frictionNotes = buildFrictionNotes(result, topDropoffs, options)
 
   return {
     variant: result.variant,
@@ -338,6 +369,7 @@ export function buildShowroomAbmFrictionReport(result: ShowroomAbmSimulationResu
 function buildFrictionNotes(
   result: ShowroomAbmSimulationResult,
   topDropoffs: ShowroomAbmFrictionReport['topDropoffs'],
+  options?: ShowroomAbmSimulationOptions,
 ): string[] {
   const notes: string[] = []
   const { funnel, rates } = result
@@ -348,12 +380,20 @@ function buildFrictionNotes(
 
   const concernDrop = funnel.storyAgents - funnel.concernSelected
   if (concernDrop > funnel.storyAgents * 0.4) {
-    notes.push('고민 카드까지 오지만 선택하지 않는 비율이 높습니다. 카드 카피·스크롤 위치·「성공 사례 보기」 인지도를 점검하세요.')
+    if (options?.mobile) {
+      notes.push('모바일에서 갤러리 스크롤 후 **전문가추천**까지 도달하지 못하는 비율이 높습니다. 헤더 「전문가추천」 앵커·섹션 위치를 점검하세요.')
+    } else {
+      notes.push('고민 카드까지 오지만 선택하지 않는 비율이 높습니다. 카드 카피·스크롤 위치·「성공 사례 보기」 인지도를 점검하세요.')
+    }
   }
 
   const baToStoryDrop = funnel.beforeAfterViewed - funnel.storyOpened
   if (baToStoryDrop > funnel.beforeAfterViewed * 0.35) {
-    notes.push('B/A는 보지만 사례 페이지로 넘어가지 않습니다. 블로그 티저·「자세히 보기」 CTA가 약해 보일 수 있습니다.')
+    if (options?.mobile) {
+      notes.push('「현장 Before/After」는 사진 탭→블로그 링크 분리가 맞지만, 블로그 CTA 발견성이 낮을 수 있습니다. 앨범(사진)과 「자세히 보기」 시각적 구분을 확인하세요.')
+    } else {
+      notes.push('B/A는 보지만 사례 페이지로 넘어가지 않습니다. 블로그 티저·「자세히 보기」 CTA가 약해 보일 수 있습니다.')
+    }
   }
 
   const caseFailEstimate = funnel.storyOpened - funnel.caseLoaded
@@ -363,18 +403,28 @@ function buildFrictionNotes(
 
   const momentToClickDrop = funnel.consultationMoment - funnel.consultationClicked
   if (momentToClickDrop > funnel.consultationMoment * 0.6) {
-    notes.push('사례까지 본 사람 중 상담 클릭 전환은 여전히 낮습니다. Sticky CTA 카피·노출 타이밍·채널톡 오픈 신뢰도가 병목일 수 있습니다.')
+    notes.push('사례까지 본 사람 중 상담 클릭 전환은 여전히 낮습니다. 메인 **Sticky**와 사례 페이지 CTA의 문구·노출 타이밍을 점검하세요.')
   }
 
   const photoOpenRate = rate(funnel.photoGalleryOpened, funnel.photoAgents)
   if (photoOpenRate < 0.5) {
-    notes.push('사진 루트는 갤러리 진입 자체가 어렵습니다. 「시공 사례 사진 바로 찾기」 섹션 가시성·탭(업종/제품/색상) 발견성을 확인하세요.')
+    if (options?.mobile) {
+      notes.push('사진 루트도 갤러리 이후 상담까지 가기 어렵습니다. 업종 pill·「먼저 업종을 선택하세요」·필터 버튼 발견성을 모바일에서 재확인하세요.')
+    } else {
+      notes.push('사진 루트는 갤러리 진입 자체가 어렵습니다. 「시공 사례 사진 바로 찾기」 섹션 가시성·탭(업종/제품/색상) 발견성을 확인하세요.')
+    }
+  } else if (options?.mobile) {
+    notes.push('사진-first + 메인 Sticky 덕분에 상담 전환은 개선됐지만, **갤러리 모달 vs Sticky** 중 어디가 더 쓰이는지는 실측 surface로 확인하세요.')
+  }
+
+  if (options?.mobile) {
+    notes.push('헤더 「시공전후」「전문가추천」은 `abm_header_nav_click`으로 실측합니다. 앵커 클릭 후 상담까지 이어지는지 대시보드에서 교차 확인하세요.')
   }
 
   if (rates.overallConsultationRate < 0.05) {
     notes.push('전체 방문 대비 상담 클릭은 아직 낮은 편입니다. 시뮬 추정치이므로 **실측 ABM 대시보드**(`/admin/showroom-abm`)로 교차 검증하세요.')
   } else {
-    notes.push('개선 후에도 상담까지 가는 사람은 소수입니다. 퍼널 상단(고민→B/A)보다 **상담 CTA 구간**이 다음 레버일 가능성이 큽니다.')
+    notes.push('Phase 3 Sticky 반영 후 상담 전환은 개선됐습니다. 다음 레버는 헤더 앵커·갤러리 필터 발견성과 사례 페이지 CTA입니다.')
   }
 
   return notes
@@ -383,12 +433,14 @@ function buildFrictionNotes(
 export function buildShowroomAbmFrictionMarkdown(
   comparison: ShowroomAbmComparison,
   focusVariant: ShowroomAbmUxVariant = 'after',
+  options?: ShowroomAbmSimulationOptions,
 ): string {
   const result = focusVariant === 'before' ? comparison.before : comparison.after
-  const friction = buildShowroomAbmFrictionReport(result)
+  const friction = buildShowroomAbmFrictionReport(result, options)
   const routeSplit = result.agents.length > 0
     ? `${result.funnel.storyAgents} story / ${result.funnel.photoAgents} photo`
     : '-'
+  const viewportLabel = options?.mobile ? '모바일 · 현재 공개 쇼룸 UX' : '데스크톱 가정'
 
   const formatStepRow = (step: ShowroomAbmFunnelStep) => {
     const prev = step.rateFromPrevious == null ? '-' : formatPercent(step.rateFromPrevious)
@@ -397,7 +449,7 @@ export function buildShowroomAbmFrictionMarkdown(
   }
 
   const lines = [
-    `## 현재 UX 불편·이탈 진단 (${focusVariant}, ${comparison.agentCount} agents)`,
+    `## 현재 UX 불편·이탈 진단 (${focusVariant}, ${comparison.agentCount} agents, ${viewportLabel})`,
     '',
     `- 루트 분포: ${routeSplit}`,
     `- 전체 상담 클릭률(방문 대비): ${formatPercent(result.rates.overallConsultationRate)}`,
@@ -430,11 +482,15 @@ export function buildShowroomAbmFrictionMarkdown(
   return lines.join('\n')
 }
 
-export function buildShowroomAbmComparisonReport(comparison: ShowroomAbmComparison): string {
+export function buildShowroomAbmComparisonReport(
+  comparison: ShowroomAbmComparison,
+  options?: ShowroomAbmSimulationOptions,
+): string {
+  const viewportLabel = options?.mobile ? '모바일 · 현재 공개 쇼룸 UX' : '데스크톱 가정'
   const lines = [
     `# Showroom ABM Agent Simulation (${comparison.agentCount} agents)`,
     '',
-    '동일 1000명 페르소나를 before/after UX 가정으로 각각 시뮬레이션한 결과입니다.',
+    `동일 ${comparison.agentCount}명 페르소나를 before/after UX 가정으로 각각 시뮬레이션한 결과입니다. (${viewportLabel})`,
     '실제 라이브 데이터가 쌓이기 전, 이번 개선의 방향성을 검증하는 **모델 추정치**입니다.',
     '',
     '## 핵심 반응 지표',
@@ -471,7 +527,7 @@ export function buildShowroomAbmComparisonReport(comparison: ShowroomAbmComparis
     `- 사진 상담 클릭: ${comparison.before.funnel.photoConsultationClicked}`,
     `- 사례 로드 성공: ${comparison.before.funnel.caseLoaded}`,
     '',
-    buildShowroomAbmFrictionMarkdown(comparison, 'after'),
+    buildShowroomAbmFrictionMarkdown(comparison, 'after', options),
   ]
   return lines.join('\n')
 }

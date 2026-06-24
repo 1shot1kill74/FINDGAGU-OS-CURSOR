@@ -58,7 +58,12 @@ const SURFACE_LABELS: Record<ShowroomAbmConsultationSurface, string> = {
   case_sticky: '사례 하단 Sticky',
   case_inline: '사례 본문 상담',
   gallery_modal: '갤러리 모달',
-  gallery_browse_header: '갤러리 헤더',
+  gallery_browse_header: '메인 Sticky',
+}
+
+const HEADER_NAV_LABELS: Record<string, string> = {
+  before_after: '시공전후',
+  expert_recommend: '전문가추천',
 }
 
 type AbmEventRow = {
@@ -92,6 +97,13 @@ type ConcernMetric = {
 
 type SurfaceMetric = {
   surface: string
+  label: string
+  sessions: number
+  events: number
+}
+
+type HeaderNavMetric = {
+  target: string
   label: string
   sessions: number
   events: number
@@ -332,18 +344,11 @@ export default function ShowroomAbmDashboardPage() {
 
             <section className="grid gap-6 xl:grid-cols-2">
               <SimpleTable
-                title="고민별 행동"
-                description="concern 메타데이터가 붙은 이벤트 기준"
-                emptyMessage="고민 데이터가 없습니다."
-                columns={['고민', '세션', '고민 선택', 'B/A 클릭', '사례 열림', '상담']}
-                rows={metrics.concernMetrics.map((row) => [
-                  row.concern,
-                  formatNumber(row.sessions),
-                  formatNumber(row.concernSelects),
-                  formatNumber(row.baClicks),
-                  formatNumber(row.caseOpens),
-                  formatNumber(row.consultations),
-                ])}
+                title="헤더 네비 클릭"
+                description="상단 시공전후·전문가추천 앵커 (abm_header_nav_click)"
+                emptyMessage="헤더 네비 클릭 데이터가 없습니다."
+                columns={['대상', '세션', '클릭 수']}
+                rows={metrics.headerNavMetrics.map((row) => [row.label, formatNumber(row.sessions), formatNumber(row.events)])}
               />
 
               <SimpleTable
@@ -354,6 +359,21 @@ export default function ShowroomAbmDashboardPage() {
                 rows={metrics.surfaceMetrics.map((row) => [row.label, formatNumber(row.sessions), formatNumber(row.events)])}
               />
             </section>
+
+            <SimpleTable
+              title="고민별 행동"
+              description="concern 메타데이터가 붙은 이벤트 기준"
+              emptyMessage="고민 데이터가 없습니다."
+              columns={['고민', '세션', '고민 선택', 'B/A 클릭', '사례 열림', '상담']}
+              rows={metrics.concernMetrics.map((row) => [
+                row.concern,
+                formatNumber(row.sessions),
+                formatNumber(row.concernSelects),
+                formatNumber(row.baClicks),
+                formatNumber(row.caseOpens),
+                formatNumber(row.consultations),
+              ])}
+            />
 
             <SimpleTable
               title="SNS/캠페인별 유입"
@@ -398,8 +418,9 @@ export default function ShowroomAbmDashboardPage() {
             <p>1. 퍼널은 session_key 기준입니다. 같은 사람이 여러 단계를 거치면 각 단계에 1회씩 집계됩니다.</p>
             <p>2. 기본 「프로덕션만」은 운영 도메인 이벤트만 보여 줍니다. 로컬·프리뷰 테스트는 「전체」에서 확인하세요.</p>
             <p>3. 빨간 이탈 구간(이전 단계 대비 급격한 감소)부터 UX·카피·CTA를 손보는 것이 우선입니다.</p>
-            <p>4. 상담 surface가 한쪽에만 몰리면, 다른 CTA의 가시성·문구·배치를 조정해 보세요.</p>
-            <p>5. 사례 실패 건은 콘텐츠·링크 품질 문제일 수 있으니 case 작업실과 함께 확인하세요.</p>
+            <p>4. 상담 surface가 한쪽에만 몰리면, 다른 CTA의 가시성·문구·배치를 조정해 보세요. 메인 Sticky(`gallery_browse_header`)와 갤러리 모달을 비교하세요.</p>
+            <p>5. 헤더 「시공전후」「전문가추천」 클릭(`abm_header_nav_click`)이 높으면 앵커는 쓰이고 있는 것입니다. 클릭 후 상담 전환은 별도로 봅니다.</p>
+            <p>6. 사례 실패 건은 콘텐츠·링크 품질 문제일 수 있으니 case 작업실과 함께 확인하세요.</p>
           </div>
         </section>
       </div>
@@ -446,6 +467,7 @@ function buildAbmDashboardMetrics(rows: AbmEventRow[]) {
     storyFunnel,
     galleryFunnel,
     concernMetrics: buildConcernMetrics(rows),
+    headerNavMetrics: buildHeaderNavMetrics(rows),
     surfaceMetrics: buildSurfaceMetrics(rows),
     channelMetrics: buildChannelMetrics(rows),
     caseFailMetrics: buildCaseFailMetrics(rows),
@@ -501,6 +523,28 @@ function buildConcernMetrics(rows: AbmEventRow[]): ConcernMetric[] {
     .sort(
       (a, b) => b.consultations - a.consultations || b.sessions - a.sessions || a.concern.localeCompare(b.concern, 'ko')
     )
+}
+
+function buildHeaderNavMetrics(rows: AbmEventRow[]): HeaderNavMetric[] {
+  const map = new Map<string, { sessions: Set<string>; events: number }>()
+
+  for (const row of rows) {
+    if (row.event_name !== 'abm_header_nav_click') continue
+    const target = readMetadataString(row.metadata, 'navTarget') ?? 'unknown'
+    const bucket = map.get(target) ?? { sessions: new Set<string>(), events: 0 }
+    bucket.sessions.add(row.session_key)
+    bucket.events += 1
+    map.set(target, bucket)
+  }
+
+  return [...map.entries()]
+    .map(([target, bucket]) => ({
+      target,
+      label: HEADER_NAV_LABELS[target] ?? target,
+      sessions: bucket.sessions.size,
+      events: bucket.events,
+    }))
+    .sort((a, b) => b.sessions - a.sessions || b.events - a.events)
 }
 
 function buildSurfaceMetrics(rows: AbmEventRow[]): SurfaceMetric[] {

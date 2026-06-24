@@ -11,6 +11,7 @@ export type ShowroomAbmEventName = Extract<
   | 'abm_consultation_click'
   | 'abm_gallery_open'
   | 'abm_gallery_browse'
+  | 'abm_header_nav_click'
 >
 
 export type ShowroomAbmConsultationSurface =
@@ -19,6 +20,8 @@ export type ShowroomAbmConsultationSurface =
   | 'case_inline'
   | 'gallery_modal'
   | 'gallery_browse_header'
+
+export type ShowroomAbmHeaderNavTarget = 'before_after' | 'expert_recommend'
 
 export type ShowroomAbmGalleryMode = 'site' | 'product' | 'color' | 'beforeAfter'
 
@@ -58,5 +61,16 @@ export function trackShowroomAbmConsultationClick(input: {
     concern: input.concern,
     siteName: input.siteName,
     metadata: { surface: input.surface },
+  })
+}
+
+export function trackShowroomAbmHeaderNavClick(input: {
+  target: ShowroomAbmHeaderNavTarget
+  concern?: string | null
+}): void {
+  trackShowroomAbmEvent({
+    eventName: 'abm_header_nav_click',
+    concern: input.concern,
+    metadata: { navTarget: input.target },
   })
 }

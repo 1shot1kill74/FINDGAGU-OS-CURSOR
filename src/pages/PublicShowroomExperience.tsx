@@ -30,7 +30,7 @@ import {
 } from '@/lib/showroomCaseProfileService'
 import { collectShowroomAliasNamesFromImages, collectShowroomIdentityKeys } from '@/lib/showroomCaseAlias'
 import { appendShowroomConcernQuery, openShowroomConsultationChat } from '@/pages/showroom/showroomStoryCta'
-import { trackShowroomAbmEvent } from '@/lib/showroomAbmTracking'
+import { trackShowroomAbmEvent, trackShowroomAbmHeaderNavClick } from '@/lib/showroomAbmTracking'
 
 import {
   CONCERN_CARDS,
@@ -68,6 +68,8 @@ import {
   summarizeTopLabels,
 } from '@/pages/showroom/showroomPageGrouping'
 import { ShowroomExpertConsultationButton } from '@/pages/showroom/ShowroomExpertConsultationButton'
+import { ShowroomMainStickyConsultCta } from '@/pages/showroom/ShowroomMainStickyConsultCta'
+import { ShowroomMobileExpertComment } from '@/pages/showroom/ShowroomMobileExpertComment'
 import { loadShowroomDataset } from '@/pages/showroom/showroomDataset'
 import type {
   ColorGroup,
@@ -152,6 +154,7 @@ export default function PublicShowroomExperience() {
   const trackedPublicEntryRef = useRef(false)
   const trackedAbmEnterRef = useRef(false)
   const originalArchivePath = '/public/showroom/original'
+  const [concernSectionExpanded, setConcernSectionExpanded] = useState(true)
 
   // 딥링크: URL ?q, ?concern 변경 시(뒤로가기 등) 상태 동기화. 레거시 ?tag도 지원.
   useEffect(() => {
@@ -159,7 +162,9 @@ export default function PublicShowroomExperience() {
     const concern = searchParams.get('concern')
     const legacyTag = searchParams.get('tag')
     setSearchQuery(q ?? (normalizeConcernTag(legacyTag) ? '' : (legacyTag ?? '')))
-    setSelectedConcernTag(normalizeConcernTag(concern) ?? normalizeConcernTag(legacyTag))
+    const nextConcern = normalizeConcernTag(concern) ?? normalizeConcernTag(legacyTag)
+    setSelectedConcernTag(nextConcern)
+    if (nextConcern) setConcernSectionExpanded(true)
   }, [searchParams])
 
   useEffect(() => {
@@ -213,6 +218,7 @@ export default function PublicShowroomExperience() {
   const setConcernTagAndUrl = (value: string | null) => {
     setSelectedConcernTag(value)
     updateShowroomParams({ concern: value })
+    if (value) setConcernSectionExpanded(true)
     if (mode === 'public' && value) {
       trackShowroomAbmEvent({
         eventName: 'abm_concern_select',
@@ -509,7 +515,7 @@ export default function PublicShowroomExperience() {
       ...labels
         .filter((industry) => !INDUSTRY_PREFERRED_ORDER.includes(industry as typeof INDUSTRY_PREFERRED_ORDER[number]))
         .sort((a, b) => a.localeCompare(b, 'ko')),
-    ]
+    ].filter((industry) => industry !== '기타')
 
     return orderedLabels.map((industry) => {
       const groups = grouped.get(industry) ?? []
@@ -544,7 +550,7 @@ export default function PublicShowroomExperience() {
     [beforeAfterGroups, concernIndustryFilter, selectedConcernTag]
   )
   const featuredBeforeAfterGroups = useMemo(
-    () => visibleBeforeAfterGroups.slice(0, 3),
+    () => visibleBeforeAfterGroups.slice(0, 2),
     [visibleBeforeAfterGroups]
   )
   const concernBeforeAfterTotalPages = useMemo(
@@ -1002,22 +1008,24 @@ export default function PublicShowroomExperience() {
   }, [beforeAfterPage, concernBeforeAfterTotalPages])
 
   const scrollToBeforeAfterSection = useCallback(() => {
-    setViewMode('industry')
-    navigate({ pathname: location.pathname, search: location.search, hash: 'showroom-before-after-section' }, { replace: true })
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        scrollToSectionWithOffset('showroom-before-after-section')
-      })
-    })
-  }, [navigate, scrollToSectionWithOffset, location.pathname, location.search])
+    trackShowroomAbmHeaderNavClick({ target: 'before_after', concern: selectedConcernTag })
+    scrollToSectionWithOffset('showroom-featured-ba-heading')
+  }, [scrollToSectionWithOffset, selectedConcernTag])
 
-  /** URL 해시(#showroom-before-after-section)로 진입 시 업종 뷰로 맞춘 뒤 해당 섹션으로 스크롤 */
+  const scrollToExpertRecommendSection = useCallback(() => {
+    trackShowroomAbmHeaderNavClick({ target: 'expert_recommend', concern: selectedConcernTag })
+    setConcernSectionExpanded(true)
+    requestAnimationFrame(() => {
+      scrollToSectionWithOffset('showroom-concern-heading')
+    })
+  }, [scrollToSectionWithOffset, selectedConcernTag])
+
+  /** URL 해시(#showroom-featured-ba-heading)로 진입 시 전후 비교 섹션으로 스크롤 */
   useEffect(() => {
-    if (location.hash !== '#showroom-before-after-section') return
+    if (location.hash !== '#showroom-featured-ba-heading') return
     if (loading) return
-    setViewMode('industry')
     const t = window.setTimeout(() => {
-      scrollToSectionWithOffset('showroom-before-after-section')
+      scrollToSectionWithOffset('showroom-featured-ba-heading')
     }, 280)
     return () => window.clearTimeout(t)
   }, [location.hash, loading, scrollToSectionWithOffset])
@@ -1114,7 +1122,7 @@ export default function PublicShowroomExperience() {
     )
   }
 
-  const renderBeforeAfterCard = (group: SiteGroup, options?: { linkToStory?: boolean }) => {
+  const renderBeforeAfterCard = (group: SiteGroup, options?: { linkToStory?: boolean; compactPreview?: boolean }) => {
     const beforeImages = group.images.filter((image) => image.before_after_role === 'before')
     const afterImages = group.images.filter((image) => image.before_after_role === 'after')
     const beforeImage = beforeImages[0] ?? null
@@ -1122,9 +1130,39 @@ export default function PublicShowroomExperience() {
     const caseProfileDraft = getBeforeAfterProfileDraft(group)
     const publicLabel = getGroupPublicLabel(group)
     const storyHref = options?.linkToStory ? getBeforeAfterStoryHref(group) : null
+    const compactPreview = options?.compactPreview ?? false
     if (!beforeImage || !afterImage) return null
 
-    const beforeAfterPreview = (
+    const beforeAfterPreview = compactPreview ? (
+      <>
+        <div className="flex w-full flex-col">
+          <div className="relative aspect-[16/10] w-full bg-neutral-100">
+            <img
+              src={beforeImage.thumbnail_url || beforeImage.cloudinary_url}
+              alt={`${publicLabel} before`}
+              className="h-full w-full object-cover"
+              loading="lazy"
+              decoding="async"
+            />
+            <span className="absolute left-2 top-2 rounded-full bg-black/75 px-2 py-0.5 text-[10px] font-semibold text-white">
+              Before
+            </span>
+          </div>
+          <div className="relative aspect-[16/10] w-full bg-neutral-100">
+            <img
+              src={afterImage.thumbnail_url || afterImage.cloudinary_url}
+              alt={`${publicLabel} after`}
+              className="h-full w-full object-cover"
+              loading="lazy"
+              decoding="async"
+            />
+            <span className="absolute left-2 top-2 rounded-full bg-emerald-600/90 px-2 py-0.5 text-[10px] font-semibold text-white">
+              After
+            </span>
+          </div>
+        </div>
+      </>
+    ) : (
       <>
         <div className="grid grid-cols-2">
           <div className="relative aspect-[4/3] bg-neutral-100">
@@ -1160,17 +1198,40 @@ export default function PublicShowroomExperience() {
     )
 
     const publicBlogTeaser = (
-      <div className="border-t border-emerald-100 bg-emerald-50/50 px-3 py-2">
+      <div className={cn('border-t border-emerald-100 bg-emerald-50/50 px-3 py-2', compactPreview && 'px-2.5 py-2')}>
         <div className="rounded-xl bg-white px-3 py-2.5 shadow-sm ring-1 ring-emerald-200/90">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">블로그 소개</p>
-          <p className="mt-1 min-h-[7.5rem] text-sm leading-relaxed text-slate-600 line-clamp-4">
+          <p
+            className={cn(
+              'mt-1 text-sm leading-relaxed text-slate-600',
+              compactPreview ? 'line-clamp-2' : 'min-h-[7.5rem] line-clamp-4',
+            )}
+          >
             {(caseProfileDraft.blogTeaserLine ?? '').trim()}
           </p>
           {storyHref && (
-            <p className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-emerald-700">
-              블로그·카드뉴스에서 자세히 보기
-              <ArrowRight className="h-3.5 w-3.5" aria-hidden />
-            </p>
+            compactPreview ? (
+              <Link
+                to={storyHref}
+                className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-emerald-700"
+                onClick={() => {
+                  trackShowroomAbmEvent({
+                    eventName: 'abm_ba_story_click',
+                    concern: selectedConcernTag,
+                    siteName: group.siteName,
+                    industry: group.businessTypes[0] ?? null,
+                  })
+                }}
+              >
+                블로그·카드뉴스에서 자세히 보기
+                <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+              </Link>
+            ) : (
+              <p className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-emerald-700">
+                블로그·카드뉴스에서 자세히 보기
+                <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+              </p>
+            )
           )}
         </div>
       </div>
@@ -1179,9 +1240,26 @@ export default function PublicShowroomExperience() {
     return (
       <div
         key={`before-after-${group.siteName}`}
-        className="flex h-full flex-col overflow-hidden rounded-2xl border border-emerald-200 bg-white text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
+        className={cn(
+          'flex h-full flex-col overflow-hidden rounded-2xl border border-emerald-200 bg-white text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md',
+          compactPreview && 'rounded-xl shadow-none hover:translate-y-0 hover:shadow-sm',
+        )}
       >
-        {storyHref ? (
+        {compactPreview ? (
+          <>
+            <button
+              type="button"
+              onClick={() => openDetail('beforeAfter', group.siteName)}
+              className="flex w-full flex-col text-left"
+            >
+              {beforeAfterPreview}
+            </button>
+            <div className="flex items-start p-3">
+              <h4 className="text-sm font-semibold leading-snug text-neutral-900">{publicLabel}</h4>
+            </div>
+            {publicBlogTeaser}
+          </>
+        ) : storyHref ? (
           <Link
             to={storyHref}
             className="flex w-full flex-1 flex-col text-left"
@@ -1222,13 +1300,6 @@ export default function PublicShowroomExperience() {
     'font-semibold text-white hover:from-[#667a60] hover:to-[#505f4a] hover:text-white',
   )
 
-  const gallerySegmentPillClass = cn(
-    'pointer-events-none absolute top-1 bottom-1 left-1 rounded-lg transition-transform duration-200 ease-out',
-    mugwortSelectedFillClass,
-  )
-
-  const galleryViewModeIndex = viewMode === 'industry' ? 0 : viewMode === 'product' ? 1 : 2
-
   const handleGalleryViewModeChange = (mode: ViewMode) => {
     trackShowroomAbmEvent({
       eventName: 'abm_gallery_browse',
@@ -1247,13 +1318,15 @@ export default function PublicShowroomExperience() {
     return (
       <Button
         type="button"
-        variant="ghost"
+        variant="outline"
         role="tab"
         aria-selected={isActive}
         className={cn(
-          'relative z-10 h-10 min-w-0 flex-1 gap-2 rounded-lg border-0 bg-transparent px-3 shadow-none sm:px-4',
-          'hover:bg-transparent hover:shadow-none focus-visible:ring-[#5f7058]/35',
-          isActive ? 'font-semibold text-white' : 'text-neutral-600 hover:text-neutral-900',
+          'h-10 min-w-0 flex-1 gap-2 rounded-lg border-neutral-200 bg-white px-3 shadow-sm sm:flex-none sm:px-4',
+          'hover:border-neutral-300 hover:bg-neutral-50 hover:text-neutral-900 focus-visible:ring-[#5f7058]/35',
+          isActive
+            ? selectedBrowseButtonClass
+            : 'font-medium text-neutral-700',
         )}
         onClick={() => handleGalleryViewModeChange(mode)}
       >
@@ -1268,18 +1341,10 @@ export default function PublicShowroomExperience() {
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="space-y-2">
           <div
-            className="relative inline-flex w-full max-w-2xl rounded-xl border border-neutral-200/80 bg-gradient-to-b from-slate-50 to-slate-100/90 p-1 shadow-[inset_0_1px_2px_rgba(15,23,42,0.06)]"
+            className="flex w-full max-w-2xl flex-wrap gap-2"
             role="tablist"
             aria-label="사례 사진 보기 기준"
           >
-            <span
-              aria-hidden
-              className={gallerySegmentPillClass}
-              style={{
-                width: 'calc((100% - 8px) / 3)',
-                transform: `translateX(calc(${galleryViewModeIndex} * 100%))`,
-              }}
-            />
             {renderGalleryViewModeButton('industry', '업종별로 보기', Building2)}
             {renderGalleryViewModeButton('product', '제품별로 보기', Package)}
             {renderGalleryViewModeButton('color', '색상별로 보기', Palette)}
@@ -1386,7 +1451,9 @@ export default function PublicShowroomExperience() {
       {viewMode === 'industry' && paginatedIndustrySections.length > 0 && (
         <div>
           <div className="flex flex-wrap items-center gap-2">
-            {paginatedIndustrySections.map((section) => (
+            {paginatedIndustrySections
+              .filter((section) => section.industry !== '기타')
+              .map((section) => (
               <Button
                 key={`industry-nav-${section.industry}`}
                 type="button"
@@ -1399,6 +1466,7 @@ export default function PublicShowroomExperience() {
               </Button>
             ))}
           </div>
+          <p className="mt-2 text-sm font-semibold text-amber-600">먼저 업종을 선택하세요</p>
           
         </div>
       )}
@@ -1425,444 +1493,45 @@ export default function PublicShowroomExperience() {
               </h1>
               
             </div>
-            
+            <div className="flex shrink-0 flex-row items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 px-3 text-xs"
+                onClick={scrollToBeforeAfterSection}
+              >
+                시공전후
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 px-3 text-xs"
+                onClick={scrollToExpertRecommendSection}
+              >
+                전문가추천
+              </Button>
+            </div>
           </div>
           
         </div>
       </header>
 
       <main className="max-w-6xl mx-auto px-4 py-8 md:px-8">
-        {/* 메인 카피: 강렬한 헤드라인 */}
-        <section className="mb-8" aria-labelledby="showroom-main-heading">
+        {/* 메인 카피: 사진-first — 고민 선택은 선택 사항 */}
+        <section className="mb-6" aria-labelledby="showroom-main-heading">
           <h1 id="showroom-main-heading" className="text-2xl md:text-3xl font-bold text-neutral-900 leading-tight mb-1">
             실패하지 않는 공간 기획, 그 차이는 <span className="text-amber-600">디테일</span>에 있습니다.
           </h1>
-          <p className="text-neutral-600 text-base md:text-lg">대표님의 공간, 어떤 변화가 필요하신가요?</p>
-          <p className="text-xs md:text-sm text-neutral-500 mt-2">
-            실제 시공 사례와 Before/After를 고민별로 안내해 드립니다. 궁금한 점은 화면 하단 상담 버튼으로 바로 문의하실 수 있습니다.
+          <p className="text-neutral-600 text-base md:text-lg">
+            실제 시공 사례부터 편하게 둘러보세요. 고민 선택은 나중에 해도 됩니다.
           </p>
         </section>
 
-        {/* 전문가가 먼저 질문하는 공감 카드: 말풍선 + 핵심어 하이라이트 + 성공 사례 보기 CTA */}
-        <section className="mb-8" aria-labelledby="showroom-concern-heading">
-          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <h2 id="showroom-concern-heading" className="text-lg font-semibold text-neutral-900">
-                고민별로 맞춤 사례 보기
-              </h2>
-              <p className="mt-1 text-sm text-neutral-600">
-                우리 상황에 가까운 질문을 고르면 전문가 코멘트와 Before/After 사례를 이어서 보여 드립니다.
-              </p>
-            </div>
-            <div
-              className="shrink-0 w-full sm:max-w-sm rounded-xl border border-amber-200/90 bg-amber-50 p-3.5 shadow-sm ring-1 ring-amber-100/80"
-              aria-label="사례 사진 바로 탐색"
-            >
-              <div className="flex items-start gap-2.5">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-amber-200/80 bg-white text-amber-700">
-                  <Images className="h-4 w-4" aria-hidden />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold text-neutral-900">설명 없이 사례 사진만 보기</p>
-                  <p className="mt-0.5 text-xs text-neutral-500">
-                    {siteGroups.length}개 현장 · 사진{' '}
-                    {siteGroups.reduce((total, group) => total + group.images.length, 0)}장 바로 탐색
-                  </p>
-                </div>
-              </div>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-8 gap-1.5 border-amber-200/80 bg-white/95 px-3 text-xs hover:bg-amber-100/60 hover:text-amber-950"
-                  onClick={() => jumpToGalleryView('industry')}
-                >
-                  <Building2 className="h-3.5 w-3.5" />
-                  업종별
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-8 gap-1.5 border-amber-200/80 bg-white/95 px-3 text-xs hover:bg-amber-100/60 hover:text-amber-950"
-                  onClick={() => jumpToGalleryView('product')}
-                >
-                  <Package className="h-3.5 w-3.5" />
-                  제품별
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-8 gap-1.5 border-amber-200/80 bg-white/95 px-3 text-xs hover:bg-amber-100/60 hover:text-amber-950"
-                  onClick={() => jumpToGalleryView('color')}
-                >
-                  <Palette className="h-3.5 w-3.5" />
-                  색상별
-                </Button>
-              </div>
-            </div>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {CONCERN_CARDS.map((card) => {
-              const isSelected = selectedConcernTag === card.tag
-              const handleCardClick = () => {
-                if (selectedConcernTag !== card.tag) {
-                  setConcernTagAndUrl(card.tag)
-                }
-                requestAnimationFrame(() => {
-                  document.getElementById('showroom-concern-result-anchor')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-                })
-              }
-              return (
-                <button
-                  key={card.tag}
-                  type="button"
-                  onClick={handleCardClick}
-                  className="group flex flex-col gap-3 text-left rounded-2xl p-4 bg-white border-2 border-neutral-200 shadow-sm hover:shadow-xl hover:border-amber-300 hover:-translate-y-1 active:scale-[0.99] transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-2 min-h-[88px] cursor-pointer"
-                >
-                  <div className="flex items-center gap-3 flex-1 min-h-0">
-                    <div className="flex shrink-0 self-center flex-col items-center justify-center gap-2">
-                      <span
-                        className="w-14 h-14 rounded-full bg-neutral-100 flex items-center justify-center text-3xl border-2 border-neutral-200 group-hover:border-amber-200 transition-colors overflow-hidden"
-                        aria-hidden
-                      >
-                        {card.imageSrc ? (
-                          <img src={card.imageSrc} alt="" className="w-full h-full object-cover object-top" />
-                        ) : (
-                          card.emoji
-                        )}
-                      </span>
-                      <span className="inline-flex flex-col items-center rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold leading-tight text-slate-700 ring-1 ring-slate-200">
-                        {card.industryFilter === '관리형전환' ? (
-                          <>
-                            <span>스터디카페의</span>
-                            <span>관리형전환</span>
-                          </>
-                        ) : (
-                          getConcernIndustryDisplayLabel(card.industryFilter)
-                        )}
-                      </span>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div
-                        className={`rounded-xl rounded-tl-none px-4 py-3 border border-neutral-100 group-hover:bg-amber-50/50 group-hover:border-amber-100 transition-colors ${
-                          isSelected ? 'bg-amber-50/80 border-amber-200' : ''
-                        }`}
-                        style={{ boxShadow: '0 1px 2px rgba(0,0,0,0.04)' }}
-                      >
-                      <p className="text-sm text-neutral-700 leading-relaxed font-medium">
-                        {highlightKeywords(card.message)}
-                      </p>
-                      </div>
-                    </div>
-                  </div>
-                  <span className="inline-flex items-center gap-1 self-end rounded-full bg-amber-500 text-white text-xs font-semibold px-3 py-1.5 shadow-md">
-                    <MousePointerClick className="h-3.5 w-3.5" />
-                    성공 사례 보기
-                  </span>
-                </button>
-              )
-            })}
-          </div>
-        </section>
-        <div id="showroom-concern-result-anchor" className="h-px scroll-mt-28 md:scroll-mt-32" aria-hidden />
-        {/* 전문가 코멘트: 해당 카드 클릭 시에만 표시 — 왼쪽 코멘트, 오른쪽 전문가 이미지(답하는 느낌) */}
-        { selectedConcernTag === '관리형 창업 또는 전환' && (
-          <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
-            <div className="flex-1 min-w-0 py-5 px-5">
-              <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
-              <div className="text-slate-600 text-sm leading-relaxed space-y-3">
-                <p>
-                  관리형 공간은 단순한 인테리어가 아닙니다. 아이들의 <span className="font-bold text-slate-800">성과를 만들어내는 학습 엔진</span>이어야 합니다.
-                </p>
-                <p>
-                  누군가 우리 공간의 겉모습을 카피하는 것은 쉽습니다. 자재를 줄여서 가격을 낮추는 것도 어렵지 않습니다. 하지만 장시간 학습의 피로도를 낮추는 인체공학적 설계, 교시제 운영을 고려한 정교한 동선, 조도와 환기 시스템의 최적화까지—그 <span className="font-bold text-slate-800">이유를 알고 설계하는 것</span>과 모르고 흉내 내는 것은 결과에서 천지 차이를 만듭니다.
-                </p>
-                <p>
-                  결국, 성공하는 공간은 보이지 않는 <span className="font-bold text-slate-800">디테일에서 결정됩니다.</span> 그 한 끗 차이의 디테일이 원장님의 사업을 성공으로 이끕니다.
-                </p>
-              </div>
-              <div className="mt-4 pt-4 border-t border-slate-200">
-                <ShowroomExpertConsultationButton concern={selectedConcernTag}>
-                  관리형 맞춤형 레이아웃 상담하기
-                </ShowroomExpertConsultationButton>
-              </div>
-            </div>
-            <div className="sm:w-40 shrink-0 flex items-center justify-center sm:justify-end pr-4 pb-2">
-              <span className="w-32 h-32 sm:w-40 sm:h-40 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center shrink-0">
-                <img
-                  src="/showroom-expert-comment.png"
-                  alt=""
-                  className="w-full h-full object-cover object-top"
-                />
-              </span>
-            </div>
-          </section>
-        )}
-        { selectedConcernTag === '매출 향상 스터디카페 리뉴얼' && (
-          <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
-            <div className="flex-1 min-w-0 py-5 px-5">
-              <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
-              <p className="text-slate-700 text-sm font-medium mb-3">비슷해 보인다고 똑같은 스터디카페가 아닙니다.</p>
-              <div className="text-slate-600 text-sm leading-relaxed space-y-3">
-                <p>
-                  수많은 스터디카페가 생겨나고, 이제 인테리어는 상향 평준화되어 다 비슷해 보입니다. 하지만 현장에는 <span className="font-bold text-slate-800">유독 잘되는 집과 안 되는 집</span>의 극명한 차이가 존재합니다.
-                </p>
-                <p>
-                  우리는 그 차이를 명확히 압니다. 성공하는 스터디카페는 화려한 조명보다, 고객이 <span className="font-bold text-slate-800">&apos;무의식중에 편하다&apos;라고 느끼는 공간 디테일</span>에서 승부가 갈리기 때문입니다.
-                </p>
-                <p>
-                  점주의 관리 방식이 녹아든 가구 배치, 무의식적인 피로감을 줄여주는 책상의 높이와 각도—이런 보이지 않는 <span className="font-bold text-slate-800">디테일의 격차</span>가 모여 고객이 다시 찾는 &apos;잘되는 집&apos;을 만듭니다. 그 차이를 아는 전문가와 함께 시작하십시오.
-                </p>
-              </div>
-              <div className="mt-4 pt-4 border-t border-slate-200">
-                <ShowroomExpertConsultationButton concern={selectedConcernTag}>
-                  스터디카페 리뉴얼 맞춤형 상담하기
-                </ShowroomExpertConsultationButton>
-              </div>
-            </div>
-            <div className="sm:w-40 shrink-0 flex items-center justify-center sm:justify-end pr-4 pb-2">
-              <span className="w-32 h-32 sm:w-40 sm:h-40 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center shrink-0">
-                <img
-                  src="/showroom-expert-comment.png"
-                  alt=""
-                  className="w-full h-full object-cover object-top"
-                />
-              </span>
-            </div>
-          </section>
-        )}
-        { selectedConcernTag === '스터디카페를 관리형으로 전환' && (
-          <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
-            <div className="flex-1 min-w-0 py-5 px-5">
-              <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
-              <p className="text-slate-700 text-sm font-medium mb-3">같은 스터디카페처럼 보여서는 나중에 프리미엄을 받기 어렵습니다.</p>
-              <div className="text-slate-600 text-sm leading-relaxed space-y-3">
-                <p>
-                  지금 운영 중인 스터디카페라도, 공간·동선·운영 구조를 <span className="font-bold text-slate-800">관리형으로 전환</span>하면 기존 매장과의 차별화가 훨씬 선명해집니다.
-                </p>
-                <p>
-                  이것은 단순히 예쁘게 바꾸는 리뉴얼이 아닙니다. 고객이 느끼는 프리미엄을 높이고, 향후 관리형 오픈을 고민하는 인수자에게도 <span className="font-bold text-slate-800">더 설득력 있는 매장 자산</span>으로 보이게 만드는 전략입니다.
-                </p>
-                <p>
-                  결국 잘된 전환은 현재의 경쟁력을 만들고, 나중의 엑시트 가능성까지 바꿉니다. 파인드가구는 그 흐름까지 고려해 공간을 제안합니다.
-                </p>
-              </div>
-              <div className="mt-4 pt-4 border-t border-slate-200">
-                <ShowroomExpertConsultationButton concern={selectedConcernTag}>
-                  스터디카페를 관리형으로 전환 상담하기
-                </ShowroomExpertConsultationButton>
-              </div>
-            </div>
-            <div className="sm:w-40 shrink-0 flex items-center justify-center sm:justify-end pr-4 pb-2">
-              <span className="w-32 h-32 sm:w-40 sm:h-40 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center shrink-0">
-                <img
-                  src="/showroom-expert-comment.png"
-                  alt=""
-                  className="w-full h-full object-cover object-top"
-                />
-              </span>
-            </div>
-          </section>
-        )}
-        { selectedConcernTag === '스터디카페 같은 학원 자습실' && (
-          <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
-            <div className="flex-1 min-w-0 py-5 px-5">
-              <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
-              <p className="text-slate-700 text-sm font-medium mb-3">유료인가요, 무료인가요? 목적이 분명해야 성공합니다.</p>
-              <div className="text-slate-600 text-sm leading-relaxed space-y-3">
-                <p>
-                  학원 자습실 기획의 첫 단추는 <span className="font-bold text-slate-800">유료 공간인지, 무료 서비스 공간인지</span>를 결정하는 것입니다.
-                </p>
-                <p>
-                  유료 공간이라면 학부모와 학생이 지불한 비용만큼의 &apos;특별한 가치&apos;가 체감되어야 합니다. 반면, 무료 공간이라면 관리 효율과 기본기에 집중하여 예산의 최적화를 이뤄내야 하죠.
-                </p>
-                <p>
-                  원장님, 자습실은 단순히 아이들이 머무는 곳이 아닙니다. <span className="font-bold text-slate-800">학생들에게는 몰입의 경험을, 원장님께는 추가 매출</span>과 재등록률 상승을 가져다주는 <span className="font-bold text-slate-800">&apos;전략적 자산&apos;</span>이어야 합니다. 목적에 맞는 정교한 기획이 예산 낭비를 막고 학원의 가치를 높입니다.
-                </p>
-              </div>
-              <div className="mt-4 pt-4 border-t border-slate-200">
-                <ShowroomExpertConsultationButton concern={selectedConcernTag}>
-                  우리 학원 맞춤형 자습실 예산 상담하기
-                </ShowroomExpertConsultationButton>
-              </div>
-            </div>
-            <div className="sm:w-40 shrink-0 flex items-center justify-center sm:justify-end pr-4 pb-2">
-              <span className="w-32 h-32 sm:w-40 sm:h-40 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center shrink-0">
-                <img
-                  src="/showroom-expert-comment.png"
-                  alt=""
-                  className="w-full h-full object-cover object-top"
-                />
-              </span>
-            </div>
-          </section>
-        )}
-
-        { selectedConcernTag === '고교학점제 자습공간 구축' && (
-          <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
-            <div className="flex-1 min-w-0 py-5 px-5">
-              <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
-              <p className="text-slate-700 text-sm font-medium mb-3">
-                모호했던 고교학점제 공간 기획, 이제 <span className="font-bold text-slate-900">&apos;검증된 표준&apos;</span>이 정답입니다.
-              </p>
-              <div className="text-slate-600 text-sm leading-relaxed space-y-3">
-                <p>
-                  고교학점제 시행 초기, 교육 현장에는 수많은 고민이 있었습니다. 공간의 가변성은 어느 정도여야 하는지, 학습 몰입도와 개방성 사이의 균형은 어떻게 잡아야 하는지…
-                </p>
-                <p>
-                  이제 수많은 시공 사례를 통해 최적의 방향성은 명확해졌습니다. 고교학점제 자율학습 공간은 단순한 휴게실이 아닌, 학생 개개인의 공강 시간을 실질적인 학습 성과로 연결하는 <span className="font-bold text-slate-800">&apos;맞춤형 거점&apos;</span>이어야 합니다.
-                </p>
-                <p>
-                  복잡한 행정 절차와 예산에 맞춘 최적의 공간 설계, 이제 고민하지 마십시오. 수많은 학교 현장에서 검증된 <span className="font-bold text-slate-800">파인드가구만의 특화된 공간 솔루션</span>이 선생님의 명쾌한 해답이 되어드리겠습니다.
-                </p>
-              </div>
-              <div className="mt-4 pt-4 border-t border-slate-200">
-                <ShowroomExpertConsultationButton concern={selectedConcernTag}>
-                  우리 학교 맞춤형 제안서 및 견적 상담하기
-                </ShowroomExpertConsultationButton>
-              </div>
-            </div>
-            <div className="sm:w-40 shrink-0 flex items-center justify-center sm:justify-end pr-4 pb-2">
-              <span className="w-32 h-32 sm:w-40 sm:h-40 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center shrink-0">
-                <img
-                  src="/showroom-expert-comment.png"
-                  alt=""
-                  className="w-full h-full object-cover object-top"
-                />
-              </span>
-            </div>
-          </section>
-        )}
-
-        { selectedConcernTag === '아파트 독서실 리뉴얼' && (
-          <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
-            <div className="flex-1 min-w-0 py-5 px-5">
-              <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
-              <p className="text-slate-700 text-sm font-medium mb-3">단순한 시설 교체가 아닙니다. 입주민의 자부심을 설계하는 일입니다.</p>
-              <div className="text-slate-600 text-sm leading-relaxed space-y-3">
-                <p>
-                  최근 아파트 커뮤니티의 중심이 &apos;미니 도서관&apos;에서 &apos;프리미엄 독서실·스터디카페&apos;로 빠르게 재편되고 있습니다. 이용자는 늘었지만, 낡은 시설이 단지의 가치를 떨어뜨리고 있지는 않습니까?
-                </p>
-                <p>
-                  아파트 리뉴얼은 일반 창업과 다릅니다. 의사결정 주체에 따른 계약 방식의 차이, 단지 내 관리 규정 준수 등 <span className="font-bold text-slate-800">복잡한 행정 절차를 완벽하게 이해</span>해야 합니다. 단순히 가구를 잘 만드는 것을 넘어, <span className="font-bold text-slate-800">실수 없는 행정 처리와 투명한 공정 관리</span>가 동반되어야 입주민들의 신뢰를 얻을 수 있습니다.
-                </p>
-                <p>
-                  입주민의 만족과 단지의 가치를 함께 높이는 공간은 기본입니다. 복잡한 절차는 파인드가구가 책임지고, 입주자대표회의에는 <span className="font-bold text-slate-800">단지의 가치가 올라가는 결과</span>만 드립니다.
-                </p>
-              </div>
-              <div className="mt-4 flex flex-wrap items-center gap-1.5 sm:gap-2 text-xs text-slate-700">
-                <span className="flex items-center gap-1 shrink-0"><MessageCircle className="h-3.5 w-3.5" aria-hidden /> 상담</span>
-                <ArrowRight className="h-3.5 w-3.5 text-slate-500 shrink-0" aria-hidden />
-                <span className="flex items-center gap-1 shrink-0"><FileCheck className="h-3.5 w-3.5" aria-hidden /> 규정 검토</span>
-                <ArrowRight className="h-3.5 w-3.5 text-slate-500 shrink-0" aria-hidden />
-                <span className="flex items-center gap-1 shrink-0"><Users className="h-3.5 w-3.5" aria-hidden /> 입주민 동의 지원</span>
-                <ArrowRight className="h-3.5 w-3.5 text-slate-500 shrink-0" aria-hidden />
-                <span className="flex items-center gap-1 shrink-0"><Wrench className="h-3.5 w-3.5" aria-hidden /> 시공</span>
-                <ArrowRight className="h-3.5 w-3.5 text-slate-500 shrink-0" aria-hidden />
-                <span className="flex items-center gap-1 shrink-0"><ClipboardCheck className="h-3.5 w-3.5" aria-hidden /> 사후관리</span>
-              </div>
-              <div className="mt-4 pt-4 border-t border-slate-200">
-                <ShowroomExpertConsultationButton concern={selectedConcernTag}>
-                  우리 아파트 맞춤형 리뉴얼 제안서 요청하기
-                </ShowroomExpertConsultationButton>
-              </div>
-            </div>
-            <div className="sm:w-40 shrink-0 flex items-center justify-center sm:justify-end pr-4 pb-2">
-              <span className="w-32 h-32 sm:w-40 sm:h-40 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center shrink-0">
-                <img
-                  src="/showroom-expert-comment.png"
-                  alt=""
-                  className="w-full h-full object-cover object-top"
-                />
-              </span>
-            </div>
-          </section>
-        )}
-
-        { selectedConcernTag && (
-          <section
-            id="showroom-concern-before-after-section"
-            className="mb-8 rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4 md:p-5 scroll-mt-28"
-          >
-            <div className="flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
-              <div>
-                <h2 className="text-base font-semibold text-neutral-900">
-                  {getConcernIndustryDisplayLabel(concernIndustryFilter)} Before/After 사례
-                </h2>
-                <p className="text-sm text-neutral-600">
-                  선택하신 고민과 같은 업종의 전후 비교 사례입니다. 카드를 누르면 블로그·카드뉴스에서 사례 스토리와 사진을 이어서 볼 수 있습니다.
-                </p>
-              </div>
-              {concernBeforeAfterGroups.length > 0 && (
-                <p className="text-xs text-neutral-500">{concernBeforeAfterGroups.length}개 현장</p>
-              )}
-            </div>
-            {concernBeforeAfterGroups.length === 0 ? (
-              <p className="mt-4 text-sm text-neutral-500">
-                이 고민에 맞는 전후 비교 사례를 준비 중입니다. 아래 시공사례 갤러리에서 비슷한 업종 사례를 먼저 확인해 보세요.
-              </p>
-            ) : (
-              <>
-                <div className="mt-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {pagedConcernBeforeAfterGroups.map((group) => renderBeforeAfterCard(group, { linkToStory: true }))}
-                </div>
-                {concernBeforeAfterTotalPages > 1 && (
-                  <div className="mt-4 flex flex-wrap items-center justify-center gap-2 pt-1">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="gap-1.5"
-                      disabled={currentConcernBeforeAfterPage <= 1}
-                      onClick={() => setBeforeAfterPage(currentConcernBeforeAfterPage - 1)}
-                    >
-                      <ChevronLeft className="h-4 w-4" />
-                      이전
-                    </Button>
-                    <div className="flex flex-wrap items-center justify-center gap-1">
-                      {Array.from({ length: concernBeforeAfterTotalPages }, (_, index) => {
-                        const pageNumber = index + 1
-                        const isCurrent = pageNumber === currentConcernBeforeAfterPage
-                        return (
-                          <Button
-                            key={`concern-before-after-page-${pageNumber}`}
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className={cn('min-w-9 px-0', isCurrent && selectedBrowseButtonClass)}
-                            onClick={() => setBeforeAfterPage(pageNumber)}
-                          >
-                            {pageNumber}
-                          </Button>
-                        )
-                      })}
-                    </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="gap-1.5"
-                      disabled={currentConcernBeforeAfterPage >= concernBeforeAfterTotalPages}
-                      onClick={() => setBeforeAfterPage(currentConcernBeforeAfterPage + 1)}
-                    >
-                      다음
-                      <ChevronRight className="h-4 w-4" />
-                    </Button>
-                  </div>
-                )}
-              </>
-            )}
-          </section>
-        )}
-
-        
-
           <section
             id="showroom-gallery-browse"
-            className="mt-12 border-t border-neutral-200 pt-10 scroll-mt-24 md:scroll-mt-28"
+            className="scroll-mt-24 md:scroll-mt-28"
             aria-labelledby="showroom-gallery-browse-heading"
           >
             <div className="mb-6">
@@ -2146,22 +1815,33 @@ export default function PublicShowroomExperience() {
                         이전
                       </Button>
                       <div className="flex flex-wrap items-center justify-center gap-1">
-                        {Array.from({ length: section.totalPages }, (_, index) => {
-                          const pageNumber = index + 1
-                          const isCurrent = pageNumber === section.currentPage
-                          return (
+                        {(
+                          [
+                            ...Array.from({ length: Math.min(section.totalPages, 4) }, (_, index) => index + 1),
+                            ...(section.totalPages > 4 ? (['ellipsis'] as const) : []),
+                          ] as Array<number | 'ellipsis'>
+                        ).map((item) =>
+                          item === 'ellipsis' ? (
+                            <span
+                              key={`${section.industry}-page-ellipsis`}
+                              className="inline-flex min-w-9 items-center justify-center px-1 text-sm text-neutral-500"
+                              aria-hidden
+                            >
+                              ...
+                            </span>
+                          ) : (
                             <Button
-                              key={`${section.industry}-page-${pageNumber}`}
+                              key={`${section.industry}-page-${item}`}
                               type="button"
                               variant="outline"
                               size="sm"
-                              className={cn('min-w-9 px-0', isCurrent && selectedBrowseButtonClass)}
-                              onClick={() => moveIndustryPage(section.industry, pageNumber)}
+                              className={cn('min-w-9 px-0', item === section.currentPage && selectedBrowseButtonClass)}
+                              onClick={() => moveIndustryPage(section.industry, item)}
                             >
-                              {pageNumber}
+                              {item}
                             </Button>
-                          )
-                        })}
+                          ),
+                        )}
                       </div>
                       <Button
                         type="button"
@@ -2193,6 +1873,399 @@ export default function PublicShowroomExperience() {
         {viewMode === 'industry' && paginatedIndustrySections.length === 0 && (
           <p className="text-center text-neutral-500 py-12">검색 결과가 없습니다.</p>
         )}
+
+        {featuredBeforeAfterGroups.length > 0 && (
+          <div className="mt-8 mb-8 rounded-xl border border-neutral-200 bg-neutral-50/80 p-4" aria-labelledby="showroom-featured-ba-heading">
+            <h3 id="showroom-featured-ba-heading" className="text-sm font-semibold text-neutral-800">
+              현장 Before/After
+            </h3>
+            <p className="mt-0.5 text-xs text-neutral-500">같은 현장의 Before/After를 빠르게 확인해 보세요.</p>
+            <div className="mt-3 grid w-full grid-cols-1 gap-4 sm:grid-cols-2">
+              {featuredBeforeAfterGroups.map((group) => (
+                <div
+                  key={`featured-ba-${getGroupPublicLabel(group)}`}
+                  className="w-full min-w-0"
+                >
+                  {renderBeforeAfterCard(group, { linkToStory: true, compactPreview: true })}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* 전문가가 먼저 질문하는 공감 카드: 말풍선 + 핵심어 하이라이트 + 성공 사례 보기 CTA */}
+        <section
+          className="mb-8 rounded-2xl border border-neutral-200 bg-white overflow-hidden"
+          aria-labelledby="showroom-concern-heading"
+        >
+          <div className="p-4">
+            <div className="min-w-0 flex-1">
+              <h2 id="showroom-concern-heading" className="text-lg font-semibold text-neutral-900">
+                전문가추천
+              </h2>
+              <p className="mt-1 text-sm text-neutral-600">
+                {selectedConcernTag
+                  ? `선택: ${selectedConcernTag} · 전문가 코멘트와 맞춤 Before/After`
+                  : '우리 상황에 가까운 질문을 고르면 전문가 코멘트와 사례를 이어서 보여 드립니다.'}
+              </p>
+            </div>
+          </div>
+          <div className="border-t border-neutral-100 px-4 pb-4 pt-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {CONCERN_CARDS.map((card) => {
+              const isSelected = selectedConcernTag === card.tag
+              const handleCardClick = () => {
+                if (selectedConcernTag !== card.tag) {
+                  setConcernTagAndUrl(card.tag)
+                }
+                requestAnimationFrame(() => {
+                  document.getElementById('showroom-concern-result-anchor')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                })
+              }
+              return (
+                <button
+                  key={card.tag}
+                  type="button"
+                  onClick={handleCardClick}
+                  className="group flex flex-col gap-3 text-left rounded-2xl p-4 bg-white border-2 border-neutral-200 shadow-sm hover:shadow-xl hover:border-amber-300 hover:-translate-y-1 active:scale-[0.99] transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-2 min-h-[88px] cursor-pointer"
+                >
+                  <div className="flex items-center gap-3 flex-1 min-h-0">
+                    <div className="flex shrink-0 self-center flex-col items-center justify-center gap-2">
+                      <span
+                        className="w-14 h-14 rounded-full bg-neutral-100 flex items-center justify-center text-3xl border-2 border-neutral-200 group-hover:border-amber-200 transition-colors overflow-hidden"
+                        aria-hidden
+                      >
+                        {card.imageSrc ? (
+                          <img src={card.imageSrc} alt="" className="w-full h-full object-cover object-top" />
+                        ) : (
+                          card.emoji
+                        )}
+                      </span>
+                      <span className="inline-flex flex-col items-center rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold leading-tight text-slate-700 ring-1 ring-slate-200">
+                        {card.industryFilter === '관리형전환' ? (
+                          <>
+                            <span>스터디카페의</span>
+                            <span>관리형전환</span>
+                          </>
+                        ) : (
+                          getConcernIndustryDisplayLabel(card.industryFilter)
+                        )}
+                      </span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div
+                        className={`rounded-xl rounded-tl-none px-4 py-3 border border-neutral-100 group-hover:bg-amber-50/50 group-hover:border-amber-100 transition-colors ${
+                          isSelected ? 'bg-amber-50/80 border-amber-200' : ''
+                        }`}
+                        style={{ boxShadow: '0 1px 2px rgba(0,0,0,0.04)' }}
+                      >
+                      <p className="text-sm text-neutral-700 leading-relaxed font-medium">
+                        {highlightKeywords(card.message)}
+                      </p>
+                      </div>
+                    </div>
+                  </div>
+                  <span className="inline-flex items-center gap-1 self-end rounded-full bg-amber-500 text-white text-xs font-semibold px-3 py-1.5 shadow-md">
+                    <MousePointerClick className="h-3.5 w-3.5" />
+                    성공 사례 보기
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+            </div>
+        </section>
+        <div id="showroom-concern-result-anchor" className="h-px scroll-mt-28 md:scroll-mt-32" aria-hidden />
+        {/* 전문가 코멘트: 해당 카드 클릭 시에만 표시 — 왼쪽 코멘트, 오른쪽 전문가 이미지(답하는 느낌) */}
+        { selectedConcernTag === '관리형 창업 또는 전환' && (
+          <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
+            <div className="flex-1 min-w-0 py-5 px-5">
+              <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
+              <ShowroomMobileExpertComment>
+                <p>
+                  관리형 공간은 단순한 인테리어가 아닙니다. 아이들의 <span className="font-bold text-slate-800">성과를 만들어내는 학습 엔진</span>이어야 합니다.
+                </p>
+                <p>
+                  누군가 우리 공간의 겉모습을 카피하는 것은 쉽습니다. 자재를 줄여서 가격을 낮추는 것도 어렵지 않습니다. 하지만 장시간 학습의 피로도를 낮추는 인체공학적 설계, 교시제 운영을 고려한 정교한 동선, 조도와 환기 시스템의 최적화까지—그 <span className="font-bold text-slate-800">이유를 알고 설계하는 것</span>과 모르고 흉내 내는 것은 결과에서 천지 차이를 만듭니다.
+                </p>
+                <p>
+                  결국, 성공하는 공간은 보이지 않는 <span className="font-bold text-slate-800">디테일에서 결정됩니다.</span> 그 한 끗 차이의 디테일이 원장님의 사업을 성공으로 이끕니다.
+                </p>
+              </ShowroomMobileExpertComment>
+              <div className="mt-4 pt-4 border-t border-slate-200">
+                <ShowroomExpertConsultationButton concern={selectedConcernTag}>
+                  관리형 맞춤형 레이아웃 상담하기
+                </ShowroomExpertConsultationButton>
+              </div>
+            </div>
+            <div className="sm:w-40 shrink-0 flex items-center justify-center sm:justify-end pr-4 pb-2">
+              <span className="w-32 h-32 sm:w-40 sm:h-40 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center shrink-0">
+                <img
+                  src="/showroom-expert-comment.png"
+                  alt=""
+                  className="w-full h-full object-cover object-top"
+                />
+              </span>
+            </div>
+          </section>
+        )}
+        { selectedConcernTag === '매출 향상 스터디카페 리뉴얼' && (
+          <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
+            <div className="flex-1 min-w-0 py-5 px-5">
+              <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
+              <p className="text-slate-700 text-sm font-medium mb-3">비슷해 보인다고 똑같은 스터디카페가 아닙니다.</p>
+              <ShowroomMobileExpertComment>
+                <p>
+                  수많은 스터디카페가 생겨나고, 이제 인테리어는 상향 평준화되어 다 비슷해 보입니다. 하지만 현장에는 <span className="font-bold text-slate-800">유독 잘되는 집과 안 되는 집</span>의 극명한 차이가 존재합니다.
+                </p>
+                <p>
+                  우리는 그 차이를 명확히 압니다. 성공하는 스터디카페는 화려한 조명보다, 고객이 <span className="font-bold text-slate-800">&apos;무의식중에 편하다&apos;라고 느끼는 공간 디테일</span>에서 승부가 갈리기 때문입니다.
+                </p>
+                <p>
+                  점주의 관리 방식이 녹아든 가구 배치, 무의식적인 피로감을 줄여주는 책상의 높이와 각도—이런 보이지 않는 <span className="font-bold text-slate-800">디테일의 격차</span>가 모여 고객이 다시 찾는 &apos;잘되는 집&apos;을 만듭니다. 그 차이를 아는 전문가와 함께 시작하십시오.
+                </p>
+              </ShowroomMobileExpertComment>
+              <div className="mt-4 pt-4 border-t border-slate-200">
+                <ShowroomExpertConsultationButton concern={selectedConcernTag}>
+                  스터디카페 리뉴얼 맞춤형 상담하기
+                </ShowroomExpertConsultationButton>
+              </div>
+            </div>
+            <div className="sm:w-40 shrink-0 flex items-center justify-center sm:justify-end pr-4 pb-2">
+              <span className="w-32 h-32 sm:w-40 sm:h-40 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center shrink-0">
+                <img
+                  src="/showroom-expert-comment.png"
+                  alt=""
+                  className="w-full h-full object-cover object-top"
+                />
+              </span>
+            </div>
+          </section>
+        )}
+        { selectedConcernTag === '스터디카페를 관리형으로 전환' && (
+          <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
+            <div className="flex-1 min-w-0 py-5 px-5">
+              <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
+              <p className="text-slate-700 text-sm font-medium mb-3">같은 스터디카페처럼 보여서는 나중에 프리미엄을 받기 어렵습니다.</p>
+              <ShowroomMobileExpertComment>
+                <p>
+                  지금 운영 중인 스터디카페라도, 공간·동선·운영 구조를 <span className="font-bold text-slate-800">관리형으로 전환</span>하면 기존 매장과의 차별화가 훨씬 선명해집니다.
+                </p>
+                <p>
+                  이것은 단순히 예쁘게 바꾸는 리뉴얼이 아닙니다. 고객이 느끼는 프리미엄을 높이고, 향후 관리형 오픈을 고민하는 인수자에게도 <span className="font-bold text-slate-800">더 설득력 있는 매장 자산</span>으로 보이게 만드는 전략입니다.
+                </p>
+                <p>
+                  결국 잘된 전환은 현재의 경쟁력을 만들고, 나중의 엑시트 가능성까지 바꿉니다. 파인드가구는 그 흐름까지 고려해 공간을 제안합니다.
+                </p>
+              </ShowroomMobileExpertComment>
+              <div className="mt-4 pt-4 border-t border-slate-200">
+                <ShowroomExpertConsultationButton concern={selectedConcernTag}>
+                  스터디카페를 관리형으로 전환 상담하기
+                </ShowroomExpertConsultationButton>
+              </div>
+            </div>
+            <div className="sm:w-40 shrink-0 flex items-center justify-center sm:justify-end pr-4 pb-2">
+              <span className="w-32 h-32 sm:w-40 sm:h-40 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center shrink-0">
+                <img
+                  src="/showroom-expert-comment.png"
+                  alt=""
+                  className="w-full h-full object-cover object-top"
+                />
+              </span>
+            </div>
+          </section>
+        )}
+        { selectedConcernTag === '스터디카페 같은 학원 자습실' && (
+          <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
+            <div className="flex-1 min-w-0 py-5 px-5">
+              <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
+              <p className="text-slate-700 text-sm font-medium mb-3">유료인가요, 무료인가요? 목적이 분명해야 성공합니다.</p>
+              <ShowroomMobileExpertComment>
+                <p>
+                  학원 자습실 기획의 첫 단추는 <span className="font-bold text-slate-800">유료 공간인지, 무료 서비스 공간인지</span>를 결정하는 것입니다.
+                </p>
+                <p>
+                  유료 공간이라면 학부모와 학생이 지불한 비용만큼의 &apos;특별한 가치&apos;가 체감되어야 합니다. 반면, 무료 공간이라면 관리 효율과 기본기에 집중하여 예산의 최적화를 이뤄내야 하죠.
+                </p>
+                <p>
+                  원장님, 자습실은 단순히 아이들이 머무는 곳이 아닙니다. <span className="font-bold text-slate-800">학생들에게는 몰입의 경험을, 원장님께는 추가 매출</span>과 재등록률 상승을 가져다주는 <span className="font-bold text-slate-800">&apos;전략적 자산&apos;</span>이어야 합니다. 목적에 맞는 정교한 기획이 예산 낭비를 막고 학원의 가치를 높입니다.
+                </p>
+              </ShowroomMobileExpertComment>
+              <div className="mt-4 pt-4 border-t border-slate-200">
+                <ShowroomExpertConsultationButton concern={selectedConcernTag}>
+                  우리 학원 맞춤형 자습실 예산 상담하기
+                </ShowroomExpertConsultationButton>
+              </div>
+            </div>
+            <div className="sm:w-40 shrink-0 flex items-center justify-center sm:justify-end pr-4 pb-2">
+              <span className="w-32 h-32 sm:w-40 sm:h-40 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center shrink-0">
+                <img
+                  src="/showroom-expert-comment.png"
+                  alt=""
+                  className="w-full h-full object-cover object-top"
+                />
+              </span>
+            </div>
+          </section>
+        )}
+
+        { selectedConcernTag === '고교학점제 자습공간 구축' && (
+          <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
+            <div className="flex-1 min-w-0 py-5 px-5">
+              <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
+              <p className="text-slate-700 text-sm font-medium mb-3">
+                모호했던 고교학점제 공간 기획, 이제 <span className="font-bold text-slate-900">&apos;검증된 표준&apos;</span>이 정답입니다.
+              </p>
+              <ShowroomMobileExpertComment>
+                <p>
+                  고교학점제 시행 초기, 교육 현장에는 수많은 고민이 있었습니다. 공간의 가변성은 어느 정도여야 하는지, 학습 몰입도와 개방성 사이의 균형은 어떻게 잡아야 하는지…
+                </p>
+                <p>
+                  이제 수많은 시공 사례를 통해 최적의 방향성은 명확해졌습니다. 고교학점제 자율학습 공간은 단순한 휴게실이 아닌, 학생 개개인의 공강 시간을 실질적인 학습 성과로 연결하는 <span className="font-bold text-slate-800">&apos;맞춤형 거점&apos;</span>이어야 합니다.
+                </p>
+                <p>
+                  복잡한 행정 절차와 예산에 맞춘 최적의 공간 설계, 이제 고민하지 마십시오. 수많은 학교 현장에서 검증된 <span className="font-bold text-slate-800">파인드가구만의 특화된 공간 솔루션</span>이 선생님의 명쾌한 해답이 되어드리겠습니다.
+                </p>
+              </ShowroomMobileExpertComment>
+              <div className="mt-4 pt-4 border-t border-slate-200">
+                <ShowroomExpertConsultationButton concern={selectedConcernTag}>
+                  우리 학교 맞춤형 제안서 및 견적 상담하기
+                </ShowroomExpertConsultationButton>
+              </div>
+            </div>
+            <div className="sm:w-40 shrink-0 flex items-center justify-center sm:justify-end pr-4 pb-2">
+              <span className="w-32 h-32 sm:w-40 sm:h-40 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center shrink-0">
+                <img
+                  src="/showroom-expert-comment.png"
+                  alt=""
+                  className="w-full h-full object-cover object-top"
+                />
+              </span>
+            </div>
+          </section>
+        )}
+
+        { selectedConcernTag === '아파트 독서실 리뉴얼' && (
+          <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
+            <div className="flex-1 min-w-0 py-5 px-5">
+              <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
+              <p className="text-slate-700 text-sm font-medium mb-3">단순한 시설 교체가 아닙니다. 입주민의 자부심을 설계하는 일입니다.</p>
+              <ShowroomMobileExpertComment>
+                <p>
+                  최근 아파트 커뮤니티의 중심이 &apos;미니 도서관&apos;에서 &apos;프리미엄 독서실·스터디카페&apos;로 빠르게 재편되고 있습니다. 이용자는 늘었지만, 낡은 시설이 단지의 가치를 떨어뜨리고 있지는 않습니까?
+                </p>
+                <p>
+                  아파트 리뉴얼은 일반 창업과 다릅니다. 의사결정 주체에 따른 계약 방식의 차이, 단지 내 관리 규정 준수 등 <span className="font-bold text-slate-800">복잡한 행정 절차를 완벽하게 이해</span>해야 합니다. 단순히 가구를 잘 만드는 것을 넘어, <span className="font-bold text-slate-800">실수 없는 행정 처리와 투명한 공정 관리</span>가 동반되어야 입주민들의 신뢰를 얻을 수 있습니다.
+                </p>
+                <p>
+                  입주민의 만족과 단지의 가치를 함께 높이는 공간은 기본입니다. 복잡한 절차는 파인드가구가 책임지고, 입주자대표회의에는 <span className="font-bold text-slate-800">단지의 가치가 올라가는 결과</span>만 드립니다.
+                </p>
+              </ShowroomMobileExpertComment>
+              <div className="mt-4 flex flex-wrap items-center gap-1.5 sm:gap-2 text-xs text-slate-700">
+                <span className="flex items-center gap-1 shrink-0"><MessageCircle className="h-3.5 w-3.5" aria-hidden /> 상담</span>
+                <ArrowRight className="h-3.5 w-3.5 text-slate-500 shrink-0" aria-hidden />
+                <span className="flex items-center gap-1 shrink-0"><FileCheck className="h-3.5 w-3.5" aria-hidden /> 규정 검토</span>
+                <ArrowRight className="h-3.5 w-3.5 text-slate-500 shrink-0" aria-hidden />
+                <span className="flex items-center gap-1 shrink-0"><Users className="h-3.5 w-3.5" aria-hidden /> 입주민 동의 지원</span>
+                <ArrowRight className="h-3.5 w-3.5 text-slate-500 shrink-0" aria-hidden />
+                <span className="flex items-center gap-1 shrink-0"><Wrench className="h-3.5 w-3.5" aria-hidden /> 시공</span>
+                <ArrowRight className="h-3.5 w-3.5 text-slate-500 shrink-0" aria-hidden />
+                <span className="flex items-center gap-1 shrink-0"><ClipboardCheck className="h-3.5 w-3.5" aria-hidden /> 사후관리</span>
+              </div>
+              <div className="mt-4 pt-4 border-t border-slate-200">
+                <ShowroomExpertConsultationButton concern={selectedConcernTag}>
+                  우리 아파트 맞춤형 리뉴얼 제안서 요청하기
+                </ShowroomExpertConsultationButton>
+              </div>
+            </div>
+            <div className="sm:w-40 shrink-0 flex items-center justify-center sm:justify-end pr-4 pb-2">
+              <span className="w-32 h-32 sm:w-40 sm:h-40 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center shrink-0">
+                <img
+                  src="/showroom-expert-comment.png"
+                  alt=""
+                  className="w-full h-full object-cover object-top"
+                />
+              </span>
+            </div>
+          </section>
+        )}
+
+        { selectedConcernTag && (
+          <section
+            id="showroom-concern-before-after-section"
+            className="mb-8 rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4 md:p-5 scroll-mt-28"
+          >
+            <div className="flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
+              <div>
+                <h2 className="text-base font-semibold text-neutral-900">
+                  {getConcernIndustryDisplayLabel(concernIndustryFilter)} Before/After 사례
+                </h2>
+                <p className="text-sm text-neutral-600">
+                  선택하신 고민과 같은 업종의 전후 비교 사례입니다. 카드를 누르면 블로그·카드뉴스에서 사례 스토리와 사진을 이어서 볼 수 있습니다.
+                </p>
+              </div>
+              {concernBeforeAfterGroups.length > 0 && (
+                <p className="text-xs text-neutral-500">{concernBeforeAfterGroups.length}개 현장</p>
+              )}
+            </div>
+            {concernBeforeAfterGroups.length === 0 ? (
+              <p className="mt-4 text-sm text-neutral-500">
+                이 고민에 맞는 전후 비교 사례를 준비 중입니다. 아래 시공사례 갤러리에서 비슷한 업종 사례를 먼저 확인해 보세요.
+              </p>
+            ) : (
+              <>
+                <div className="mt-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {pagedConcernBeforeAfterGroups.map((group) => renderBeforeAfterCard(group, { linkToStory: true }))}
+                </div>
+                {concernBeforeAfterTotalPages > 1 && (
+                  <div className="mt-4 flex flex-wrap items-center justify-center gap-2 pt-1">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="gap-1.5"
+                      disabled={currentConcernBeforeAfterPage <= 1}
+                      onClick={() => setBeforeAfterPage(currentConcernBeforeAfterPage - 1)}
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                      이전
+                    </Button>
+                    <div className="flex flex-wrap items-center justify-center gap-1">
+                      {Array.from({ length: concernBeforeAfterTotalPages }, (_, index) => {
+                        const pageNumber = index + 1
+                        const isCurrent = pageNumber === currentConcernBeforeAfterPage
+                        return (
+                          <Button
+                            key={`concern-before-after-page-${pageNumber}`}
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className={cn('min-w-9 px-0', isCurrent && selectedBrowseButtonClass)}
+                            onClick={() => setBeforeAfterPage(pageNumber)}
+                          >
+                            {pageNumber}
+                          </Button>
+                        )
+                      })}
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="gap-1.5"
+                      disabled={currentConcernBeforeAfterPage >= concernBeforeAfterTotalPages}
+                      onClick={() => setBeforeAfterPage(currentConcernBeforeAfterPage + 1)}
+                    >
+                      다음
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                )}
+              </>
+            )}
+          </section>
+        )}
+
       </main>
 
       {/* 상세 갤러리 모달 */}
@@ -2430,6 +2503,8 @@ export default function PublicShowroomExperience() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <ShowroomMainStickyConsultCta enabled={detailOpen === null} concern={selectedConcernTag} />
     </div>
   )
 }

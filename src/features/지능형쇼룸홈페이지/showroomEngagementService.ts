@@ -13,6 +13,7 @@ export type ShowroomEventName =
   | 'abm_consultation_click'
   | 'abm_gallery_open'
   | 'abm_gallery_browse'
+  | 'abm_header_nav_click'
 
 type ShowroomEventRecord = {
   sessionKey: string
