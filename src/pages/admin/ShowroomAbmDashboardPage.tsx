@@ -39,12 +39,20 @@ const PERIOD_OPTIONS = [
   { value: 90, label: '최근 90일' },
 ] as const
 
-const FUNNEL_STEPS = [
+const BEFORE_AFTER_FUNNEL_STEPS = [
   { eventName: 'abm_showroom_enter', label: '쇼룸 진입' },
-  { eventName: 'abm_concern_select', label: '고민 선택' },
-  { eventName: 'abm_ba_story_click', label: 'B/A 스토리 클릭' },
+  { eventName: 'abm_header_nav_click', label: '현장 전후 바로가기', metadataKey: 'navTarget', metadataValue: 'before_after' },
+  { eventName: 'abm_ba_story_click', label: 'B/A 카드 클릭' },
   { eventName: 'abm_case_open', label: '사례 페이지 열림' },
   { eventName: 'abm_consultation_click', label: '상담 클릭' },
+] as const
+
+const EXPERT_RECOMMEND_FUNNEL_STEPS = [
+  { eventName: 'abm_showroom_enter', label: '쇼룸 진입' },
+  { eventName: 'abm_header_nav_click', label: '전문가추천 바로가기', metadataKey: 'navTarget', metadataValue: 'expert_recommend' },
+  { eventName: 'abm_concern_select', label: '추천 질문 선택' },
+  { eventName: 'abm_ba_story_click', label: '추천 사례 클릭', metadataKey: 'concern' },
+  { eventName: 'abm_consultation_click', label: '상담 클릭', metadataKey: 'concern' },
 ] as const
 
 const GALLERY_STEPS = [
@@ -333,20 +341,29 @@ export default function ShowroomAbmDashboardPage() {
           </section>
         ) : (
           <>
-            <section className="grid gap-6 xl:grid-cols-2">
-              <FunnelPanel title="스토리 퍼널" description="고민 → B/A → 사례 → 상담 흐름의 세션 기준 전환" steps={metrics.storyFunnel} />
+            <section className="grid gap-6 xl:grid-cols-3">
               <FunnelPanel
-                title="갤러리 루트"
-                description="고민 없이 사진 탐색으로 들어온 세션의 행동"
+                title="현장 전후 퍼널"
+                description="진입 → 현장 전후 바로가기 → B/A 카드 → 사례 → 상담"
+                steps={metrics.beforeAfterFunnel}
+              />
+              <FunnelPanel
+                title="전문가추천 퍼널"
+                description="진입 → 전문가추천 바로가기 → 질문 선택 → 추천 사례 → 상담"
+                steps={metrics.expertRecommendFunnel}
+              />
+              <FunnelPanel
+                title="사진 탐색 퍼널"
+                description="업종·제품·색상 기준 사진 탐색 → 상세 열림 → 상담"
                 steps={metrics.galleryFunnel}
               />
             </section>
 
             <section className="grid gap-6 xl:grid-cols-2">
               <SimpleTable
-                title="헤더 네비 클릭"
-                description="상단 시공전후·전문가추천 앵커 (abm_header_nav_click)"
-                emptyMessage="헤더 네비 클릭 데이터가 없습니다."
+                title="바로가기 클릭"
+                description="현장 전후·전문가추천 책갈피/앵커 (abm_header_nav_click)"
+                emptyMessage="바로가기 클릭 데이터가 없습니다."
                 columns={['대상', '세션', '클릭 수']}
                 rows={metrics.headerNavMetrics.map((row) => [row.label, formatNumber(row.sessions), formatNumber(row.events)])}
               />
@@ -419,7 +436,7 @@ export default function ShowroomAbmDashboardPage() {
             <p>2. 기본 「프로덕션만」은 운영 도메인 이벤트만 보여 줍니다. 로컬·프리뷰 테스트는 「전체」에서 확인하세요.</p>
             <p>3. 빨간 이탈 구간(이전 단계 대비 급격한 감소)부터 UX·카피·CTA를 손보는 것이 우선입니다.</p>
             <p>4. 상담 surface가 한쪽에만 몰리면, 다른 CTA의 가시성·문구·배치를 조정해 보세요. 메인 Sticky(`gallery_browse_header`)와 갤러리 모달을 비교하세요.</p>
-            <p>5. 헤더 「시공전후」「전문가추천」 클릭(`abm_header_nav_click`)이 높으면 앵커는 쓰이고 있는 것입니다. 클릭 후 상담 전환은 별도로 봅니다.</p>
+            <p>5. 「현장 전후」「전문가추천」 바로가기 클릭(`abm_header_nav_click`)이 높으면 책갈피 탐색은 쓰이고 있는 것입니다. 클릭 후 상담 전환은 퍼널별로 봅니다.</p>
             <p>6. 사례 실패 건은 콘텐츠·링크 품질 문제일 수 있으니 case 작업실과 함께 확인하세요.</p>
           </div>
         </section>
@@ -455,7 +472,8 @@ function buildAbmDashboardMetrics(rows: AbmEventRow[]) {
   const caseOpenEvents = countEvents(rows, 'abm_case_open')
   const caseFailEvents = countEvents(rows, 'abm_case_open_fail')
 
-  const storyFunnel = buildFunnelMetrics(rows, FUNNEL_STEPS, enterSessions)
+  const beforeAfterFunnel = buildFunnelMetrics(rows, BEFORE_AFTER_FUNNEL_STEPS, enterSessions)
+  const expertRecommendFunnel = buildFunnelMetrics(rows, EXPERT_RECOMMEND_FUNNEL_STEPS, enterSessions)
   const galleryFunnel = buildFunnelMetrics(rows, GALLERY_STEPS, enterSessions)
 
   return {
@@ -464,7 +482,8 @@ function buildAbmDashboardMetrics(rows: AbmEventRow[]) {
     consultationRate: enterSessions > 0 ? consultationSessions / enterSessions : 0,
     caseOpenEvents,
     caseFailEvents,
-    storyFunnel,
+    beforeAfterFunnel,
+    expertRecommendFunnel,
     galleryFunnel,
     concernMetrics: buildConcernMetrics(rows),
     headerNavMetrics: buildHeaderNavMetrics(rows),
@@ -476,14 +495,15 @@ function buildAbmDashboardMetrics(rows: AbmEventRow[]) {
 
 function buildFunnelMetrics(
   rows: AbmEventRow[],
-  steps: readonly { eventName: string; label: string }[],
+  steps: readonly { eventName: string; label: string; metadataKey?: string; metadataValue?: string }[],
   enterSessions: number
 ): FunnelStepMetric[] {
   let previousSessions: number | null = null
 
   return steps.map((step) => {
-    const sessions = countUniqueSessions(rows, step.eventName)
-    const events = countEvents(rows, step.eventName)
+    const stepRows = getFunnelStepRows(rows, step)
+    const sessions = countUniqueSessions(stepRows, step.eventName)
+    const events = countEvents(stepRows, step.eventName)
     const rateFromEnter = enterSessions > 0 ? sessions / enterSessions : null
     const dropFromPrevious =
       previousSessions == null || previousSessions <= 0 ? null : 1 - sessions / previousSessions
@@ -499,6 +519,15 @@ function buildFunnelMetrics(
       dropFromPrevious,
     }
   })
+}
+
+function getFunnelStepRows(
+  rows: AbmEventRow[],
+  step: { eventName: string; metadataKey?: string; metadataValue?: string }
+): AbmEventRow[] {
+  if (!step.metadataKey) return rows
+  if (step.metadataValue == null) return rows.filter((row) => Boolean(readMetadataString(row.metadata, step.metadataKey)))
+  return rows.filter((row) => readMetadataString(row.metadata, step.metadataKey) === step.metadataValue)
 }
 
 function buildConcernMetrics(rows: AbmEventRow[]): ConcernMetric[] {

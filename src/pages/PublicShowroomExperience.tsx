@@ -1030,6 +1030,32 @@ export default function PublicShowroomExperience() {
     return () => window.clearTimeout(t)
   }, [location.hash, loading, scrollToSectionWithOffset])
 
+  const renderSectionBookmarkTabs = () => (
+    <nav
+      className="fixed right-0 top-32 z-30 flex flex-col items-end gap-2 md:top-40"
+      aria-label="쇼룸 주요 섹션 바로가기"
+    >
+      {featuredBeforeAfterGroups.length > 0 ? (
+        <button
+          type="button"
+          onClick={scrollToBeforeAfterSection}
+          className="rounded-l-2xl border border-r-0 border-[#5f7058]/25 bg-white/95 px-2.5 py-3 text-[12px] font-semibold text-[#43503e] shadow-[0_8px_22px_rgba(0,0,0,0.14)] backdrop-blur transition hover:-translate-x-1 hover:bg-[#f4f7f1] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#5f7058]/35"
+          style={{ writingMode: 'vertical-rl' }}
+        >
+          현장 전후
+        </button>
+      ) : null}
+      <button
+        type="button"
+        onClick={scrollToExpertRecommendSection}
+        className="rounded-l-2xl border border-r-0 border-amber-300/70 bg-amber-50/95 px-2.5 py-3 text-[12px] font-semibold text-amber-800 shadow-[0_8px_22px_rgba(0,0,0,0.14)] backdrop-blur transition hover:-translate-x-1 hover:bg-amber-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/50"
+        style={{ writingMode: 'vertical-rl' }}
+      >
+        전문가 추천
+      </button>
+    </nav>
+  )
+
   const renderSiteGroupCard = (
     group: SiteGroup,
     helperText: string,
@@ -1493,30 +1519,11 @@ export default function PublicShowroomExperience() {
               </h1>
               
             </div>
-            <div className="flex shrink-0 flex-row items-center gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-8 px-3 text-xs"
-                onClick={scrollToBeforeAfterSection}
-              >
-                시공전후
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-8 px-3 text-xs"
-                onClick={scrollToExpertRecommendSection}
-              >
-                전문가추천
-              </Button>
-            </div>
           </div>
           
         </div>
       </header>
+      {renderSectionBookmarkTabs()}
 
       <main className="max-w-6xl mx-auto px-4 py-8 md:px-8">
         {/* 메인 카피: 사진-first — 고민 선택은 선택 사항 */}
