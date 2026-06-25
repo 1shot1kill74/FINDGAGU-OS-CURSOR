@@ -1,5 +1,13 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "redirects": [
+    {
+      "source": "/:path*",
+      "has": [{ "type": "host", "value": "os.findgagu.co.kr" }],
+      "destination": "https://findgagu-os-cursor.vercel.app/dashboard",
+      "permanent": false
+    }
+  ],
   "headers": [
     {
       "source": "/(.*)",
