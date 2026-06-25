@@ -525,9 +525,10 @@ function getFunnelStepRows(
   rows: AbmEventRow[],
   step: { eventName: string; metadataKey?: string; metadataValue?: string }
 ): AbmEventRow[] {
-  if (!step.metadataKey) return rows
-  if (step.metadataValue == null) return rows.filter((row) => Boolean(readMetadataString(row.metadata, step.metadataKey)))
-  return rows.filter((row) => readMetadataString(row.metadata, step.metadataKey) === step.metadataValue)
+  const metadataKey = step.metadataKey
+  if (!metadataKey) return rows
+  if (step.metadataValue == null) return rows.filter((row) => Boolean(readMetadataString(row.metadata, metadataKey)))
+  return rows.filter((row) => readMetadataString(row.metadata, metadataKey) === step.metadataValue)
 }
 
 function buildConcernMetrics(rows: AbmEventRow[]): ConcernMetric[] {
