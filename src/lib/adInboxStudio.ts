@@ -304,3 +304,82 @@ export async function createAdInboxTimelapseJob(input: {
 
   return { jobId: created.job.id }
 }
+
+/** 타임랩스 전 AI 보정본을 같은 배치에 Before로 추가 */
+export async function insertAdInboxCleanupAsset(input: {
+  source: AdInboxAsset
+  cloudinary_url: string
+  thumbnail_url: string | null
+  public_id?: string | null
+}): Promise<{ id: string }> {
+  const photoDate =
+    input.source.photo_date ||
+    (input.source.created_at ? input.source.created_at.slice(0, 10) : new Date().toISOString().slice(0, 10))
+  const shortName = input.source.site_name?.trim() || '이름미상'
+  const groupId =
+    input.source.before_after_group_id?.trim() || buildAdInboxGroupId(photoDate, shortName)
+
+  const result = await insertImageAsset({
+    cloudinary_url: input.cloudinary_url,
+    thumbnail_url: input.thumbnail_url,
+    public_watermark_status: 'skipped',
+    site_name: shortName,
+    photo_date: photoDate,
+    category: AD_INBOX_CATEGORY,
+    is_main: false,
+    is_consultation: false,
+    storage_type: 'cloudinary',
+    memo: '광고 대기실 · AI 사람 제거 보정',
+    metadata: {
+      source: AD_INBOX_SOURCE,
+      ad_inbox: true,
+      before_after_role: 'before',
+      before_after_group_id: groupId,
+      ad_inbox_label: `${photoDate} ${shortName}`,
+      edited_from: input.source.id,
+      cleanup: 'people_removed',
+      public_id: input.public_id ?? undefined,
+      original_name: `cleanup-${input.source.original_name || input.source.id}.jpg`,
+    },
+  })
+
+  if ('error' in result) {
+    throw result.error
+  }
+  return { id: result.id }
+}
+
+export async function cleanupPeopleFromAdInboxAsset(asset: AdInboxAsset): Promise<{ id: string }> {
+  const imageUrl = asset.cloudinary_url?.trim() || asset.thumbnail_url?.trim()
+  if (!imageUrl) {
+    throw new Error('보정할 이미지 URL이 없습니다.')
+  }
+
+  const { data: auth } = await supabase.auth.getSession()
+  const token = auth.session?.access_token
+  const res = await fetch('/api/ad-inbox-cleanup-people', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ imageUrl }),
+  })
+  const json = (await res.json()) as {
+    ok?: boolean
+    message?: string
+    cloudinary_url?: string
+    thumbnail_url?: string | null
+    public_id?: string | null
+  }
+  if (!res.ok || !json.ok || !json.cloudinary_url) {
+    throw new Error(json.message || '사람 제거 보정에 실패했습니다.')
+  }
+
+  return insertAdInboxCleanupAsset({
+    source: asset,
+    cloudinary_url: json.cloudinary_url,
+    thumbnail_url: json.thumbnail_url ?? null,
+    public_id: json.public_id ?? null,
+  })
+}

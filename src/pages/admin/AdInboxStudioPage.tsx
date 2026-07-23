@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Loader2, RefreshCw, Sparkles, Upload, Video } from 'lucide-react'
+import { ArrowLeft, Eraser, Loader2, RefreshCw, Sparkles, Upload, Video } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { getShowroomImagePreviewUrl } from '@/lib/imageAssetShowroom'
 import {
+  cleanupPeopleFromAdInboxAsset,
   createAdInboxTimelapseJob,
   groupAdInboxBatches,
   listAdInboxAssets,
@@ -40,6 +41,7 @@ export default function AdInboxStudioPage() {
   const [afterId, setAfterId] = useState<string | null>(null)
   const [recommending, setRecommending] = useState(false)
   const [recommendation, setRecommendation] = useState<AdInboxPairRecommendation | null>(null)
+  const [cleaningId, setCleaningId] = useState<string | null>(null)
 
   const batches = useMemo(() => groupAdInboxBatches(assets), [assets])
   const selectedBatch: AdInboxBatch | null =
@@ -115,6 +117,20 @@ export default function AdInboxStudioPage() {
       toast.success('추천 페어를 적용했습니다. 확인 후 타임랩스를 만드세요.')
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '적용 실패')
+    }
+  }
+
+  const handleCleanupPeople = async (asset: AdInboxAsset) => {
+    setCleaningId(asset.id)
+    try {
+      const { id } = await cleanupPeopleFromAdInboxAsset(asset)
+      await refresh()
+      setBeforeId(id)
+      toast.success('사람 제거 보정본을 같은 배치에 추가했습니다. Before로 선택해 두었습니다.')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '보정 실패')
+    } finally {
+      setCleaningId(null)
     }
   }
 
@@ -425,6 +441,14 @@ export default function AdInboxStudioPage() {
                               >
                                 After
                               </button>
+                              <button
+                                type="button"
+                                disabled={cleaningId === asset.id}
+                                className="rounded-md bg-sky-50 px-2 py-0.5 text-[10px] font-medium text-sky-900 disabled:opacity-50"
+                                onClick={() => void handleCleanupPeople(asset)}
+                              >
+                                {cleaningId === asset.id ? '보정중…' : '사람제거'}
+                              </button>
                             </div>
                             {!isBefore && !isAfter ? (
                               <p className="text-[10px] text-neutral-400">미선택 · 하나를 누르세요</p>
@@ -435,6 +459,19 @@ export default function AdInboxStudioPage() {
                     })}
                   </div>
                   <div className="mt-4 flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => beforeAsset && void handleCleanupPeople(beforeAsset)}
+                      disabled={!beforeAsset || cleaningId === beforeAsset?.id}
+                    >
+                      {cleaningId && beforeAsset && cleaningId === beforeAsset.id ? (
+                        <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Eraser className="mr-1.5 h-4 w-4" />
+                      )}
+                      Before 사람 제거 보정
+                    </Button>
                     <Button
                       type="button"
                       onClick={() => void handleCreateTimelapse()}
@@ -451,6 +488,9 @@ export default function AdInboxStudioPage() {
                       <Link to="/admin/showroom-shorts">검수함만 열기</Link>
                     </Button>
                   </div>
+                  <p className="mt-2 text-xs text-neutral-500">
+                    사람이 찍힌 Before는 타임랩스 전에 「사람 제거 보정」→ 새 컷 확인 → 그다음 타임랩스.
+                  </p>
                 </div>
               ) : null}
             </div>
