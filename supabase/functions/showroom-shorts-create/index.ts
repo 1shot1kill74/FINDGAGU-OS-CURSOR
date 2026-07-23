@@ -249,6 +249,8 @@ Deno.serve(async (req) => {
     const token = await createKlingJwt(klingAccessKey, klingSecretKey)
     const apiMode = resolveKlingApiMode(klingModelName)
     const requestPath = getKlingCreatePath(apiMode)
+    // Kling은 external_task_id 재사용을 거부함 → 재생성마다 고유값 사용 (job id는 접두로 유지)
+    const externalTaskId = `${jobId}-${Date.now()}`
     const requestBody = buildKlingRequestBody({
       mode: apiMode,
       modelName: klingModelName,
@@ -257,7 +259,7 @@ Deno.serve(async (req) => {
       promptText: getString(job.prompt_text),
       durationSeconds: Number(job.duration_seconds ?? 10),
       aspectRatio: getString(job.source_aspect_ratio) || "16:9",
-      externalTaskId: jobId,
+      externalTaskId,
       callbackUrl: getOptionalString(callbackUrl),
     })
 

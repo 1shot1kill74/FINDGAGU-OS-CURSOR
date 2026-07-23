@@ -11,28 +11,22 @@ import type { ShowroomImageAsset } from '@/lib/imageAssetShowroom'
 import {
   SHOWROOM_SHORTS_CHANNELS,
   createShowroomShortsJob,
+  getShowroomShortsJob,
+  listShowroomShortsJobsByBeforeAssetIds,
+  listShowroomShortsJobsForGroupKey,
   validateBeforeAfterSelection,
   type ShowroomShortsChannel,
+  type ShowroomShortsJobRecord,
 } from '@/lib/showroomShorts'
+import { SHOWROOM_SHORTS_TIMELAPSE_PROMPT } from '@/lib/showroomShortsTimelapsePrompt'
+
+export type { ShowroomShortsJobRecord as AdInboxTimelapseJob }
 
 export const AD_INBOX_SOURCE = 'ad_inbox'
 export const AD_INBOX_CATEGORY = 'ad_inbox'
 
-export const AD_INBOX_DEFAULT_PROMPT = `Create a realistic 10-second renovation timelapse video using exactly two reference images.
-The first image is the BEFORE state of the space.
-The second image is the final AFTER state of the same space.
-Preserve order: start from the first image, end at the second image.
-
-Show a believable renovation timeline: before space → workers enter → dismantle old furniture → clean → install new layout → cleanup → final after reveal matching the second image.
-
-Rules:
-- major changes only while workers are visibly working
-- no magical morph, no instant swap, no blending the two images
-- fixed wide camera, photorealistic indoor lighting, smooth timelapse pacing
-- final frame must match the second image as closely as possible
-
-Negative prompt:
-furniture morphing, magical remodeling, floating furniture, warped walls, after image as start frame, before and after blended`
+/** @deprecated 공통 프롬프트로 통일 — SHOWROOM_SHORTS_TIMELAPSE_PROMPT 사용 */
+export const AD_INBOX_DEFAULT_PROMPT = SHOWROOM_SHORTS_TIMELAPSE_PROMPT
 
 export type AdInboxRole = 'before' | 'after' | 'unset'
 
@@ -281,6 +275,27 @@ export async function updateAdInboxAssetRole(
   if (updateError) {
     throw new Error(updateError.message || 'BA 태그 저장에 실패했습니다.')
   }
+}
+
+/** 쇼룸 숏츠 job의 before_after_group_key 형식 */
+export function buildAdInboxShortsGroupKey(batchKey: string): string {
+  return `before-after:${batchKey.trim()}`
+}
+
+export async function listAdInboxTimelapseJobsForBatch(batch: AdInboxBatch): Promise<ShowroomShortsJobRecord[]> {
+  const byGroup = await listShowroomShortsJobsForGroupKey(buildAdInboxShortsGroupKey(batch.key))
+  if (byGroup.length > 0) return byGroup
+
+  const assetIds = batch.assets.map((asset) => asset.id)
+  if (assetIds.length === 0) return []
+
+  const assetSet = new Set(assetIds)
+  const byAssets = await listShowroomShortsJobsByBeforeAssetIds(assetIds)
+  return byAssets.filter((job) => assetSet.has(job.before_asset_id) && assetSet.has(job.after_asset_id))
+}
+
+export async function getAdInboxTimelapseJob(jobId: string): Promise<ShowroomShortsJobRecord | null> {
+  return getShowroomShortsJob(jobId)
 }
 
 export async function createAdInboxTimelapseJob(input: {

@@ -493,6 +493,50 @@ function normalizePublishStatus(value: unknown): ShowroomShortsPublishStatus {
     : 'draft'
 }
 
+export async function getShowroomShortsJob(jobId: string): Promise<ShowroomShortsJobRecord | null> {
+  const { data, error } = await supabase
+    .from('showroom_shorts_jobs')
+    .select('*')
+    .eq('id', jobId)
+    .maybeSingle()
+
+  if (error) throw new Error(error.message)
+  if (!data) return null
+  return mapShortsJobRow(data as Record<string, unknown>)
+}
+
+export async function listShowroomShortsJobsForGroupKey(groupKey: string): Promise<ShowroomShortsJobRecord[]> {
+  const key = groupKey.trim()
+  if (!key) return []
+
+  const { data, error } = await supabase
+    .from('showroom_shorts_jobs')
+    .select('*')
+    .eq('before_after_group_key', key)
+    .order('created_at', { ascending: false })
+    .limit(8)
+
+  if (error) throw new Error(error.message)
+  return (data ?? []).map((row) => mapShortsJobRow(row as Record<string, unknown>))
+}
+
+export async function listShowroomShortsJobsByBeforeAssetIds(
+  assetIds: string[],
+): Promise<ShowroomShortsJobRecord[]> {
+  const ids = [...new Set(assetIds.map((id) => id.trim()).filter(Boolean))]
+  if (ids.length === 0) return []
+
+  const { data, error } = await supabase
+    .from('showroom_shorts_jobs')
+    .select('*')
+    .in('before_asset_id', ids)
+    .order('created_at', { ascending: false })
+    .limit(12)
+
+  if (error) throw new Error(error.message)
+  return (data ?? []).map((row) => mapShortsJobRow(row as Record<string, unknown>))
+}
+
 export async function listShowroomShortsJobs() {
   const [
     { data: jobs, error: jobsError },
@@ -542,6 +586,21 @@ export async function listShowroomShortsJobs() {
       recent_logs: logsByJobId.get(mapped.id) ?? [],
     }
   })
+}
+
+export async function updateShowroomShortsJobPrompt(jobId: string, promptText: string) {
+  const trimmed = promptText.trim()
+  if (!trimmed) throw new Error('프롬프트가 비어 있습니다.')
+
+  const { error } = await supabase
+    .from('showroom_shorts_jobs')
+    .update({
+      prompt_text: trimmed,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', jobId)
+
+  if (error) throw new Error(error.message)
 }
 
 export async function requestShowroomShortsGeneration(jobId: string) {

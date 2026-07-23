@@ -124,7 +124,8 @@ Before + After 선택
 - 코드: `src/pages/admin/AdInboxStudioPage.tsx`, `src/lib/adInboxStudio.ts`
 - 저장: `image_assets` + `category=ad_inbox` + `metadata.source=ad_inbox` (`is_consultation=false` → 쇼룸 목록에 안 섞임)
 - 묶음: `날짜 + 짧은 이름` → `before_after_group_id = ad:YYYY-MM-DD:이름`
-- 타임랩스: 기존 `createShowroomShortsJob` → `/admin/showroom-shorts` 검수함
+- 타임랩스: 기존 `createShowroomShortsJob` 연결
+- **인라인 검수(2026-07-24)**: 대기실에서 원본 재생·상태 폴링·워커 합성까지 진행. `/admin/showroom-shorts`는 채널 론칭(업로드 준비/승인)용 탈출구로만 유지
 
 로컬 확인 후 커밋 예정.
 

@@ -11,6 +11,7 @@ import {
   validateBeforeAfterSelection,
   type ShowroomShortsChannel,
 } from '@/lib/showroomShorts'
+import { SHOWROOM_SHORTS_TIMELAPSE_PROMPT } from '@/lib/showroomShortsTimelapsePrompt'
 import { Loader2, Video, CheckCircle2, ExternalLink } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -20,40 +21,7 @@ type Props = {
   selectedImages: ShowroomImageAsset[]
 }
 
-const DEFAULT_PROMPT = `Create a realistic 10-second renovation timelapse video using exactly two reference images.
-The first image is the BEFORE state of the space.
-The second image is the final AFTER state of the same space.
-You must clearly preserve this order: start from the first image, end at the second image, and never treat the second image as the starting point.
-
-The location is a managed study cafe / educational learning space.
-Start from the exact layout, furniture arrangement, wall condition, lighting direction, and camera framing of the first image.
-End with the exact completed interior, furniture arrangement, and final styling shown in the second image.
-
-Show a believable renovation timeline in this order:
-1. the original before space,
-2. workers entering,
-3. dismantling and demolition of the old desks, partitions, shelves, and furniture,
-4. removal and cleaning,
-5. installation and assembly of the new furniture and layout,
-6. final cleanup,
-7. reveal of the completed after space matching the second image.
-
-Important:
-- major visual changes must happen only while workers are visibly present and actively working
-- do not skip directly from before to after
-- do not blend the two images together
-- do not start from the after image
-- do not use only one image as the basis for the whole video
-- do not let furniture, walls, partitions, fixtures, desks, or shelves morph, teleport, slide, disappear, or appear on their own
-- no magical transition, no instant replacement, no floating objects, no warped geometry
-- the transformation must be driven by visible human labor: lifting, carrying, drilling, assembling, installing, dismantling, and cleaning
-
-Use a fixed wide camera angle, realistic indoor lighting, photorealistic construction details, smooth timelapse pacing, natural worker motion, and a clean final reveal.
-Keep the room structure consistent with the source images unless workers are visibly modifying it.
-The final frame must match the second image as closely as possible.
-
-Negative prompt:
-furniture morphing, empty room transformation, magical remodeling, floating furniture, disappearing objects, surreal motion, warped walls, unstable geometry, random layout change, melting objects, ghost workers, duplicated workers, broken hands, distorted tools, flickering furniture, unrealistic construction, sudden scene jump, after image used as start frame, before and after blended together, single-image interpretation`
+const DEFAULT_PROMPT = SHOWROOM_SHORTS_TIMELAPSE_PROMPT
 
 function channelLabel(channel: ShowroomShortsChannel) {
   if (channel === 'youtube') return 'YouTube Shorts'

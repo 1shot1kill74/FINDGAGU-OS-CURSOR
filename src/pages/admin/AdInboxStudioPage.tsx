@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Eraser, Loader2, RefreshCw, Sparkles, Upload, Video } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { ArrowLeft, Eraser, ExternalLink, Loader2, RefreshCw, Sparkles, Upload, Video } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -8,26 +8,51 @@ import { getShowroomImagePreviewUrl } from '@/lib/imageAssetShowroom'
 import {
   cleanupPeopleFromAdInboxAsset,
   createAdInboxTimelapseJob,
+  getAdInboxTimelapseJob,
   groupAdInboxBatches,
   listAdInboxAssets,
+  listAdInboxTimelapseJobsForBatch,
   updateAdInboxAssetRole,
   uploadAdInboxPhotos,
   type AdInboxAsset,
   type AdInboxBatch,
   type AdInboxRole,
+  type AdInboxTimelapseJob,
 } from '@/lib/adInboxStudio'
 import {
   recommendAdInboxPair,
   resolveAssetsFromRecommendation,
   type AdInboxPairRecommendation,
 } from '@/lib/adInboxPairRecommend'
+import {
+  pollShowroomShortsJob,
+  requestShowroomShortsComposition,
+  requestShowroomShortsGeneration,
+  getShowroomShortsCompositionStatus,
+  updateShowroomShortsJobPrompt,
+} from '@/lib/showroomShorts'
+import { SHOWROOM_SHORTS_TIMELAPSE_PROMPT } from '@/lib/showroomShortsTimelapsePrompt'
 
 function todayYmd() {
   return new Date().toISOString().slice(0, 10)
 }
 
+function jobStatusLabel(job: AdInboxTimelapseJob) {
+  if (job.status === 'failed' || job.kling_status === 'request_failed') return '실패'
+  if (job.status === 'generating' || job.kling_status === 'submitted' || job.kling_status === 'processing') {
+    return '원본 생성 중'
+  }
+  if (job.source_video_url && !job.final_video_url) {
+    if (job.status === 'composition_queued' || job.status === 'composition_processing') return '합성 중'
+    return '원본 검수'
+  }
+  if (job.final_video_url || job.status === 'ready_for_review' || job.status === 'composited') {
+    return '합성 완료'
+  }
+  return job.status
+}
+
 export default function AdInboxStudioPage() {
-  const navigate = useNavigate()
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [creating, setCreating] = useState(false)
@@ -42,10 +67,19 @@ export default function AdInboxStudioPage() {
   const [recommending, setRecommending] = useState(false)
   const [recommendation, setRecommendation] = useState<AdInboxPairRecommendation | null>(null)
   const [cleaningId, setCleaningId] = useState<string | null>(null)
+  const [jobs, setJobs] = useState<AdInboxTimelapseJob[]>([])
+  const [activeJobId, setActiveJobId] = useState<string | null>(null)
+  const [jobsLoading, setJobsLoading] = useState(false)
+  const [actingJob, setActingJob] = useState(false)
 
   const batches = useMemo(() => groupAdInboxBatches(assets), [assets])
   const selectedBatch: AdInboxBatch | null =
     batches.find((b) => b.key === selectedBatchKey) ?? batches[0] ?? null
+
+  const activeJob = useMemo(
+    () => jobs.find((job) => job.id === activeJobId) ?? jobs[0] ?? null,
+    [jobs, activeJobId],
+  )
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -56,6 +90,27 @@ export default function AdInboxStudioPage() {
       toast.error(error instanceof Error ? error.message : '대기실을 불러오지 못했습니다.')
     } finally {
       setLoading(false)
+    }
+  }, [])
+
+  const refreshJobs = useCallback(async (batch: AdInboxBatch | null) => {
+    if (!batch) {
+      setJobs([])
+      setActiveJobId(null)
+      return
+    }
+    setJobsLoading(true)
+    try {
+      const rows = await listAdInboxTimelapseJobsForBatch(batch)
+      setJobs(rows)
+      setActiveJobId((prev) => {
+        if (prev && rows.some((job) => job.id === prev)) return prev
+        return rows[0]?.id ?? null
+      })
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '타임랩스 작업을 불러오지 못했습니다.')
+    } finally {
+      setJobsLoading(false)
     }
   }, [])
 
@@ -78,6 +133,8 @@ export default function AdInboxStudioPage() {
       setBeforeId(null)
       setAfterId(null)
       setRecommendation(null)
+      setJobs([])
+      setActiveJobId(null)
       return
     }
     const before = selectedBatch.assets.find((a) => a.before_after_role === 'before')
@@ -85,7 +142,46 @@ export default function AdInboxStudioPage() {
     setBeforeId(before?.id ?? null)
     setAfterId(after?.id ?? null)
     setRecommendation(null)
-  }, [selectedBatch?.key])
+    void refreshJobs(selectedBatch)
+  }, [selectedBatch?.key, refreshJobs])
+
+  useEffect(() => {
+    if (!activeJob) return
+    const generating =
+      activeJob.status === 'generating' ||
+      activeJob.kling_status === 'submitted' ||
+      activeJob.kling_status === 'processing'
+    const composing =
+      activeJob.status === 'composition_queued' || activeJob.status === 'composition_processing'
+    if (!generating && !composing) return
+
+    let cancelled = false
+    const timer = window.setInterval(() => {
+      void (async () => {
+        try {
+          if (generating) {
+            await pollShowroomShortsJob(activeJob.id)
+          } else {
+            await getShowroomShortsCompositionStatus(activeJob.id)
+          }
+          if (cancelled) return
+          const fresh = await getAdInboxTimelapseJob(activeJob.id)
+          if (!fresh || cancelled) return
+          setJobs((prev) => {
+            const others = prev.filter((job) => job.id !== fresh.id)
+            return [fresh, ...others]
+          })
+        } catch {
+          // 폴링 실패는 조용히 다음 주기에 재시도
+        }
+      })()
+    }, 8_000)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [activeJob?.id, activeJob?.status, activeJob?.kling_status])
 
   const handleRecommendPair = async () => {
     if (!selectedBatch) return
@@ -200,12 +296,74 @@ export default function AdInboxStudioPage() {
         before: beforeAsset,
         after: afterAsset,
       })
-      toast.success('클링 생성을 시작했습니다. 검수함으로 이동합니다.')
-      navigate(`/admin/showroom-shorts?job=${encodeURIComponent(jobId)}`)
+      setActiveJobId(jobId)
+      const job = await getAdInboxTimelapseJob(jobId)
+      if (job) {
+        setJobs((prev) => [job, ...prev.filter((row) => row.id !== job.id)])
+      } else if (selectedBatch) {
+        await refreshJobs(selectedBatch)
+      }
+      toast.success('클링 생성을 시작했습니다. 아래에서 원본을 검수하세요.')
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '타임랩스 생성 실패')
     } finally {
       setCreating(false)
+    }
+  }
+
+  const handlePollActive = async () => {
+    if (!activeJob) return
+    setActingJob(true)
+    try {
+      await pollShowroomShortsJob(activeJob.id)
+      const fresh = await getAdInboxTimelapseJob(activeJob.id)
+      if (fresh) {
+        setJobs((prev) => [fresh, ...prev.filter((job) => job.id !== fresh.id)])
+      }
+      toast.success('상태를 갱신했습니다.')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '상태 확인 실패')
+    } finally {
+      setActingJob(false)
+    }
+  }
+
+  const handleRegenerate = async () => {
+    if (!activeJob) return
+    setActingJob(true)
+    try {
+      // 짧은 대기실 프롬프트로 만들어진 job도 채널 숏츠급 프롬프트로 맞춰 재생성
+      await updateShowroomShortsJobPrompt(activeJob.id, SHOWROOM_SHORTS_TIMELAPSE_PROMPT)
+      await requestShowroomShortsGeneration(activeJob.id)
+      const fresh = await getAdInboxTimelapseJob(activeJob.id)
+      if (fresh) {
+        setJobs((prev) => [fresh, ...prev.filter((job) => job.id !== fresh.id)])
+      }
+      toast.success('작업자 설치 타임랩스 프롬프트로 원본을 다시 요청했습니다.')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '재생성 실패')
+    } finally {
+      setActingJob(false)
+    }
+  }
+
+  const handleCompose = async () => {
+    if (!activeJob?.source_video_url) {
+      toast.error('원본 영상이 있어야 합성할 수 있습니다.')
+      return
+    }
+    setActingJob(true)
+    try {
+      await requestShowroomShortsComposition(activeJob.id)
+      const fresh = await getAdInboxTimelapseJob(activeJob.id)
+      if (fresh) {
+        setJobs((prev) => [fresh, ...prev.filter((job) => job.id !== fresh.id)])
+      }
+      toast.success('워커 합성을 요청했습니다.')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '합성 요청 실패')
+    } finally {
+      setActingJob(false)
     }
   }
 
@@ -223,8 +381,8 @@ export default function AdInboxStudioPage() {
             </Link>
             <h1 className="text-2xl font-semibold tracking-tight text-neutral-900">광고 대기실</h1>
             <p className="mt-1 max-w-2xl text-sm text-neutral-500">
-              분류 전 사진을 날짜·짧은 이름으로만 모읍니다. 제품·색상·쇼룸 정리는 하지 않습니다.
-              BA 두 장을 고르면 기존 클링 검수함으로 보냅니다.
+              입고 → BA 선택 → 타임랩스 → 이 화면에서 원본 검수. 채널 론칭만 필요할 때 숏츠 검수함으로
+              넘어갑니다.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -233,7 +391,7 @@ export default function AdInboxStudioPage() {
               새로고침
             </Button>
             <Button type="button" variant="outline" size="sm" asChild>
-              <Link to="/admin/showroom-shorts">숏츠 검수함</Link>
+              <Link to="/admin/showroom-shorts">채널 론칭(숏츠 검수함)</Link>
             </Button>
           </div>
         </div>
@@ -334,7 +492,11 @@ export default function AdInboxStudioPage() {
                     }`}
                   >
                     <div className="font-medium">{batch.label}</div>
-                    <div className={`mt-0.5 text-[11px] ${selectedBatch?.key === batch.key ? 'text-neutral-300' : 'text-neutral-500'}`}>
+                    <div
+                      className={`mt-0.5 text-[11px] ${
+                        selectedBatch?.key === batch.key ? 'text-neutral-300' : 'text-neutral-500'
+                      }`}
+                    >
                       B{batch.beforeCount} · A{batch.afterCount}
                       {batch.unsetCount ? ` · ?${batch.unsetCount}` : ''} · {batch.assets.length}장
                     </div>
@@ -482,15 +644,159 @@ export default function AdInboxStudioPage() {
                       ) : (
                         <Video className="mr-1.5 h-4 w-4" />
                       )}
-                      타임랩스 만들기 → 검수함
-                    </Button>
-                    <Button type="button" variant="outline" asChild>
-                      <Link to="/admin/showroom-shorts">검수함만 열기</Link>
+                      타임랩스 만들기
                     </Button>
                   </div>
                   <p className="mt-2 text-xs text-neutral-500">
                     사람이 찍힌 Before는 타임랩스 전에 「사람 제거 보정」→ 새 컷 확인 → 그다음 타임랩스.
                   </p>
+
+                  <div className="mt-6 rounded-2xl border border-neutral-200 bg-neutral-50/80 p-4">
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <h3 className="text-sm font-semibold text-neutral-900">이 배치 검수</h3>
+                        <p className="text-xs text-neutral-500">
+                          원본이 나오면 여기서 확인하고, 괜찮으면 합성으로 진행합니다.
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => void refreshJobs(selectedBatch)}
+                        disabled={jobsLoading}
+                      >
+                        <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${jobsLoading ? 'animate-spin' : ''}`} />
+                        작업 새로고침
+                      </Button>
+                    </div>
+
+                    {jobsLoading && jobs.length === 0 ? (
+                      <div className="flex items-center gap-2 py-6 text-sm text-neutral-500">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        작업 불러오는 중…
+                      </div>
+                    ) : jobs.length === 0 ? (
+                      <p className="py-4 text-sm text-neutral-500">
+                        아직 이 배치의 타임랩스 작업이 없습니다. BA를 고른 뒤 「타임랩스 만들기」를 누르세요.
+                      </p>
+                    ) : (
+                      <div className="space-y-4">
+                        {jobs.length > 1 ? (
+                          <div className="flex flex-wrap gap-1.5">
+                            {jobs.map((job) => (
+                              <button
+                                key={job.id}
+                                type="button"
+                                onClick={() => setActiveJobId(job.id)}
+                                className={`rounded-full border px-2.5 py-1 text-[11px] ${
+                                  activeJob?.id === job.id
+                                    ? 'border-neutral-900 bg-neutral-900 text-white'
+                                    : 'border-neutral-200 bg-white text-neutral-600'
+                                }`}
+                              >
+                                {jobStatusLabel(job)} · {job.created_at.slice(5, 16).replace('T', ' ')}
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+
+                        {activeJob ? (
+                          <>
+                            <div className="flex flex-wrap items-center gap-2 text-xs">
+                              <span className="rounded-full bg-white px-2.5 py-1 font-medium text-neutral-800 ring-1 ring-neutral-200">
+                                {jobStatusLabel(activeJob)}
+                              </span>
+                              <span className="text-neutral-500">
+                                kling: {activeJob.kling_status ?? '—'} · job {activeJob.status}
+                              </span>
+                            </div>
+
+                            {activeJob.source_video_url ? (
+                              <video
+                                key={activeJob.source_video_url}
+                                src={activeJob.source_video_url}
+                                controls
+                                playsInline
+                                className="max-h-[420px] w-full rounded-xl bg-black"
+                              />
+                            ) : (
+                              <div className="flex items-center gap-2 rounded-xl border border-dashed border-neutral-300 bg-white px-4 py-8 text-sm text-neutral-500">
+                                {(activeJob.status === 'generating' ||
+                                  activeJob.kling_status === 'submitted' ||
+                                  activeJob.kling_status === 'processing') && (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                )}
+                                {activeJob.status === 'failed' || activeJob.kling_status === 'request_failed'
+                                  ? '생성에 실패했습니다. 아래에서 다시 요청하세요.'
+                                  : '원본 생성 중입니다. 자동으로 상태를 갱신합니다.'}
+                              </div>
+                            )}
+
+                            {activeJob.final_video_url ? (
+                              <div>
+                                <p className="mb-2 text-xs font-medium text-neutral-700">최종(합성) 영상</p>
+                                <video
+                                  key={activeJob.final_video_url}
+                                  src={activeJob.final_video_url}
+                                  controls
+                                  playsInline
+                                  className="max-h-[420px] w-full rounded-xl bg-black"
+                                />
+                              </div>
+                            ) : null}
+
+                            <div className="flex flex-wrap gap-2">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                disabled={actingJob}
+                                onClick={() => void handlePollActive()}
+                              >
+                                {actingJob ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
+                                상태 확인
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                disabled={actingJob}
+                                onClick={() => void handleRegenerate()}
+                              >
+                                프롬프트 교정 후 다시 생성
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                disabled={actingJob || !activeJob.source_video_url}
+                                onClick={() => void handleCompose()}
+                              >
+                                {activeJob.final_video_url ? '합성 다시하기' : '원본 OK · 워커 합성'}
+                              </Button>
+                              {activeJob.source_video_url ? (
+                                <Button type="button" size="sm" variant="outline" asChild>
+                                  <a href={activeJob.source_video_url} target="_blank" rel="noreferrer">
+                                    원본 새 탭
+                                    <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
+                                  </a>
+                                </Button>
+                              ) : null}
+                              <Button type="button" size="sm" variant="outline" asChild>
+                                <Link to={`/admin/showroom-shorts?job=${encodeURIComponent(activeJob.id)}`}>
+                                  채널 론칭으로
+                                </Link>
+                              </Button>
+                            </div>
+                            <p className="text-[11px] text-neutral-500">
+                              원본이 마음에 들면 「워커 합성」까지 여기서 진행하세요. 유튜브·페북·인스타 업로드
+                              준비/승인은 「채널 론칭」에서 합니다.
+                            </p>
+                          </>
+                        ) : null}
+                      </div>
+                    )}
+                  </div>
                 </div>
               ) : null}
             </div>
