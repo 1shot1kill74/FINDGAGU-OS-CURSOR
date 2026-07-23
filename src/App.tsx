@@ -28,6 +28,7 @@ const HomepageConceptPage = lazy(() => import('@/pages/HomepageConceptPage'))
 const MigrationPage = lazy(() => import('@/pages/admin/MigrationPage'))
 const ArchivePage = lazy(() => import('@/pages/admin/ArchivePage'))
 const ShowroomCaseStudioPage = lazy(() => import('@/pages/admin/ShowroomCaseStudioPage'))
+const AdInboxStudioPage = lazy(() => import('@/pages/admin/AdInboxStudioPage'))
 const ShowroomShortsPage = lazy(() => import('@/pages/admin/ShowroomShortsPage'))
 const ShowroomBasicShortsQueuePage = lazy(() => import('@/pages/admin/ShowroomBasicShortsQueuePage'))
 const ShowroomAdsDashboardPage = lazy(() => import('@/pages/admin/ShowroomAdsDashboardPage'))
@@ -169,6 +170,7 @@ function App() {
             <Route path="/admin/archive" element={<ArchivePage />} />
             <Route path="/admin/showroom-case-studio" element={<ShowroomCaseStudioPage />} />
             <Route path="/admin/showroom-case-studio/:siteKey" element={<ShowroomCaseApproachPage mode="internal" />} />
+            <Route path="/admin/ad-inbox" element={<AdInboxStudioPage />} />
             <Route path="/admin/showroom-shorts" element={<ShowroomShortsPage />} />
             <Route path="/admin/showroom-basic-shorts" element={<ShowroomBasicShortsQueuePage />} />
             <Route path="/admin/showroom-ads" element={<ShowroomAdsDashboardPage />} />

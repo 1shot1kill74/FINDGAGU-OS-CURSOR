@@ -19,6 +19,7 @@ import {
   Sparkles,
   Target,
   TriangleAlert,
+  Video,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAuth } from '@/auth/AuthProvider'
@@ -309,6 +310,12 @@ export default function DashboardPage() {
       description: '직원용 시공사례 쇼룸과 노출 순서를 점검합니다.',
       to: '/showroom',
       icon: MonitorCog,
+    },
+    {
+      title: '광고 대기실',
+      description: '분류 전 BA 사진 입고 후 클링 타임랩스로 보냅니다.',
+      to: '/admin/ad-inbox',
+      icon: Video,
     },
     {
       title: '케이스 작업실',

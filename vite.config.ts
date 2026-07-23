@@ -40,6 +40,69 @@ export default defineConfig(({ mode }) => {
     },
     plugins: [
       react(),
+      {
+        name: 'local-ad-inbox-pair-recommend',
+        configureServer(server) {
+          server.middlewares.use(async (req, res, next) => {
+            if (!req.url?.startsWith('/api/ad-inbox-pair-recommend')) {
+              next()
+              return
+            }
+            if (req.method === 'OPTIONS') {
+              res.statusCode = 204
+              res.end('')
+              return
+            }
+            if (req.method !== 'POST') {
+              res.statusCode = 405
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify({ ok: false, message: 'POST only' }))
+              return
+            }
+
+            try {
+              const chunks: Buffer[] = []
+              await new Promise<void>((resolve, reject) => {
+                req.on('data', (chunk) => chunks.push(Buffer.from(chunk)))
+                req.on('end', () => resolve())
+                req.on('error', reject)
+              })
+              const rawBody = Buffer.concat(chunks).toString('utf8')
+              const handler = (await import('./api/ad-inbox-pair-recommend.ts')).default
+              const headers: Record<string, string | string[] | undefined> = { ...req.headers }
+              await handler(
+                { method: req.method, headers, body: rawBody ? JSON.parse(rawBody) : {} },
+                {
+                  setHeader(name, value) {
+                    res.setHeader(name, value)
+                  },
+                  status(code) {
+                    res.statusCode = code
+                    return {
+                      json(body) {
+                        res.setHeader('Content-Type', 'application/json')
+                        res.end(JSON.stringify(body))
+                      },
+                      send(body) {
+                        res.end(body)
+                      },
+                    }
+                  },
+                },
+              )
+            } catch (error) {
+              res.statusCode = 500
+              res.setHeader('Content-Type', 'application/json')
+              res.end(
+                JSON.stringify({
+                  ok: false,
+                  message: error instanceof Error ? error.message : 'local recommend failed',
+                }),
+              )
+            }
+          })
+        },
+      },
     ],
     build: {
       rollupOptions: {
