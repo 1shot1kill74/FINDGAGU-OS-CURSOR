@@ -8,12 +8,12 @@
  *
  * 환경 변수:
  * - VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY (필수)
- * - SITE_PUBLIC_BASE_URL (필수, 예: https://www.findgagu.com)
+ * - SITE_PUBLIC_BASE_URL (필수, 예: https://www.findgagu.co.kr)
  *
  * 사용:
  *   tsx scripts/buildSitemap.ts
  *   - 또는 -
- *   SITE_PUBLIC_BASE_URL=https://www.findgagu.com tsx scripts/buildSitemap.ts
+ *   SITE_PUBLIC_BASE_URL=https://www.findgagu.co.kr tsx scripts/buildSitemap.ts
  *
  * `npm run build` 이후에 실행되도록 package.json scripts에 연결되어 있다.
  */
@@ -31,7 +31,11 @@ type CaseRow = {
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL?.trim() || ''
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY?.trim() || ''
-const BASE_URL = (process.env.SITE_PUBLIC_BASE_URL?.trim() || '').replace(/\/+$/, '')
+const DEFAULT_PUBLIC_BASE_URL = 'https://www.findgagu.co.kr'
+const BASE_URL = (
+  process.env.SITE_PUBLIC_BASE_URL?.trim() ||
+  (process.env.VERCEL === '1' ? DEFAULT_PUBLIC_BASE_URL : '')
+).replace(/\/+$/, '')
 
 const STRICT = process.env.SITEMAP_STRICT === '1'
 
@@ -55,7 +59,7 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
 }
 if (!BASE_URL) {
   if (STRICT) {
-    console.error('[buildSitemap] SITE_PUBLIC_BASE_URL 이 비어 있습니다. 예: https://www.findgagu.com')
+    console.error('[buildSitemap] SITE_PUBLIC_BASE_URL 이 비어 있습니다. 예: https://www.findgagu.co.kr')
     process.exit(1)
   }
   await writeFallback('SITE_PUBLIC_BASE_URL 누락 (로컬 빌드일 수 있음)')
@@ -136,15 +140,20 @@ async function fetchAllRows(): Promise<CaseRow[]> {
 }
 
 async function main(): Promise<void> {
+  if (!process.env.SITE_PUBLIC_BASE_URL?.trim() && process.env.VERCEL === '1') {
+    console.warn(`[buildSitemap] SITE_PUBLIC_BASE_URL 미설정 → ${DEFAULT_PUBLIC_BASE_URL} 사용`)
+  }
   console.log(`[buildSitemap] base = ${BASE_URL}`)
   const rows = await fetchAllRows()
   console.log(`[buildSitemap] fetched ${rows.length} case profile rows`)
 
   const entries: SitemapEntry[] = []
 
-  // 정적 진입점들 (필요시 더 추가)
-  entries.push({ loc: `${BASE_URL}/`, changefreq: 'weekly', priority: 0.6 })
-  entries.push({ loc: `${BASE_URL}/showroom`, changefreq: 'weekly', priority: 0.7 })
+  // 공개 진입점 (내부 /showroom 은 로그인 영역이므로 제외)
+  entries.push({ loc: `${BASE_URL}/`, changefreq: 'weekly', priority: 0.7 })
+  entries.push({ loc: `${BASE_URL}/public/showroom`, changefreq: 'daily', priority: 1.0 })
+  entries.push({ loc: `${BASE_URL}/public/showroom/cardnews`, changefreq: 'weekly', priority: 0.7 })
+  entries.push({ loc: `${BASE_URL}/contact`, changefreq: 'monthly', priority: 0.5 })
 
   let approvedBlogCount = 0
   let publishedCardNewsCount = 0

@@ -20,7 +20,7 @@
  *
  * 환경 변수:
  *   - VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY (필수)
- *   - SITE_PUBLIC_BASE_URL (필수, 예: https://www.findgagu.com)
+ *   - SITE_PUBLIC_BASE_URL (필수, 예: https://www.findgagu.co.kr)
  *
  * 환경 변수가 없으면 (로컬 빌드 등) 조용히 스킵한다.
  */
@@ -38,7 +38,11 @@ type CaseRow = {
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL?.trim() || ''
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY?.trim() || ''
-const BASE_URL = (process.env.SITE_PUBLIC_BASE_URL?.trim() || '').replace(/\/+$/, '')
+const DEFAULT_PUBLIC_BASE_URL = 'https://www.findgagu.co.kr'
+const BASE_URL = (
+  process.env.SITE_PUBLIC_BASE_URL?.trim() ||
+  (process.env.VERCEL === '1' ? DEFAULT_PUBLIC_BASE_URL : '')
+).replace(/\/+$/, '')
 const STRICT = process.env.PRERENDER_STRICT === '1'
 
 const DIST_DIR = path.resolve(process.cwd(), 'dist')

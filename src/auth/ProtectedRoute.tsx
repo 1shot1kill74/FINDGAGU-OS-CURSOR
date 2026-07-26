@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { Navigate, Outlet, useLocation } from 'react-router-dom'
 import { useAuth } from '@/auth/AuthProvider'
 import { describeInternalRoute } from '@/lib/internalRouteLabel'
@@ -7,6 +8,14 @@ export default function ProtectedRoute() {
   const { user, loading } = useAuth()
   const nextPath = `${location.pathname}${location.search}${location.hash}`
   const nextLabel = describeInternalRoute(location.pathname)
+
+  useEffect(() => {
+    const previousTitle = document.title
+    document.title = 'FINDGAGU OS'
+    return () => {
+      document.title = previousTitle
+    }
+  }, [location.pathname])
 
   if (loading) {
     return (

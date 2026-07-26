@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowLeft, ArrowRight, CalendarDays, Images } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -7,6 +7,12 @@ import {
   fetchPublicShowroomCardNewsListItems,
   type PublicShowroomCardNewsListItem,
 } from '@/lib/publicShowroomCardNewsService'
+import { usePageHead } from '@/lib/usePageHead'
+import {
+  PUBLIC_SHOWROOM_BRAND,
+  buildPublicShowroomBasicMetas,
+  getPublicShowroomCanonicalUrl,
+} from '@/lib/publicShowroomSeo'
 
 function formatPublishedAt(value: string | null) {
   if (!value) return ''
@@ -21,6 +27,24 @@ export default function PublicShowroomCardNewsPage() {
   const [items, setItems] = useState<PublicShowroomCardNewsListItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  const cardNewsTitle = `${PUBLIC_SHOWROOM_BRAND} 공개 카드뉴스`
+  const cardNewsDescription =
+    '파인드가구 시공 사례를 카드뉴스 형식으로 모아 둔 공개 목록입니다. 관심 현장을 골라 상세를 확인하세요.'
+  const cardNewsMetas = useMemo(
+    () =>
+      buildPublicShowroomBasicMetas({
+        title: cardNewsTitle,
+        description: cardNewsDescription,
+        canonicalPath: '/public/showroom/cardnews',
+      }),
+    [cardNewsTitle, cardNewsDescription],
+  )
+  usePageHead({
+    title: cardNewsTitle,
+    metas: cardNewsMetas,
+    canonicalUrl: getPublicShowroomCanonicalUrl('/public/showroom/cardnews'),
+  })
 
   useEffect(() => {
     let cancelled = false

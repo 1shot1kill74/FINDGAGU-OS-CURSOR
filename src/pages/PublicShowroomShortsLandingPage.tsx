@@ -2,7 +2,7 @@
  * 숏츠 댓글 → 연속 랜딩 (모바일 우선)
  * 릴스 BA 1+1이 아니라, 대기실에 모인 그 현장 사진을 더 보여 준다.
  */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { usePublicShowroomChannelTalk } from '@/hooks/usePublicShowroomChannelTalk'
 import {
@@ -11,6 +11,12 @@ import {
 } from '@/lib/showroomAbmTracking'
 import { fetchPublicShowroomShortsLanding, type PublicShowroomShortsLanding } from '@/lib/showroomShortsLanding'
 import { openShowroomConsultationChat } from '@/pages/showroom/showroomStoryCta'
+import { usePageHead } from '@/lib/usePageHead'
+import {
+  PUBLIC_SHOWROOM_BRAND,
+  buildPublicShowroomBasicMetas,
+  getPublicShowroomCanonicalUrl,
+} from '@/lib/publicShowroomSeo'
 
 function roleLabel(role: string) {
   if (role === 'before') return 'BEFORE'
@@ -69,6 +75,33 @@ export default function PublicShowroomShortsLandingPage() {
     const query = params.toString()
     return `/public/showroom${query ? `?${query}` : ''}`
   })()
+
+  const seoTitle = landing
+    ? `${landing.displayName} 현장 — ${PUBLIC_SHOWROOM_BRAND} 숏츠`
+    : `${PUBLIC_SHOWROOM_BRAND} 숏츠 현장`
+  const seoDescription = landing
+    ? `${landing.displayName} 숏츠에 나온 현장의 Before/After 사진을 이어서 보고 상담을 요청하세요.`
+    : '숏츠에 나온 현장 사진을 이어서 보고 상담을 요청하세요.'
+  const canonicalPath = jobId
+    ? `/public/showroom/shorts/${encodeURIComponent(jobId)}`
+    : '/public/showroom'
+  const heroImage = landing?.gallery[0]?.url ?? null
+  const shortsMetas = useMemo(
+    () =>
+      buildPublicShowroomBasicMetas({
+        title: seoTitle,
+        description: seoDescription,
+        canonicalPath,
+        imageUrl: heroImage,
+        robots: 'noindex, follow',
+      }),
+    [seoTitle, seoDescription, canonicalPath, heroImage],
+  )
+  usePageHead({
+    title: seoTitle,
+    metas: shortsMetas,
+    canonicalUrl: getPublicShowroomCanonicalUrl(canonicalPath),
+  })
 
   if (loading) {
     return (
