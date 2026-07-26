@@ -9,6 +9,9 @@ export const PUBLIC_SHOWROOM_HUB_TITLE = '파인드가구 온라인 쇼룸 — �
 export const PUBLIC_SHOWROOM_HUB_DESCRIPTION =
   '학원 자습실, 도서관, 아파트 커뮤니티 공간의 Before/After 시공 사례를 모은 파인드가구 온라인 쇼룸입니다. 현장 사진을 보고 맞춤 상담을 요청하세요.'
 
+/** 공개 공유 기본 OG (1200×630, `public/og-default.jpg`) */
+export const PUBLIC_SHOWROOM_DEFAULT_OG_PATH = '/og-default.jpg'
+
 export const PUBLIC_SHOWROOM_HUB_FAQS = [
   {
     question: '파인드가구 온라인 쇼룸에서는 무엇을 볼 수 있나요?',
@@ -34,6 +37,11 @@ function absoluteUrl(pathOrUrl: string, origin = typeof window !== 'undefined' ?
   return `${base}${path}`
 }
 
+export function getPublicShowroomDefaultOgImageUrl(origin?: string): string {
+  const base = (origin ?? (typeof window !== 'undefined' ? window.location.origin : PUBLIC_SHOWROOM_ORIGIN)).replace(/\/+$/, '')
+  return absoluteUrl(PUBLIC_SHOWROOM_DEFAULT_OG_PATH, base)
+}
+
 export function buildPublicShowroomBasicMetas(input: {
   title: string
   description: string
@@ -44,6 +52,7 @@ export function buildPublicShowroomBasicMetas(input: {
 }): PageHeadMetaTag[] {
   const origin = typeof window !== 'undefined' ? window.location.origin : PUBLIC_SHOWROOM_ORIGIN
   const canonicalUrl = absoluteUrl(input.canonicalPath, origin)
+  const imageUrl = input.imageUrl?.trim() || getPublicShowroomDefaultOgImageUrl(origin)
   const list: PageHeadMetaTag[] = [
     { kind: 'name', name: 'description', content: input.description },
     { kind: 'property', property: 'og:title', content: input.title },
@@ -52,14 +61,14 @@ export function buildPublicShowroomBasicMetas(input: {
     { kind: 'property', property: 'og:url', content: canonicalUrl },
     { kind: 'property', property: 'og:locale', content: 'ko_KR' },
     { kind: 'property', property: 'og:site_name', content: PUBLIC_SHOWROOM_BRAND },
-    { kind: 'name', name: 'twitter:card', content: input.imageUrl ? 'summary_large_image' : 'summary' },
+    { kind: 'property', property: 'og:image', content: imageUrl },
+    { kind: 'property', property: 'og:image:width', content: '1200' },
+    { kind: 'property', property: 'og:image:height', content: '630' },
+    { kind: 'name', name: 'twitter:card', content: 'summary_large_image' },
     { kind: 'name', name: 'twitter:title', content: input.title },
     { kind: 'name', name: 'twitter:description', content: input.description },
+    { kind: 'name', name: 'twitter:image', content: imageUrl },
   ]
-  if (input.imageUrl?.trim()) {
-    list.push({ kind: 'property', property: 'og:image', content: input.imageUrl.trim() })
-    list.push({ kind: 'name', name: 'twitter:image', content: input.imageUrl.trim() })
-  }
   if (input.robots?.trim()) {
     list.push({ kind: 'name', name: 'robots', content: input.robots.trim() })
   }
@@ -67,11 +76,15 @@ export function buildPublicShowroomBasicMetas(input: {
 }
 
 export function buildOrganizationJsonLd(origin = PUBLIC_SHOWROOM_ORIGIN): PageHeadJsonLd {
+  const base = origin.replace(/\/+$/, '')
+  const logo = getPublicShowroomDefaultOgImageUrl(base)
   return {
     '@context': 'https://schema.org',
     '@type': 'Organization',
     name: PUBLIC_SHOWROOM_BRAND,
-    url: origin.replace(/\/+$/, ''),
+    url: base,
+    logo,
+    image: logo,
     description: PUBLIC_SHOWROOM_HUB_DESCRIPTION,
     areaServed: {
       '@type': 'Country',

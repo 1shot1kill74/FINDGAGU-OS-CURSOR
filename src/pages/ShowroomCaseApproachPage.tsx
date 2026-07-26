@@ -7,6 +7,7 @@ import { usePublicShowroomChannelTalk } from '@/hooks/usePublicShowroomChannelTa
 import { buildShowroomCaseCardNewsPackage, formatShowroomCardTextForDisplay, normalizeShowroomCardNewsSlides, resolveCardNewsSlideImageUrl } from '@/lib/showroomCaseContentPackage'
 import { buildCanonicalBlogPostFromN8nBlogResponse, renderCanonicalBlogPostHtml } from '@/lib/showroomCaseCanonicalBlog'
 import { usePageHead, type PageHeadJsonLd, type PageHeadMetaTag } from '@/lib/usePageHead'
+import { getPublicShowroomDefaultOgImageUrl } from '@/lib/publicShowroomSeo'
 import {
   loadShowroomCaseApproachBundle,
   resolvePublicShowroomCaseHref,
@@ -454,7 +455,7 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
   const geoPoints = (displayBlog?.structured?.geoPoints ?? []).filter(
     (g): g is string => typeof g === 'string' && g.trim().length > 0,
   )
-  const heroImageForOg = afterHeroUrl || beforeHeroUrl || ''
+  const heroImageForOg = afterHeroUrl || beforeHeroUrl || getPublicShowroomDefaultOgImageUrl()
   const canonicalUrl =
     typeof window !== 'undefined' && mode === 'public' && canonicalBlog?.status === 'approved'
       ? (canonicalBlog?.seo.canonicalPath?.trim()
@@ -468,11 +469,15 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
     if (ogTitle) list.push({ kind: 'property', property: 'og:title', content: ogTitle })
     if (ogDescription) list.push({ kind: 'property', property: 'og:description', content: ogDescription })
     list.push({ kind: 'property', property: 'og:type', content: 'article' })
-    if (heroImageForOg) list.push({ kind: 'property', property: 'og:image', content: heroImageForOg })
+    if (heroImageForOg) {
+      list.push({ kind: 'property', property: 'og:image', content: heroImageForOg })
+      list.push({ kind: 'property', property: 'og:image:width', content: '1200' })
+      list.push({ kind: 'property', property: 'og:image:height', content: '630' })
+    }
     if (typeof window !== 'undefined' && mode === 'public') {
       list.push({ kind: 'property', property: 'og:url', content: window.location.href })
     }
-    list.push({ kind: 'name', name: 'twitter:card', content: heroImageForOg ? 'summary_large_image' : 'summary' })
+    list.push({ kind: 'name', name: 'twitter:card', content: 'summary_large_image' })
     if (ogTitle) list.push({ kind: 'name', name: 'twitter:title', content: ogTitle })
     if (ogDescription) list.push({ kind: 'name', name: 'twitter:description', content: ogDescription })
     if (heroImageForOg) list.push({ kind: 'name', name: 'twitter:image', content: heroImageForOg })
