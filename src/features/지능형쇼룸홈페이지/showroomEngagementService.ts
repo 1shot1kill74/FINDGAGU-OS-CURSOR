@@ -14,6 +14,8 @@ export type ShowroomEventName =
   | 'abm_gallery_open'
   | 'abm_gallery_browse'
   | 'abm_header_nav_click'
+  | 'abm_shorts_landing_enter'
+  | 'abm_shorts_more_sites_click'
 
 type ShowroomEventRecord = {
   sessionKey: string

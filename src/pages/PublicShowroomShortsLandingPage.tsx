@@ -2,9 +2,13 @@
  * 숏츠 댓글 → 연속 랜딩 (모바일 우선)
  * 릴스 BA 1+1이 아니라, 대기실에 모인 그 현장 사진을 더 보여 준다.
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { usePublicShowroomChannelTalk } from '@/hooks/usePublicShowroomChannelTalk'
+import {
+  trackShowroomAbmShortsLandingEnter,
+  trackShowroomAbmShortsMoreSitesClick,
+} from '@/lib/showroomAbmTracking'
 import { fetchPublicShowroomShortsLanding, type PublicShowroomShortsLanding } from '@/lib/showroomShortsLanding'
 import { openShowroomConsultationChat } from '@/pages/showroom/showroomStoryCta'
 
@@ -21,6 +25,7 @@ export default function PublicShowroomShortsLandingPage() {
   const [landing, setLanding] = useState<PublicShowroomShortsLanding | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const trackedEnterJobId = useRef<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -36,6 +41,13 @@ export default function PublicShowroomShortsLandingPage() {
           return
         }
         setLanding(result)
+        if (trackedEnterJobId.current !== result.jobId) {
+          trackedEnterJobId.current = result.jobId
+          trackShowroomAbmShortsLandingEnter({
+            jobId: result.jobId,
+            siteName: result.displayName,
+          })
+        }
       })
       .catch(() => {
         if (cancelled) return
@@ -127,6 +139,12 @@ export default function PublicShowroomShortsLandingPage() {
         <div className="mt-5">
           <Link
             to={catalogHref}
+            onClick={() => {
+              trackShowroomAbmShortsMoreSitesClick({
+                jobId: landing.jobId,
+                siteName: landing.displayName,
+              })
+            }}
             className="flex min-h-12 items-center justify-center rounded-full border border-stone-300 bg-white px-4 text-sm font-medium text-stone-700"
           >
             다른 현장 더 보기

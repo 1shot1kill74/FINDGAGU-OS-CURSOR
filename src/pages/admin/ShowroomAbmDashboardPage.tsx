@@ -17,7 +17,7 @@ const TRAFFIC_FILTER_OPTIONS: { value: ShowroomAbmTrafficFilter; label: string; 
   {
     value: 'production',
     label: '프로덕션만',
-    description: 'findgagu-os-cursor.vercel.app 등 운영 도메인만 집계',
+    description: 'www.findgagu.co.kr · os.findgagu.co.kr 등 운영 도메인만 집계',
   },
   {
     value: 'exclude_local',
@@ -37,6 +37,24 @@ const PERIOD_OPTIONS = [
   { value: 15, label: '최근 15일' },
   { value: 30, label: '최근 30일' },
   { value: 90, label: '최근 90일' },
+] as const
+
+/** 핵심: 숏츠 → 중간 랜딩 → 상담 */
+const SHORTS_LANDING_FUNNEL_STEPS = [
+  { eventName: 'abm_shorts_landing_enter', label: '숏츠 랜딩 진입' },
+  {
+    eventName: 'abm_consultation_click',
+    label: '랜딩에서 상담 클릭',
+    metadataKey: 'surface',
+    metadataValue: 'shorts_landing',
+  },
+] as const
+
+/** 보조: 랜딩에서 카탈로그로 빠진 뒤 */
+const SHORTS_TO_CATALOG_FUNNEL_STEPS = [
+  { eventName: 'abm_shorts_landing_enter', label: '숏츠 랜딩 진입' },
+  { eventName: 'abm_shorts_more_sites_click', label: '다른 현장 더 보기' },
+  { eventName: 'abm_showroom_enter', label: '쇼룸 카탈로그 진입' },
 ] as const
 
 const BEFORE_AFTER_FUNNEL_STEPS = [
@@ -228,8 +246,9 @@ export default function ShowroomAbmDashboardPage() {
               <h1 className="text-2xl font-semibold tracking-tight text-slate-900">쇼룸 ABM 퍼널</h1>
             </div>
             <p className="max-w-3xl text-sm leading-6 text-slate-600">
-              공개 쇼룸(`/public/showroom`) 실측 이벤트를 기준으로 유입, 이탈, 상담 발생 지점을 확인합니다. 기본값은{' '}
-              <span className="font-medium text-slate-800">프로덕션 도메인만</span> 집계해 로컬·프리뷰 테스트와 구분합니다.
+              광고 숏츠 → 중간 랜딩(<code className="rounded bg-slate-100 px-1">/r/yt|ig|fb/:jobId</code>) → 상담·카탈로그
+              흐름을 먼저 보고, 쇼룸 카탈로그 탐색은 보조로 봅니다. 기본값은{' '}
+              <span className="font-medium text-slate-800">프로덕션 도메인만</span> 집계합니다.
             </p>
             <p className="text-xs text-slate-500">
               프로덕션 호스트: {productionHostnames.join(', ')}
@@ -288,27 +307,27 @@ export default function ShowroomAbmDashboardPage() {
 
         <section className="grid gap-4 md:grid-cols-4">
           <SummaryCard
-            title="쇼룸 세션"
-            value={formatNumber(metrics.enterSessions)}
-            description="abm_showroom_enter 고유 session_key"
+            title="숏츠 랜딩 세션"
+            value={formatNumber(metrics.shortsLandingSessions)}
+            description="abm_shorts_landing_enter 고유 session_key"
             icon={<Users className="h-4 w-4" />}
           />
           <SummaryCard
-            title="상담 클릭 세션"
-            value={formatNumber(metrics.consultationSessions)}
-            description="abm_consultation_click 고유 session_key"
+            title="랜딩→상담"
+            value={formatNumber(metrics.shortsConsultationSessions)}
+            description="숏츠 랜딩 CTA 상담 클릭 세션"
             icon={<MessageCircle className="h-4 w-4" />}
           />
           <SummaryCard
-            title="상담 전환율"
-            value={formatPercent(metrics.consultationRate)}
-            description="상담 클릭 세션 ÷ 쇼룸 진입 세션"
+            title="랜딩 상담 전환율"
+            value={formatPercent(metrics.shortsConsultationRate)}
+            description="랜딩 상담 ÷ 숏츠 랜딩 진입"
             icon={<Filter className="h-4 w-4" />}
           />
           <SummaryCard
-            title="사례 열림 / 실패"
-            value={`${formatNumber(metrics.caseOpenEvents)} / ${formatNumber(metrics.caseFailEvents)}`}
-            description="성공 abm_case_open · 실패 abm_case_open_fail"
+            title="다른 현장 더 보기"
+            value={formatNumber(metrics.shortsMoreSitesSessions)}
+            description="랜딩에서 카탈로그로 이동한 세션"
             icon={<BarChart3 className="h-4 w-4" />}
           />
         </section>
@@ -321,7 +340,7 @@ export default function ShowroomAbmDashboardPage() {
           <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
             <p className="text-sm text-slate-500">
               {rows.length === 0
-                ? '선택 기간에 ABM 이벤트가 없습니다. 공개 쇼룸(`/public/showroom`)에서 고객 행동이 발생하면 여기에 쌓입니다.'
+                ? '선택 기간에 ABM 이벤트가 없습니다. 숏츠 랜딩(`/r/.../jobId`) 또는 공개 쇼룸에서 행동이 발생하면 여기에 쌓입니다.'
                 : `${getAbmTrafficFilterLabel(trafficFilter)} 조건에 맞는 이벤트가 없습니다. 로컬 테스트만 있었다면 「로컬 제외」 또는 「전체」로 바꿔 보세요.`}
             </p>
             {rows.length > 0 && hostnameMetrics.length > 0 ? (
@@ -342,71 +361,111 @@ export default function ShowroomAbmDashboardPage() {
           </section>
         ) : (
           <>
-            <section className="grid gap-6 xl:grid-cols-3">
+            <section className="grid gap-6 xl:grid-cols-2">
               <FunnelPanel
-                title="현장 전후 퍼널"
-                description="진입 → 현장 전후 바로가기 → B/A 카드 → 사례 → 상담"
-                steps={metrics.beforeAfterFunnel}
+                title="숏츠 → 랜딩 → 상담"
+                description="광고 숏츠 링크 → 중간 랜딩 → 채널톡 상담 (핵심 퍼널)"
+                steps={metrics.shortsLandingFunnel}
               />
               <FunnelPanel
-                title="전문가추천 퍼널"
-                description="진입 → 전문가추천 바로가기 → 질문 선택 → 추천 사례 → 상담"
-                steps={metrics.expertRecommendFunnel}
-              />
-              <FunnelPanel
-                title="사진 탐색 퍼널"
-                description="업종·제품·색상 기준 사진 탐색 → 상세 열림 → 상담"
-                steps={metrics.galleryFunnel}
+                title="숏츠 → 랜딩 → 카탈로그"
+                description="랜딩에서 「다른 현장 더 보기」로 쇼룸 탐색에 합류"
+                steps={metrics.shortsToCatalogFunnel}
               />
             </section>
 
             <section className="grid gap-6 xl:grid-cols-2">
               <SimpleTable
-                title="바로가기 클릭"
-                description="현장 전후·전문가추천 책갈피/앵커 (abm_header_nav_click)"
-                emptyMessage="바로가기 클릭 데이터가 없습니다."
-                columns={['대상', '세션', '클릭 수']}
-                rows={metrics.headerNavMetrics.map((row) => [row.label, formatNumber(row.sessions), formatNumber(row.events)])}
-              />
-
-              <SimpleTable
                 title="상담 클릭 surface"
-                description="어디 CTA에서 상담이 시작됐는지"
+                description="어디 CTA에서 상담이 시작됐는지 (숏츠 랜딩 포함)"
                 emptyMessage="상담 클릭 데이터가 없습니다."
                 columns={['위치', '세션', '클릭 수']}
                 rows={metrics.surfaceMetrics.map((row) => [row.label, formatNumber(row.sessions), formatNumber(row.events)])}
               />
+              <SimpleTable
+                title="SNS/캠페인별 유입"
+                description="숏츠 `/r/yt|ig|fb` · SNS `/sns/...` UTM 기준"
+                emptyMessage="채널 데이터가 없습니다."
+                columns={['소스', '매체', '캠페인', '세션', '이벤트', '상담']}
+                rows={metrics.channelMetrics.map((row) => [
+                  row.source,
+                  row.medium,
+                  row.campaign,
+                  formatNumber(row.sessions),
+                  formatNumber(row.events),
+                  formatNumber(row.consultations),
+                ])}
+              />
             </section>
 
-            <SimpleTable
-              title="고민별 행동"
-              description="concern 메타데이터가 붙은 이벤트 기준"
-              emptyMessage="고민 데이터가 없습니다."
-              columns={['고민', '세션', '고민 선택', 'B/A 클릭', '사례 열림', '상담']}
-              rows={metrics.concernMetrics.map((row) => [
-                row.concern,
-                formatNumber(row.sessions),
-                formatNumber(row.concernSelects),
-                formatNumber(row.baClicks),
-                formatNumber(row.caseOpens),
-                formatNumber(row.consultations),
-              ])}
-            />
-
-            <SimpleTable
-              title="SNS/캠페인별 유입"
-              description="짧은 SNS 링크(`/sns/instagram`, `/sns/kakao`, `/sns/blog`)와 UTM 기준"
-              emptyMessage="채널 데이터가 없습니다."
-              columns={['소스', '매체', '캠페인', '세션', '이벤트', '상담']}
-              rows={metrics.channelMetrics.map((row) => [
-                row.source,
-                row.medium,
-                row.campaign,
-                formatNumber(row.sessions),
-                formatNumber(row.events),
-                formatNumber(row.consultations),
-              ])}
-            />
+            <details className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm open:pb-5">
+              <summary className="cursor-pointer text-lg font-semibold text-slate-900">
+                쇼룸 카탈로그 퍼널 (보조)
+              </summary>
+              <p className="mt-2 text-sm text-slate-500">
+                프로필 링크·「다른 현장 더 보기」로 들어온 뒤의 기존 공개 쇼룸 탐색입니다. 숏츠 직행과 별개로 봅니다.
+              </p>
+              <div className="mt-5 grid gap-6 xl:grid-cols-3">
+                <FunnelPanel
+                  title="현장 전후 퍼널"
+                  description="진입 → 현장 전후 → B/A → 사례 → 상담"
+                  steps={metrics.beforeAfterFunnel}
+                />
+                <FunnelPanel
+                  title="전문가추천 퍼널"
+                  description="진입 → 전문가추천 → 질문 → 사례 → 상담"
+                  steps={metrics.expertRecommendFunnel}
+                />
+                <FunnelPanel
+                  title="사진 탐색 퍼널"
+                  description="갤러리 탐색 → 상세 → 상담"
+                  steps={metrics.galleryFunnel}
+                />
+              </div>
+              <div className="mt-6 grid gap-6 xl:grid-cols-2">
+                <SimpleTable
+                  title="바로가기 클릭"
+                  description="현장 전후·전문가추천 책갈피 (abm_header_nav_click)"
+                  emptyMessage="바로가기 클릭 데이터가 없습니다."
+                  columns={['대상', '세션', '클릭 수']}
+                  rows={metrics.headerNavMetrics.map((row) => [row.label, formatNumber(row.sessions), formatNumber(row.events)])}
+                />
+                <SimpleTable
+                  title="고민별 행동"
+                  description="concern 메타데이터 기준"
+                  emptyMessage="고민 데이터가 없습니다."
+                  columns={['고민', '세션', '고민 선택', 'B/A 클릭', '사례 열림', '상담']}
+                  rows={metrics.concernMetrics.map((row) => [
+                    row.concern,
+                    formatNumber(row.sessions),
+                    formatNumber(row.concernSelects),
+                    formatNumber(row.baClicks),
+                    formatNumber(row.caseOpens),
+                    formatNumber(row.consultations),
+                  ])}
+                />
+              </div>
+              <div className="mt-6 grid gap-4 md:grid-cols-3">
+                <SummaryCard
+                  title="카탈로그 세션"
+                  value={formatNumber(metrics.enterSessions)}
+                  description="abm_showroom_enter"
+                  icon={<Users className="h-4 w-4" />}
+                />
+                <SummaryCard
+                  title="전체 상담 세션"
+                  value={formatNumber(metrics.consultationSessions)}
+                  description="모든 surface 합"
+                  icon={<MessageCircle className="h-4 w-4" />}
+                />
+                <SummaryCard
+                  title="사례 열림 / 실패"
+                  value={`${formatNumber(metrics.caseOpenEvents)} / ${formatNumber(metrics.caseFailEvents)}`}
+                  description="abm_case_open · fail"
+                  icon={<BarChart3 className="h-4 w-4" />}
+                />
+              </div>
+            </details>
 
             {metrics.caseFailMetrics.length > 0 ? (
               <SimpleTable
@@ -433,12 +492,11 @@ export default function ShowroomAbmDashboardPage() {
         <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
           <h2 className="text-lg font-semibold text-slate-900">해석 가이드</h2>
           <div className="mt-4 space-y-3 text-sm leading-6 text-slate-600">
-            <p>1. 퍼널은 session_key 기준입니다. 같은 사람이 여러 단계를 거치면 각 단계에 1회씩 집계됩니다.</p>
-            <p>2. 기본 「프로덕션만」은 운영 도메인 이벤트만 보여 줍니다. 로컬·프리뷰 테스트는 「전체」에서 확인하세요.</p>
-            <p>3. 빨간 이탈 구간(이전 단계 대비 급격한 감소)부터 UX·카피·CTA를 손보는 것이 우선입니다.</p>
-            <p>4. 상담 surface가 한쪽에만 몰리면, 다른 CTA의 가시성·문구·배치를 조정해 보세요. 메인 Sticky(`gallery_browse_header`)와 갤러리 모달을 비교하세요.</p>
-            <p>5. 「현장 전후」「전문가추천」 바로가기 클릭(`abm_header_nav_click`)이 높으면 책갈피 탐색은 쓰이고 있는 것입니다. 클릭 후 상담 전환은 퍼널별로 봅니다.</p>
-            <p>6. 사례 실패 건은 콘텐츠·링크 품질 문제일 수 있으니 case 작업실과 함께 확인하세요.</p>
+            <p>1. 핵심은 숏츠 랜딩입니다. 랜딩 진입 대비 상담 전환이 낮으면 CTA·사진·카피부터 손봅니다.</p>
+            <p>2. 「다른 현장 더 보기」가 높고 상담이 낮으면, 랜딩이 카탈로그로만 새고 있는 것입니다.</p>
+            <p>3. 인스타는 프로필 링크(고정 쇼룸 입구) 비중이 클 수 있어, 카탈로그 퍼널은 보조로 봅니다.</p>
+            <p>4. 유튜브·페이스북은 숏츠 job 랜딩 직행이 본선입니다. medium=`shorts` 유입을 채널 표에서 확인하세요.</p>
+            <p>5. 퍼널은 session_key 기준입니다. 기본 「프로덕션만」은 운영 도메인만 집계합니다.</p>
           </div>
         </section>
       </div>
@@ -473,16 +531,36 @@ function buildAbmDashboardMetrics(rows: AbmEventRow[]) {
   const caseOpenEvents = countEvents(rows, 'abm_case_open')
   const caseFailEvents = countEvents(rows, 'abm_case_open_fail')
 
+  const shortsLandingSessions = countUniqueSessions(rows, 'abm_shorts_landing_enter')
+  const shortsConsultationSessions = countUniqueSessions(
+    getFunnelStepRows(rows, {
+      eventName: 'abm_consultation_click',
+      metadataKey: 'surface',
+      metadataValue: 'shorts_landing',
+    }),
+    'abm_consultation_click',
+  )
+  const shortsMoreSitesSessions = countUniqueSessions(rows, 'abm_shorts_more_sites_click')
+
+  const shortsLandingFunnel = buildFunnelMetrics(rows, SHORTS_LANDING_FUNNEL_STEPS, shortsLandingSessions)
+  const shortsToCatalogFunnel = buildFunnelMetrics(rows, SHORTS_TO_CATALOG_FUNNEL_STEPS, shortsLandingSessions)
   const beforeAfterFunnel = buildFunnelMetrics(rows, BEFORE_AFTER_FUNNEL_STEPS, enterSessions)
   const expertRecommendFunnel = buildFunnelMetrics(rows, EXPERT_RECOMMEND_FUNNEL_STEPS, enterSessions)
   const galleryFunnel = buildFunnelMetrics(rows, GALLERY_STEPS, enterSessions)
 
   return {
+    shortsLandingSessions,
+    shortsConsultationSessions,
+    shortsConsultationRate:
+      shortsLandingSessions > 0 ? shortsConsultationSessions / shortsLandingSessions : 0,
+    shortsMoreSitesSessions,
     enterSessions,
     consultationSessions,
     consultationRate: enterSessions > 0 ? consultationSessions / enterSessions : 0,
     caseOpenEvents,
     caseFailEvents,
+    shortsLandingFunnel,
+    shortsToCatalogFunnel,
     beforeAfterFunnel,
     expertRecommendFunnel,
     galleryFunnel,

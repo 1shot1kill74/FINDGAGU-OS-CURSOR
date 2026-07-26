@@ -12,6 +12,8 @@ export type ShowroomAbmEventName = Extract<
   | 'abm_gallery_open'
   | 'abm_gallery_browse'
   | 'abm_header_nav_click'
+  | 'abm_shorts_landing_enter'
+  | 'abm_shorts_more_sites_click'
 >
 
 export type ShowroomAbmConsultationSurface =
@@ -73,5 +75,33 @@ export function trackShowroomAbmHeaderNavClick(input: {
     eventName: 'abm_header_nav_click',
     concern: input.concern,
     metadata: { navTarget: input.target },
+  })
+}
+
+export function trackShowroomAbmShortsLandingEnter(input: {
+  jobId: string
+  siteName?: string | null
+}): void {
+  trackShowroomAbmEvent({
+    eventName: 'abm_shorts_landing_enter',
+    siteName: input.siteName,
+    metadata: {
+      jobId: input.jobId,
+      entry: 'shorts',
+    },
+  })
+}
+
+export function trackShowroomAbmShortsMoreSitesClick(input: {
+  jobId: string
+  siteName?: string | null
+}): void {
+  trackShowroomAbmEvent({
+    eventName: 'abm_shorts_more_sites_click',
+    siteName: input.siteName,
+    metadata: {
+      jobId: input.jobId,
+      entry: 'shorts',
+    },
   })
 }
