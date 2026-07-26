@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>쇼룸 단일화 컷리스트 — 공개 쇼룸만 남기기</title>
+  <style>
+    :root {
+      --bg: #f4f2ec;
+      --ink: #1c1917;
+      --muted: #57534e;
+      --line: #d6d3d1;
+      --card: #fff;
+      --keep: #0f766e;
+      --keep-bg: #ccfbf1;
+      --admin: #b45309;
+      --admin-bg: #ffedd5;
+      --kill: #be123c;
+      --kill-bg: #ffe4e6;
+      --font: "Pretendard", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: var(--font);
+      color: var(--ink);
+      background:
+        radial-gradient(900px 420px at 0% 0%, #e7f6f3 0%, transparent 55%),
+        var(--bg);
+      line-height: 1.55;
+    }
+    .wrap { max-width: 960px; margin: 0 auto; padding: 40px 20px 72px; }
+    h1 {
+      margin: 0 0 8px;
+      font-size: clamp(1.5rem, 3vw, 2rem);
+      letter-spacing: -0.03em;
+    }
+    .lede { color: var(--muted); margin: 0 0 22px; max-width: 60ch; }
+    .callout {
+      background: var(--keep-bg);
+      border: 1px solid #99f6e4;
+      border-radius: 14px;
+      padding: 14px 16px;
+      margin-bottom: 28px;
+    }
+    .callout strong { color: var(--keep); }
+    .grid3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-bottom: 28px;
+    }
+    .stat {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px 16px;
+    }
+    .stat b { display: block; font-size: 1.2rem; }
+    .stat span { color: var(--muted); font-size: 0.85rem; }
+    h2 {
+      font-size: 1.15rem;
+      margin: 32px 0 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--line);
+      letter-spacing: -0.02em;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      overflow: hidden;
+      font-size: 0.9rem;
+      margin-bottom: 8px;
+    }
+    th, td {
+      padding: 11px 12px;
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid var(--line);
+    }
+    th {
+      background: #fafaf9;
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-weight: 700;
+    }
+    tr:last-child td { border-bottom: 0; }
+    .tag {
+      display: inline-block;
+      font-size: 0.72rem;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 999px;
+      white-space: nowrap;
+    }
+    .tag.keep { background: var(--keep-bg); color: var(--keep); }
+    .tag.admin { background: var(--admin-bg); color: var(--admin); }
+    .tag.kill { background: var(--kill-bg); color: var(--kill); }
+    .now {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin: 16px 0 8px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 16px;
+    }
+    .card h3 { margin: 0 0 8px; font-size: 0.98rem; }
+    .card ul { margin: 0; padding-left: 1.1rem; color: var(--muted); font-size: 0.9rem; }
+    .card li { margin: 0.3rem 0; }
+    .phases { display: grid; gap: 10px; }
+    .phase {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px 16px;
+      display: grid;
+      grid-template-columns: 88px 1fr;
+      gap: 12px;
+      align-items: start;
+    }
+    .phase .n {
+      font-weight: 800;
+      color: var(--keep);
+      font-size: 0.85rem;
+    }
+    .phase p { margin: 0; color: var(--muted); font-size: 0.92rem; }
+    .phase strong { color: var(--ink); }
+    footer {
+      margin-top: 36px;
+      padding-top: 14px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+    @media (max-width: 720px) {
+      .grid3, .now { grid-template-columns: 1fr; }
+      .phase { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>쇼룸 단일화 컷리스트</h1>
+    <p class="lede">
+      목표: 직원과 고객이 <strong>같은 공개 쇼룸</strong>을 보며 소통한다.
+      내부 쇼룸은 “두 번째 쇼룸”이 아니라, 운영 기능은 어드민으로 내린다.
+    </p>
+
+    <div class="callout">
+      <strong>원칙 한 줄</strong><br />
+      쇼룸 = 보기·설명·상담 화면은 <code>/public/showroom</code> 하나.
+      만들기·고치기·이름/공개 관리는 전부 어드민.
+    </div>
+
+    <div class="grid3">
+      <div class="stat"><b>남김</b><span>공개 쇼룸 경험</span></div>
+      <div class="stat"><b>내림</b><span>운영·편집·승인</span></div>
+      <div class="stat"><b>폐기 후보</b><span>내부 쇼룸 UI 이중화</span></div>
+    </div>
+
+    <h2>지금 구조 (문제)</h2>
+    <div class="now">
+      <div class="card">
+        <h3>내부 쇼룸 <code>/showroom</code></h3>
+        <ul>
+          <li>ShowroomPage (~3500줄)</li>
+          <li>직원용 컨트롤·정렬·내부 현장명</li>
+          <li>원래 의도: 직원+고객 같이 보기</li>
+          <li>실제: 두 번째 UI로 고착</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>외부 쇼룸 <code>/public/showroom</code></h3>
+        <ul>
+          <li>PublicShowroomExperience (~2500줄)</li>
+          <li>ABM · 채널톡 · 공개 표시명</li>
+          <li>승인 블로그만 노출</li>
+          <li>실제 고객·광고 랜딩</li>
+        </ul>
+      </div>
+    </div>
+    <p class="lede" style="margin-top:8px">
+      에너지 낭비 지점: <code>site_name</code> / <code>canonical_site_name</code> /
+      <code>external_display_name</code> / <code>broad_external_display_name</code> 이중화,
+      URL 키 매칭, 두 UI 유지보수.
+    </p>
+
+    <h2>남길 것 — 공개 쇼룸 (같이 보는 화면)</h2>
+    <table>
+      <thead>
+        <tr><th>항목</th><th>이유</th><th>비고</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="tag keep">KEEP</span> 공개 쇼룸 UI</td>
+          <td>고객·직원 공통 뷰</td>
+          <td><code>/public/showroom</code> (+ case/cardnews)</td>
+        </tr>
+        <tr>
+          <td><span class="tag keep">KEEP</span> 고민 → B/A → 사례</td>
+          <td>상담·숏츠 랜딩의 증거 허브</td>
+          <td>thin 입구로 단순화 예정</td>
+        </tr>
+        <tr>
+          <td><span class="tag keep">KEEP</span> 상담 CTA / 채널톡</td>
+          <td>퍼널 행동 단계</td>
+          <td>직원이 같이 볼 때도 동일</td>
+        </tr>
+        <tr>
+          <td><span class="tag keep">KEEP</span> ABM 이벤트</td>
+          <td>이탈·회수 실측</td>
+          <td>대시보드는 어드민</td>
+        </tr>
+        <tr>
+          <td><span class="tag keep">KEEP</span> /r/* · UTM 진입</td>
+          <td>숏츠·광고 합류점</td>
+          <td>현장/유형 직행</td>
+        </tr>
+        <tr>
+          <td><span class="tag keep">KEEP</span> 승인된 사례·블로그 노출</td>
+          <td>고객에게 보여줄 정본만</td>
+          <td>미승인은 어드민에서만</td>
+        </tr>
+        <tr>
+          <td><span class="tag keep">KEEP</span> 고객용 표시명 1개</td>
+          <td>소통용 이름</td>
+          <td>예: “압구정 관리형” — 코드 숨김</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>어드민으로 내릴 것 — 운영 화면</h2>
+    <table>
+      <thead>
+        <tr><th>항목</th><th>어디로</th><th>이유</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="tag admin">ADMIN</span> 사진 입고·BA·메타 편집</td>
+          <td>광고 대기실 / 자산관리</td>
+          <td>쇼룸이 아님</td>
+        </tr>
+        <tr>
+          <td><span class="tag admin">ADMIN</span> 내부 현장 코드 (<code>site_name</code>)</td>
+          <td>어드민 필드만</td>
+          <td>고객·상담 화면에서 제거</td>
+        </tr>
+        <tr>
+          <td><span class="tag admin">ADMIN</span> 공개 표시명 편집</td>
+          <td>어드민 1필드</td>
+          <td>이중 UI에서 고치지 않음</td>
+        </tr>
+        <tr>
+          <td><span class="tag admin">ADMIN</span> 노출 순서·공개/비공개</td>
+          <td>어드민 토글</td>
+          <td>쇼룸은 결과만 봄</td>
+        </tr>
+        <tr>
+          <td><span class="tag admin">ADMIN</span> 케이스 작업실·블로그 승인</td>
+          <td><code>/admin/showroom-case-studio</code></td>
+          <td>이미 존재, 유지</td>
+        </tr>
+        <tr>
+          <td><span class="tag admin">ADMIN</span> 숏츠 제작·론칭</td>
+          <td>광고 대기실 / 숏츠 검수</td>
+          <td>쇼룸과 분리</td>
+        </tr>
+        <tr>
+          <td><span class="tag admin">ADMIN</span> ABM 대시보드</td>
+          <td><code>/admin/showroom-abm</code></td>
+          <td>분석은 직원 전용</td>
+        </tr>
+        <tr>
+          <td><span class="tag admin">ADMIN</span> 미승인 블로그/초안 미리보기</td>
+          <td>작업실 미리보기</td>
+          <td>공개 쇼룸에 draft 모드 넣지 않음</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>폐기·축소 후보 — 이중화 제거</h2>
+    <table>
+      <thead>
+        <tr><th>항목</th><th>조치</th><th>메모</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="tag kill">CUT</span> 내부 쇼룸을 “제품”으로 유지</td>
+          <td>대시보드 「내부 쇼룸」→ 공개 쇼룸으로 링크 변경</td>
+          <td>같이 보기 = 공개 URL</td>
+        </tr>
+        <tr>
+          <td><span class="tag kill">CUT</span> ShowroomPage 독립 UX 장기 유지</td>
+          <td>단계적 폐기 / 리다이렉트</td>
+          <td>기능 이전 후 삭제</td>
+        </tr>
+        <tr>
+          <td><span class="tag kill">CUT</span> 표시명 다층 구조</td>
+          <td><code>display_name</code>(공개) + <code>site_code</code>(내부) 2개로 축소</td>
+          <td>broad/external/canonical 정리</td>
+        </tr>
+        <tr>
+          <td><span class="tag kill">CUT</span> 내부·공개 URL 키 매핑 복잡도</td>
+          <td>공개 case 키 = 표시명/슬러그 단일</td>
+          <td>alias 헬퍼 축소 목표</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>추천 실행 순서 (작게)</h2>
+    <div class="phases">
+      <div class="phase">
+        <div class="n">Phase 0</div>
+        <p>
+          <strong>정책 고정:</strong> “같이 보기 = 공개 쇼룸 URL”.
+          대시보드 버튼을 공개 쇼룸으로 바꾸고, 내부 쇼룸은 “레거시”로 표기.
+        </p>
+      </div>
+      <div class="phase">
+        <div class="n">Phase 1</div>
+        <p>
+          <strong>이름 단순화:</strong> 상담·공개 화면에는 고객용 표시명만.
+          내부 코드는 어드민에서만 보이게.
+        </p>
+      </div>
+      <div class="phase">
+        <div class="n">Phase 2</div>
+        <p>
+          <strong>내부 전용 조작 이전:</strong> 정렬·공개토글·표시명 편집이
+          아직 내부 쇼룸에만 있으면 어드민으로 옮김.
+        </p>
+      </div>
+      <div class="phase">
+        <div class="n">Phase 3</div>
+        <p>
+          <strong>/showroom → /public/showroom 리다이렉트</strong> 후
+          ShowroomPage 제거. (퍼널 thin 입구 개편과 같이 가도 됨)
+        </p>
+      </div>
+    </div>
+
+    <h2>한 줄 결론</h2>
+    <div class="callout">
+      쇼룸을 두 개 둘 문제가 아니라,
+      <strong>공개 쇼룸 하나 + 어드민 운영</strong>으로  dur면 된다.
+      내부 쇼룸 UI는 목적(같이 보기)을 배반한 중복이다.
+    </div>
+
+    <footer>
+      FINDGAGU · <code>docs/SHOWROOM_UNIFY_CUTLIST.html</code>
+      · 근거: ShowroomPage / PublicShowroomExperience / showroomCaseApproachData / DashboardPage
+    </footer>
+  </div>
+</body>
+</html>

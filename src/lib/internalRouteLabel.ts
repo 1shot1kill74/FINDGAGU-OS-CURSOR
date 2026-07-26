@@ -10,6 +10,7 @@ export function describeInternalRoute(path: string) {
   if (normalized.startsWith('/admin/showroom-case-studio')) return '쇼룸 케이스 작업실'
   if (normalized.startsWith('/admin/ad-inbox')) return '광고 대기실'
   if (normalized.startsWith('/public/showroom/cardnews')) return '쇼룸 카드뉴스'
+  if (normalized.startsWith('/public/showroom/shorts')) return '숏츠 연속 랜딩'
   if (normalized.startsWith('/public/showroom/case')) return '쇼룸 사례 기획'
   if (normalized.startsWith('/open-showroom/cardnews')) return '쇼룸 카드뉴스'
   if (normalized.startsWith('/showroom')) return '쇼룸'

@@ -20,6 +20,7 @@ export type ShowroomAbmConsultationSurface =
   | 'case_inline'
   | 'gallery_modal'
   | 'gallery_browse_header'
+  | 'shorts_landing'
 
 export type ShowroomAbmHeaderNavTarget = 'before_after' | 'expert_recommend'
 

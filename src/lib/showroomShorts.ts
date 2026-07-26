@@ -42,6 +42,7 @@ export interface ShowroomShortsTargetRecord {
   hashtags: string[]
   first_comment: string
   publish_status: ShowroomShortsPublishStatus
+  final_video_url: string | null
   external_post_id: string | null
   external_post_url: string | null
   preparation_payload: Record<string, unknown> | null
@@ -144,11 +145,25 @@ function stripShowroomStagePrefix(value: string | null | undefined): string | nu
   return stripped || normalized
 }
 
+/** 입고 입구 이름 앞의 숫자 코드 제거. 예: "2607 압구정 관리형" → "압구정 관리형" */
+export function stripLeadingSiteNumericCode(value: string | null | undefined): string | null {
+  const normalized = trimOrNull(value)?.replace(/\s+/g, ' ').trim()
+  if (!normalized) return null
+  const stripped = normalized.replace(/^\d+(?:\s*[-_.]?\s*)+/u, '').trim()
+  return stripped || normalized
+}
+
 function getCanonicalSiteName(image: ShowroomImageAsset): string | null {
   return (
     stripShowroomStagePrefix(image.canonical_site_name) ||
     stripShowroomStagePrefix(image.site_name)
   )
+}
+
+/** 통일 제목: 10초 만에 보는 {입구이름(숫자 제외)} 대변신 */
+export function buildShowroomShortsUnifiedTitle(siteName: string | null | undefined): string {
+  const name = stripLeadingSiteNumericCode(siteName) || '시공 사례'
+  return `10초 만에 보는 ${name} 대변신`
 }
 
 function normalizeComparableText(value: string | null | undefined): string | null {
@@ -222,13 +237,48 @@ export function validateBeforeAfterSelection(images: ShowroomImageAsset[]): Show
 function buildHashtags(images: ShowroomImageAsset[]): string[] {
   const meta = images[0]
   const industry = trimOrNull(meta?.business_type)
-  const tags = ['#사무실인테리어', '#사무실가구', '#사무용가구', '#사무실꾸미기', '#파인드가구']
-  
+  // 교육용 가구: 관리형 스터디카페·학원·학교·아파트 독서실 등
+  const tags = ['#스터디카페', '#학원인테리어', '#독서실', '#교육용가구', '#파인드가구']
+
   if (industry && industry !== '기타') {
-    tags.push(`#${industry.replace(/\s+/g, '')}인테리어`)
+    tags.push(`#${industry.replace(/\s+/g, '')}`)
   }
-  
+
   return Array.from(new Set(tags))
+}
+
+/** 짧은 랜딩 링크. /r/yt/{jobId} → 해당 job 연속 페이지 + utm */
+const SHOWROOM_SHORTS_LANDING_ORIGIN = 'https://www.findgagu.co.kr'
+
+export function showroomShortsLandingCode(channel: ShowroomShortsChannel): 'yt' | 'ig' | 'fb' {
+  if (channel === 'instagram') return 'ig'
+  if (channel === 'facebook') return 'fb'
+  return 'yt'
+}
+
+export function buildShowroomShortsLandingUrl(channel: ShowroomShortsChannel, jobId?: string | null): string {
+  const code = showroomShortsLandingCode(channel)
+  const id = typeof jobId === 'string' ? jobId.trim() : ''
+  if (!id) return `${SHOWROOM_SHORTS_LANDING_ORIGIN}/r/${code}`
+  return `${SHOWROOM_SHORTS_LANDING_ORIGIN}/r/${code}/${encodeURIComponent(id)}`
+}
+
+/** 첫댓글 본문은 유지하고, 파인드가구 링크만 채널별 짧은 /r/ 링크로 맞춤 */
+export function withShowroomShortsLandingUrl(
+  firstComment: string,
+  channel: ShowroomShortsChannel,
+  jobId?: string | null,
+): string {
+  const url = buildShowroomShortsLandingUrl(channel, jobId)
+  const body = firstComment
+    .replace(/\n?https?:\/\/(?:www\.)?findgagu\.co\.kr\S*/gi, '')
+    // 잘못된 치환 잔재 (예: 확인하세요./r/fb) 및 레거시/job 경로
+    .replace(/\.?\/r\/(?:yt|ig|fb)(?:\/[^\s]*)?/gi, '')
+    .replace(/[ \t]+$/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+  if (!body) return url
+  return `${body}\n${url}`
 }
 
 export function buildShowroomShortsDraft(images: ShowroomImageAsset[]) {
@@ -237,31 +287,28 @@ export function buildShowroomShortsDraft(images: ShowroomImageAsset[]) {
     throw new Error(selection.message)
   }
 
-    const siteName =
-      getCanonicalSiteName(selection.afterImage) ||
-      getCanonicalSiteName(selection.beforeImage) ||
-      '시공 사례'
+  // 제목용 OOOO: 입고 입구 이름(site_name)에서 앞 숫자 코드만 제거
+  const entranceName =
+    getCanonicalSiteName(selection.afterImage) ||
+    getCanonicalSiteName(selection.beforeImage) ||
+    trimOrNull(selection.afterImage.external_display_name) ||
+    trimOrNull(selection.beforeImage.external_display_name) ||
+    '시공 사례'
+  const openShowroomTitle = stripLeadingSiteNumericCode(entranceName) || '시공 사례'
 
-    const openShowroomTitle =
-      trimOrNull(selection.afterImage.external_display_name) ||
-      trimOrNull(selection.beforeImage.external_display_name) ||
-      siteName
-    const industry = trimOrNull(selection.afterImage.business_type) || trimOrNull(selection.beforeImage.business_type)
-    const industryLine = industry && industry !== '기타'
-      ? `${industry} 업종 공간 구성과 사무가구 배치 아이디어가 필요하신 분들께 특히 참고가 되는 사례입니다.`
-      : '사무공간은 가구 배치와 레이아웃만 달라져도 업무 몰입도와 공간 인상이 크게 달라질 수 있습니다.'
+  const firstCommentBody = `${openShowroomTitle}처럼 공간 구성이 필요하신가요? 파인드가구 쇼룸에서 더 많은 사례를 확인하세요.`
 
+  // 본문·첫댓글: YouTube 기준 단일 카피 (FB/IG도 동일) — 링크만 채널별 짧은 URL
   return {
-    title: `${openShowroomTitle} Before & After | 10초 숏츠`,
+    title: buildShowroomShortsUnifiedTitle(entranceName),
     description: [
       `${openShowroomTitle}의 Before & After 공간 변화입니다.`,
       '',
-      '실제 현장 사진을 바탕으로 제작한 오피스 스타일링 전후 비교 사례입니다.',
-      industryLine,
-      '사무실 인테리어와 사무용 가구 구성이 고민되신다면 파인드가구 온라인 쇼룸에서 더 다양한 사례를 확인하실 수 있습니다.',
+      '실제 현장 사진을 바탕으로 제작한 공간 변화 전후 사례 비교입니다.',
     ].join('\n'),
     hashtags: buildHashtags(images),
-    firstComment: `${openShowroomTitle}처럼 업종에 맞는 사무공간 구성이 필요하신가요? 가장 궁금한 포인트를 댓글로 남겨주세요.`,
+    firstComment: withShowroomShortsLandingUrl(firstCommentBody, 'youtube'),
+    firstCommentBody,
   }
 }
 
@@ -312,13 +359,14 @@ export async function createShowroomShortsJob(payload: {
     throw new Error(jobError?.message ?? '숏츠 작업 저장에 실패했습니다.')
   }
 
+  const jobId = String(job.id)
   const targetRows = payload.channels.map((channel) => ({
-    shorts_job_id: String(job.id),
+    shorts_job_id: jobId,
     channel,
     title: draft.title,
     description: draft.description,
     hashtags: draft.hashtags,
-    first_comment: draft.firstComment,
+    first_comment: withShowroomShortsLandingUrl(draft.firstCommentBody, channel, jobId),
     publish_status: 'draft',
     updated_at: now,
   }))
@@ -344,8 +392,10 @@ export async function createShowroomShortsJob(payload: {
   }
 }
 
-/** 유튜브만 저장된 레거시 작업에 페이스북·인스타 타깃 행을 채워 3열 검수 UI가 다시 나오도록 합니다. */
-export async function ensureShowroomShortsTripleTargets(jobId: string): Promise<{ inserted: number }> {
+/** 유튜브만 저장된 레거시 작업에 FB/IG 행을 채우고, 본문·첫댓글을 유튜브 기준으로 통일합니다. */
+export async function ensureShowroomShortsTripleTargets(
+  jobId: string,
+): Promise<{ inserted: number; synced: number }> {
   const nowIso = new Date().toISOString()
 
   const { data: rows, error: targetsError } = await supabase
@@ -383,34 +433,86 @@ export async function ensureShowroomShortsTripleTargets(jobId: string): Promise<
       title,
       description,
       hashtags,
-      first_comment: firstComment,
+      first_comment: withShowroomShortsLandingUrl(firstComment, channel, jobId),
       publish_status: 'draft',
       updated_at: nowIso,
     })
   }
 
-  if (inserts.length === 0) {
-    return { inserted: 0 }
+  if (inserts.length > 0) {
+    const { error: insertError } = await supabase.from('showroom_shorts_targets').insert(inserts)
+    if (insertError) {
+      throw new Error(insertError.message)
+    }
+
+    const { error: jobError } = await supabase
+      .from('showroom_shorts_jobs')
+      .update({
+        requested_channels: [...SHOWROOM_SHORTS_CHANNELS],
+        updated_at: nowIso,
+      })
+      .eq('id', jobId)
+
+    if (jobError) {
+      throw new Error(jobError.message)
+    }
   }
 
-  const { error: insertError } = await supabase.from('showroom_shorts_targets').insert(inserts)
-  if (insertError) {
-    throw new Error(insertError.message)
+  const synced = await syncShowroomShortsTargetsCopyFromYoutube(jobId)
+  await ensureShowroomShortsShortLandingLinks(jobId)
+  return { inserted: inserts.length, synced }
+}
+
+/** FB/IG 본문·해시태그·첫댓글을 YouTube 타깃과 동일하게 맞춥니다. */
+export async function syncShowroomShortsTargetsCopyFromYoutube(jobId: string): Promise<number> {
+  const nowIso = new Date().toISOString()
+  const { data: rows, error } = await supabase
+    .from('showroom_shorts_targets')
+    .select('id, channel, description, hashtags, first_comment')
+    .eq('shorts_job_id', jobId)
+
+  if (error) {
+    throw new Error(error.message)
   }
 
-  const { error: jobError } = await supabase
-    .from('showroom_shorts_jobs')
-    .update({
-      requested_channels: [...SHOWROOM_SHORTS_CHANNELS],
-      updated_at: nowIso,
-    })
-    .eq('id', jobId)
+  const list = (rows ?? []) as Record<string, unknown>[]
+  const youtube = list.find((row) => normalizeChannel(row.channel) === 'youtube')
+  if (!youtube) return 0
 
-  if (jobError) {
-    throw new Error(jobError.message)
+  const description = String(youtube.description ?? '')
+  const hashtags = Array.isArray(youtube.hashtags) ? youtube.hashtags.map((item) => String(item)) : []
+  const youtubeFirstComment = String(youtube.first_comment ?? '')
+  const hashtagsKey = JSON.stringify(hashtags)
+
+  let synced = 0
+  for (const row of list) {
+    const channel = normalizeChannel(row.channel)
+    if (channel === 'youtube') continue
+
+    const localizedFirstComment = withShowroomShortsLandingUrl(youtubeFirstComment, channel, jobId)
+    const sameDescription = String(row.description ?? '') === description
+    const sameFirstComment = String(row.first_comment ?? '') === localizedFirstComment
+    const rowHashtags = Array.isArray(row.hashtags) ? row.hashtags.map((item) => String(item)) : []
+    const sameHashtags = JSON.stringify(rowHashtags) === hashtagsKey
+    if (sameDescription && sameFirstComment && sameHashtags) continue
+
+    const { error: updateError } = await supabase
+      .from('showroom_shorts_targets')
+      .update({
+        description,
+        hashtags,
+        first_comment: localizedFirstComment,
+        updated_at: nowIso,
+      })
+      .eq('id', String(row.id))
+
+    if (updateError) {
+      throw new Error(updateError.message)
+    }
+    synced += 1
   }
 
-  return { inserted: inserts.length }
+  return synced
 }
 
 function mapShortsTargetRow(row: Record<string, unknown>): ShowroomShortsTargetRecord {
@@ -423,6 +525,7 @@ function mapShortsTargetRow(row: Record<string, unknown>): ShowroomShortsTargetR
     hashtags: Array.isArray(row.hashtags) ? row.hashtags.map((item) => String(item)) : [],
     first_comment: String(row.first_comment ?? ''),
     publish_status: normalizePublishStatus(row.publish_status),
+    final_video_url: trimOrNull(typeof row.final_video_url === 'string' ? row.final_video_url : null),
     external_post_id: trimOrNull(typeof row.external_post_id === 'string' ? row.external_post_id : null),
     external_post_url: trimOrNull(typeof row.external_post_url === 'string' ? row.external_post_url : null),
     preparation_payload: asJsonRecord(row.preparation_payload),
@@ -493,6 +596,31 @@ function normalizePublishStatus(value: unknown): ShowroomShortsPublishStatus {
     : 'draft'
 }
 
+async function attachTargetsToJobs(jobs: ShowroomShortsJobRecord[]): Promise<ShowroomShortsJobRecord[]> {
+  if (jobs.length === 0) return []
+  const jobIds = jobs.map((job) => job.id)
+  const { data, error } = await supabase
+    .from('showroom_shorts_targets')
+    .select('*')
+    .in('shorts_job_id', jobIds)
+    .order('created_at', { ascending: true })
+
+  if (error) throw new Error(error.message)
+
+  const targetsByJobId = new Map<string, ShowroomShortsTargetRecord[]>()
+  for (const row of data ?? []) {
+    const mapped = mapShortsTargetRow(row as Record<string, unknown>)
+    const bucket = targetsByJobId.get(mapped.shorts_job_id) ?? []
+    bucket.push(mapped)
+    targetsByJobId.set(mapped.shorts_job_id, bucket)
+  }
+
+  return jobs.map((job) => ({
+    ...job,
+    targets: targetsByJobId.get(job.id) ?? job.targets ?? [],
+  }))
+}
+
 export async function getShowroomShortsJob(jobId: string): Promise<ShowroomShortsJobRecord | null> {
   const { data, error } = await supabase
     .from('showroom_shorts_jobs')
@@ -502,7 +630,8 @@ export async function getShowroomShortsJob(jobId: string): Promise<ShowroomShort
 
   if (error) throw new Error(error.message)
   if (!data) return null
-  return mapShortsJobRow(data as Record<string, unknown>)
+  const [withTargets] = await attachTargetsToJobs([mapShortsJobRow(data as Record<string, unknown>)])
+  return withTargets ?? null
 }
 
 export async function listShowroomShortsJobsForGroupKey(groupKey: string): Promise<ShowroomShortsJobRecord[]> {
@@ -517,7 +646,7 @@ export async function listShowroomShortsJobsForGroupKey(groupKey: string): Promi
     .limit(8)
 
   if (error) throw new Error(error.message)
-  return (data ?? []).map((row) => mapShortsJobRow(row as Record<string, unknown>))
+  return attachTargetsToJobs((data ?? []).map((row) => mapShortsJobRow(row as Record<string, unknown>)))
 }
 
 export async function listShowroomShortsJobsByBeforeAssetIds(
@@ -534,7 +663,7 @@ export async function listShowroomShortsJobsByBeforeAssetIds(
     .limit(12)
 
   if (error) throw new Error(error.message)
-  return (data ?? []).map((row) => mapShortsJobRow(row as Record<string, unknown>))
+  return attachTargetsToJobs((data ?? []).map((row) => mapShortsJobRow(row as Record<string, unknown>)))
 }
 
 export async function listShowroomShortsJobs() {
@@ -716,6 +845,21 @@ export async function requestShowroomShortsComposition(jobId: string) {
   })
 }
 
+/** 철거/설치 5초 세그먼트가 준비되면 Railway 워커가 10초로 이어붙임 */
+export async function stitchShowroomShortsSplit(jobId: string) {
+  return callShowroomShortsWorker<{
+    ok: boolean
+    jobId: string
+    status: string
+    klingStatus?: string | null
+    sourceVideoUrl?: string | null
+    message?: string
+  }>('', {
+    method: 'POST',
+    body: JSON.stringify({ jobId, action: 'stitch-split' }),
+  })
+}
+
 export async function getShowroomShortsCompositionStatus(jobId: string) {
   return callShowroomShortsWorker<ShowroomShortsWorkerJobStatus>(`?jobId=${encodeURIComponent(jobId)}`, {
     method: 'GET',
@@ -838,16 +982,15 @@ function extractHashtagsText(value: string | null | undefined) {
 
 export function buildShowroomShortsPublishPackage(target: ShowroomShortsTargetRecord) {
   const preparation = target.preparation_payload
+  const jobId = target.shorts_job_id
   const fallbackHashtagsText = joinHashtags(target.hashtags)
   const preparedTitle =
     pickPreparationString(preparation, ['preparedTitle', 'title', 'videoTitle'])
     ?? target.title
+  // YouTube 본문 기준 통일: description + hashtags (채널별 caption 분기 없음)
   const preparedBody =
-    pickPreparationString(preparation, ['descriptionWithHashtags', 'caption'])
+    pickPreparationString(preparation, ['descriptionWithHashtags', 'description', 'caption'])
     ?? [target.description.trim(), fallbackHashtagsText].filter(Boolean).join('\n\n')
-  const preparedCaption =
-    pickPreparationString(preparation, ['caption', 'descriptionWithHashtags'])
-    ?? preparedBody
   const hashtagsText =
     pickPreparationString(preparation, ['hashtagsText'])
     ?? extractHashtagsText(preparedBody)
@@ -863,10 +1006,62 @@ export function buildShowroomShortsPublishPackage(target: ShowroomShortsTargetRe
     title: preparedTitle,
     description: preparedDescription,
     hashtagsText,
-    firstComment: preparedFirstComment,
+    firstComment: withShowroomShortsLandingUrl(preparedFirstComment, target.channel, jobId),
+    landingUrl: buildShowroomShortsLandingUrl(target.channel, jobId),
     descriptionWithHashtags: preparedBody,
-    caption: preparedCaption,
+    caption: preparedBody,
   }
+}
+
+/** 기존 타깃 첫댓글·preparation firstComment를 채널별 /r/ 짧은 링크로 맞춤 */
+export async function ensureShowroomShortsShortLandingLinks(jobId: string): Promise<number> {
+  const nowIso = new Date().toISOString()
+  const { data: rows, error } = await supabase
+    .from('showroom_shorts_targets')
+    .select('id, channel, first_comment, preparation_payload')
+    .eq('shorts_job_id', jobId)
+
+  if (error) throw new Error(error.message)
+
+  let updated = 0
+  for (const row of rows ?? []) {
+    const channel = normalizeChannel(row.channel)
+    const nextFirstComment = withShowroomShortsLandingUrl(String(row.first_comment ?? ''), channel, jobId)
+    const prep =
+      row.preparation_payload && typeof row.preparation_payload === 'object' && !Array.isArray(row.preparation_payload)
+        ? ({ ...(row.preparation_payload as Record<string, unknown>) } as Record<string, unknown>)
+        : null
+
+    let nextPrep = prep
+    if (prep) {
+      const prepComment = pickPreparationString(prep, ['firstComment', 'comment'])
+      if (prepComment) {
+        nextPrep = {
+          ...prep,
+          firstComment: withShowroomShortsLandingUrl(prepComment, channel, jobId),
+          comment: withShowroomShortsLandingUrl(prepComment, channel, jobId),
+        }
+      }
+    }
+
+    const sameComment = String(row.first_comment ?? '') === nextFirstComment
+    const samePrep = JSON.stringify(prep ?? null) === JSON.stringify(nextPrep ?? null)
+    if (sameComment && samePrep) continue
+
+    const { error: updateError } = await supabase
+      .from('showroom_shorts_targets')
+      .update({
+        first_comment: nextFirstComment,
+        ...(nextPrep ? { preparation_payload: nextPrep } : {}),
+        updated_at: nowIso,
+      })
+      .eq('id', String(row.id))
+
+    if (updateError) throw new Error(updateError.message)
+    updated += 1
+  }
+
+  return updated
 }
 
 export async function markShowroomShortsTargetsReady(jobId: string) {

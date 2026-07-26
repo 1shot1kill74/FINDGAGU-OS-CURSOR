@@ -17,6 +17,7 @@ const PublicGalleryView = lazy(() => import('@/pages/PublicGalleryView'))
 const ShareRedirect = lazy(() => import('@/pages/ShareRedirect'))
 const PublicShowroomPage = lazy(() => import('@/pages/PublicShowroomPage'))
 const PublicShowroomCardNewsPage = lazy(() => import('@/pages/PublicShowroomCardNewsPage'))
+const PublicShowroomShortsLandingPage = lazy(() => import('@/pages/PublicShowroomShortsLandingPage'))
 const ShowroomCaseApproachPage = lazy(() => import('@/pages/ShowroomCaseApproachPage'))
 const InternalShowroomPage = lazy(() => import('@/pages/InternalShowroomPage'))
 const OriginalShowroomPage = lazy(() => import('@/pages/OriginalShowroomPage'))
@@ -75,12 +76,17 @@ const SNS_CHANNEL_ALIASES: Record<string, string> = {
   ig: 'instagram',
   insta: 'instagram',
   instagram: 'instagram',
+  fb: 'facebook',
+  facebook: 'facebook',
   kakao: 'kakao',
   kakaotalk: 'kakao',
   blog: 'blog',
   naver: 'blog',
   youtube: 'youtube',
   yt: 'youtube',
+  shorts: 'shorts',
+  reel: 'shorts',
+  reels: 'shorts',
 }
 
 function normalizeSnsChannel(value: string | undefined): string {
@@ -88,21 +94,33 @@ function normalizeSnsChannel(value: string | undefined): string {
   return SNS_CHANNEL_ALIASES[normalized] ?? (normalized || 'sns')
 }
 
-function getSnsMedium(channel: string): string {
+function getSnsMedium(channel: string, entry: 'sns' | 'shorts'): string {
+  if (entry === 'shorts') return 'shorts'
   if (channel === 'blog') return 'content'
   return 'social'
 }
 
-function SnsShowroomRedirect() {
+function SnsShowroomRedirect(props: { entry?: 'sns' | 'shorts' }) {
+  const entry = props.entry ?? 'sns'
   const location = useLocation()
-  const { channel } = useParams<{ channel?: string }>()
+  const { channel, jobId } = useParams<{ channel?: string; jobId?: string }>()
   const normalizedChannel = normalizeSnsChannel(channel)
   const params = new URLSearchParams(location.search)
 
   if (!params.get('utm_source')) params.set('utm_source', normalizedChannel)
-  if (!params.get('utm_medium')) params.set('utm_medium', getSnsMedium(normalizedChannel))
+  if (!params.get('utm_medium')) params.set('utm_medium', getSnsMedium(normalizedChannel, entry))
   if (!params.get('utm_campaign')) params.set('utm_campaign', 'showroom_abm_202606')
-  params.set('entry', 'sns')
+  params.set('entry', entry)
+
+  const trimmedJobId = jobId?.trim()
+  if (entry === 'shorts' && trimmedJobId) {
+    return (
+      <Navigate
+        replace
+        to={`/public/showroom/shorts/${encodeURIComponent(trimmedJobId)}?${params.toString()}${location.hash}`}
+      />
+    )
+  }
 
   return <Navigate replace to={`/public/showroom?${params.toString()}${location.hash}`} />
 }
@@ -144,6 +162,7 @@ function App() {
           <Route path="/public/showroom/cardnews/:siteKey" element={<ShowroomCaseApproachPage mode="public" entry="cardnews" />} />
           <Route path="/public/showroom/cardnews" element={<PublicShowroomCardNewsPage />} />
           <Route path="/public/showroom/case/:siteKey" element={<ShowroomCaseApproachPage mode="public" />} />
+          <Route path="/public/showroom/shorts/:jobId" element={<PublicShowroomShortsLandingPage />} />
           <Route path="/public/showroom" element={<PublicShowroomPage />} />
           <Route path="/public/showroom/original" element={<OriginalShowroomPage mode="public" />} />
           <Route path="/open-showroom/cardnews/:siteKey" element={<LegacyOpenShowroomCardNewsDetailRedirect />} />
@@ -151,9 +170,11 @@ function App() {
           <Route path="/open-showroom/case/:siteKey" element={<LegacyOpenShowroomCaseDetailRedirect />} />
           <Route path="/open-showroom" element={<LegacyOpenShowroomRedirect targetPath="/public/showroom" />} />
           <Route path="/open-showroom/original" element={<LegacyOpenShowroomRedirect targetPath="/public/showroom/original" />} />
-          <Route path="/sns" element={<SnsShowroomRedirect />} />
-          <Route path="/sns/:channel" element={<SnsShowroomRedirect />} />
-          <Route path="/s/:channel" element={<SnsShowroomRedirect />} />
+          <Route path="/sns" element={<SnsShowroomRedirect entry="sns" />} />
+          <Route path="/sns/:channel" element={<SnsShowroomRedirect entry="sns" />} />
+          <Route path="/s/:channel" element={<SnsShowroomRedirect entry="sns" />} />
+          <Route path="/r/:channel/:jobId" element={<SnsShowroomRedirect entry="shorts" />} />
+          <Route path="/r/:channel" element={<SnsShowroomRedirect entry="shorts" />} />
           <Route path="/contact" element={<ContactPage />} />
           <Route path="/review/sample" element={<PublicCustomerReviewSamplePage />} />
           <Route element={<ProtectedRoute />}>
