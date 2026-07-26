@@ -67,6 +67,7 @@ const SURFACE_LABELS: Record<ShowroomAbmConsultationSurface, string> = {
   case_inline: '사례 본문 상담',
   gallery_modal: '갤러리 모달',
   gallery_browse_header: '메인 Sticky',
+  shorts_landing: '숏츠 연속 랜딩',
 }
 
 const HEADER_NAV_LABELS: Record<string, string> = {
