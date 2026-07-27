@@ -72,12 +72,10 @@ function buildPublishPackage(target: JsonRecord) {
   const preparedTitle =
     pickPreparationString(preparationPayload, ["preparedTitle", "title", "videoTitle"])
     || getString(target.title)
+  // YouTube 본문 기준 통일 (FB/IG caption도 동일)
   const descriptionWithHashtags =
-    pickPreparationString(preparationPayload, ["descriptionWithHashtags", "caption"])
+    pickPreparationString(preparationPayload, ["descriptionWithHashtags", "description", "caption"])
     || [getString(target.description), fallbackHashtagsText].filter(Boolean).join("\n\n")
-  const caption =
-    pickPreparationString(preparationPayload, ["caption", "descriptionWithHashtags"])
-    || descriptionWithHashtags
   const hashtagsText =
     pickPreparationString(preparationPayload, ["hashtagsText"])
     || extractHashtagsText(descriptionWithHashtags)
@@ -85,9 +83,22 @@ function buildPublishPackage(target: JsonRecord) {
   const description =
     pickPreparationString(preparationPayload, ["description", "preparedDescription"])
     || getString(target.description)
-  const firstComment =
+  const rawFirstComment =
     pickPreparationString(preparationPayload, ["firstComment", "comment"])
     || getString(target.first_comment)
+  const channel = getString(target.channel).toLowerCase()
+  const landingCode = channel === "instagram" || channel === "ig"
+    ? "ig"
+    : channel === "facebook" || channel === "fb"
+    ? "fb"
+    : "yt"
+  const landingUrl = `https://www.findgagu.co.kr/r/${landingCode}`
+  const firstCommentBody = rawFirstComment
+    .replace(/\n?https?:\/\/(?:www\.)?findgagu\.co\.kr\S*/gi, "")
+    .replace(/\.?\/r\/(?:yt|ig|fb)\b/gi, "")
+    .replace(/[ \t]+$/gm, "")
+    .trim()
+  const firstComment = firstCommentBody ? `${firstCommentBody}\n${landingUrl}` : landingUrl
 
   return {
     title: preparedTitle,
@@ -95,7 +106,7 @@ function buildPublishPackage(target: JsonRecord) {
     hashtagsText,
     firstComment,
     descriptionWithHashtags,
-    caption,
+    caption: descriptionWithHashtags,
   }
 }
 
@@ -221,7 +232,10 @@ Deno.serve(async (req) => {
     const parentRow = getRecord(targetRow[tables.draftRelation])
     const parentId = getString(targetRow[tables.parentIdField])
     const publishStatus = getString(targetRow.publish_status)
-    const finalVideoUrl = trimOrNull(parentRow?.[tables.finalVideoField])
+    // 타깃에 URL이 있으면 사용, 없으면 부모 job/draft 대표본 (단일 합성본)
+    const finalVideoUrl =
+      trimOrNull(targetRow.final_video_url)
+      || trimOrNull(parentRow?.[tables.finalVideoField])
 
     if (!parentRow || !parentId) {
       return json({ ok: false, message: "연결된 숏츠 작업 정보를 찾지 못했습니다." }, 400)
@@ -346,6 +360,7 @@ Deno.serve(async (req) => {
         description: getString(targetRow.description),
         hashtags: Array.isArray(targetRow.hashtags) ? targetRow.hashtags : [],
         firstComment: getString(targetRow.first_comment),
+        finalVideoUrl,
       },
       publishPackage,
       sourceType,

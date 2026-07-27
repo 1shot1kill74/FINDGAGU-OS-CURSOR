@@ -209,7 +209,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const normalizeNode = $('입력 정규화').item.json;\nconst youtubeOutput = $json;\nconst externalPostId = youtubeOutput.id || `youtube-${Date.now()}`;\nconst externalPostUrl = youtubeOutput.id ? `https://www.youtube.com/shorts/${youtubeOutput.id}` : `https://www.youtube.com/watch?v=${externalPostId}`;\nconst firstCommentText = String(normalizeNode.preparedFirstComment ?? '').trim();\nconst youtubeChannelId = String(youtubeOutput.snippet?.channelId ?? youtubeOutput.channelId ?? '').trim();\n\nreturn [{\n  json: {\n    ...normalizeNode,\n    youtubeResponse: youtubeOutput,\n    externalPostId,\n    externalPostUrl,\n    youtubeChannelId,\n    firstCommentText,\n  }\n}];"
+        "jsCode": "const normalizeNode = $('입력 정규화').item.json;\nconst youtubeOutput = $json;\nconst videoId = String(youtubeOutput.id || youtubeOutput.uploadId || '').trim();\nconst externalPostId = videoId || `youtube-${Date.now()}`;\nconst externalPostUrl = videoId\n  ? `https://www.youtube.com/shorts/${videoId}`\n  : `https://www.youtube.com/watch?v=${externalPostId}`;\nconst firstCommentText = String(normalizeNode.preparedFirstComment ?? '').trim();\nconst youtubeChannelId = String(youtubeOutput.snippet?.channelId ?? youtubeOutput.channelId ?? '').trim();\n\nreturn [{\n  json: {\n    ...normalizeNode,\n    youtubeResponse: youtubeOutput,\n    externalPostId,\n    externalPostUrl,\n    youtubeChannelId,\n    firstCommentText,\n  }\n}];"
       },
       "id": "node-yt-comment-context",
       "name": "YouTube 댓글 정보 준비",

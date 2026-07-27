@@ -52,7 +52,8 @@
     "title": "title",
     "description": "description",
     "hashtags": ["#BeforeAfter"],
-    "firstComment": "comment"
+    "firstComment": "comment",
+    "finalVideoUrl": "https://... (없으면 job.finalVideoUrl)"
   },
   "publishPackage": {
     "title": "title",
@@ -69,6 +70,12 @@
 - `X-Showroom-Shorts-Source: showroom-shorts`
 - `X-Showroom-Shorts-Action: prepare|launch`
 - `X-Showroom-Shorts-Secret: SHOWROOM_SHORTS_PUBLISH_WEBHOOK_SECRET`
+
+`finalVideoUrl` 우선순위:
+1. `showroom_shorts_targets.final_video_url` (있으면)
+2. 부모 `showroom_shorts_jobs.final_video_url` (단일 합성본)
+
+YouTube / Facebook / Instagram은 같은 최종 MP4를 공유합니다.
 
 ## 4. n8n 즉시 응답 권장 형식
 

@@ -316,6 +316,8 @@ export async function createShowroomShortsJob(payload: {
   promptText: string
   channels: ShowroomShortsChannel[]
   images: ShowroomImageAsset[]
+  /** 있으면 selection.groupKey 대신 사용 (광고 대기실 현장 카드 키 등) */
+  beforeAfterGroupKey?: string
 }) {
   const selection = validateBeforeAfterSelection(payload.images)
   if (!selection.ok) {
@@ -330,6 +332,7 @@ export async function createShowroomShortsJob(payload: {
 
   const draft = buildShowroomShortsDraft(payload.images)
   const now = new Date().toISOString()
+  const groupKeyOverride = payload.beforeAfterGroupKey?.trim() || null
 
   const { data: authData } = await supabase.auth.getUser()
   const createdBy = authData.user?.id ?? null
@@ -343,7 +346,7 @@ export async function createShowroomShortsJob(payload: {
       after_asset_id: selection.afterImage.id,
       before_asset_url: selection.beforeImage.cloudinary_url || selection.beforeImage.thumbnail_url,
       after_asset_url: selection.afterImage.cloudinary_url || selection.afterImage.thumbnail_url,
-      before_after_group_key: selection.groupKey,
+      before_after_group_key: groupKeyOverride || selection.groupKey,
       requested_channels: payload.channels,
       source_aspect_ratio: '16:9',
       final_aspect_ratio: '9:16',

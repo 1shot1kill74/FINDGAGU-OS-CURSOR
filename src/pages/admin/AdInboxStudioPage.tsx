@@ -1,23 +1,51 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowLeft, Eraser, ExternalLink, Loader2, RefreshCw, Sparkles, Upload, Video } from 'lucide-react'
+import {
+  ArrowLeft,
+  Eraser,
+  ExternalLink,
+  FolderInput,
+  Loader2,
+  RefreshCw,
+  Send,
+  Sparkles,
+  Trash2,
+  Upload,
+  Video,
+} from 'lucide-react'
+import AdInboxImportShowroomDialog, {
+  type AdInboxImportShowroomResult,
+} from '@/components/admin/AdInboxImportShowroomDialog'
+import AdInboxImportShowroomAfterOnlyDialog from '@/components/admin/AdInboxImportShowroomAfterOnlyDialog'
+import AdInboxPromoteToShowroomDialog from '@/components/admin/AdInboxPromoteToShowroomDialog'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { getShowroomImagePreviewUrl } from '@/lib/imageAssetShowroom'
 import {
+  adInboxWorkProgressLabel,
+  buildAdInboxSiteGroupId,
   cleanupPeopleFromAdInboxAsset,
+  createAdInboxSite,
   createAdInboxTimelapseJob,
+  deleteAdInboxAsset,
+  deriveAdInboxBatchWorkState,
+  ensureAdInboxSitesFromLegacyAssets,
   getAdInboxTimelapseJob,
   groupAdInboxBatches,
   listAdInboxAssets,
+  listAdInboxSites,
   listAdInboxTimelapseJobsForBatch,
+  listAdInboxWorkProgressByBatches,
   updateAdInboxAssetRole,
   uploadAdInboxPhotos,
   type AdInboxAsset,
   type AdInboxBatch,
+  type AdInboxBatchWorkState,
   type AdInboxRole,
+  type AdInboxSite,
   type AdInboxTimelapseJob,
+  type AdInboxWorkProgress,
 } from '@/lib/adInboxStudio'
 import {
   recommendAdInboxPair,
@@ -25,21 +53,93 @@ import {
   type AdInboxPairRecommendation,
 } from '@/lib/adInboxPairRecommend'
 import {
+  SHOWROOM_SHORTS_CHANNELS,
+  buildShowroomShortsPublishPackage,
+  ensureShowroomShortsShortLandingLinks,
+  ensureShowroomShortsTripleTargets,
   pollShowroomShortsJob,
   requestShowroomShortsComposition,
   requestShowroomShortsGeneration,
+  markShowroomShortsTargetsReady,
+  requestShowroomShortsPublishLaunch,
+  requestShowroomShortsPublishPrepare,
   getShowroomShortsCompositionStatus,
+  stitchShowroomShortsSplit,
   updateShowroomShortsJobPrompt,
+  type ShowroomShortsTargetRecord,
 } from '@/lib/showroomShorts'
 import { SHOWROOM_SHORTS_TIMELAPSE_PROMPT } from '@/lib/showroomShortsTimelapsePrompt'
+
+function getChannelLabel(channel: string) {
+  if (channel === 'youtube') return 'YouTube'
+  if (channel === 'facebook') return 'Facebook'
+  if (channel === 'instagram') return 'Instagram'
+  return channel
+}
+
+function orderTargets(targets: ShowroomShortsTargetRecord[] | undefined) {
+  return [...(targets ?? [])].sort((a, b) => {
+    const order = SHOWROOM_SHORTS_CHANNELS as readonly string[]
+    return order.indexOf(a.channel) - order.indexOf(b.channel)
+  })
+}
+
+function hasActivePublish(job: AdInboxTimelapseJob) {
+  return (job.targets ?? []).some((target) =>
+    ['ready', 'preparing', 'publishing'].includes(target.publish_status),
+  )
+}
+
+function publishStatusLabel(status: string) {
+  if (status === 'ready') return '업로드 준비 대기'
+  if (status === 'preparing') return '업로드 준비 중'
+  if (status === 'launch_ready') return '론칭 전 확인'
+  if (status === 'publishing') return '게시 중'
+  if (status === 'published') return '게시 완료'
+  if (status === 'failed') return '실패'
+  if (status === 'approved') return '승인됨'
+  return status
+}
+
+function pickPrepString(payload: Record<string, unknown> | null | undefined, keys: string[]) {
+  if (!payload) return null
+  for (const key of keys) {
+    const value = payload[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return null
+}
 
 function todayYmd() {
   return new Date().toISOString().slice(0, 10)
 }
 
+function isJobGenerating(job: AdInboxTimelapseJob) {
+  if (job.source_video_url) return false
+  if (job.status === 'generating') return true
+  const kling = job.kling_status ?? ''
+  return (
+    kling === 'submitted' ||
+    kling === 'processing' ||
+    kling === 'segments_ready' ||
+    kling.startsWith('demo:')
+  )
+}
+
 function jobStatusLabel(job: AdInboxTimelapseJob) {
   if (job.status === 'failed' || job.kling_status === 'request_failed') return '실패'
-  if (job.status === 'generating' || job.kling_status === 'submitted' || job.kling_status === 'processing') {
+  if (job.kling_status === 'segments_ready') return '철거·설치 이어붙이는 중'
+  if (isJobGenerating(job)) {
+    const kling = job.kling_status ?? ''
+    if (kling.startsWith('demo:')) {
+      if (/install:awaiting_start_frame/i.test(kling)) return '철거 끝프레임 → 설치 시작 중'
+      if (/install:pending/i.test(kling) && !/demo:(succeed|completed)/i.test(kling)) return '철거 5초 생성 중'
+      const demoDone = /demo:(succeed|completed)/i.test(kling)
+      const installDone = /install:(succeed|completed)/i.test(kling)
+      if (demoDone && !installDone) return '설치 5초 생성 중'
+      if (!demoDone) return '철거 5초 생성 중'
+      return '철거·설치 이어붙이는 중'
+    }
     return '원본 생성 중'
   }
   if (job.source_video_url && !job.final_video_url) {
@@ -47,9 +147,42 @@ function jobStatusLabel(job: AdInboxTimelapseJob) {
     return '원본 검수'
   }
   if (job.final_video_url || job.status === 'ready_for_review' || job.status === 'composited') {
-    return '합성 완료'
+    const targets = job.targets ?? []
+    if (targets.length > 0 && targets.every((t) => t.publish_status === 'published')) return '채널 게시 완료'
+    if (hasActivePublish(job)) return '채널 론칭 중'
+    if (targets.some((t) => t.publish_status === 'launch_ready' || t.publish_status === 'approved')) {
+      return '론칭 승인 대기'
+    }
+    return '채널 론칭'
   }
   return job.status
+}
+
+function workProgressBadgeClass(progress: AdInboxWorkProgress, selected: boolean) {
+  if (selected) {
+    if (progress === 'working') return 'bg-sky-400/20 text-sky-100'
+    if (progress === 'done') return 'bg-emerald-400/20 text-emerald-100'
+    return 'bg-white/10 text-neutral-200'
+  }
+  if (progress === 'working') return 'bg-sky-50 text-sky-800'
+  if (progress === 'done') return 'bg-emerald-50 text-emerald-800'
+  return 'bg-neutral-100 text-neutral-600'
+}
+
+function generatingHint(job: AdInboxTimelapseJob) {
+  if (job.status === 'failed' || job.kling_status === 'request_failed') {
+    return '생성에 실패했습니다. 아래에서 다시 요청하세요.'
+  }
+  if (job.kling_status === 'segments_ready') {
+    return '철거·설치 원본이 준비됐습니다. 워커가 10초로 이어붙이는 중입니다.'
+  }
+  if (/install:awaiting_start_frame/i.test(job.kling_status ?? '')) {
+    return '철거가 끝났습니다. 마지막 장면을 뽑아 설치 5초를 시작하는 중입니다.'
+  }
+  if ((job.kling_status ?? '').startsWith('demo:')) {
+    return '철거 5초 → (마지막 프레임) → 설치 5초 순서로 만들고, 끝나면 이어붙입니다.'
+  }
+  return '원본 생성 중입니다. 자동으로 상태를 갱신합니다.'
 }
 
 export default function AdInboxStudioPage() {
@@ -57,8 +190,11 @@ export default function AdInboxStudioPage() {
   const [uploading, setUploading] = useState(false)
   const [creating, setCreating] = useState(false)
   const [assets, setAssets] = useState<AdInboxAsset[]>([])
+  const [sites, setSites] = useState<AdInboxSite[]>([])
+  const [uploadMode, setUploadMode] = useState<'new' | 'existing'>('existing')
   const [shortName, setShortName] = useState('')
   const [photoDate, setPhotoDate] = useState(todayYmd())
+  const [targetSiteId, setTargetSiteId] = useState<string>('')
   const [uploadRole, setUploadRole] = useState<AdInboxRole>('unset')
   const [files, setFiles] = useState<File[]>([])
   const [selectedBatchKey, setSelectedBatchKey] = useState<string | null>(null)
@@ -67,12 +203,20 @@ export default function AdInboxStudioPage() {
   const [recommending, setRecommending] = useState(false)
   const [recommendation, setRecommendation] = useState<AdInboxPairRecommendation | null>(null)
   const [cleaningId, setCleaningId] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
   const [jobs, setJobs] = useState<AdInboxTimelapseJob[]>([])
   const [activeJobId, setActiveJobId] = useState<string | null>(null)
   const [jobsLoading, setJobsLoading] = useState(false)
   const [actingJob, setActingJob] = useState(false)
+  const [workProgressByKey, setWorkProgressByKey] = useState<Record<string, AdInboxBatchWorkState>>({})
+  const [importShowroomOpen, setImportShowroomOpen] = useState(false)
+  const [importAfterOnlyOpen, setImportAfterOnlyOpen] = useState(false)
+  const [promoteShowroomOpen, setPromoteShowroomOpen] = useState(false)
+  const autoPrepareKeysRef = useRef<Set<string>>(new Set())
+  const youtubeCopySyncKeysRef = useRef<Set<string>>(new Set())
+  const legacyBackfillDoneRef = useRef(false)
 
-  const batches = useMemo(() => groupAdInboxBatches(assets), [assets])
+  const batches = useMemo(() => groupAdInboxBatches(assets, sites), [assets, sites])
   const selectedBatch: AdInboxBatch | null =
     batches.find((b) => b.key === selectedBatchKey) ?? batches[0] ?? null
 
@@ -84,8 +228,21 @@ export default function AdInboxStudioPage() {
   const refresh = useCallback(async () => {
     setLoading(true)
     try {
-      const rows = await listAdInboxAssets()
+      if (!legacyBackfillDoneRef.current) {
+        try {
+          await ensureAdInboxSitesFromLegacyAssets()
+        } catch {
+          // 백필 실패해도 목록은 계속 로드
+        }
+        legacyBackfillDoneRef.current = true
+      }
+      const [rows, siteRows] = await Promise.all([listAdInboxAssets(), listAdInboxSites()])
       setAssets(rows)
+      setSites(siteRows)
+      setTargetSiteId((prev) => {
+        if (prev && siteRows.some((site) => site.id === prev)) return prev
+        return siteRows[0]?.id ?? ''
+      })
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '대기실을 불러오지 못했습니다.')
     } finally {
@@ -119,6 +276,33 @@ export default function AdInboxStudioPage() {
   }, [refresh])
 
   useEffect(() => {
+    if (batches.length === 0) {
+      setWorkProgressByKey({})
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      try {
+        const map = await listAdInboxWorkProgressByBatches(batches)
+        if (!cancelled) setWorkProgressByKey(map)
+      } catch {
+        // 진행상태 실패해도 카드 목록은 유지
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [batches])
+
+  useEffect(() => {
+    if (!selectedBatch) return
+    setWorkProgressByKey((prev) => ({
+      ...prev,
+      [selectedBatch.key]: deriveAdInboxBatchWorkState(jobs),
+    }))
+  }, [selectedBatch?.key, jobs])
+
+  useEffect(() => {
     if (!selectedBatch) {
       setSelectedBatchKey(null)
       return
@@ -142,26 +326,36 @@ export default function AdInboxStudioPage() {
     setBeforeId(before?.id ?? null)
     setAfterId(after?.id ?? null)
     setRecommendation(null)
+    // 선택한 현장 카드에 추가 입고가 기본
+    if (sites.some((site) => site.id === selectedBatch.siteId)) {
+      setTargetSiteId(selectedBatch.siteId)
+      setUploadMode('existing')
+    }
     void refreshJobs(selectedBatch)
-  }, [selectedBatch?.key, refreshJobs])
+  }, [selectedBatch?.key, selectedBatch?.siteId, sites, refreshJobs])
 
   useEffect(() => {
     if (!activeJob) return
-    const generating =
-      activeJob.status === 'generating' ||
-      activeJob.kling_status === 'submitted' ||
-      activeJob.kling_status === 'processing'
+    const generating = isJobGenerating(activeJob)
     const composing =
       activeJob.status === 'composition_queued' || activeJob.status === 'composition_processing'
-    if (!generating && !composing) return
+    const publishing = hasActivePublish(activeJob)
+    if (!generating && !composing && !publishing) return
 
     let cancelled = false
     const timer = window.setInterval(() => {
       void (async () => {
         try {
           if (generating) {
-            await pollShowroomShortsJob(activeJob.id)
-          } else {
+            const polled = await pollShowroomShortsJob(activeJob.id)
+            const needsWorkerAdvance =
+              !polled.sourceVideoUrl &&
+              (polled.klingStatus === 'segments_ready' ||
+                /install:awaiting_start_frame/i.test(polled.klingStatus ?? ''))
+            if (needsWorkerAdvance) {
+              await stitchShowroomShortsSplit(activeJob.id).catch(() => undefined)
+            }
+          } else if (composing) {
             await getShowroomShortsCompositionStatus(activeJob.id)
           }
           if (cancelled) return
@@ -181,7 +375,13 @@ export default function AdInboxStudioPage() {
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [activeJob?.id, activeJob?.status, activeJob?.kling_status])
+  }, [
+    activeJob?.id,
+    activeJob?.status,
+    activeJob?.kling_status,
+    activeJob?.source_video_url,
+    activeJob?.targets,
+  ])
 
   const handleRecommendPair = async () => {
     if (!selectedBatch) return
@@ -230,6 +430,25 @@ export default function AdInboxStudioPage() {
     }
   }
 
+  const handleDeleteAsset = async (asset: AdInboxAsset) => {
+    const label = asset.original_name?.trim() || '이 사진'
+    if (!window.confirm(`「${label}」을(를) 광고 대기실에서 삭제할까요?\n삭제 후에는 복구할 수 없습니다.`)) {
+      return
+    }
+    setDeletingId(asset.id)
+    try {
+      await deleteAdInboxAsset(asset.id)
+      if (beforeId === asset.id) setBeforeId(null)
+      if (afterId === asset.id) setAfterId(null)
+      await refresh()
+      toast.success('사진을 삭제했습니다.')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '삭제 실패')
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
   const handleUpload = async () => {
     if (!files.length) {
       toast.error('사진을 선택하세요.')
@@ -237,11 +456,25 @@ export default function AdInboxStudioPage() {
     }
     setUploading(true)
     try {
+      let siteId = targetSiteId
+      if (uploadMode === 'new') {
+        const site = await createAdInboxSite({
+          shortName,
+          photoDate: photoDate || null,
+        })
+        siteId = site.id
+        setTargetSiteId(site.id)
+        setUploadMode('existing')
+      }
+      if (!siteId) {
+        throw new Error('현장 카드를 선택하거나 새로 만드세요.')
+      }
+
       const result = await uploadAdInboxPhotos({
+        siteId,
         files,
-        shortName,
-        photoDate,
         role: uploadRole,
+        photoDate: photoDate || null,
       })
       if (result.ok) {
         toast.success(`${result.ok}장 입고했습니다.`)
@@ -251,11 +484,7 @@ export default function AdInboxStudioPage() {
       }
       setFiles([])
       await refresh()
-      setSelectedBatchKey(
-        shortName.trim()
-          ? `ad:${photoDate.trim() || todayYmd()}:${shortName.trim().toLowerCase()}`
-          : null,
-      )
+      setSelectedBatchKey(buildAdInboxSiteGroupId(result.siteId))
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '입고에 실패했습니다.')
     } finally {
@@ -285,6 +514,16 @@ export default function AdInboxStudioPage() {
   const beforeAsset = selectedBatch?.assets.find((a) => a.id === beforeId) ?? null
   const afterAsset = selectedBatch?.assets.find((a) => a.id === afterId) ?? null
 
+  const adoptCreatedTimelapseJob = async (jobId: string) => {
+    setActiveJobId(jobId)
+    const job = await getAdInboxTimelapseJob(jobId)
+    if (job) {
+      setJobs((prev) => [job, ...prev.filter((row) => row.id !== job.id)])
+    } else if (selectedBatch) {
+      await refreshJobs(selectedBatch)
+    }
+  }
+
   const handleCreateTimelapse = async () => {
     if (!beforeAsset || !afterAsset) {
       toast.error('Before 1장과 After 1장을 선택하세요.')
@@ -296,18 +535,22 @@ export default function AdInboxStudioPage() {
         before: beforeAsset,
         after: afterAsset,
       })
-      setActiveJobId(jobId)
-      const job = await getAdInboxTimelapseJob(jobId)
-      if (job) {
-        setJobs((prev) => [job, ...prev.filter((row) => row.id !== job.id)])
-      } else if (selectedBatch) {
-        await refreshJobs(selectedBatch)
-      }
+      await adoptCreatedTimelapseJob(jobId)
       toast.success('클링 생성을 시작했습니다. 아래에서 원본을 검수하세요.')
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '타임랩스 생성 실패')
     } finally {
       setCreating(false)
+    }
+  }
+
+  const handleImportedFromShowroom = async (result: AdInboxImportShowroomResult) => {
+    setSelectedBatchKey(result.siteBatchKey)
+    await refresh()
+    setActiveJobId(result.jobId)
+    const job = await getAdInboxTimelapseJob(result.jobId)
+    if (job) {
+      setJobs((prev) => [job, ...prev.filter((row) => row.id !== job.id)])
     }
   }
 
@@ -359,13 +602,147 @@ export default function AdInboxStudioPage() {
       if (fresh) {
         setJobs((prev) => [fresh, ...prev.filter((job) => job.id !== fresh.id)])
       }
-      toast.success('워커 합성을 요청했습니다.')
+      toast.success('합성을 요청했습니다. 끝나면 업로드 준비까지 자동으로 진행됩니다.')
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '합성 요청 실패')
     } finally {
       setActingJob(false)
     }
   }
+
+  useEffect(() => {
+    if (!activeJob?.final_video_url) return
+    const hasDraft = (activeJob.targets ?? []).some((target) => target.publish_status === 'draft')
+    if (!hasDraft) return
+    let cancelled = false
+    void (async () => {
+      try {
+        await markShowroomShortsTargetsReady(activeJob.id)
+        if (cancelled) return
+        const fresh = await getAdInboxTimelapseJob(activeJob.id)
+        if (!fresh || cancelled) return
+        setJobs((prev) => [fresh, ...prev.filter((job) => job.id !== fresh.id)])
+      } catch {
+        // draft→ready 전환 실패는 사용자가 새로고침/상태확인으로 재시도
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [activeJob?.id, activeJob?.final_video_url, activeJob?.targets])
+
+  // 최종 영상 준비되면 3채널 카피 통일 + 첫댓글 짧은 /r/ 링크 반영
+  useEffect(() => {
+    if (!activeJob?.final_video_url) return
+    const key = activeJob.id
+    if (youtubeCopySyncKeysRef.current.has(key)) return
+    youtubeCopySyncKeysRef.current.add(key)
+
+    let cancelled = false
+    void (async () => {
+      try {
+        await ensureShowroomShortsTripleTargets(activeJob.id)
+        await ensureShowroomShortsShortLandingLinks(activeJob.id)
+        if (cancelled) return
+        const fresh = await getAdInboxTimelapseJob(activeJob.id)
+        if (!fresh || cancelled) return
+        setJobs((prev) => [fresh, ...prev.filter((job) => job.id !== fresh.id)])
+      } catch {
+        youtubeCopySyncKeysRef.current.delete(key)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [activeJob?.id, activeJob?.final_video_url])
+
+  // 워커가 자동 prepare를 못 한 경우(구버전 등) UI에서 ready 타깃을 한 번 더 준비 요청
+  useEffect(() => {
+    if (!activeJob?.final_video_url) return
+    const readyTargets = (activeJob.targets ?? []).filter((target) => target.publish_status === 'ready')
+    if (readyTargets.length === 0) return
+    const key = `${activeJob.id}:${readyTargets
+      .map((target) => target.id)
+      .sort()
+      .join(',')}`
+    if (autoPrepareKeysRef.current.has(key)) return
+    autoPrepareKeysRef.current.add(key)
+
+    let cancelled = false
+    void (async () => {
+      await Promise.allSettled(
+        readyTargets.map((target) => requestShowroomShortsPublishPrepare(target.id)),
+      )
+      if (cancelled) return
+      const fresh = await getAdInboxTimelapseJob(activeJob.id).catch(() => null)
+      if (!fresh || cancelled) return
+      setJobs((prev) => [fresh, ...prev.filter((job) => job.id !== fresh.id)])
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [activeJob?.id, activeJob?.final_video_url, activeJob?.targets])
+
+  const refreshActiveJob = async () => {
+    if (!activeJob) return
+    const fresh = await getAdInboxTimelapseJob(activeJob.id)
+    if (fresh) {
+      setJobs((prev) => [fresh, ...prev.filter((job) => job.id !== fresh.id)])
+    }
+  }
+
+  const handleEnsureTripleTargets = async () => {
+    if (!activeJob) return
+    setActingJob(true)
+    try {
+      const result = await ensureShowroomShortsTripleTargets(activeJob.id)
+      const linkUpdated = await ensureShowroomShortsShortLandingLinks(activeJob.id)
+      await refreshActiveJob()
+      toast.success(
+        result.inserted > 0
+          ? `채널 타깃 ${result.inserted}개를 맞췄고, 짧은 /r/ 링크를 반영했습니다.`
+          : result.synced > 0 || linkUpdated > 0
+            ? `본문·첫댓글·짧은 링크를 채널별로 맞췄습니다.`
+            : '이미 3채널 타깃과 짧은 링크가 맞춰져 있습니다.',
+      )
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '채널 타깃 맞추기 실패')
+    } finally {
+      setActingJob(false)
+    }
+  }
+
+  const handlePrepareTarget = async (target: ShowroomShortsTargetRecord) => {
+    setActingJob(true)
+    try {
+      const result = await requestShowroomShortsPublishPrepare(target.id)
+      await refreshActiveJob()
+      toast.success(result.message ?? '업로드 준비 요청을 전달했습니다.')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '업로드 준비 요청 실패')
+    } finally {
+      setActingJob(false)
+    }
+  }
+
+  const handleLaunchTarget = async (target: ShowroomShortsTargetRecord) => {
+    const confirmed = window.confirm(`${getChannelLabel(target.channel)} 채널에 실제 론칭을 시작할까요?`)
+    if (!confirmed) return
+    setActingJob(true)
+    try {
+      const result = await requestShowroomShortsPublishLaunch(target.id)
+      await refreshActiveJob()
+      toast.success(result.message ?? '론칭 승인 요청을 전달했습니다.')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '론칭 승인 요청 실패')
+    } finally {
+      setActingJob(false)
+    }
+  }
+
+  const orderedTargets = useMemo(() => orderTargets(activeJob?.targets), [activeJob?.targets])
 
   return (
     <div className="min-h-screen bg-neutral-50">
@@ -381,17 +758,14 @@ export default function AdInboxStudioPage() {
             </Link>
             <h1 className="text-2xl font-semibold tracking-tight text-neutral-900">광고 대기실</h1>
             <p className="mt-1 max-w-2xl text-sm text-neutral-500">
-              입고 → BA 선택 → 타임랩스 → 이 화면에서 원본 검수. 채널 론칭만 필요할 때 숏츠 검수함으로
-              넘어갑니다.
+              클링 원본만 확인하면 됩니다. 합성·업로드 준비는 자동, 최종 게시 직전에 준비 패키지를 확인한 뒤
+              론칭하세요.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button type="button" variant="outline" size="sm" onClick={() => void refresh()} disabled={loading}>
               <RefreshCw className={`mr-1.5 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
               새로고침
-            </Button>
-            <Button type="button" variant="outline" size="sm" asChild>
-              <Link to="/admin/showroom-shorts">채널 론칭(숏츠 검수함)</Link>
             </Button>
           </div>
         </div>
@@ -401,20 +775,68 @@ export default function AdInboxStudioPage() {
             <Upload className="h-4 w-4 text-neutral-700" />
             <h2 className="text-base font-semibold text-neutral-900">입고 입구</h2>
           </div>
-          <div className="grid gap-3 md:grid-cols-2">
-            <label className="block text-sm">
-              <span className="mb-1 block text-neutral-600">짧은 이름 (필수)</span>
-              <Input
-                value={shortName}
-                onChange={(e) => setShortName(e.target.value)}
-                placeholder="예: 평택스터디"
-              />
-            </label>
-            <label className="block text-sm">
-              <span className="mb-1 block text-neutral-600">날짜 (필수)</span>
-              <Input type="date" value={photoDate} onChange={(e) => setPhotoDate(e.target.value)} />
-            </label>
+          <p className="mb-3 text-xs text-neutral-500">
+            현장 카드에 사진을 붙입니다. Before/After 순서는 상관없고, 같은 카드면 한 묶음입니다.
+          </p>
+          <div className="mb-3 flex flex-wrap gap-2">
+            {(
+              [
+                ['existing', '기존 카드에 추가'],
+                ['new', '새 현장 카드'],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setUploadMode(value)}
+                className={`rounded-full border px-3 py-1 text-xs font-medium ${
+                  uploadMode === value
+                    ? 'border-neutral-900 bg-neutral-900 text-white'
+                    : 'border-neutral-200 bg-neutral-50 text-neutral-600'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
           </div>
+
+          {uploadMode === 'new' ? (
+            <div className="grid gap-3 md:grid-cols-2">
+              <label className="block text-sm">
+                <span className="mb-1 block text-neutral-600">현장 카드 이름 (필수)</span>
+                <Input
+                  value={shortName}
+                  onChange={(e) => setShortName(e.target.value)}
+                  placeholder="예: 2607 압구정 관리형"
+                />
+              </label>
+              <label className="block text-sm">
+                <span className="mb-1 block text-neutral-600">참고 날짜 (선택)</span>
+                <Input type="date" value={photoDate} onChange={(e) => setPhotoDate(e.target.value)} />
+              </label>
+            </div>
+          ) : (
+            <label className="block text-sm">
+              <span className="mb-1 block text-neutral-600">현장 카드 선택</span>
+              <select
+                value={targetSiteId}
+                onChange={(e) => setTargetSiteId(e.target.value)}
+                className="flex h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm text-neutral-900"
+              >
+                {sites.length === 0 ? (
+                  <option value="">아직 카드가 없습니다 · 새 현장 카드를 만드세요</option>
+                ) : (
+                  sites.map((site) => (
+                    <option key={site.id} value={site.id}>
+                      {site.short_name}
+                      {site.photo_date ? ` · ${site.photo_date}` : ''}
+                    </option>
+                  ))
+                )}
+              </select>
+            </label>
+          )}
+
           <div className="mt-3 flex flex-wrap gap-2">
             {(
               [
@@ -449,9 +871,17 @@ export default function AdInboxStudioPage() {
             ) : null}
           </div>
           <div className="mt-4">
-            <Button type="button" onClick={() => void handleUpload()} disabled={uploading}>
+            <Button
+              type="button"
+              onClick={() => void handleUpload()}
+              disabled={
+                uploading ||
+                files.length === 0 ||
+                (uploadMode === 'new' ? !shortName.trim() : !targetSiteId)
+              }
+            >
               {uploading ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Upload className="mr-1.5 h-4 w-4" />}
-              대기실에 넣기
+              {uploadMode === 'new' ? '카드 만들고 넣기' : '선택한 카드에 넣기'}
             </Button>
           </div>
         </section>
@@ -459,15 +889,42 @@ export default function AdInboxStudioPage() {
         <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
             <div>
-              <h2 className="text-base font-semibold text-neutral-900">대기실 · 배치</h2>
-              <p className="text-xs text-neutral-500">날짜 + 짧은 이름으로 묶입니다. 현장 매칭은 나중에.</p>
+              <h2 className="text-base font-semibold text-neutral-900">대기실 · 현장 카드</h2>
+              <p className="text-xs text-neutral-500">
+                대기중(사진만) → 작업중(릴스 제작·론칭) → 작업완료(채널 게시 완료)
+              </p>
             </div>
-            {selectedBatch && beforeAsset && afterAsset ? (
-              <Button type="button" onClick={() => void handleCreateTimelapse()} disabled={creating}>
-                {creating ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Video className="mr-1.5 h-4 w-4" />}
-                타임랩스 만들기
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setImportShowroomOpen(true)}
+                disabled={creating}
+              >
+                <FolderInput className="mr-1.5 h-4 w-4" />
+                BA 있는 쇼룸
               </Button>
-            ) : null}
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setImportAfterOnlyOpen(true)}
+                disabled={creating}
+              >
+                <FolderInput className="mr-1.5 h-4 w-4" />
+                Before 없는 After
+              </Button>
+              {selectedBatch && selectedBatch.assets.length > 0 ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setPromoteShowroomOpen(true)}
+                  disabled={creating}
+                >
+                  <Send className="mr-1.5 h-4 w-4" />
+                  쇼룸으로 보내기
+                </Button>
+              ) : null}
+            </div>
           </div>
 
           {loading ? (
@@ -476,32 +933,63 @@ export default function AdInboxStudioPage() {
               불러오는 중…
             </div>
           ) : batches.length === 0 ? (
-            <p className="py-10 text-center text-sm text-neutral-500">아직 입고된 사진이 없습니다.</p>
+            <p className="py-10 text-center text-sm text-neutral-500">
+              아직 현장 카드가 없습니다. 「BA 있는 쇼룸」또는 「Before 없는 After」로 시작하거나,
+              위에서 새 카드를 만들어 주세요.
+            </p>
           ) : (
-            <div className="grid gap-6 lg:grid-cols-[220px_1fr]">
+            <div className="grid gap-6 lg:grid-cols-[260px_1fr]">
               <div className="space-y-1">
-                {batches.map((batch) => (
-                  <button
-                    key={batch.key}
-                    type="button"
-                    onClick={() => setSelectedBatchKey(batch.key)}
-                    className={`w-full rounded-xl border px-3 py-2 text-left text-sm ${
-                      selectedBatch?.key === batch.key
-                        ? 'border-neutral-900 bg-neutral-900 text-white'
-                        : 'border-neutral-200 bg-neutral-50 text-neutral-700 hover:border-neutral-300'
-                    }`}
-                  >
-                    <div className="font-medium">{batch.label}</div>
-                    <div
-                      className={`mt-0.5 text-[11px] ${
-                        selectedBatch?.key === batch.key ? 'text-neutral-300' : 'text-neutral-500'
+                {batches.map((batch) => {
+                  const selected = selectedBatch?.key === batch.key
+                  const workState = workProgressByKey[batch.key] ?? {
+                    progress: 'waiting' as const,
+                    completedAt: null,
+                  }
+                  const progress = workState.progress
+                  return (
+                    <button
+                      key={batch.key}
+                      type="button"
+                      onClick={() => setSelectedBatchKey(batch.key)}
+                      className={`w-full rounded-xl border px-3 py-2.5 text-left text-sm ${
+                        selected
+                          ? 'border-neutral-900 bg-neutral-900 text-white'
+                          : 'border-neutral-200 bg-neutral-50 text-neutral-700 hover:border-neutral-300'
                       }`}
                     >
-                      B{batch.beforeCount} · A{batch.afterCount}
-                      {batch.unsetCount ? ` · ?${batch.unsetCount}` : ''} · {batch.assets.length}장
-                    </div>
-                  </button>
-                ))}
+                      <div className="font-medium leading-snug">{batch.shortName}</div>
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                        <span
+                          className={`rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-tight ${workProgressBadgeClass(progress, selected)}`}
+                        >
+                          {adInboxWorkProgressLabel(progress, workState.completedAt)}
+                        </span>
+                        <span
+                          className={`text-[11px] ${
+                            selected ? 'text-neutral-300' : 'text-neutral-500'
+                          }`}
+                        >
+                          B{batch.beforeCount} · A{batch.afterCount}
+                          {batch.unsetCount ? ` · ?${batch.unsetCount}` : ''} · {batch.assets.length}장
+                        </span>
+                        {batch.promotedCount > 0 || batch.status === 'promoted' ? (
+                          <span
+                            className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                              selected
+                                ? 'bg-emerald-500/30 text-emerald-100'
+                                : 'bg-emerald-50 text-emerald-800'
+                            }`}
+                          >
+                            {batch.status === 'promoted'
+                              ? '쇼룸 완료'
+                              : `쇼룸 ${batch.promotedCount}/${batch.assets.length}`}
+                          </span>
+                        ) : null}
+                      </div>
+                    </button>
+                  )
+                })}
               </div>
 
               {selectedBatch ? (
@@ -572,10 +1060,28 @@ export default function AdInboxStudioPage() {
                                 : 'border-neutral-200'
                           }`}
                         >
-                          <div className="aspect-[4/3] bg-neutral-200">
+                          <div className="relative aspect-[4/3] bg-neutral-200">
                             {preview ? (
                               <img src={preview} alt="" className="h-full w-full object-cover" />
                             ) : null}
+                            {asset.is_consultation ? (
+                              <span className="absolute left-1.5 top-1.5 rounded bg-emerald-600 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                                쇼룸 등록됨
+                              </span>
+                            ) : null}
+                            <button
+                              type="button"
+                              title="사진 삭제"
+                              disabled={deletingId === asset.id || cleaningId === asset.id}
+                              className="absolute right-1.5 top-1.5 inline-flex items-center justify-center rounded-md bg-black/55 p-1.5 text-white hover:bg-red-600 disabled:opacity-50"
+                              onClick={() => void handleDeleteAsset(asset)}
+                            >
+                              {deletingId === asset.id ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Trash2 className="h-3.5 w-3.5" />
+                              )}
+                            </button>
                           </div>
                           <div className="space-y-1.5 p-2">
                             <div className="flex flex-wrap gap-1">
@@ -605,7 +1111,7 @@ export default function AdInboxStudioPage() {
                               </button>
                               <button
                                 type="button"
-                                disabled={cleaningId === asset.id}
+                                disabled={cleaningId === asset.id || deletingId === asset.id}
                                 className="rounded-md bg-sky-50 px-2 py-0.5 text-[10px] font-medium text-sky-900 disabled:opacity-50"
                                 onClick={() => void handleCleanupPeople(asset)}
                               >
@@ -722,14 +1228,10 @@ export default function AdInboxStudioPage() {
                               />
                             ) : (
                               <div className="flex items-center gap-2 rounded-xl border border-dashed border-neutral-300 bg-white px-4 py-8 text-sm text-neutral-500">
-                                {(activeJob.status === 'generating' ||
-                                  activeJob.kling_status === 'submitted' ||
-                                  activeJob.kling_status === 'processing') && (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                {isJobGenerating(activeJob) && (
+                                  <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
                                 )}
-                                {activeJob.status === 'failed' || activeJob.kling_status === 'request_failed'
-                                  ? '생성에 실패했습니다. 아래에서 다시 요청하세요.'
-                                  : '원본 생성 중입니다. 자동으로 상태를 갱신합니다.'}
+                                {generatingHint(activeJob)}
                               </div>
                             )}
 
@@ -772,7 +1274,9 @@ export default function AdInboxStudioPage() {
                                 disabled={actingJob || !activeJob.source_video_url}
                                 onClick={() => void handleCompose()}
                               >
-                                {activeJob.final_video_url ? '합성 다시하기' : '원본 OK · 워커 합성'}
+                                {activeJob.final_video_url
+                                  ? '합성·업로드준비 다시하기'
+                                  : '원본 OK · 합성·업로드준비'}
                               </Button>
                               {activeJob.source_video_url ? (
                                 <Button type="button" size="sm" variant="outline" asChild>
@@ -782,16 +1286,192 @@ export default function AdInboxStudioPage() {
                                   </a>
                                 </Button>
                               ) : null}
-                              <Button type="button" size="sm" variant="outline" asChild>
-                                <Link to={`/admin/showroom-shorts?job=${encodeURIComponent(activeJob.id)}`}>
-                                  채널 론칭으로
-                                </Link>
-                              </Button>
                             </div>
-                            <p className="text-[11px] text-neutral-500">
-                              원본이 마음에 들면 「워커 합성」까지 여기서 진행하세요. 유튜브·페북·인스타 업로드
-                              준비/승인은 「채널 론칭」에서 합니다.
-                            </p>
+
+                            {activeJob.final_video_url ? (
+                              <div className="space-y-3 rounded-xl border border-emerald-200 bg-emerald-50/40 p-4">
+                                <div className="flex flex-wrap items-start justify-between gap-2">
+                                  <div>
+                                    <p className="text-sm font-semibold text-neutral-900">
+                                      최종 업로드 전 확인
+                                    </p>
+                                    <p className="mt-0.5 text-xs text-neutral-600">
+                                      합성·업로드 준비는 자동입니다. 첫댓글 링크는 짧은 주소(
+                                      <span className="font-medium text-neutral-800">/r/yt · /r/ig · /r/fb</span>
+                                      )로 쇼룸+UTM이 붙습니다. 확인 후 「론칭 승인」만 누르세요.
+                                    </p>
+                                  </div>
+                                  {orderedTargets.length < SHOWROOM_SHORTS_CHANNELS.length ? (
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="secondary"
+                                      disabled={actingJob}
+                                      onClick={() => void handleEnsureTripleTargets()}
+                                    >
+                                      3채널 타깃 맞추기
+                                    </Button>
+                                  ) : null}
+                                </div>
+                                {orderedTargets.length === 0 ? (
+                                  <p className="text-xs text-amber-700">
+                                    퍼블리시 타깃이 없습니다. 「3채널 타깃 맞추기」를 눌러 주세요.
+                                  </p>
+                                ) : (
+                                  <div className="grid gap-3 md:grid-cols-3">
+                                    {orderedTargets.map((target) => {
+                                      const publishPackage = buildShowroomShortsPublishPackage(target)
+                                      const canPrepare = [
+                                        'ready',
+                                        'failed',
+                                        'launch_ready',
+                                        'approved',
+                                      ].includes(target.publish_status)
+                                      const canLaunch = ['launch_ready', 'approved'].includes(
+                                        target.publish_status,
+                                      )
+                                      const busy =
+                                        target.publish_status === 'preparing' ||
+                                        target.publish_status === 'publishing'
+                                      const bodyPreview = publishPackage.descriptionWithHashtags
+                                      const previewUrl = pickPrepString(target.preparation_payload, [
+                                        'previewUrl',
+                                        'draftUrl',
+                                        'platformDraftUrl',
+                                        'uploadUrl',
+                                      ])
+                                      const checklistRaw = target.preparation_payload?.checklist
+                                      const checklist = Array.isArray(checklistRaw)
+                                        ? checklistRaw
+                                            .map((item) => (typeof item === 'string' ? item.trim() : ''))
+                                            .filter(Boolean)
+                                        : []
+
+                                      return (
+                                        <div
+                                          key={target.id}
+                                          className="flex flex-col rounded-lg border border-neutral-200 bg-white p-3"
+                                        >
+                                          <div className="mb-2 flex items-center justify-between gap-2">
+                                            <p className="text-sm font-medium text-neutral-900">
+                                              {getChannelLabel(target.channel)}
+                                            </p>
+                                            <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] text-neutral-600">
+                                              {publishStatusLabel(target.publish_status)}
+                                            </span>
+                                          </div>
+
+                                          {target.publish_status === 'preparing' ||
+                                          target.publish_status === 'ready' ? (
+                                            <p className="mb-2 flex items-center gap-1.5 text-xs text-neutral-500">
+                                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                              업로드 준비 패키지를 만드는 중…
+                                            </p>
+                                          ) : null}
+
+                                          <div className="mb-3 space-y-2 rounded-md border border-neutral-100 bg-neutral-50 p-2.5 text-xs text-neutral-700">
+                                            <div>
+                                              <p className="mb-0.5 font-medium text-neutral-500">제목</p>
+                                              <p className="whitespace-pre-wrap break-words">
+                                                {publishPackage.title || '—'}
+                                              </p>
+                                            </div>
+                                            <div>
+                                              <p className="mb-0.5 font-medium text-neutral-500">본문</p>
+                                              <p className="max-h-28 overflow-y-auto whitespace-pre-wrap break-words">
+                                                {bodyPreview || '—'}
+                                              </p>
+                                            </div>
+                                            {publishPackage.firstComment ? (
+                                              <div>
+                                                <p className="mb-0.5 font-medium text-neutral-500">첫 댓글</p>
+                                                <p className="whitespace-pre-wrap break-words">
+                                                  {publishPackage.firstComment}
+                                                </p>
+                                                {publishPackage.landingUrl ? (
+                                                  <p className="mt-1 text-[11px] text-emerald-700">
+                                                    짧은 링크 · {publishPackage.landingUrl}
+                                                    <span className="text-neutral-500">
+                                                      {' '}
+                                                      → medium=shorts
+                                                    </span>
+                                                  </p>
+                                                ) : null}
+                                              </div>
+                                            ) : null}
+                                            {checklist.length > 0 ? (
+                                              <ul className="list-disc space-y-0.5 pl-4 text-neutral-600">
+                                                {checklist.map((item) => (
+                                                  <li key={item}>{item}</li>
+                                                ))}
+                                              </ul>
+                                            ) : null}
+                                            {previewUrl ? (
+                                              <a
+                                                href={previewUrl}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                                className="inline-flex items-center gap-1 text-neutral-700 underline-offset-2 hover:underline"
+                                              >
+                                                플랫폼 초안/미리보기
+                                                <ExternalLink className="h-3 w-3" />
+                                              </a>
+                                            ) : null}
+                                          </div>
+
+                                          <div className="mt-auto flex flex-col gap-2">
+                                            <Button
+                                              type="button"
+                                              size="sm"
+                                              disabled={!canLaunch || actingJob}
+                                              onClick={() => void handleLaunchTarget(target)}
+                                            >
+                                              {busy && target.publish_status === 'publishing' ? (
+                                                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                                              ) : null}
+                                              론칭 승인
+                                            </Button>
+                                            <Button
+                                              type="button"
+                                              size="sm"
+                                              variant="outline"
+                                              disabled={!canPrepare || actingJob}
+                                              onClick={() => void handlePrepareTarget(target)}
+                                            >
+                                              {busy && target.publish_status === 'preparing' ? (
+                                                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                                              ) : null}
+                                              준비 다시 요청
+                                            </Button>
+                                            {target.external_post_url ? (
+                                              <a
+                                                href={target.external_post_url}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                                className="inline-flex items-center gap-1 text-[11px] text-neutral-600 underline-offset-2 hover:underline"
+                                              >
+                                                게시물 열기
+                                                <ExternalLink className="h-3 w-3" />
+                                              </a>
+                                            ) : null}
+                                            {target.preparation_error ? (
+                                              <p className="text-[11px] text-red-600">
+                                                {target.preparation_error}
+                                              </p>
+                                            ) : null}
+                                          </div>
+                                        </div>
+                                      )
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <p className="text-[11px] text-neutral-500">
+                                클링 원본이 괜찮으면 「원본 OK · 합성·업로드준비」를 누르세요. 이후 합성과
+                                채널 업로드 준비는 자동으로 이어집니다.
+                              </p>
+                            )}
                           </>
                         ) : null}
                       </div>
@@ -803,6 +1483,29 @@ export default function AdInboxStudioPage() {
           )}
         </section>
       </div>
+
+      <AdInboxImportShowroomDialog
+        open={importShowroomOpen}
+        onOpenChange={setImportShowroomOpen}
+        onCreated={(result) => {
+          void handleImportedFromShowroom(result)
+        }}
+      />
+      <AdInboxImportShowroomAfterOnlyDialog
+        open={importAfterOnlyOpen}
+        onOpenChange={setImportAfterOnlyOpen}
+        onCreated={(result) => {
+          void handleImportedFromShowroom(result)
+        }}
+      />
+      <AdInboxPromoteToShowroomDialog
+        open={promoteShowroomOpen}
+        onOpenChange={setPromoteShowroomOpen}
+        batch={selectedBatch}
+        onPromoted={() => {
+          void refresh()
+        }}
+      />
     </div>
   )
 }

@@ -261,6 +261,78 @@ export async function updateImageAssetConsultation(assetId: string, isConsultati
   return { error: error ?? null }
 }
 
+/**
+ * 사람 제거 보정본으로 쇼룸 원본 URL을 교체.
+ * 이전 URL은 metadata에 보관 (롤백용).
+ */
+export async function replaceShowroomAssetImageUrls(input: {
+  assetId: string
+  cloudinary_url: string
+  thumbnail_url?: string | null
+  public_id?: string | null
+}): Promise<{ error: Error | null }> {
+  const assetId = input.assetId.trim()
+  const cloudinaryUrl = input.cloudinary_url.trim()
+  if (!assetId || !cloudinaryUrl) {
+    return { error: new Error('교체할 자산과 이미지 URL이 필요합니다.') }
+  }
+
+  const { data, error: fetchError } = await supabase
+    .from('image_assets')
+    .select('cloudinary_url, thumbnail_url, metadata')
+    .eq('id', assetId)
+    .maybeSingle()
+
+  if (fetchError) return { error: new Error(fetchError.message) }
+  if (!data) return { error: new Error('쇼룸 이미지를 찾을 수 없습니다.') }
+
+  const prevMeta =
+    data.metadata && typeof data.metadata === 'object' && !Array.isArray(data.metadata)
+      ? { ...(data.metadata as Record<string, unknown>) }
+      : {}
+
+  const previousUrl =
+    typeof data.cloudinary_url === 'string' && data.cloudinary_url.trim()
+      ? data.cloudinary_url.trim()
+      : null
+  const previousThumb =
+    typeof data.thumbnail_url === 'string' && data.thumbnail_url.trim()
+      ? data.thumbnail_url.trim()
+      : null
+
+  if (previousUrl && previousUrl !== cloudinaryUrl) {
+    const history = Array.isArray(prevMeta.previous_image_urls)
+      ? [...(prevMeta.previous_image_urls as unknown[])]
+      : []
+    history.push({
+      cloudinary_url: previousUrl,
+      thumbnail_url: previousThumb,
+      replaced_at: new Date().toISOString(),
+      reason: 'people_cleanup',
+    })
+    prevMeta.previous_image_urls = history.slice(-5)
+    prevMeta.replaced_by_cleanup = true
+    if (!prevMeta.original_cloudinary_url) {
+      prevMeta.original_cloudinary_url = previousUrl
+    }
+  }
+
+  if (input.public_id?.trim()) {
+    prevMeta.public_id = input.public_id.trim()
+  }
+
+  const { error } = await supabase
+    .from('image_assets')
+    .update({
+      cloudinary_url: cloudinaryUrl,
+      thumbnail_url: input.thumbnail_url?.trim() || null,
+      metadata: prevMeta as Json,
+    })
+    .eq('id', assetId)
+
+  return { error: error ? new Error(error.message) : null }
+}
+
 export async function updateImageAssetBeforeAfter(
   assetId: string,
   currentMetadata: Record<string, unknown> | null | undefined,

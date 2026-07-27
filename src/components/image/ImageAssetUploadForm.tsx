@@ -6,25 +6,23 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { useColorChips } from '@/hooks/useColorChips'
 import { readExifFromFile } from '@/lib/exifUtil'
 import { uploadEngine } from '@/lib/uploadEngine'
 import {
-  compareSpaceDisplayNameOptions,
   getExistingImageFingerprints,
   insertImageAsset,
   getExistingSiteNames,
 } from '@/lib/imageAssetUploadService'
-import type { SpaceDisplayNameOption } from '@/lib/imageAssetUploadService'
 import { buildBroadExternalDisplayName, buildExternalDisplayName, isCloudinaryConfigured } from '@/lib/imageAssetService'
 import { getCloudinaryCloudName } from '@/lib/config'
 import { buildOpenShowroomDisplayName, buildOpenShowroomWatermarkedUrls } from '@/lib/openShowroomWatermark'
 import { toast } from 'sonner'
 import { X, Check } from 'lucide-react'
-
-const CATEGORY_OPTIONS = ['책상', '의자', '책장', '사물함', '기타']
-const BUSINESS_TYPE_OPTIONS = ['학원', '관리형', '스터디카페', '학교', '아파트', '기타']
+import {
+  EMPTY_IMAGE_ASSET_COMMON_META,
+  ImageAssetCommonMetaFields,
+  type ImageAssetCommonMetaValue,
+} from '@/components/image/ImageAssetCommonMetaFields'
 
 type UploadStatus = 'pending' | 'uploading' | 'done'
 
@@ -34,64 +32,6 @@ interface PendingItem {
   preview: string
   is_main: boolean
   status: UploadStatus
-}
-
-function normalizeSearchValue(value: string): string {
-  return value.trim().toLowerCase()
-}
-
-function compactSearchValue(value: string): string {
-  return normalizeSearchValue(value).replace(/\s+/g, '')
-}
-
-function extractTrailingFourDigitCode(value: string): string | null {
-  const matches = value.match(/\d{4,}/g)
-  if (!matches?.length) return null
-  const last = matches[matches.length - 1]
-  return last ? last.slice(-4) : null
-}
-
-function getSiteOptionSearchScore(option: SpaceDisplayNameOption, query: string): number {
-  const trimmed = query.trim()
-  if (!trimmed) return 0
-  const lowered = normalizeSearchValue(trimmed)
-  const compact = compactSearchValue(trimmed)
-  const display = option.display_name ?? ''
-  const spaceId = option.space_id ?? ''
-  const normalizedDisplay = normalizeSearchValue(display)
-  const compactDisplay = compactSearchValue(display)
-  const normalizedSpaceId = normalizeSearchValue(spaceId)
-  const compactSpaceId = compactSearchValue(spaceId)
-  const trailingCode = extractTrailingFourDigitCode(display) ?? ''
-
-  if (normalizedSpaceId === lowered || compactSpaceId === compact) return 100
-  if (trailingCode && trailingCode === trimmed) return 95
-  if (normalizedDisplay === lowered || compactDisplay === compact) return 90
-  if (normalizedDisplay.startsWith(lowered) || compactDisplay.startsWith(compact)) return 80
-  if (normalizedDisplay.includes(lowered) || compactDisplay.includes(compact)) return 70
-  if (normalizedSpaceId.includes(lowered) || compactSpaceId.includes(compact)) return 65
-  if (trailingCode && trailingCode.includes(trimmed)) return 60
-  return 0
-}
-
-function matchesSiteOption(option: SpaceDisplayNameOption, query: string): boolean {
-  const trimmed = query.trim()
-  if (!trimmed) return true
-  const lowered = normalizeSearchValue(trimmed)
-  const compact = compactSearchValue(trimmed)
-  const terms = lowered.split(/\s+/).filter(Boolean)
-  const display = option.display_name ?? ''
-  const spaceId = option.space_id ?? ''
-  const trailingCode = extractTrailingFourDigitCode(display) ?? ''
-  const haystacks = [
-    normalizeSearchValue(display),
-    compactSearchValue(display),
-    normalizeSearchValue(spaceId),
-    compactSearchValue(spaceId),
-    trailingCode,
-  ].filter(Boolean)
-  return terms.every((term) => haystacks.some((value) => value.includes(term))) ||
-    haystacks.some((value) => value.includes(lowered) || value.includes(compact))
 }
 
 function generateId(): string {
@@ -129,81 +69,37 @@ export function ImageAssetUploadForm({
   onClose,
 }: ImageAssetUploadFormProps) {
   const inputRef = useRef<HTMLInputElement>(null)
-  const { chips: colorChips, isLoading: colorLoading } = useColorChips()
-  const colorByGroup = colorChips.reduce<Record<string, string[]>>(
-    (acc, c) => {
-      if (!acc[c.color_type]) acc[c.color_type] = []
-      acc[c.color_type].push(c.color_name)
-      return acc
-    },
-    {}
-  )
 
   const [pending, setPending] = useState<PendingItem[]>([])
   const [uploading, setUploading] = useState(false)
   const [dragOver, setDragOver] = useState(false)
   const [recentUploads, setRecentUploads] = useState<{ id: string; thumbnail_url: string }[]>([])
 
-  const [site_name, setSite_name] = useState(prefill?.site_name ?? '')
-  const [siteNameSuggestions, setSiteNameSuggestions] = useState<SpaceDisplayNameOption[]>([])
-  const [siteNameOptions, setSiteNameOptions] = useState<SpaceDisplayNameOption[]>([])
-  const [siteNameOpen, setSiteNameOpen] = useState(false)
-  const siteNameInputRef = useRef<HTMLInputElement>(null)
-  const [selectedSpaceOption, setSelectedSpaceOption] = useState<SpaceDisplayNameOption | null>(null)
+  const [meta, setMeta] = useState<ImageAssetCommonMetaValue>(() => ({
+    ...EMPTY_IMAGE_ASSET_COMMON_META,
+    site_name: prefill?.site_name ?? '',
+  }))
 
-  const refreshSiteNameOptions = useCallback(async () => {
-    const options = await getExistingSiteNames()
-    setSiteNameOptions(options)
-    return options
+  const patchMeta = useCallback((patch: Partial<ImageAssetCommonMetaValue>) => {
+    setMeta((prev) => ({ ...prev, ...patch }))
   }, [])
 
   useEffect(() => {
-    void refreshSiteNameOptions()
-  }, [refreshSiteNameOptions])
-
-  useEffect(() => {
-    if (prefill?.site_name) setSite_name(prefill.site_name)
-  }, [prefill?.site_name])
+    if (prefill?.site_name) patchMeta({ site_name: prefill.site_name })
+  }, [prefill?.site_name, patchMeta])
 
   useEffect(() => {
     if (!prefill?.consultation_id) return
-    setSelectedSpaceOption((prev) => {
-      if (prev?.consultation_id === prefill.consultation_id) return prev
-      const matched = siteNameOptions.find((option) => option.consultation_id === prefill.consultation_id)
-      return matched ?? prev
+    void getExistingSiteNames().then((options) => {
+      const matched = options.find((option) => option.consultation_id === prefill.consultation_id)
+      if (matched) {
+        setMeta((prev) => {
+          if (prev.selectedSpaceOption?.consultation_id === prefill.consultation_id) return prev
+          return { ...prev, selectedSpaceOption: matched, site_name: matched.display_name || prev.site_name }
+        })
+      }
     })
-  }, [prefill?.consultation_id, siteNameOptions])
-
-  const [photo_date, setPhoto_date] = useState('')
-  const [location, setLocation] = useState('')
-  const [business_type, setBusiness_type] = useState('')
-  const [category, setCategory] = useState('책상')
-  const [product_name, setProduct_name] = useState('')
-  const [color_name, setColor_name] = useState('')
-  const [memo, setMemo] = useState('')
-  const [beforeAfterRole, setBeforeAfterRole] = useState<'before' | 'after'>('after')
-
-  const buildSiteSuggestions = useCallback(
-    (query: string) => {
-      const filtered = query.trim()
-        ? siteNameOptions
-            .filter((option) => matchesSiteOption(option, query))
-            .sort((a, b) => {
-              const scoreDiff = getSiteOptionSearchScore(b, query) - getSiteOptionSearchScore(a, query)
-              if (scoreDiff !== 0) return scoreDiff
-              return compareSpaceDisplayNameOptions(a, b)
-            })
-        : siteNameOptions
-      return filtered.slice(0, 20)
-    },
-    [siteNameOptions]
-  )
-
-  useEffect(() => {
-    if (prefill?.site_name) return
-    if (!site_name.trim()) return
-    setSiteNameSuggestions(buildSiteSuggestions(site_name))
-  }, [siteNameOptions, site_name, buildSiteSuggestions, prefill?.site_name])
+  }, [prefill?.consultation_id])
 
   const addFiles = useCallback(async (files: FileList | File[]) => {
     const list = Array.from(files).filter((f) => f.type.startsWith('image/'))
@@ -232,17 +128,20 @@ export function ImageAssetUploadForm({
       status: 'pending' as UploadStatus,
     }))
     setPending((prev) => [...prev, ...next])
-    if (toAdd.length > 0 && (!photo_date.trim() || !location.trim())) {
+    if (toAdd.length > 0) {
       try {
         const exif = await readExifFromFile(toAdd[0])
-        if (!photo_date.trim() && exif.photo_date) setPhoto_date(exif.photo_date)
-        if (!location.trim() && exif.location) setLocation(exif.location)
+        setMeta((prev) => ({
+          ...prev,
+          photo_date: prev.photo_date.trim() ? prev.photo_date : exif.photo_date || prev.photo_date,
+          location: prev.location.trim() ? prev.location : exif.location || prev.location,
+        }))
       } catch {
         // EXIF 자동 입력 실패 시 수동 입력 유지
       }
     }
     if (toAdd.length > 0) toast.success(`${toAdd.length}장 추가됨`)
-  }, [photo_date, location])
+  }, [])
 
   const removePending = useCallback((id: string) => {
     setPending((prev) => prev.filter((p) => p.id !== id))
@@ -293,33 +192,29 @@ export function ImageAssetUploadForm({
     if (pending.length === 0) return
     try {
       const exif = await readExifFromFile(pending[0].file)
-      if (exif.photo_date) setPhoto_date(exif.photo_date)
-      if (exif.location) setLocation(exif.location)
+      patchMeta({
+        photo_date: exif.photo_date || meta.photo_date,
+        location: exif.location || meta.location,
+      })
       toast.success('첫 번째 사진에서 촬영일·위치를 불러왔습니다.')
     } catch {
       toast.error('EXIF를 읽을 수 없습니다.')
     }
-  }, [pending])
+  }, [pending, patchMeta, meta.photo_date, meta.location])
 
   const resetUploadFields = useCallback((mode: 'keep-site' | 'new-site') => {
     setPending((prev) => {
       for (const item of prev) URL.revokeObjectURL(item.preview)
       return []
     })
-    if (mode === 'new-site' && !prefill?.site_name) {
-      setSite_name('')
-      setSelectedSpaceOption(null)
-      setSiteNameSuggestions([])
-      setSiteNameOpen(false)
-    }
-    setPhoto_date('')
-    setLocation('')
-    setBusiness_type('')
-    setCategory('책상')
-    setProduct_name('')
-    setColor_name('')
-    setMemo('')
-    setBeforeAfterRole('after')
+    setMeta((prev) => {
+      const keepSite = mode === 'keep-site' || !!prefill?.site_name
+      return {
+        ...EMPTY_IMAGE_ASSET_COMMON_META,
+        site_name: keepSite ? prev.site_name : (prefill?.site_name ?? ''),
+        selectedSpaceOption: keepSite ? prev.selectedSpaceOption : null,
+      }
+    })
   }, [prefill])
 
   const handleSubmit = useCallback(
@@ -330,7 +225,7 @@ export function ImageAssetUploadForm({
         toast.error('사진을 선택해 주세요.')
         return
       }
-      const siteTrim = site_name.trim()
+      const siteTrim = meta.site_name.trim()
       if (!siteTrim) {
         toast.error('현장명을 입력해 주세요. 같은 현장명으로 올리면 하나의 시공 사례로 묶입니다.')
         return
@@ -342,54 +237,54 @@ export function ImageAssetUploadForm({
       setUploading(true)
       let success = 0
       let fail = 0
-      const consultationId = prefill?.consultation_id ?? selectedSpaceOption?.consultation_id ?? ''
-      const selectedSpaceId = selectedSpaceOption?.space_id ?? null
+      const consultationId = prefill?.consultation_id ?? meta.selectedSpaceOption?.consultation_id ?? ''
+      const selectedSpaceId = meta.selectedSpaceOption?.space_id ?? null
       const uploadSource = prefill ? 'consultation_card' : 'image_asset_upload'
       const common = {
         site_name: siteTrim || null,
-        photo_date: photo_date.trim() || null,
-        location: location.trim() || null,
-        business_type: business_type.trim() || null,
-        category: category.trim() || '책상',
-        product_name: product_name.trim() || null,
-        color_name: color_name.trim() || null,
-        memo: memo.trim() || null,
+        photo_date: meta.photo_date.trim() || null,
+        location: meta.location.trim() || null,
+        business_type: meta.business_type.trim() || null,
+        category: meta.category.trim() || '책상',
+        product_name: meta.product_name.trim() || null,
+        color_name: meta.color_name.trim() || null,
+        memo: meta.memo.trim() || null,
       }
       for (const item of toUpload) {
         setPending((prev) =>
           prev.map((p) => (p.id === item.id ? { ...p, status: 'uploading' as UploadStatus } : p))
         )
         try {
-          const externalDisplayName = selectedSpaceOption
+          const externalDisplayName = meta.selectedSpaceOption
             ? buildExternalDisplayName({
-                requestDate: selectedSpaceOption.request_date,
-                startDate: selectedSpaceOption.start_date,
-                createdAt: selectedSpaceOption.created_at,
-                region: location.trim() || null,
+                requestDate: meta.selectedSpaceOption.request_date,
+                startDate: meta.selectedSpaceOption.start_date,
+                createdAt: meta.selectedSpaceOption.created_at,
+                region: meta.location.trim() || null,
                 siteName: siteTrim,
-                industry: business_type.trim() || null,
-                customerPhone: selectedSpaceOption.customer_phone,
+                industry: meta.business_type.trim() || null,
+                customerPhone: meta.selectedSpaceOption.customer_phone,
               })
             : null
           const broadExternalDisplayName = buildBroadExternalDisplayName(externalDisplayName)
-          const meta = {
+          const uploadMeta = {
             customer_name: siteTrim,
             project_id: consultationId,
             space_id: selectedSpaceId,
-            category: category.trim() || '책상',
-            upload_date: photo_date.trim() || new Date().toISOString().slice(0, 10),
+            category: meta.category.trim() || '책상',
+            upload_date: meta.photo_date.trim() || new Date().toISOString().slice(0, 10),
             source: uploadSource,
-            before_after_role: beforeAfterRole,
+            before_after_role: meta.beforeAfterRole,
           }
-          const uploadResult = await uploadEngine(item.file, meta)
+          const uploadResult = await uploadEngine(item.file, uploadMeta)
           const { cloudinary_url, thumbnail_url, public_id, storage_type, storage_path } = uploadResult
           const publicDisplayName = buildOpenShowroomDisplayName({
             siteName: siteTrim,
             externalDisplayName: externalDisplayName || null,
             broadExternalDisplayName: broadExternalDisplayName || null,
-            location: location.trim() || null,
-            businessType: business_type.trim() || null,
-            createdAt: photo_date.trim() || new Date().toISOString(),
+            location: meta.location.trim() || null,
+            businessType: meta.business_type.trim() || null,
+            createdAt: meta.photo_date.trim() || new Date().toISOString(),
           })
           const publicWatermark = buildOpenShowroomWatermarkedUrls({
             sourceUrl: cloudinary_url,
@@ -419,7 +314,7 @@ export function ImageAssetUploadForm({
               external_display_name: externalDisplayName || undefined,
               broad_external_display_name: broadExternalDisplayName || undefined,
               public_id: public_id ?? undefined,
-              before_after_role: beforeAfterRole,
+              before_after_role: meta.beforeAfterRole,
             },
           })
           if ('error' in result) {
@@ -457,21 +352,7 @@ export function ImageAssetUploadForm({
         toast.success(`${success}건 저장되었습니다.${fail > 0 ? ` (실패 ${fail}건)` : ''}`)
       }
     },
-    [
-      pending,
-      site_name,
-      photo_date,
-      location,
-      business_type,
-      category,
-      product_name,
-      color_name,
-      memo,
-      beforeAfterRole,
-      prefill,
-      onSuccess,
-      selectedSpaceOption,
-    ]
+    [pending, meta, prefill, onSuccess]
   )
 
   return (
@@ -499,76 +380,12 @@ export function ImageAssetUploadForm({
         </p>
       </div>
 
-      <div className="rounded-lg border border-border p-4 bg-muted/20">
-        <label className="block text-sm font-medium mb-2">현장명 / 스페이스 표시명 *</label>
-        <p className="text-xs text-muted-foreground mb-2">상담 데이터에 연결된 스페이스 표시명을 검색합니다. 선택하면 해당 상담 ID와 스페이스 ID도 함께 연결됩니다.</p>
-        <div className="relative">
-          <Input
-            ref={siteNameInputRef}
-            type="text"
-            value={site_name}
-            onChange={(e) => {
-              const v = e.target.value
-              setSite_name(v)
-              setSelectedSpaceOption(null)
-              setSiteNameSuggestions(buildSiteSuggestions(v))
-              setSiteNameOpen(true)
-            }}
-            onFocus={() => {
-              setSiteNameOpen(true)
-              void refreshSiteNameOptions().then((options) => {
-                const next = site_name.trim()
-                  ? options
-                      .filter((option) => matchesSiteOption(option, site_name))
-                      .sort((a, b) => {
-                        const scoreDiff = getSiteOptionSearchScore(b, site_name) - getSiteOptionSearchScore(a, site_name)
-                        if (scoreDiff !== 0) return scoreDiff
-                        return compareSpaceDisplayNameOptions(a, b)
-                      })
-                      .slice(0, 20)
-                  : options.slice(0, 20)
-                setSiteNameSuggestions(next)
-              })
-            }}
-            onBlur={() => {
-              setTimeout(() => setSiteNameOpen(false), 180)
-            }}
-            placeholder="예: 강남 테헤란로 오피스"
-            className="w-full"
-            autoComplete="off"
-            readOnly={!!prefill?.site_name}
-          />
-          {siteNameOpen && !prefill?.site_name && siteNameSuggestions.length > 0 && (
-            <ul
-              className="absolute z-50 mt-1 w-full rounded-md border border-border bg-background text-popover-foreground shadow-lg max-h-48 overflow-auto"
-              role="listbox"
-            >
-              {siteNameSuggestions.map((option) => (
-                <li
-                  key={`${option.consultation_id}:${option.space_id ?? option.display_name}`}
-                  role="option"
-                  className="px-3 py-2 cursor-pointer hover:bg-accent hover:text-accent-foreground"
-                  onMouseDown={(e) => {
-                    e.preventDefault()
-                    setSite_name(option.display_name)
-                    setSelectedSpaceOption(option)
-                    setSiteNameSuggestions([])
-                    setSiteNameOpen(false)
-                  }}
-                >
-                  <div className="text-sm">{option.display_name}</div>
-                  {option.space_id && (
-                    <div className="text-[11px] text-muted-foreground">{option.space_id}</div>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-        {selectedSpaceOption?.space_id && (
-          <p className="text-[11px] text-muted-foreground mt-2">연결된 스페이스 ID: {selectedSpaceOption?.space_id}</p>
-        )}
-      </div>
+      <ImageAssetCommonMetaFields
+        value={meta}
+        onChange={patchMeta}
+        siteNameReadOnly={!!prefill?.site_name}
+        parts={['site']}
+      />
 
       <div>
         <label className="block text-sm font-medium mb-2">사진 추가 (여러 장 선택 또는 드래그 앤 드롭)</label>
@@ -701,112 +518,12 @@ export function ImageAssetUploadForm({
         </>
       )}
 
-      <div className="rounded-lg border border-border p-4 space-y-4 bg-muted/20">
-        <h2 className="text-sm font-semibold">공통 속성 (선택한 모든 사진에 적용)</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium mb-1">촬영일</label>
-            <Input
-              type="date"
-              value={photo_date}
-              onChange={(e) => setPhoto_date(e.target.value)}
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">지역</label>
-            <Input
-              value={location}
-              onChange={(e) => setLocation(e.target.value)}
-              placeholder="위도, 경도 또는 지역명"
-            />
-          </div>
-        </div>
-        <div>
-          <label className="block text-sm font-medium mb-1">업종</label>
-          <select
-            className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
-            value={business_type}
-            onChange={(e) => setBusiness_type(e.target.value)}
-          >
-            <option value="">선택</option>
-            {BUSINESS_TYPE_OPTIONS.map((opt) => (
-              <option key={opt} value={opt}>{opt}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="block text-sm font-medium mb-1">제품 카테고리</label>
-          <select
-            className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
-            value={category}
-            onChange={(e) => setCategory(e.target.value)}
-          >
-            {CATEGORY_OPTIONS.map((opt) => (
-              <option key={opt} value={opt}>{opt}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="block text-sm font-medium mb-1">제품명</label>
-          <Input
-            value={product_name}
-            onChange={(e) => setProduct_name(e.target.value)}
-            placeholder="예: 스마트A 책상"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium mb-1">색상 (공식 컬러칩)</label>
-          <select
-            className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
-            value={color_name}
-            onChange={(e) => setColor_name(e.target.value)}
-            disabled={colorLoading}
-          >
-            <option value="">선택</option>
-            {colorByGroup.Standard?.length ? (
-              <optgroup label="기본 컬러 (Standard)">
-                {colorByGroup.Standard.map((name) => (
-                  <option key={name} value={name}>{name}</option>
-                ))}
-              </optgroup>
-            ) : null}
-            {colorByGroup.Special?.length ? (
-              <optgroup label="스페셜 컬러 (Special)">
-                {colorByGroup.Special.map((name) => (
-                  <option key={name} value={name}>{name}</option>
-                ))}
-              </optgroup>
-            ) : null}
-            {colorByGroup.Other?.length ? (
-              <optgroup label="기타">
-                {colorByGroup.Other.map((name) => (
-                  <option key={name} value={name}>{name}</option>
-                ))}
-              </optgroup>
-            ) : null}
-          </select>
-        </div>
-        <div>
-          <label className="block text-sm font-medium mb-1">배치 성격</label>
-          <select
-            className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
-            value={beforeAfterRole}
-            onChange={(e) => setBeforeAfterRole(e.target.value === 'before' ? 'before' : 'after')}
-          >
-            <option value="after">애프터 (기본)</option>
-            <option value="before">비포어</option>
-          </select>
-          <p className="mt-1 text-xs text-muted-foreground">이번에 올리는 사진 묶음 전체에 동일하게 적용됩니다. 대부분은 애프터로 두고, 비포어 사진일 때만 변경하세요.</p>
-        </div>
-        <div>
-          <label className="block text-sm font-medium mb-1">메모</label>
-          <Input
-            value={memo}
-            onChange={(e) => setMemo(e.target.value)}
-            placeholder="기타 메모"
-          />
-        </div>
-      </div>
+      <ImageAssetCommonMetaFields
+        value={meta}
+        onChange={patchMeta}
+        siteNameReadOnly={!!prefill?.site_name}
+        parts={['attributes']}
+      />
 
       <div className="flex gap-2 pt-2">
         <Button

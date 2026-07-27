@@ -122,6 +122,10 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
     const body = (typeof req.body === 'string' ? JSON.parse(req.body) : req.body) as {
       imageUrl?: string
       prompt?: string
+      /** text-first는 지시 준수에 유리 (Before 합성 등) */
+      promptFirst?: boolean
+      model?: string
+      temperature?: number
     }
     const imageUrl = typeof body.imageUrl === 'string' ? body.imageUrl.trim() : ''
     if (!imageUrl) {
@@ -137,10 +141,20 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
 
     const source = await fetchImageAsBase64(imageUrl)
     const model =
+      (typeof body.model === 'string' && body.model.trim()) ||
       process.env.GOOGLE_GEMINI_IMAGE_MODEL?.trim() ||
       process.env.GOOGLE_GEMINI_MODEL?.trim() ||
       'gemini-2.5-flash-image'
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
+    const promptText =
+      typeof body.prompt === 'string' && body.prompt.trim() ? body.prompt.trim() : CLEANUP_PROMPT
+    const imagePart = { inlineData: { mimeType: source.mimeType, data: source.base64 } }
+    const textPart = { text: promptText }
+    const promptFirst = body.promptFirst === true
+    const temperature =
+      typeof body.temperature === 'number' && Number.isFinite(body.temperature)
+        ? Math.min(1, Math.max(0, body.temperature))
+        : 0.15
 
     const geminiRes = await fetch(endpoint, {
       method: 'POST',
@@ -149,15 +163,12 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
         contents: [
           {
             role: 'user',
-            parts: [
-              { inlineData: { mimeType: source.mimeType, data: source.base64 } },
-              { text: typeof body.prompt === 'string' && body.prompt.trim() ? body.prompt.trim() : CLEANUP_PROMPT },
-            ],
+            parts: promptFirst ? [textPart, imagePart] : [imagePart, textPart],
           },
         ],
         generationConfig: {
           responseModalities: ['TEXT', 'IMAGE'],
-          temperature: 0.2,
+          temperature,
         },
       }),
     })

@@ -1,5 +1,12 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from "npm:@supabase/supabase-js@2"
+import {
+  encodeSplitState,
+  isSplitReady,
+  needsInstallStart,
+  parseSplitState,
+  type SplitKlingState,
+} from "../_shared/klingSplitState.ts"
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -239,7 +246,7 @@ async function insertLog(
 
 async function persistSourceVideoToStorage(
   supabase: ReturnType<typeof createClient>,
-  input: { jobId: string; sourceVideoUrl: string },
+  input: { jobId: string; sourceVideoUrl: string; segmentLabel?: string },
 ) {
   if (input.sourceVideoUrl.includes(`/storage/v1/object/public/${SHOWROOM_SHORTS_VIDEO_BUCKET}/`)) {
     return input.sourceVideoUrl
@@ -252,7 +259,8 @@ async function persistSourceVideoToStorage(
 
   const contentType = getOptionalString(response.headers.get("content-type")) || "video/mp4"
   const extension = inferVideoExtension(contentType, input.sourceVideoUrl)
-  const objectPath = `source/${sanitizePathSegment(input.jobId)}/kling-source-${Date.now()}.${extension}`
+  const label = input.segmentLabel ? `${sanitizePathSegment(input.segmentLabel)}-` : ""
+  const objectPath = `source/${sanitizePathSegment(input.jobId)}/${label}kling-source-${Date.now()}.${extension}`
   const buffer = new Uint8Array(await response.arrayBuffer())
 
   const { error: uploadError } = await supabase.storage
@@ -296,15 +304,201 @@ Deno.serve(async (req) => {
       return json({ ok: false, message: jobError?.message ?? "숏츠 작업을 찾지 못했습니다." }, 404)
     }
 
-    const klingTaskId = getString(job.kling_job_id)
-    if (!klingTaskId) {
+    const rawKlingJobId = job.kling_job_id
+    if (!rawKlingJobId) {
       return json({ ok: false, message: "아직 생성 작업 ID가 없습니다. 먼저 생성 요청을 실행하세요." }, 400)
     }
 
     const token = await createKlingJwt(klingAccessKey, klingSecretKey)
     const apiMode = resolveKlingApiMode(klingModelName)
-    const requestPaths = buildKlingPollPathCandidates(klingModelName, klingTaskId)
     const candidateBaseUrls = buildKlingApiBaseUrls(klingApiBaseUrl)
+    const nowIso = new Date().toISOString()
+    const splitState = parseSplitState(rawKlingJobId)
+
+    if (splitState) {
+      const pollSegment = async (taskId: string) => {
+        const requestPaths = buildKlingPollPathCandidates(klingModelName, taskId)
+        let activeBaseUrl = candidateBaseUrls[0]
+        let requestPath = requestPaths[0]
+        let response!: Response
+        let rawText = ""
+        let parsed: JsonRecord | null = null
+
+        for (const candidatePath of requestPaths) {
+          requestPath = candidatePath
+          activeBaseUrl = candidateBaseUrls[0]
+          response = await fetch(`${activeBaseUrl}${requestPath}`, {
+            method: "GET",
+            headers: { Authorization: `Bearer ${token}` },
+          })
+          rawText = await response.text()
+          parsed = parseJsonRecord(rawText)
+
+          if (!response.ok && shouldRetryWithFallback(response.status, parsed, rawText) && candidateBaseUrls.length > 1) {
+            for (const candidate of candidateBaseUrls.slice(1)) {
+              activeBaseUrl = candidate
+              response = await fetch(`${activeBaseUrl}${requestPath}`, {
+                method: "GET",
+                headers: { Authorization: `Bearer ${token}` },
+              })
+              rawText = await response.text()
+              parsed = parseJsonRecord(rawText)
+              if (response.ok || !shouldRetryWithFallback(response.status, parsed, rawText)) break
+            }
+          }
+          if (response.ok || ![400, 404].includes(response.status)) break
+        }
+
+        return { response, rawText, parsed, activeBaseUrl, requestPath }
+      }
+
+      const demoPoll = await pollSegment(splitState.demo.taskId)
+      const installPoll = splitState.install.taskId
+        ? await pollSegment(splitState.install.taskId)
+        : null
+
+      if (!demoPoll.response.ok || (installPoll && !installPoll.response.ok)) {
+        const failed = !demoPoll.response.ok ? demoPoll : installPoll!
+        await insertLog(supabase, {
+          jobId,
+          stage: "kling_poll_failed",
+          message: `분할 원본 상태 조회 실패 (${failed.response.status})`,
+          payload: {
+            demo: demoPoll.parsed ?? { rawText: demoPoll.rawText },
+            install: installPoll ? (installPoll.parsed ?? { rawText: installPoll.rawText }) : null,
+          },
+        })
+        return json({
+          ok: false,
+          provider: "kling",
+          upstreamStatus: failed.response.status,
+          message: getKlingErrorMessage(failed.parsed, failed.rawText, failed.response.status),
+        })
+      }
+
+      const next: SplitKlingState = {
+        mode: "split_demo_install_v1",
+        startFrameUrl: splitState.startFrameUrl ?? null,
+        demo: {
+          taskId: splitState.demo.taskId,
+          status: extractStatus(demoPoll.parsed),
+          url: splitState.demo.url ?? null,
+        },
+        install: {
+          taskId: splitState.install.taskId,
+          status: installPoll
+            ? extractStatus(installPoll.parsed)
+            : (splitState.install.status || "pending"),
+          url: splitState.install.url ?? null,
+        },
+      }
+
+      const persistIfReady = async (label: "demo" | "install", status: string, remoteUrl: string | null) => {
+        if (mapJobStatus(status) !== "generated" || !remoteUrl) return null
+        if (label === "demo" && next.demo.url) return next.demo.url
+        if (label === "install" && next.install.url) return next.install.url
+        const persisted = await persistSourceVideoToStorage(supabase, {
+          jobId,
+          sourceVideoUrl: remoteUrl,
+          segmentLabel: label,
+        })
+        await insertLog(supabase, {
+          jobId,
+          stage: "source_segment_persisted",
+          message: `${label === "demo" ? "철거" : "설치"} 5초 원본을 Storage에 저장했습니다.`,
+          payload: { label, original: remoteUrl, persisted },
+        })
+        return persisted
+      }
+
+      try {
+        const demoRemote = extractVideoUrl(demoPoll.parsed)
+        const installRemote = installPoll ? extractVideoUrl(installPoll.parsed) : null
+        const demoUrl = await persistIfReady("demo", next.demo.status || "", demoRemote)
+        const installUrl = await persistIfReady("install", next.install.status || "", installRemote)
+        if (demoUrl) next.demo.url = demoUrl
+        if (installUrl) next.install.url = installUrl
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "분할 원본 Storage 복사 실패"
+        await insertLog(supabase, {
+          jobId,
+          stage: "source_video_persist_failed",
+          message,
+        })
+        return json({ ok: false, message }, 500)
+      }
+
+      const demoFailed = mapJobStatus(next.demo.status || "") === "failed"
+      const installFailed = next.install.taskId
+        ? mapJobStatus(next.install.status || "") === "failed"
+        : false
+      const awaitingInstall = needsInstallStart(next)
+      const ready = isSplitReady(next)
+
+      let status = "generating"
+      let installStatusLabel = next.install.taskId
+        ? (next.install.status || "processing")
+        : awaitingInstall
+          ? "awaiting_start_frame"
+          : "pending"
+      let klingStatus = `demo:${next.demo.status || "processing"}|install:${installStatusLabel}`
+      if (demoFailed || installFailed) {
+        status = "failed"
+        klingStatus = "request_failed"
+      } else if (ready) {
+        // 워커가 concat 후 source_video_url을 채움
+        status = getString(job.source_video_url) ? "generated" : "generating"
+        klingStatus = getString(job.source_video_url) ? "succeed" : "segments_ready"
+      }
+
+      await supabase
+        .from("showroom_shorts_jobs")
+        .update({
+          status,
+          kling_status: klingStatus,
+          kling_job_id: encodeSplitState(next),
+          source_video_url: getOptionalString(job.source_video_url),
+          updated_at: nowIso,
+        })
+        .eq("id", jobId)
+
+      await insertLog(supabase, {
+        jobId,
+        stage: "kling_polled_split",
+        message: ready
+          ? "철거·설치 세그먼트가 준비됐습니다. 이어붙이기를 진행합니다."
+          : awaitingInstall
+            ? "철거 원본이 준비됐습니다. 마지막 프레임으로 설치 생성을 시작합니다."
+            : `분할 생성 진행 중 (${klingStatus})`,
+        payload: { split: next },
+      })
+
+      return json({
+        ok: true,
+        jobId,
+        status,
+        klingStatus,
+        split: next,
+        sourceVideoUrl: getOptionalString(job.source_video_url),
+        finalVideoUrl: getOptionalString(job.final_video_url),
+        message: ready
+          ? getString(job.source_video_url)
+            ? "이어붙인 원본이 준비됐습니다."
+            : "철거·설치 원본이 준비됐습니다. 워커가 이어붙입니다."
+          : awaitingInstall
+            ? "철거가 끝났습니다. 워커가 마지막 프레임으로 설치를 요청합니다."
+          : status === "failed"
+            ? "분할 생성 중 한쪽이 실패했습니다."
+            : "철거/설치 생성이 아직 진행 중입니다.",
+      })
+    }
+
+    const klingTaskId = getString(rawKlingJobId)
+    if (!klingTaskId) {
+      return json({ ok: false, message: "아직 생성 작업 ID가 없습니다. 먼저 생성 요청을 실행하세요." }, 400)
+    }
+
+    const requestPaths = buildKlingPollPathCandidates(klingModelName, klingTaskId)
     let activeBaseUrl = candidateBaseUrls[0]
     let requestPath = requestPaths[0]
     let response!: Response
@@ -371,7 +565,6 @@ Deno.serve(async (req) => {
     const klingStatus = extractStatus(parsed)
     const sourceVideoUrl = extractVideoUrl(parsed)
     const nextStatus = mapJobStatus(klingStatus)
-    const nowIso = new Date().toISOString()
 
     let persistedSourceVideoUrl = sourceVideoUrl
     let storageCopyError: string | null = null

@@ -7,6 +7,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
+  // 로컬 /api/* 핸들러(process.env)가 .env 값을 읽도록 주입
+  for (const [key, value] of Object.entries(env)) {
+    if (process.env[key] === undefined) process.env[key] = value
+  }
   const showroomShortsProxyTarget =
     env.SHOWROOM_SHORTS_PROXY_TARGET?.trim() || 'https://findgagu-os-cursor.vercel.app'
   const showroomShortsProxyToken = env.SHOWROOM_SHORTS_PROXY_TOKEN?.trim() || ''

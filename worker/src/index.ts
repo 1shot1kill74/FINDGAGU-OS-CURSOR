@@ -98,6 +98,21 @@ let queueRunning = false
 const activeBasicDrafts = new Map<string, ActiveJobState>()
 const queuedBasicDrafts: string[] = []
 let basicQueueRunning = false
+const stitchingSplitJobs = new Set<string>()
+const startingInstallJobs = new Set<string>()
+
+type SplitSegmentState = {
+  taskId: string
+  status?: string
+  url?: string | null
+}
+
+type SplitKlingState = {
+  mode: 'split_demo_install_v1'
+  startFrameUrl?: string | null
+  demo: SplitSegmentState
+  install: SplitSegmentState
+}
 let showroomGenerationPollRunning = false
 
 app.get('/health', (_req, res) => {
@@ -120,6 +135,42 @@ app.get('/health', (_req, res) => {
       ...state,
     })),
   })
+})
+
+app.post('/jobs/stitch-split', requireWorkerAuth, async (req, res) => {
+  const jobId = getString(req.body?.jobId)
+  if (!jobId) {
+    res.status(400).json({ ok: false, message: 'jobId가 필요합니다.' })
+    return
+  }
+
+  try {
+    await requestShowroomShortsPoll(jobId)
+    await startInstallFromDemoLastFrameIfReady(jobId)
+    await stitchSplitSegmentsIfReady(jobId)
+    const { data: job, error } = await supabase
+      .from('showroom_shorts_jobs')
+      .select('id, status, kling_status, source_video_url')
+      .eq('id', jobId)
+      .maybeSingle()
+    if (error || !job) {
+      res.status(404).json({ ok: false, message: error?.message ?? '숏츠 작업을 찾지 못했습니다.' })
+      return
+    }
+    res.json({
+      ok: true,
+      jobId,
+      status: job.status,
+      klingStatus: job.kling_status ?? null,
+      sourceVideoUrl: job.source_video_url,
+      message: job.source_video_url
+        ? '철거·설치 원본을 이어붙였습니다.'
+        : '세그먼트가 아직 준비되지 않았거나 이어붙이기가 진행 중입니다.',
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '분할 원본 이어붙이기 중 오류가 발생했습니다.'
+    res.status(500).json({ ok: false, message })
+  }
 })
 
 app.post('/jobs/compose', requireWorkerAuth, async (req, res) => {
@@ -344,6 +395,8 @@ async function pollGeneratingShowroomShortsJobs() {
     for (const job of data ?? []) {
       try {
         await requestShowroomShortsPoll(job.id)
+        await startInstallFromDemoLastFrameIfReady(job.id)
+        await stitchSplitSegmentsIfReady(job.id)
       } catch (error) {
         console.error(
           `[showroom-shorts-worker] generating poll failed job=${job.id}`,
@@ -377,6 +430,249 @@ async function requestShowroomShortsPoll(jobId: string) {
   }
 
   return responseBody
+}
+
+function parseSplitKlingState(raw: unknown): SplitKlingState | null {
+  if (typeof raw !== 'string' || !raw.trim().startsWith('{')) return null
+  try {
+    const parsed = JSON.parse(raw) as Partial<SplitKlingState>
+    if (parsed?.mode !== 'split_demo_install_v1') return null
+    const demoTaskId = typeof parsed.demo?.taskId === 'string' ? parsed.demo.taskId.trim() : ''
+    if (!demoTaskId) return null
+    const installTaskId = typeof parsed.install?.taskId === 'string' ? parsed.install.taskId.trim() : ''
+    return {
+      mode: 'split_demo_install_v1',
+      startFrameUrl:
+        typeof parsed.startFrameUrl === 'string' && parsed.startFrameUrl.trim()
+          ? parsed.startFrameUrl.trim()
+          : null,
+      demo: {
+        taskId: demoTaskId,
+        status: typeof parsed.demo?.status === 'string' ? parsed.demo.status : undefined,
+        url: typeof parsed.demo?.url === 'string' ? parsed.demo.url : null,
+      },
+      install: {
+        taskId: installTaskId,
+        status: typeof parsed.install?.status === 'string' ? parsed.install.status : undefined,
+        url: typeof parsed.install?.url === 'string' ? parsed.install.url : null,
+      },
+    }
+  } catch {
+    return null
+  }
+}
+
+async function requestShowroomShortsCreateInstall(jobId: string, startImageUrl: string) {
+  const response = await fetch(`${SUPABASE_URL}/functions/v1/showroom-shorts-create`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    },
+    body: JSON.stringify({ jobId, phase: 'install', startImageUrl }),
+  })
+  const responseBody = await response.text().catch(() => '')
+  if (!response.ok) {
+    throw new Error(
+      [`showroom-shorts-create(install) 실패 (${response.status})`, responseBody].filter(Boolean).join(' ')
+    )
+  }
+  return responseBody
+}
+
+/** 철거 원본이 있으면 마지막 프레임을 뽑아 설치 5초 클링을 요청 */
+async function startInstallFromDemoLastFrameIfReady(jobId: string) {
+  if (startingInstallJobs.has(jobId)) return
+  startingInstallJobs.add(jobId)
+
+  const workDir = path.join(os.tmpdir(), `showroom-install-start-${jobId}-${Date.now()}`)
+
+  try {
+    const { data: job, error } = await supabase
+      .from('showroom_shorts_jobs')
+      .select('id, status, kling_status, kling_job_id, source_video_url')
+      .eq('id', jobId)
+      .single()
+
+    if (error || !job) {
+      throw new Error(error?.message ?? '숏츠 작업을 찾지 못했습니다.')
+    }
+    if (getString(job.source_video_url)) return
+
+    const split = parseSplitKlingState(job.kling_job_id)
+    const demoUrl = getString(split?.demo.url)
+    if (!split || !demoUrl || getString(split.install.taskId)) return
+
+    console.log(`[showroom-shorts-worker] extract demo last frame job=${jobId}`)
+    await insertLog(jobId, 'split_install_frame_started', '철거 마지막 프레임을 추출해 설치를 시작합니다.', {
+      demo_url: demoUrl,
+    })
+
+    await fs.mkdir(workDir, { recursive: true })
+    const demoPath = path.join(workDir, 'demo.mp4')
+    const framePath = path.join(workDir, 'demo-last.jpg')
+    await downloadToFile(demoUrl, demoPath)
+
+    const extractAttempts = [
+      ['-y', '-sseof', '-0.05', '-i', demoPath, '-frames:v', '1', '-q:v', '2', framePath],
+      ['-y', '-ss', '4.9', '-i', demoPath, '-frames:v', '1', '-q:v', '2', framePath],
+      ['-y', '-sseof', '-1', '-i', demoPath, '-frames:v', '1', '-q:v', '2', framePath],
+    ] as const
+
+    let extracted = false
+    for (const args of extractAttempts) {
+      try {
+        await runCommand('ffmpeg', [...args])
+        await fs.access(framePath)
+        extracted = true
+        break
+      } catch {
+        // 다음 시도
+      }
+    }
+    if (!extracted) {
+      throw new Error('철거 영상 마지막 프레임 추출에 실패했습니다.')
+    }
+
+    const frameBuffer = await fs.readFile(framePath)
+    const objectPath = `source/${jobId}/demo-last-frame-${Date.now()}.jpg`
+    const { error: uploadError } = await supabase.storage.from(VIDEO_BUCKET).upload(objectPath, frameBuffer, {
+      contentType: 'image/jpeg',
+      upsert: true,
+    })
+    if (uploadError) {
+      throw new Error(`철거 마지막 프레임 업로드 실패: ${uploadError.message}`)
+    }
+
+    const startImageUrl = supabase.storage.from(VIDEO_BUCKET).getPublicUrl(objectPath).data.publicUrl
+    await requestShowroomShortsCreateInstall(jobId, startImageUrl)
+    await insertLog(jobId, 'split_install_requested', '철거 마지막 프레임으로 설치 5초를 요청했습니다.', {
+      start_image_url: startImageUrl,
+    })
+    console.log(`[showroom-shorts-worker] install create requested job=${jobId}`)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '설치 시작 프레임 처리에 실패했습니다.'
+    console.error(`[showroom-shorts-worker] start install failed job=${jobId}`, message)
+    await insertLog(jobId, 'split_install_frame_failed', message).catch(() => undefined)
+  } finally {
+    startingInstallJobs.delete(jobId)
+    await fs.rm(workDir, { recursive: true, force: true }).catch(() => undefined)
+  }
+}
+
+/** 철거 5초 + 설치 5초가 둘 다 준비되면 ffmpeg로 이어붙여 source_video_url에 저장 */
+async function stitchSplitSegmentsIfReady(jobId: string) {
+  if (stitchingSplitJobs.has(jobId)) return
+  stitchingSplitJobs.add(jobId)
+
+  const workDir = path.join(os.tmpdir(), `showroom-split-${jobId}-${Date.now()}`)
+
+  try {
+    const { data: job, error } = await supabase
+      .from('showroom_shorts_jobs')
+      .select('id, status, kling_status, kling_job_id, source_video_url')
+      .eq('id', jobId)
+      .single()
+
+    if (error || !job) {
+      throw new Error(error?.message ?? '숏츠 작업을 찾지 못했습니다.')
+    }
+    if (getString(job.source_video_url)) return
+
+    const split = parseSplitKlingState(job.kling_job_id)
+    const demoUrl = getString(split?.demo.url)
+    const installUrl = getString(split?.install.url)
+    if (!split || !demoUrl || !installUrl) return
+
+    console.log(`[showroom-shorts-worker] split stitch start job=${jobId}`)
+    await insertLog(jobId, 'split_stitch_started', '철거·설치 5초 원본을 이어붙이기 시작했습니다.', {
+      demo_url: demoUrl,
+      install_url: installUrl,
+    })
+
+    await fs.mkdir(workDir, { recursive: true })
+    const demoPath = path.join(workDir, 'demo.mp4')
+    const installPath = path.join(workDir, 'install.mp4')
+    const concatListPath = path.join(workDir, 'concat.txt')
+    const outputPath = path.join(workDir, 'stitched.mp4')
+
+    await downloadToFile(demoUrl, demoPath)
+    await downloadToFile(installUrl, installPath)
+    await fs.writeFile(
+      concatListPath,
+      [`file '${demoPath.replace(/'/g, "'\\''")}'`, `file '${installPath.replace(/'/g, "'\\''")}'`].join('\n')
+    )
+
+    try {
+      await runCommand('ffmpeg', [
+        '-y',
+        '-f',
+        'concat',
+        '-safe',
+        '0',
+        '-i',
+        concatListPath,
+        '-c',
+        'copy',
+        outputPath,
+      ])
+    } catch {
+      // 코덱/타임베이스 불일치 시 재인코딩
+      await runCommand('ffmpeg', [
+        '-y',
+        '-i',
+        demoPath,
+        '-i',
+        installPath,
+        '-filter_complex',
+        '[0:v][1:v]concat=n=2:v=1:a=0[v]',
+        '-map',
+        '[v]',
+        '-c:v',
+        'libx264',
+        '-pix_fmt',
+        'yuv420p',
+        '-movflags',
+        '+faststart',
+        outputPath,
+      ])
+    }
+
+    const videoBuffer = await fs.readFile(outputPath)
+    const objectPath = `source/${jobId}/stitched-${Date.now()}.mp4`
+    const { error: uploadError } = await supabase.storage.from(VIDEO_BUCKET).upload(objectPath, videoBuffer, {
+      contentType: 'video/mp4',
+      upsert: true,
+    })
+    if (uploadError) {
+      throw new Error(`이어붙인 원본 업로드 실패: ${uploadError.message}`)
+    }
+
+    const publicUrl = supabase.storage.from(VIDEO_BUCKET).getPublicUrl(objectPath).data.publicUrl
+    await supabase
+      .from('showroom_shorts_jobs')
+      .update({
+        status: 'generated',
+        kling_status: 'succeed',
+        source_video_url: publicUrl,
+        duration_seconds: 10,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', jobId)
+
+    await insertLog(jobId, 'split_stitch_completed', '철거·설치 원본을 이어붙여 10초 원본을 만들었습니다.', {
+      source_video_url: publicUrl,
+    })
+    console.log(`[showroom-shorts-worker] split stitch done job=${jobId}`)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '분할 원본 이어붙이기에 실패했습니다.'
+    console.error(`[showroom-shorts-worker] split stitch failed job=${jobId}`, message)
+    await insertLog(jobId, 'split_stitch_failed', message).catch(() => undefined)
+  } finally {
+    stitchingSplitJobs.delete(jobId)
+    await fs.rm(workDir, { recursive: true, force: true }).catch(() => undefined)
+  }
 }
 
 function requireWorkerAuth(req: Request, res: Response, next: () => void) {
@@ -453,7 +749,6 @@ async function processComposeJob(jobId: string) {
     const inputVideoPath = path.join(tempDir, 'source-video.mp4')
     const titleOverlayPath = path.join(tempDir, 'title-overlay.png')
     const bgmAudioPath = path.join(tempDir, 'bgm-audio')
-    const outputVideoPath = path.join(tempDir, 'final-video.mp4')
 
     console.log(`[showroom-shorts-worker] downloading source job=${jobId}`)
     await downloadToFile(job.source_video_url, inputVideoPath)
@@ -462,10 +757,12 @@ async function processComposeJob(jobId: string) {
     console.log(`[showroom-shorts-worker] bgm ready job=${jobId} path=${bgmPath ?? 'none'}`)
     const durationSeconds = await getVideoDurationSeconds(inputVideoPath, job.duration_seconds ?? DEFAULT_DURATION_SECONDS)
     console.log(`[showroom-shorts-worker] duration job=${jobId} seconds=${durationSeconds}`)
-    const textPaths = await writeTextAssets(tempDir)
     await fs.writeFile(titleOverlayPath, Buffer.from(TITLE_OVERLAY_PNG_BASE64, 'base64'))
     const titleOverlayStat = await fs.stat(titleOverlayPath)
     console.log(`[showroom-shorts-worker] title overlay ready job=${jobId} bytes=${titleOverlayStat.size}`)
+
+    const outputVideoPath = path.join(tempDir, 'final-video.mp4')
+    const textPaths = await writeTextAssets(tempDir)
 
     console.log(`[showroom-shorts-worker] ffmpeg start job=${jobId}`)
     await runFfmpegCompose({
@@ -476,7 +773,7 @@ async function processComposeJob(jobId: string) {
       durationSeconds,
       textPaths,
     })
-    console.log(`[showroom-shorts-worker] ffmpeg done job=${jobId} output=${outputVideoPath}`)
+    console.log(`[showroom-shorts-worker] ffmpeg done job=${jobId}`)
 
     const objectPath = `final/${jobId}/shorts-final-${Date.now()}.mp4`
     const videoBuffer = await fs.readFile(outputVideoPath)
@@ -490,6 +787,7 @@ async function processComposeJob(jobId: string) {
     }
 
     const finalVideoUrl = supabase.storage.from(VIDEO_BUCKET).getPublicUrl(objectPath).data.publicUrl
+
     await updateJob(jobId, {
       status: 'ready_for_review',
       final_video_url: finalVideoUrl,
@@ -498,9 +796,9 @@ async function processComposeJob(jobId: string) {
     await markTargetsReady(jobId)
     await insertLog(jobId, 'composition_completed', 'Railway 워커가 최종 MP4를 생성하고 검수 준비 상태로 전환했습니다.', {
       final_video_url: finalVideoUrl,
-      storage_path: objectPath,
       bgm_enabled: Boolean(bgmPath),
     })
+    await requestPublishPrepareForJob(jobId)
     console.log(`[showroom-shorts-worker] completed job=${jobId} finalVideoUrl=${finalVideoUrl}`)
 
     updateActiveState({
@@ -816,7 +1114,7 @@ async function markTargetsReady(jobId: string) {
       updated_at: nowIso,
     })
     .eq('shorts_job_id', jobId)
-    .in('publish_status', ['draft', 'failed'])
+    .in('publish_status', ['draft', 'failed', 'ready', 'launch_ready', 'approved'])
     .select('id, channel')
 
   if (error) {
@@ -824,10 +1122,66 @@ async function markTargetsReady(jobId: string) {
   }
 
   for (const target of targets ?? []) {
-    await insertLog(jobId, 'publish_ready', '업로드 준비가 완료되었습니다.', {
+    await insertLog(jobId, 'publish_ready', '최종 영상 기준으로 업로드 준비 대기 상태로 전환했습니다.', {
       channel: target.channel,
       target_id: target.id,
     })
+  }
+}
+
+/** 합성 완료 후 3채널 업로드 준비를 자동 요청 (론칭 승인은 사람이 확인) */
+async function requestPublishPrepareForJob(jobId: string) {
+  const { data: targets, error } = await supabase
+    .from('showroom_shorts_targets')
+    .select('id, channel, publish_status')
+    .eq('shorts_job_id', jobId)
+
+  if (error) {
+    await insertLog(jobId, 'publish_prepare_failed', '업로드 준비 대상 조회에 실패했습니다.', {
+      error: error.message,
+    }).catch(() => undefined)
+    return
+  }
+
+  for (const target of targets ?? []) {
+    const status = getString(target.publish_status)
+    if (!['ready', 'failed'].includes(status)) continue
+
+    try {
+      const response = await fetch(`${SUPABASE_URL}/functions/v1/showroom-shorts-publish-dispatch`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: SUPABASE_SERVICE_ROLE_KEY,
+          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        },
+        body: JSON.stringify({
+          targetId: target.id,
+          action: 'prepare',
+          sourceType: 'shorts',
+        }),
+      })
+      const responseBody = await response.text().catch(() => '')
+      if (!response.ok) {
+        await insertLog(jobId, 'publish_prepare_failed', '자동 업로드 준비 호출에 실패했습니다.', {
+          channel: target.channel,
+          target_id: target.id,
+          response_status: response.status,
+          response_body: responseBody.slice(0, 500),
+        }).catch(() => undefined)
+        continue
+      }
+      await insertLog(jobId, 'publish_prepare_requested', '합성 완료 후 자동으로 업로드 준비를 요청했습니다.', {
+        channel: target.channel,
+        target_id: target.id,
+      }).catch(() => undefined)
+    } catch (prepareError) {
+      await insertLog(jobId, 'publish_prepare_failed', '자동 업로드 준비 중 오류가 발생했습니다.', {
+        channel: target.channel,
+        target_id: target.id,
+        error: prepareError instanceof Error ? prepareError.message : String(prepareError),
+      }).catch(() => undefined)
+    }
   }
 }
 

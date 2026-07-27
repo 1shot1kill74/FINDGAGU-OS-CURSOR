@@ -1,5 +1,14 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from "npm:@supabase/supabase-js@2"
+import {
+  KLING_SPLIT_SEGMENT_SECONDS,
+  SHOWROOM_SHORTS_COMMON_NEGATIVE_PROMPT,
+  SHOWROOM_SHORTS_DEMOLISH_NEGATIVE_PROMPT,
+  SHOWROOM_SHORTS_DEMOLISH_PROMPT,
+  SHOWROOM_SHORTS_INSTALL_NEGATIVE_PROMPT,
+  SHOWROOM_SHORTS_INSTALL_PROMPT,
+} from "../_shared/klingSplitPrompts.ts"
+import { encodeSplitState, parseSplitState } from "../_shared/klingSplitState.ts"
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -96,8 +105,9 @@ function buildKlingRequestBody(input: {
   mode: KlingApiMode
   modelName: string
   beforeUrl: string
-  afterUrl: string
+  afterUrl: string | null
   promptText: string
+  negativePrompt: string
   durationSeconds: number
   aspectRatio: string
   externalTaskId: string
@@ -108,12 +118,15 @@ function buildKlingRequestBody(input: {
     aspect_ratio: input.aspectRatio,
     external_task_id: input.externalTaskId,
   }
+  const negativePrompt = input.negativePrompt.trim() || SHOWROOM_SHORTS_COMMON_NEGATIVE_PROMPT
 
   if (input.mode === "omni") {
+    const imageUrls = input.afterUrl ? [input.beforeUrl, input.afterUrl] : [input.beforeUrl]
     const requestBody: JsonRecord = {
       ...common,
       prompt: input.promptText,
-      image_urls: [input.beforeUrl, input.afterUrl],
+      negative_prompt: negativePrompt,
+      image_urls: imageUrls,
       duration: input.durationSeconds,
       generate_audio: false,
     }
@@ -128,11 +141,14 @@ function buildKlingRequestBody(input: {
     const requestBody: JsonRecord = {
       ...common,
       image: input.beforeUrl,
-      image_tail: input.afterUrl,
       prompt: input.promptText,
+      negative_prompt: negativePrompt,
       mode: "pro",
       duration: String(input.durationSeconds),
       sound: "off",
+    }
+    if (input.afterUrl) {
+      requestBody.image_tail = input.afterUrl
     }
     if (input.callbackUrl) {
       requestBody.callback_url = input.callbackUrl
@@ -142,19 +158,59 @@ function buildKlingRequestBody(input: {
 
   const requestBody: JsonRecord = {
     ...common,
-    image_list: [
-      { image: input.beforeUrl },
-      { image: input.afterUrl },
-    ],
+    image_list: input.afterUrl
+      ? [{ image: input.beforeUrl }, { image: input.afterUrl }]
+      : [{ image: input.beforeUrl }],
     prompt: input.promptText,
+    negative_prompt: negativePrompt,
     mode: "pro",
     duration: String(input.durationSeconds),
-    watermark_info: { enabled: true },
+    watermark_info: { enabled: false },
   }
   if (input.callbackUrl) {
     requestBody.callback_url = input.callbackUrl
   }
   return requestBody
+}
+
+async function postKlingCreate(input: {
+  token: string
+  baseUrls: string[]
+  requestPath: string
+  requestBody: JsonRecord
+}) {
+  let activeBaseUrl = input.baseUrls[0]
+  let response = await fetch(`${activeBaseUrl}${input.requestPath}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${input.token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input.requestBody),
+  })
+  let rawText = await response.text()
+  let parsed: JsonRecord | null = parseJsonRecord(rawText)
+
+  if (!response.ok && shouldRetryWithFallback(response.status, parsed, rawText) && input.baseUrls.length > 1) {
+    for (const candidate of input.baseUrls.slice(1)) {
+      activeBaseUrl = candidate
+      response = await fetch(`${activeBaseUrl}${input.requestPath}`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${input.token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(input.requestBody),
+      })
+      rawText = await response.text()
+      parsed = parseJsonRecord(rawText)
+      if (response.ok || !shouldRetryWithFallback(response.status, parsed, rawText)) {
+        break
+      }
+    }
+  }
+
+  return { response, rawText, parsed, activeBaseUrl }
 }
 
 function buildKlingApiBaseUrls(preferredBaseUrl: string | null) {
@@ -224,11 +280,17 @@ Deno.serve(async (req) => {
     const callbackUrl = getEnv("SHOWROOM_SHORTS_CALLBACK_URL", false)
 
     const supabase = createClient(supabaseUrl, serviceRoleKey)
-    const body = await req.json().catch(() => null) as { jobId?: string } | null
+    const body = await req.json().catch(() => null) as {
+      jobId?: string
+      phase?: string
+      startImageUrl?: string
+    } | null
     const jobId = getString(body?.jobId)
     if (!jobId) {
       return json({ ok: false, message: "jobId가 필요합니다." }, 400)
     }
+    const phase = getString(body?.phase) || "demolish"
+    const startImageUrl = getString(body?.startImageUrl)
 
     const { data: job, error: jobError } = await supabase
       .from("showroom_shorts_jobs")
@@ -249,54 +311,245 @@ Deno.serve(async (req) => {
     const token = await createKlingJwt(klingAccessKey, klingSecretKey)
     const apiMode = resolveKlingApiMode(klingModelName)
     const requestPath = getKlingCreatePath(apiMode)
-    // Kling은 external_task_id 재사용을 거부함 → 재생성마다 고유값 사용 (job id는 접두로 유지)
-    const externalTaskId = `${jobId}-${Date.now()}`
+    const candidateBaseUrls = buildKlingApiBaseUrls(klingApiBaseUrl)
+    const stamp = Date.now()
+    const aspectRatio = getString(job.source_aspect_ratio) || "16:9"
+    const callback = getOptionalString(callbackUrl)
+    // 10초 1방이면 후반 설치가 무너짐 → 철거 5초 후 마지막 프레임으로 설치 5초
+    const useSplit = Number(job.duration_seconds ?? 10) >= 10 && apiMode === "image-to-video-v3"
+
+    if (useSplit && phase === "install") {
+      const existing = parseSplitState(job.kling_job_id)
+      if (!existing?.demo.taskId) {
+        return json({ ok: false, message: "철거 세그먼트 상태가 없습니다. 먼저 철거 생성을 실행하세요." }, 400)
+      }
+      if (existing.install.taskId) {
+        return json({
+          ok: true,
+          jobId,
+          status: "generating",
+          split: true,
+          phase: "install",
+          installTaskId: existing.install.taskId,
+          message: "설치 생성이 이미 요청되어 있습니다.",
+        })
+      }
+      if (!startImageUrl) {
+        return json({ ok: false, message: "설치 시작 이미지(철거 마지막 프레임) URL이 필요합니다." }, 400)
+      }
+
+      const installBody = buildKlingRequestBody({
+        mode: apiMode,
+        modelName: klingModelName,
+        beforeUrl: startImageUrl,
+        afterUrl,
+        promptText: SHOWROOM_SHORTS_INSTALL_PROMPT,
+        negativePrompt: SHOWROOM_SHORTS_INSTALL_NEGATIVE_PROMPT,
+        durationSeconds: KLING_SPLIT_SEGMENT_SECONDS,
+        aspectRatio,
+        externalTaskId: `${jobId}-install-${stamp}`,
+        callbackUrl: callback,
+      })
+
+      const installResult = await postKlingCreate({
+        token,
+        baseUrls: candidateBaseUrls,
+        requestPath,
+        requestBody: installBody,
+      })
+
+      if (!installResult.response.ok) {
+        await supabase
+          .from("showroom_shorts_jobs")
+          .update({
+            status: "failed",
+            kling_status: "request_failed",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", jobId)
+        await insertLog(supabase, {
+          jobId,
+          stage: "kling_request_failed",
+          message: `설치 5초 생성 요청 실패 (${installResult.response.status})`,
+          payload: {
+            install: installResult.parsed ?? { rawText: installResult.rawText },
+            start_image_url: startImageUrl,
+            request_path: requestPath,
+            model_name: klingModelName,
+          },
+        })
+        return json({
+          ok: false,
+          provider: "kling",
+          upstreamStatus: installResult.response.status,
+          message: getKlingErrorMessage(installResult.parsed, installResult.rawText, installResult.response.status),
+        })
+      }
+
+      const installTaskId = extractTaskId(installResult.parsed)
+      if (!installTaskId) {
+        return json({ ok: false, message: "설치 생성 task_id를 받지 못했습니다." }, 502)
+      }
+
+      const splitState = encodeSplitState({
+        ...existing,
+        startFrameUrl: startImageUrl,
+        install: { taskId: installTaskId, status: "submitted", url: null },
+      })
+
+      await supabase
+        .from("showroom_shorts_jobs")
+        .update({
+          status: "generating",
+          kling_status: `demo:${existing.demo.status || "succeed"}|install:submitted`,
+          kling_job_id: splitState,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", jobId)
+
+      await insertLog(supabase, {
+        jobId,
+        stage: "kling_requested_install",
+        message: "철거 마지막 프레임을 시작으로 설치 5초 생성을 요청했습니다.",
+        payload: {
+          install_task_id: installTaskId,
+          start_image_url: startImageUrl,
+          demo_task_id: existing.demo.taskId,
+          segment_seconds: KLING_SPLIT_SEGMENT_SECONDS,
+        },
+      })
+
+      return json({
+        ok: true,
+        jobId,
+        status: "generating",
+        split: true,
+        phase: "install",
+        installTaskId,
+        message: "설치 5초 생성을 시작했습니다. 완료되면 철거 영상과 이어붙입니다.",
+      })
+    }
+
+    if (useSplit) {
+      const demolishBody = buildKlingRequestBody({
+        mode: apiMode,
+        modelName: klingModelName,
+        beforeUrl,
+        afterUrl: null,
+        promptText: SHOWROOM_SHORTS_DEMOLISH_PROMPT,
+        negativePrompt: SHOWROOM_SHORTS_DEMOLISH_NEGATIVE_PROMPT,
+        durationSeconds: KLING_SPLIT_SEGMENT_SECONDS,
+        aspectRatio,
+        externalTaskId: `${jobId}-demo-${stamp}`,
+        callbackUrl: callback,
+      })
+
+      const demolishResult = await postKlingCreate({
+        token,
+        baseUrls: candidateBaseUrls,
+        requestPath,
+        requestBody: demolishBody,
+      })
+
+      if (!demolishResult.response.ok) {
+        await supabase
+          .from("showroom_shorts_jobs")
+          .update({
+            status: "failed",
+            kling_status: "request_failed",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", jobId)
+        await insertLog(supabase, {
+          jobId,
+          stage: "kling_request_failed",
+          message: `철거 5초 생성 요청 실패 (${demolishResult.response.status})`,
+          payload: {
+            demolish: demolishResult.parsed ?? { rawText: demolishResult.rawText },
+            request_path: requestPath,
+            request_mode: apiMode,
+            model_name: klingModelName,
+          },
+        })
+        return json({
+          ok: false,
+          provider: "kling",
+          upstreamStatus: demolishResult.response.status,
+          message: getKlingErrorMessage(demolishResult.parsed, demolishResult.rawText, demolishResult.response.status),
+        })
+      }
+
+      const demoTaskId = extractTaskId(demolishResult.parsed)
+      if (!demoTaskId) {
+        return json({ ok: false, message: "철거 생성 task_id를 받지 못했습니다." }, 502)
+      }
+
+      const splitState = encodeSplitState({
+        mode: "split_demo_install_v1",
+        startFrameUrl: null,
+        demo: { taskId: demoTaskId, status: "submitted", url: null },
+        install: { taskId: "", status: "pending", url: null },
+      })
+
+      await supabase
+        .from("showroom_shorts_jobs")
+        .update({
+          status: "generating",
+          kling_status: "demo:submitted|install:pending",
+          kling_job_id: splitState,
+          source_video_url: null,
+          duration_seconds: KLING_SPLIT_SEGMENT_SECONDS * 2,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", jobId)
+
+      await insertLog(supabase, {
+        jobId,
+        stage: "kling_requested_demolish",
+        message: "철거 5초 생성을 먼저 요청했습니다. 완료 후 마지막 프레임으로 설치를 시작합니다.",
+        payload: {
+          demo_task_id: demoTaskId,
+          segment_seconds: KLING_SPLIT_SEGMENT_SECONDS,
+          request_path: requestPath,
+          model_name: klingModelName,
+        },
+      })
+
+      return json({
+        ok: true,
+        jobId,
+        status: "generating",
+        klingTaskId: demoTaskId,
+        split: true,
+        phase: "demolish",
+        demoTaskId,
+        message: "철거 5초 생성을 시작했습니다. 끝나면 마지막 프레임으로 설치 5초를 만듭니다.",
+      })
+    }
+
+    // Kling은 external_task_id 재사용을 거부함 → 재생성마다 고유값 사용
+    const externalTaskId = `${jobId}-${stamp}`
     const requestBody = buildKlingRequestBody({
       mode: apiMode,
       modelName: klingModelName,
       beforeUrl,
       afterUrl,
       promptText: getString(job.prompt_text),
+      negativePrompt: SHOWROOM_SHORTS_COMMON_NEGATIVE_PROMPT,
       durationSeconds: Number(job.duration_seconds ?? 10),
-      aspectRatio: getString(job.source_aspect_ratio) || "16:9",
+      aspectRatio,
       externalTaskId,
-      callbackUrl: getOptionalString(callbackUrl),
+      callbackUrl: callback,
     })
 
-    const candidateBaseUrls = buildKlingApiBaseUrls(klingApiBaseUrl)
-    let activeBaseUrl = candidateBaseUrls[0]
-    let response = await fetch(`${activeBaseUrl}${requestPath}`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(requestBody),
+    const single = await postKlingCreate({
+      token,
+      baseUrls: candidateBaseUrls,
+      requestPath,
+      requestBody,
     })
 
-    let rawText = await response.text()
-    let parsed: JsonRecord | null = parseJsonRecord(rawText)
-
-    if (!response.ok && shouldRetryWithFallback(response.status, parsed, rawText) && candidateBaseUrls.length > 1) {
-      for (const candidate of candidateBaseUrls.slice(1)) {
-        activeBaseUrl = candidate
-        response = await fetch(`${activeBaseUrl}${requestPath}`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(requestBody),
-        })
-        rawText = await response.text()
-        parsed = parseJsonRecord(rawText)
-        if (response.ok || !shouldRetryWithFallback(response.status, parsed, rawText)) {
-          break
-        }
-      }
-    }
-
-    if (!response.ok) {
+    if (!single.response.ok) {
       await supabase
         .from("showroom_shorts_jobs")
         .update({
@@ -308,25 +561,25 @@ Deno.serve(async (req) => {
       await insertLog(supabase, {
         jobId,
         stage: "kling_request_failed",
-        message: `원본 생성 요청 실패 (${response.status})`,
+        message: `원본 생성 요청 실패 (${single.response.status})`,
         payload: {
-          ...(parsed ?? { rawText }),
+          ...(single.parsed ?? { rawText: single.rawText }),
           request_path: requestPath,
           request_mode: apiMode,
           model_name: klingModelName,
-          request_base_url: activeBaseUrl,
+          request_base_url: single.activeBaseUrl,
         },
       })
       return json({
         ok: false,
         provider: "kling",
-        upstreamStatus: response.status,
-        requestBaseUrl: activeBaseUrl,
-        message: getKlingErrorMessage(parsed, rawText, response.status),
+        upstreamStatus: single.response.status,
+        requestBaseUrl: single.activeBaseUrl,
+        message: getKlingErrorMessage(single.parsed, single.rawText, single.response.status),
       })
     }
 
-    const taskId = extractTaskId(parsed)
+    const taskId = extractTaskId(single.parsed)
     await supabase
       .from("showroom_shorts_jobs")
       .update({
@@ -342,11 +595,11 @@ Deno.serve(async (req) => {
       stage: "kling_requested",
       message: "원본 영상 생성 작업을 요청했습니다.",
       payload: {
-        ...(parsed ?? { rawText }),
+        ...(single.parsed ?? { rawText: single.rawText }),
         request_path: requestPath,
         request_mode: apiMode,
         model_name: klingModelName,
-        request_base_url: activeBaseUrl,
+        request_base_url: single.activeBaseUrl,
       },
     })
 
@@ -355,7 +608,7 @@ Deno.serve(async (req) => {
       jobId,
       status: "generating",
       klingTaskId: taskId,
-      requestBaseUrl: activeBaseUrl,
+      requestBaseUrl: single.activeBaseUrl,
       requestPath,
       message: "원본 생성 요청을 전달했습니다.",
     })

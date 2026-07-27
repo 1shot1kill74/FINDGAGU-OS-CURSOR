@@ -750,11 +750,9 @@ export default function ShowroomShortsPage() {
                             const preparedBody =
                               pickPreparationString(
                                 target.preparation_payload,
-                                target.channel === 'youtube'
-                                  ? ['descriptionWithHashtags', 'description', 'caption']
-                                  : ['caption', 'description', 'descriptionWithHashtags']
+                                ['descriptionWithHashtags', 'description', 'caption'],
                               )
-                              ?? (target.channel === 'youtube' ? publishPackage.descriptionWithHashtags : publishPackage.caption)
+                              ?? publishPackage.descriptionWithHashtags
                             const preparedFirstComment =
                               pickPreparationString(target.preparation_payload, ['firstComment', 'comment'])
                               ?? publishPackage.firstComment
@@ -805,7 +803,7 @@ export default function ShowroomShortsPage() {
                                     type="button"
                                     variant="outline"
                                     size="sm"
-                                    onClick={() => void handleCopy('설명', target.channel === 'youtube' ? publishPackage.descriptionWithHashtags : publishPackage.caption)}
+                                    onClick={() => void handleCopy('설명', publishPackage.descriptionWithHashtags)}
                                   >
                                     설명 복사
                                   </Button>
@@ -858,7 +856,7 @@ export default function ShowroomShortsPage() {
                                         />
                                       </div>
                                       <div>
-                                        <p className="mb-1 text-xs text-muted-foreground">{target.channel === 'youtube' ? '설명 + 해시태그' : '캡션'}</p>
+                                        <p className="mb-1 text-xs text-muted-foreground">본문 (유튜브 기준)</p>
                                         <textarea
                                           value={editBody}
                                           onChange={(e) => setEditBody(e.target.value)}
@@ -915,7 +913,7 @@ export default function ShowroomShortsPage() {
                                         <p className="mt-1 whitespace-pre-wrap text-foreground">{preparedTitle}</p>
                                       </div>
                                       <div>
-                                        <p className="text-xs text-muted-foreground">{target.channel === 'youtube' ? '설명 + 해시태그' : '캡션'}</p>
+                                        <p className="text-xs text-muted-foreground">본문 (유튜브 기준)</p>
                                         <p className="mt-1 whitespace-pre-wrap text-foreground">{preparedBody}</p>
                                       </div>
                                       <div>

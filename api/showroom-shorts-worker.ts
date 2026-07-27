@@ -62,13 +62,16 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
         return
       }
 
-      const jobId = getString((req.body as { jobId?: unknown } | null)?.jobId)
+      const body = (req.body as { jobId?: unknown; action?: unknown } | null) ?? {}
+      const jobId = getString(body.jobId)
       if (!jobId) {
         res.status(400).json({ ok: false, message: 'jobId 또는 draftId가 필요합니다.' })
         return
       }
 
-      const workerResponse = await forwardToWorker('/jobs/compose', {
+      const action = getString(body.action)
+      const workerPath = action === 'stitch-split' ? '/jobs/stitch-split' : '/jobs/compose'
+      const workerResponse = await forwardToWorker(workerPath, {
         method: 'POST',
         body: JSON.stringify({ jobId }),
       })
