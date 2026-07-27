@@ -135,7 +135,8 @@ export function deriveAdInboxBatchWorkState(jobs: ShowroomShortsJobRecord[]): Ad
     const times = targets
       .map((target) => target.published_at?.trim())
       .filter((value): value is string => Boolean(value))
-    const completedAt = times.length > 0 ? [...times].sort().at(-1) ?? null : null
+    const sorted = [...times].sort()
+    const completedAt = sorted.length > 0 ? sorted[sorted.length - 1] ?? null : null
     return { progress: 'done', completedAt }
   }
 
