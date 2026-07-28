@@ -1824,7 +1824,10 @@ export default function AdInboxStudioPage() {
         onIndexChange={setPreviewIndex}
         beforeId={beforeId}
         afterId={afterId}
-        onPick={handlePickForTimelapse}
+        onPick={(asset, slot) => {
+          const inbox = displayAssets.find((a) => a.id === asset.id)
+          if (inbox) handlePickForTimelapse(inbox, slot)
+        }}
       />
     </div>
   )
