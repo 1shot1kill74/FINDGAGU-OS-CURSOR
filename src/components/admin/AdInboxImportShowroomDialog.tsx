@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Eraser, FolderInput, Loader2, Video } from 'lucide-react'
+import { Eraser, FolderInput, Loader2, Video, ZoomIn } from 'lucide-react'
 import { toast } from 'sonner'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -13,6 +13,9 @@ import {
   type ShowroomBaImportGroup,
 } from '@/lib/adInboxStudio'
 import AdInboxImportPagination, { paginateItems } from '@/components/admin/AdInboxImportPagination'
+import AdInboxImagePreviewDialog, {
+  prefetchAdInboxEnlarge,
+} from '@/components/admin/AdInboxImagePreviewDialog'
 
 export type AdInboxImportShowroomResult = {
   jobId: string
@@ -56,6 +59,8 @@ function AssetPickCard({
   replacing,
   disabled,
   onSelect,
+  onPreview,
+  onPrefetch,
   onCleanup,
   onReplaceOriginal,
 }: {
@@ -68,6 +73,8 @@ function AssetPickCard({
   replacing: boolean
   disabled: boolean
   onSelect: () => void
+  onPreview: () => void
+  onPrefetch: () => void
   onCleanup: () => void
   onReplaceOriginal: () => void
 }) {
@@ -76,6 +83,7 @@ function AssetPickCard({
     activeTone === 'before'
       ? 'border-amber-500 ring-2 ring-amber-200'
       : 'border-emerald-500 ring-2 ring-emerald-200'
+  const selectLabel = activeTone === 'before' ? 'Before 선택' : 'After 선택'
 
   return (
     <div
@@ -83,9 +91,25 @@ function AssetPickCard({
         active ? ring : 'border-neutral-200'
       }`}
     >
-      <button type="button" className="block w-full" onClick={onSelect} disabled={disabled}>
+      <button
+        type="button"
+        aria-label="사진 확대"
+        title="확대해서 보기"
+        className="group relative block w-full cursor-zoom-in"
+        onClick={onPreview}
+        onMouseEnter={onPrefetch}
+        onFocus={onPrefetch}
+        disabled={disabled}
+      >
         <div className="relative aspect-[4/3] bg-neutral-200">
-          {preview ? <img src={preview} alt="" className="h-full w-full object-cover" /> : null}
+          {preview ? (
+            <img
+              src={preview}
+              alt=""
+              draggable={false}
+              className="pointer-events-none h-full w-full object-cover"
+            />
+          ) : null}
           {replaced ? (
             <span className="absolute left-1 top-1 rounded bg-emerald-700 px-1.5 py-0.5 text-[10px] font-medium text-white">
               원본반영
@@ -95,9 +119,27 @@ function AssetPickCard({
               보정됨
             </span>
           ) : null}
+          <span className="pointer-events-none absolute bottom-1 left-1 inline-flex items-center gap-1 rounded bg-black/55 px-1.5 py-0.5 text-[10px] text-white opacity-70 transition-opacity group-hover:opacity-100">
+            <ZoomIn className="h-3 w-3" />
+            확대
+          </span>
         </div>
       </button>
       <div className="space-y-1 p-1.5">
+        <button
+          type="button"
+          disabled={disabled}
+          className={`w-full rounded-md px-2 py-1 text-[10px] font-medium disabled:opacity-50 ${
+            active
+              ? activeTone === 'before'
+                ? 'bg-amber-600 text-white'
+                : 'bg-emerald-600 text-white'
+              : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
+          }`}
+          onClick={onSelect}
+        >
+          {active ? `${selectLabel}됨` : selectLabel}
+        </button>
         <button
           type="button"
           disabled={disabled || cleaning || replacing}
@@ -141,6 +183,8 @@ export default function AdInboxImportShowroomDialog({ open, onOpenChange, onCrea
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [beforeId, setBeforeId] = useState<string | null>(null)
   const [afterId, setAfterId] = useState<string | null>(null)
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const [previewIndex, setPreviewIndex] = useState(0)
 
   useEffect(() => {
     if (!open) return
@@ -157,6 +201,8 @@ export default function AdInboxImportShowroomDialog({ open, onOpenChange, onCrea
       setSelectedKey(null)
       setBeforeId(null)
       setAfterId(null)
+      setPreviewOpen(false)
+      setPreviewIndex(0)
       setCleanupOverrides({})
       setReplacedIds({})
       setCleaningId(null)
@@ -229,6 +275,26 @@ export default function AdInboxImportShowroomDialog({ open, onOpenChange, onCrea
   const afterAssetRaw = selectedGroup?.afterAssets.find((a) => a.id === afterId) ?? null
   const beforeAsset = beforeAssetRaw ? withCleanupOverride(beforeAssetRaw, cleanupOverrides) : null
   const afterAsset = afterAssetRaw ? withCleanupOverride(afterAssetRaw, cleanupOverrides) : null
+
+  const previewAssets = useMemo(() => {
+    if (!selectedGroup) return [] as ShowroomImageAsset[]
+    return [
+      ...selectedGroup.beforeAssets.map((asset) => withCleanupOverride(asset, cleanupOverrides)),
+      ...selectedGroup.afterAssets.map((asset) => withCleanupOverride(asset, cleanupOverrides)),
+    ]
+  }, [selectedGroup, cleanupOverrides])
+
+  const openPreviewAt = (assetId: string) => {
+    const idx = previewAssets.findIndex((asset) => asset.id === assetId)
+    if (idx < 0) return
+    setPreviewIndex(idx)
+    setPreviewOpen(true)
+  }
+
+  const handlePreviewPick = (asset: ShowroomImageAsset, slot: 'before' | 'after') => {
+    if (slot === 'before') setBeforeId(asset.id)
+    else setAfterId(asset.id)
+  }
 
   const busy = creating || cleaningId !== null || replacingId !== null
   const canCreate = Boolean(beforeAsset && afterAsset && !busy)
@@ -352,7 +418,17 @@ export default function AdInboxImportShowroomDialog({ open, onOpenChange, onCrea
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next && previewOpen) {
+          setPreviewOpen(false)
+          return
+        }
+        onOpenChange(next)
+      }}
+    >
       <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -474,6 +550,8 @@ export default function AdInboxImportShowroomDialog({ open, onOpenChange, onCrea
                             replacing={replacingId === asset.id}
                             disabled={busy}
                             onSelect={() => setBeforeId(asset.id)}
+                            onPreview={() => openPreviewAt(asset.id)}
+                            onPrefetch={() => prefetchAdInboxEnlarge(display)}
                             onCleanup={() => void handleCleanup(asset)}
                             onReplaceOriginal={() => void handleReplaceOriginal(asset)}
                           />
@@ -498,6 +576,8 @@ export default function AdInboxImportShowroomDialog({ open, onOpenChange, onCrea
                             replacing={replacingId === asset.id}
                             disabled={busy}
                             onSelect={() => setAfterId(asset.id)}
+                            onPreview={() => openPreviewAt(asset.id)}
+                            onPrefetch={() => prefetchAdInboxEnlarge(display)}
                             onCleanup={() => void handleCleanup(asset)}
                             onReplaceOriginal={() => void handleReplaceOriginal(asset)}
                           />
@@ -548,5 +628,21 @@ export default function AdInboxImportShowroomDialog({ open, onOpenChange, onCrea
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    <AdInboxImagePreviewDialog
+      open={previewOpen}
+      onOpenChange={setPreviewOpen}
+      mode="single"
+      assets={previewAssets}
+      index={previewIndex}
+      onIndexChange={setPreviewIndex}
+      beforeId={beforeId}
+      afterId={afterId}
+      onPick={handlePreviewPick}
+      stackClassName="z-[200]"
+      overlayStackClassName="z-[200]"
+      lockOutsideDismiss
+    />
+    </>
   )
 }

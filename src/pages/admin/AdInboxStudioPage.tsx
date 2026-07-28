@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   ArrowLeft,
+  Columns2,
   Eraser,
   ExternalLink,
   FolderInput,
@@ -12,12 +13,18 @@ import {
   Trash2,
   Upload,
   Video,
+  ZoomIn,
 } from 'lucide-react'
 import AdInboxImportShowroomDialog, {
   type AdInboxImportShowroomResult,
 } from '@/components/admin/AdInboxImportShowroomDialog'
 import AdInboxImportShowroomAfterOnlyDialog from '@/components/admin/AdInboxImportShowroomAfterOnlyDialog'
 import AdInboxPromoteToShowroomDialog from '@/components/admin/AdInboxPromoteToShowroomDialog'
+import AdInboxImagePreviewDialog, {
+  getAdInboxFullPreviewUrl,
+  prefetchAdInboxEnlarge,
+  type AdInboxPreviewMode,
+} from '@/components/admin/AdInboxImagePreviewDialog'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -34,6 +41,7 @@ import {
   getAdInboxTimelapseJob,
   groupAdInboxBatches,
   listAdInboxAssets,
+  listAdInboxJobLinkedAssets,
   listAdInboxSites,
   listAdInboxTimelapseJobsForBatch,
   listAdInboxWorkProgressByBatches,
@@ -66,6 +74,7 @@ import {
   getShowroomShortsCompositionStatus,
   stitchShowroomShortsSplit,
   updateShowroomShortsJobPrompt,
+  updateShowroomShortsTargetPreparation,
   type ShowroomShortsTargetRecord,
 } from '@/lib/showroomShorts'
 import { SHOWROOM_SHORTS_TIMELAPSE_PROMPT } from '@/lib/showroomShortsTimelapsePrompt'
@@ -212,6 +221,15 @@ export default function AdInboxStudioPage() {
   const [importShowroomOpen, setImportShowroomOpen] = useState(false)
   const [importAfterOnlyOpen, setImportAfterOnlyOpen] = useState(false)
   const [promoteShowroomOpen, setPromoteShowroomOpen] = useState(false)
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const [previewMode, setPreviewMode] = useState<AdInboxPreviewMode>('single')
+  const [previewIndex, setPreviewIndex] = useState(0)
+  const [jobLinkedAssets, setJobLinkedAssets] = useState<AdInboxAsset[]>([])
+  const [editingTargetId, setEditingTargetId] = useState<string | null>(null)
+  const [editTitle, setEditTitle] = useState('')
+  const [editBody, setEditBody] = useState('')
+  const [editComment, setEditComment] = useState('')
+  const [editSaving, setEditSaving] = useState(false)
   const autoPrepareKeysRef = useRef<Set<string>>(new Set())
   const youtubeCopySyncKeysRef = useRef<Set<string>>(new Set())
   const legacyBackfillDoneRef = useRef(false)
@@ -224,6 +242,13 @@ export default function AdInboxStudioPage() {
     () => jobs.find((job) => job.id === activeJobId) ?? jobs[0] ?? null,
     [jobs, activeJobId],
   )
+
+  /** 임시 입고 사진이 없으면 job에 묶인 쇼룸 BA를 그리드·확대에 사용 */
+  const displayAssets = useMemo(() => {
+    if (!selectedBatch) return [] as AdInboxAsset[]
+    if (selectedBatch.assets.length > 0) return selectedBatch.assets
+    return jobLinkedAssets
+  }, [selectedBatch, jobLinkedAssets])
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -319,6 +344,7 @@ export default function AdInboxStudioPage() {
       setRecommendation(null)
       setJobs([])
       setActiveJobId(null)
+      setJobLinkedAssets([])
       return
     }
     const before = selectedBatch.assets.find((a) => a.before_after_role === 'before')
@@ -326,6 +352,7 @@ export default function AdInboxStudioPage() {
     setBeforeId(before?.id ?? null)
     setAfterId(after?.id ?? null)
     setRecommendation(null)
+    setJobLinkedAssets([])
     // 선택한 현장 카드에 추가 입고가 기본
     if (sites.some((site) => site.id === selectedBatch.siteId)) {
       setTargetSiteId(selectedBatch.siteId)
@@ -333,6 +360,43 @@ export default function AdInboxStudioPage() {
     }
     void refreshJobs(selectedBatch)
   }, [selectedBatch?.key, selectedBatch?.siteId, sites, refreshJobs])
+
+  useEffect(() => {
+    if (!selectedBatch || selectedBatch.assets.length > 0) {
+      setJobLinkedAssets([])
+      return
+    }
+    if (!activeJob?.before_asset_id && !activeJob?.before_asset_url) {
+      setJobLinkedAssets([])
+      return
+    }
+    let cancelled = false
+    void listAdInboxJobLinkedAssets(activeJob, selectedBatch.siteId, selectedBatch.shortName)
+      .then((rows) => {
+        if (cancelled) return
+        setJobLinkedAssets(rows)
+        const before = rows.find((a) => a.before_after_role === 'before')
+        const after = rows.find((a) => a.before_after_role === 'after')
+        if (before) setBeforeId(before.id)
+        if (after) setAfterId(after.id)
+      })
+      .catch(() => {
+        if (!cancelled) setJobLinkedAssets([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [
+    selectedBatch?.key,
+    selectedBatch?.siteId,
+    selectedBatch?.shortName,
+    selectedBatch?.assets.length,
+    activeJob?.id,
+    activeJob?.before_asset_id,
+    activeJob?.after_asset_id,
+    activeJob?.before_asset_url,
+    activeJob?.after_asset_url,
+  ])
 
   useEffect(() => {
     if (!activeJob) return
@@ -506,13 +570,29 @@ export default function AdInboxStudioPage() {
   const handlePickForTimelapse = (asset: AdInboxAsset, slot: 'before' | 'after') => {
     if (slot === 'before') setBeforeId(asset.id)
     else setAfterId(asset.id)
+    // 쇼룸 job 연결 원본은 대기실 BA 메타를 쓰지 않음 (쇼룸 메타 오염 방지)
+    if (asset.linked_from_showroom_job) return
     if (asset.before_after_role !== slot) {
       void handleSetRole(asset, slot)
     }
   }
 
-  const beforeAsset = selectedBatch?.assets.find((a) => a.id === beforeId) ?? null
-  const afterAsset = selectedBatch?.assets.find((a) => a.id === afterId) ?? null
+  const beforeAsset = displayAssets.find((a) => a.id === beforeId) ?? null
+  const afterAsset = displayAssets.find((a) => a.id === afterId) ?? null
+
+  const openPreviewAt = (assetId: string) => {
+    const idx = displayAssets.findIndex((a) => a.id === assetId)
+    if (idx < 0) return
+    setPreviewMode('single')
+    setPreviewIndex(idx)
+    setPreviewOpen(true)
+  }
+
+  const openComparePreview = () => {
+    if (!beforeAsset || !afterAsset) return
+    setPreviewMode('compare')
+    setPreviewOpen(true)
+  }
 
   const adoptCreatedTimelapseJob = async (jobId: string) => {
     setActiveJobId(jobId)
@@ -738,6 +818,45 @@ export default function AdInboxStudioPage() {
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '론칭 승인 요청 실패')
     } finally {
+      setActingJob(false)
+    }
+  }
+
+  const handleStartEditPackage = (targetId: string, title: string, body: string, comment: string) => {
+    setEditingTargetId(targetId)
+    setEditTitle(title)
+    setEditBody(body)
+    setEditComment(comment)
+  }
+
+  const handleCancelEditPackage = () => {
+    setEditingTargetId(null)
+    setEditTitle('')
+    setEditBody('')
+    setEditComment('')
+  }
+
+  const handleSaveEditPackage = async (target: ShowroomShortsTargetRecord) => {
+    if (!editTitle.trim()) {
+      toast.error('제목을 입력해주세요.')
+      return
+    }
+
+    setEditSaving(true)
+    setActingJob(true)
+    try {
+      await updateShowroomShortsTargetPreparation(target.id, {
+        title: editTitle.trim(),
+        descriptionWithHashtags: editBody.trim(),
+        firstComment: editComment.trim(),
+      })
+      toast.success('업로드 준비 내용을 수정했습니다.')
+      setEditingTargetId(null)
+      await refreshActiveJob()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '내용 수정에 실패했습니다.')
+    } finally {
+      setEditSaving(false)
       setActingJob(false)
     }
   }
@@ -1006,7 +1125,7 @@ export default function AdInboxStudioPage() {
                       size="sm"
                       variant="outline"
                       onClick={() => void handleRecommendPair()}
-                      disabled={recommending || selectedBatch.assets.length < 2}
+                      disabled={recommending || displayAssets.length < 2}
                     >
                       {recommending ? (
                         <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
@@ -1044,11 +1163,81 @@ export default function AdInboxStudioPage() {
                       </p>
                     </div>
                   ) : null}
+
+                  {beforeAsset || afterAsset ? (
+                    <div className="mb-4 rounded-xl border border-neutral-200 bg-neutral-50/80 p-3">
+                      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-xs font-medium text-neutral-700">선택 BA 비교</p>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          disabled={!beforeAsset || !afterAsset}
+                          onClick={openComparePreview}
+                        >
+                          <Columns2 className="mr-1.5 h-3.5 w-3.5" />
+                          비교해서 보기
+                        </Button>
+                      </div>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <button
+                          type="button"
+                          className="overflow-hidden rounded-lg border border-amber-200 bg-white text-left"
+                          onClick={() => beforeAsset && openPreviewAt(beforeAsset.id)}
+                          disabled={!beforeAsset}
+                        >
+                          <div className="px-2 py-1 text-[10px] font-semibold text-amber-800">Before</div>
+                          <div className="aspect-[16/10] bg-neutral-200">
+                            {beforeAsset ? (
+                              <img
+                                src={getAdInboxFullPreviewUrl(beforeAsset)}
+                                alt=""
+                                className="h-full w-full object-contain"
+                              />
+                            ) : (
+                              <div className="flex h-full items-center justify-center text-[11px] text-neutral-400">
+                                미선택
+                              </div>
+                            )}
+                          </div>
+                        </button>
+                        <button
+                          type="button"
+                          className="overflow-hidden rounded-lg border border-emerald-200 bg-white text-left"
+                          onClick={() => afterAsset && openPreviewAt(afterAsset.id)}
+                          disabled={!afterAsset}
+                        >
+                          <div className="px-2 py-1 text-[10px] font-semibold text-emerald-800">After</div>
+                          <div className="aspect-[16/10] bg-neutral-200">
+                            {afterAsset ? (
+                              <img
+                                src={getAdInboxFullPreviewUrl(afterAsset)}
+                                alt=""
+                                className="h-full w-full object-contain"
+                              />
+                            ) : (
+                              <div className="flex h-full items-center justify-center text-[11px] text-neutral-400">
+                                미선택
+                              </div>
+                            )}
+                          </div>
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {selectedBatch.assets.length === 0 && displayAssets.length > 0 ? (
+                    <p className="mb-3 text-[11px] text-neutral-500">
+                      쇼룸 BA로 만든 카드입니다. 원본은 쇼룸에 두고, 여기서 확대·BA 지정만 합니다.
+                    </p>
+                  ) : null}
+
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-                    {selectedBatch.assets.map((asset) => {
+                    {displayAssets.map((asset) => {
                       const preview = getShowroomImagePreviewUrl(asset)
                       const isBefore = beforeId === asset.id
                       const isAfter = afterId === asset.id
+                      const linked = Boolean(asset.linked_from_showroom_job)
                       return (
                         <div
                           key={asset.id}
@@ -1061,27 +1250,59 @@ export default function AdInboxStudioPage() {
                           }`}
                         >
                           <div className="relative aspect-[4/3] bg-neutral-200">
-                            {preview ? (
-                              <img src={preview} alt="" className="h-full w-full object-cover" />
-                            ) : null}
-                            {asset.is_consultation ? (
-                              <span className="absolute left-1.5 top-1.5 rounded bg-emerald-600 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                            <button
+                              type="button"
+                              aria-label="사진 확대"
+                              title="확대해서 보기"
+                              className="group absolute inset-0 z-[1] cursor-zoom-in"
+                              onMouseEnter={() => prefetchAdInboxEnlarge(asset)}
+                              onFocus={() => prefetchAdInboxEnlarge(asset)}
+                              onClick={(e) => {
+                                e.preventDefault()
+                                e.stopPropagation()
+                                openPreviewAt(asset.id)
+                              }}
+                            >
+                              {preview ? (
+                                <img
+                                  src={preview}
+                                  alt=""
+                                  draggable={false}
+                                  className="pointer-events-none h-full w-full object-cover"
+                                />
+                              ) : null}
+                              <span className="pointer-events-none absolute bottom-1.5 left-1.5 inline-flex items-center gap-1 rounded bg-black/55 px-1.5 py-0.5 text-[10px] text-white opacity-70 transition-opacity group-hover:opacity-100">
+                                <ZoomIn className="h-3 w-3" />
+                                확대
+                              </span>
+                            </button>
+                            {linked ? (
+                              <span className="absolute left-1.5 top-1.5 z-10 rounded bg-violet-600 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                                쇼룸 BA
+                              </span>
+                            ) : asset.is_consultation ? (
+                              <span className="absolute left-1.5 top-1.5 z-10 rounded bg-emerald-600 px-1.5 py-0.5 text-[10px] font-medium text-white">
                                 쇼룸 등록됨
                               </span>
                             ) : null}
-                            <button
-                              type="button"
-                              title="사진 삭제"
-                              disabled={deletingId === asset.id || cleaningId === asset.id}
-                              className="absolute right-1.5 top-1.5 inline-flex items-center justify-center rounded-md bg-black/55 p-1.5 text-white hover:bg-red-600 disabled:opacity-50"
-                              onClick={() => void handleDeleteAsset(asset)}
-                            >
-                              {deletingId === asset.id ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              ) : (
-                                <Trash2 className="h-3.5 w-3.5" />
-                              )}
-                            </button>
+                            {!linked ? (
+                              <button
+                                type="button"
+                                title="사진 삭제"
+                                disabled={deletingId === asset.id || cleaningId === asset.id}
+                                className="absolute right-1.5 top-1.5 z-10 inline-flex items-center justify-center rounded-md bg-black/55 p-1.5 text-white hover:bg-red-600 disabled:opacity-50"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  void handleDeleteAsset(asset)
+                                }}
+                              >
+                                {deletingId === asset.id ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                )}
+                              </button>
+                            ) : null}
                           </div>
                           <div className="space-y-1.5 p-2">
                             <div className="flex flex-wrap gap-1">
@@ -1296,9 +1517,11 @@ export default function AdInboxStudioPage() {
                                       최종 업로드 전 확인
                                     </p>
                                     <p className="mt-0.5 text-xs text-neutral-600">
-                                      합성·업로드 준비는 자동입니다. 첫댓글 링크는 짧은 주소(
+                                      합성·업로드 준비는 자동입니다. 제목·본문·첫댓글은 「내용 수정」으로 고칠 수
+                                      있고, 저장한 뒤 「론칭 승인」하면 Make 업로드에 반영됩니다. 첫댓글 링크는
+                                      짧은 주소(
                                       <span className="font-medium text-neutral-800">/r/yt · /r/ig · /r/fb</span>
-                                      )로 쇼룸+UTM이 붙습니다. 확인 후 「론칭 승인」만 누르세요.
+                                      )로 쇼룸+UTM이 붙습니다.
                                     </p>
                                   </div>
                                   {orderedTargets.length < SHOWROOM_SHORTS_CHANNELS.length ? (
@@ -1330,9 +1553,13 @@ export default function AdInboxStudioPage() {
                                       const canLaunch = ['launch_ready', 'approved'].includes(
                                         target.publish_status,
                                       )
+                                      const canEditPackage = !['preparing', 'publishing'].includes(
+                                        target.publish_status,
+                                      )
                                       const busy =
                                         target.publish_status === 'preparing' ||
                                         target.publish_status === 'publishing'
+                                      const isEditing = editingTargetId === target.id
                                       const bodyPreview = publishPackage.descriptionWithHashtags
                                       const previewUrl = pickPrepString(target.preparation_payload, [
                                         'previewUrl',
@@ -1370,53 +1597,135 @@ export default function AdInboxStudioPage() {
                                           ) : null}
 
                                           <div className="mb-3 space-y-2 rounded-md border border-neutral-100 bg-neutral-50 p-2.5 text-xs text-neutral-700">
-                                            <div>
-                                              <p className="mb-0.5 font-medium text-neutral-500">제목</p>
-                                              <p className="whitespace-pre-wrap break-words">
-                                                {publishPackage.title || '—'}
-                                              </p>
-                                            </div>
-                                            <div>
-                                              <p className="mb-0.5 font-medium text-neutral-500">본문</p>
-                                              <p className="max-h-28 overflow-y-auto whitespace-pre-wrap break-words">
-                                                {bodyPreview || '—'}
-                                              </p>
-                                            </div>
-                                            {publishPackage.firstComment ? (
-                                              <div>
-                                                <p className="mb-0.5 font-medium text-neutral-500">첫 댓글</p>
-                                                <p className="whitespace-pre-wrap break-words">
-                                                  {publishPackage.firstComment}
-                                                </p>
-                                                {publishPackage.landingUrl ? (
-                                                  <p className="mt-1 text-[11px] text-emerald-700">
-                                                    짧은 링크 · {publishPackage.landingUrl}
-                                                    <span className="text-neutral-500">
-                                                      {' '}
-                                                      → medium=shorts
-                                                    </span>
+                                            {isEditing ? (
+                                              <>
+                                                <div>
+                                                  <p className="mb-1 font-medium text-neutral-500">제목</p>
+                                                  <Input
+                                                    value={editTitle}
+                                                    onChange={(e) => setEditTitle(e.target.value)}
+                                                    className="h-8 bg-white text-xs"
+                                                    disabled={editSaving}
+                                                  />
+                                                </div>
+                                                <div>
+                                                  <p className="mb-1 font-medium text-neutral-500">본문</p>
+                                                  <textarea
+                                                    value={editBody}
+                                                    onChange={(e) => setEditBody(e.target.value)}
+                                                    rows={5}
+                                                    disabled={editSaving}
+                                                    className="w-full rounded-md border border-neutral-200 bg-white px-3 py-2 text-xs text-neutral-800 outline-none focus-visible:ring-2 focus-visible:ring-neutral-300"
+                                                  />
+                                                </div>
+                                                <div>
+                                                  <p className="mb-1 font-medium text-neutral-500">첫 댓글</p>
+                                                  <textarea
+                                                    value={editComment}
+                                                    onChange={(e) => setEditComment(e.target.value)}
+                                                    rows={2}
+                                                    disabled={editSaving}
+                                                    className="w-full rounded-md border border-neutral-200 bg-white px-3 py-2 text-xs text-neutral-800 outline-none focus-visible:ring-2 focus-visible:ring-neutral-300"
+                                                  />
+                                                  {publishPackage.landingUrl ? (
+                                                    <p className="mt-1 text-[11px] text-emerald-700">
+                                                      짧은 링크 · {publishPackage.landingUrl}
+                                                    </p>
+                                                  ) : null}
+                                                </div>
+                                                <div className="flex justify-end gap-2 pt-1">
+                                                  <Button
+                                                    type="button"
+                                                    size="sm"
+                                                    variant="outline"
+                                                    disabled={editSaving}
+                                                    onClick={handleCancelEditPackage}
+                                                  >
+                                                    취소
+                                                  </Button>
+                                                  <Button
+                                                    type="button"
+                                                    size="sm"
+                                                    disabled={editSaving || actingJob}
+                                                    onClick={() => void handleSaveEditPackage(target)}
+                                                  >
+                                                    {editSaving ? (
+                                                      <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                                                    ) : null}
+                                                    저장
+                                                  </Button>
+                                                </div>
+                                              </>
+                                            ) : (
+                                              <>
+                                                <div className="flex justify-end">
+                                                  <Button
+                                                    type="button"
+                                                    size="sm"
+                                                    variant="outline"
+                                                    className="h-7 text-[11px]"
+                                                    disabled={!canEditPackage || actingJob || editSaving}
+                                                    onClick={() =>
+                                                      handleStartEditPackage(
+                                                        target.id,
+                                                        publishPackage.title,
+                                                        bodyPreview,
+                                                        publishPackage.firstComment,
+                                                      )
+                                                    }
+                                                  >
+                                                    내용 수정
+                                                  </Button>
+                                                </div>
+                                                <div>
+                                                  <p className="mb-0.5 font-medium text-neutral-500">제목</p>
+                                                  <p className="whitespace-pre-wrap break-words">
+                                                    {publishPackage.title || '—'}
                                                   </p>
+                                                </div>
+                                                <div>
+                                                  <p className="mb-0.5 font-medium text-neutral-500">본문</p>
+                                                  <p className="max-h-28 overflow-y-auto whitespace-pre-wrap break-words">
+                                                    {bodyPreview || '—'}
+                                                  </p>
+                                                </div>
+                                                {publishPackage.firstComment ? (
+                                                  <div>
+                                                    <p className="mb-0.5 font-medium text-neutral-500">첫 댓글</p>
+                                                    <p className="whitespace-pre-wrap break-words">
+                                                      {publishPackage.firstComment}
+                                                    </p>
+                                                    {publishPackage.landingUrl ? (
+                                                      <p className="mt-1 text-[11px] text-emerald-700">
+                                                        짧은 링크 · {publishPackage.landingUrl}
+                                                        <span className="text-neutral-500">
+                                                          {' '}
+                                                          → medium=shorts
+                                                        </span>
+                                                      </p>
+                                                    ) : null}
+                                                  </div>
                                                 ) : null}
-                                              </div>
-                                            ) : null}
-                                            {checklist.length > 0 ? (
-                                              <ul className="list-disc space-y-0.5 pl-4 text-neutral-600">
-                                                {checklist.map((item) => (
-                                                  <li key={item}>{item}</li>
-                                                ))}
-                                              </ul>
-                                            ) : null}
-                                            {previewUrl ? (
-                                              <a
-                                                href={previewUrl}
-                                                target="_blank"
-                                                rel="noreferrer"
-                                                className="inline-flex items-center gap-1 text-neutral-700 underline-offset-2 hover:underline"
-                                              >
-                                                플랫폼 초안/미리보기
-                                                <ExternalLink className="h-3 w-3" />
-                                              </a>
-                                            ) : null}
+                                                {checklist.length > 0 ? (
+                                                  <ul className="list-disc space-y-0.5 pl-4 text-neutral-600">
+                                                    {checklist.map((item) => (
+                                                      <li key={item}>{item}</li>
+                                                    ))}
+                                                  </ul>
+                                                ) : null}
+                                                {previewUrl ? (
+                                                  <a
+                                                    href={previewUrl}
+                                                    target="_blank"
+                                                    rel="noreferrer"
+                                                    className="inline-flex items-center gap-1 text-neutral-700 underline-offset-2 hover:underline"
+                                                  >
+                                                    플랫폼 초안/미리보기
+                                                    <ExternalLink className="h-3 w-3" />
+                                                  </a>
+                                                ) : null}
+                                              </>
+                                            )}
                                           </div>
 
                                           <div className="mt-auto flex flex-col gap-2">
@@ -1505,6 +1814,17 @@ export default function AdInboxStudioPage() {
         onPromoted={() => {
           void refresh()
         }}
+      />
+      <AdInboxImagePreviewDialog
+        open={previewOpen}
+        onOpenChange={setPreviewOpen}
+        mode={previewMode}
+        assets={displayAssets}
+        index={previewIndex}
+        onIndexChange={setPreviewIndex}
+        beforeId={beforeId}
+        afterId={afterId}
+        onPick={handlePickForTimelapse}
       />
     </div>
   )

@@ -10,6 +10,7 @@ import {
   buildBroadExternalDisplayName,
   buildExternalDisplayName,
   parseBeforeAfterMeta,
+  parseImageAssetMeta,
 } from '@/lib/imageAssetMeta'
 import type { SpaceDisplayNameOption } from '@/lib/imageAssetUploadService'
 import type { Json } from '@/types/database'
@@ -52,6 +53,11 @@ export type AdInboxAsset = ShowroomImageAsset & {
   /** 외부 쇼룸 승격 여부 (is_consultation) */
   is_consultation?: boolean
   promoted_at?: string | null
+  /**
+   * BA 쇼룸 가져오기 등으로 job에만 연결된 쇼룸 원본.
+   * 대기실 그리드에 빌려 보여 주며, BA 메타/삭제는 쓰지 않는다.
+   */
+  linked_from_showroom_job?: boolean
 }
 
 export type AdInboxSite = {
@@ -634,6 +640,148 @@ export async function updateAdInboxAssetRole(
 /** 쇼룸 숏츠 job의 before_after_group_key 형식 */
 export function buildAdInboxShortsGroupKey(batchKey: string): string {
   return `before-after:${batchKey.trim()}`
+}
+
+function mapRowToShowroomImageAsset(r: Record<string, unknown>): ShowroomImageAsset {
+  const beforeAfter = parseBeforeAfterMeta(r.metadata)
+  const meta = parseImageAssetMeta(r.metadata)
+  return {
+    before_after_role: beforeAfter.role,
+    before_after_group_id: beforeAfter.groupId,
+    raw_site_name: r.site_name != null ? String(r.site_name) : null,
+    canonical_site_name: meta.canonicalSiteName,
+    space_display_name: meta.spaceDisplayName,
+    external_display_name: meta.externalDisplayName,
+    broad_external_display_name: meta.broadExternalDisplayName,
+    space_id: meta.spaceId,
+    id: String(r.id),
+    cloudinary_url: String(r.cloudinary_url ?? ''),
+    thumbnail_url: r.thumbnail_url != null ? String(r.thumbnail_url) : null,
+    site_name: r.site_name != null ? String(r.site_name) : null,
+    location: r.location != null ? String(r.location) : null,
+    business_type: r.business_type != null ? String(r.business_type) : null,
+    color_name: r.color_name != null ? String(r.color_name) : null,
+    product_name: r.product_name != null ? String(r.product_name) : null,
+    is_main: Boolean(r.is_main),
+    created_at: r.created_at != null ? String(r.created_at) : null,
+    view_count: Number(r.view_count ?? 0),
+    share_count: Number(r.share_count ?? 0),
+    internal_score: typeof r.internal_score === 'number' ? r.internal_score : null,
+  }
+}
+
+export async function fetchImageAssetsByIds(ids: string[]): Promise<ShowroomImageAsset[]> {
+  const unique = [...new Set(ids.map((id) => id.trim()).filter(Boolean))]
+  if (unique.length === 0) return []
+
+  const { data, error } = await supabase
+    .from('image_assets')
+    .select(
+      'id, cloudinary_url, thumbnail_url, site_name, location, business_type, color_name, product_name, is_main, created_at, view_count, share_count, internal_score, category, metadata',
+    )
+    .in('id', unique)
+
+  if (error) {
+    throw new Error(error.message || '연결 사진을 불러오지 못했습니다.')
+  }
+
+  return (data ?? []).map((row) => mapRowToShowroomImageAsset(row as Record<string, unknown>))
+}
+
+function showroomAssetAsJobLinkedPreview(
+  asset: ShowroomImageAsset,
+  siteId: string,
+  role: 'before' | 'after',
+): AdInboxAsset {
+  return {
+    ...asset,
+    before_after_role: role,
+    photo_date: asset.created_at ? asset.created_at.slice(0, 10) : null,
+    ad_inbox: true,
+    ad_inbox_site_id: siteId,
+    is_consultation: true,
+    linked_from_showroom_job: true,
+  }
+}
+
+function urlFallbackJobLinkedPreview(input: {
+  id: string
+  url: string
+  siteId: string
+  siteName: string
+  role: 'before' | 'after'
+}): AdInboxAsset {
+  return {
+    id: input.id,
+    cloudinary_url: input.url,
+    thumbnail_url: input.url,
+    site_name: input.siteName,
+    raw_site_name: input.siteName,
+    canonical_site_name: input.siteName,
+    location: null,
+    business_type: null,
+    color_name: null,
+    product_name: null,
+    is_main: false,
+    created_at: null,
+    view_count: 0,
+    share_count: 0,
+    internal_score: null,
+    before_after_role: input.role,
+    before_after_group_id: null,
+    photo_date: null,
+    ad_inbox: true,
+    ad_inbox_site_id: input.siteId,
+    is_consultation: true,
+    linked_from_showroom_job: true,
+  }
+}
+
+/**
+ * BA 쇼룸 가져오기 카드처럼 대기실 사진이 없을 때,
+ * job의 Before/After를 그리드·확대용으로 빌려온다.
+ */
+export async function listAdInboxJobLinkedAssets(
+  job: ShowroomShortsJobRecord,
+  siteId: string,
+  siteName = '쇼룸 BA',
+): Promise<AdInboxAsset[]> {
+  const beforeId = job.before_asset_id?.trim() || ''
+  const afterId = job.after_asset_id?.trim() || ''
+  const ids = [beforeId, afterId].filter(Boolean)
+  const fetched = ids.length > 0 ? await fetchImageAssetsByIds(ids) : []
+  const byId = new Map(fetched.map((asset) => [asset.id, asset]))
+  const out: AdInboxAsset[] = []
+
+  if (beforeId && byId.has(beforeId)) {
+    out.push(showroomAssetAsJobLinkedPreview(byId.get(beforeId)!, siteId, 'before'))
+  } else if (job.before_asset_url?.trim()) {
+    out.push(
+      urlFallbackJobLinkedPreview({
+        id: beforeId || `job-before:${job.id}`,
+        url: job.before_asset_url.trim(),
+        siteId,
+        siteName,
+        role: 'before',
+      }),
+    )
+  }
+
+  if (afterId && byId.has(afterId)) {
+    out.push(showroomAssetAsJobLinkedPreview(byId.get(afterId)!, siteId, 'after'))
+  } else if (job.after_asset_url?.trim()) {
+    out.push(
+      urlFallbackJobLinkedPreview({
+        id: afterId || `job-after:${job.id}`,
+        url: job.after_asset_url.trim(),
+        siteId,
+        siteName,
+        role: 'after',
+      }),
+    )
+  }
+
+  return out
 }
 
 export async function listAdInboxTimelapseJobsForBatch(batch: AdInboxBatch): Promise<ShowroomShortsJobRecord[]> {
