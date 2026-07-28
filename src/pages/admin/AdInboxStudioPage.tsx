@@ -30,6 +30,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { getShowroomImagePreviewUrl } from '@/lib/imageAssetShowroom'
 import {
+  adInboxChannelShortLabel,
   adInboxWorkProgressLabel,
   buildAdInboxSiteGroupId,
   cleanupPeopleFromAdInboxAsset,
@@ -50,6 +51,7 @@ import {
   type AdInboxAsset,
   type AdInboxBatch,
   type AdInboxBatchWorkState,
+  type AdInboxChannelPublishState,
   type AdInboxRole,
   type AdInboxSite,
   type AdInboxTimelapseJob,
@@ -176,6 +178,49 @@ function workProgressBadgeClass(progress: AdInboxWorkProgress, selected: boolean
   if (progress === 'working') return 'bg-sky-50 text-sky-800'
   if (progress === 'done') return 'bg-emerald-50 text-emerald-800'
   return 'bg-neutral-100 text-neutral-600'
+}
+
+function channelPublishTone(
+  status: AdInboxChannelPublishState['status'],
+): 'idle' | 'active' | 'done' | 'failed' {
+  if (status === 'published') return 'done'
+  if (status === 'failed') return 'failed'
+  if (['preparing', 'launch_ready', 'approved', 'publishing', 'ready'].includes(status)) {
+    return 'active'
+  }
+  return 'idle'
+}
+
+function channelPublishButtonClass(
+  status: AdInboxChannelPublishState['status'],
+  selected: boolean,
+): string {
+  const tone = channelPublishTone(status)
+  if (selected) {
+    if (tone === 'done') return 'bg-emerald-400/35 text-emerald-50 ring-1 ring-emerald-300/40'
+    if (tone === 'failed') return 'bg-red-400/25 text-red-100 ring-1 ring-red-300/30'
+    if (tone === 'active') return 'bg-amber-400/25 text-amber-50 ring-1 ring-amber-300/30'
+    return 'bg-white/10 text-neutral-400'
+  }
+  if (tone === 'done') return 'bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200'
+  if (tone === 'failed') return 'bg-red-50 text-red-700 ring-1 ring-red-200'
+  if (tone === 'active') return 'bg-amber-50 text-amber-800 ring-1 ring-amber-200'
+  return 'bg-neutral-100 text-neutral-500 ring-1 ring-neutral-200'
+}
+
+function channelPublishTitle(state: AdInboxChannelPublishState): string {
+  const label =
+    state.channel === 'youtube'
+      ? 'YouTube'
+      : state.channel === 'facebook'
+        ? 'Facebook'
+        : 'Instagram'
+  if (state.status === 'published') {
+    return state.externalPostUrl ? `${label} 게시물 열기` : `${label} 게시 완료`
+  }
+  if (state.status === 'failed') return `${label} 실패`
+  if (channelPublishTone(state.status) === 'active') return `${label} 업로드 진행 중`
+  return `${label} 대기`
 }
 
 function generatingHint(job: AdInboxTimelapseJob) {
@@ -1010,7 +1055,8 @@ export default function AdInboxStudioPage() {
             <div>
               <h2 className="text-base font-semibold text-neutral-900">대기실 · 현장 카드</h2>
               <p className="text-xs text-neutral-500">
-                대기중(사진만) → 작업중(릴스 제작·론칭) → 작업완료(채널 게시 완료)
+                대기중(사진만) → 작업중(릴스 제작) → 작업완료(합성 끝). 채널 버튼은 업로드 완료 시
+                초록색·게시물 링크
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -1064,14 +1110,22 @@ export default function AdInboxStudioPage() {
                   const workState = workProgressByKey[batch.key] ?? {
                     progress: 'waiting' as const,
                     completedAt: null,
+                    channels: deriveAdInboxBatchWorkState([]).channels,
                   }
                   const progress = workState.progress
                   return (
-                    <button
+                    <div
                       key={batch.key}
-                      type="button"
+                      role="button"
+                      tabIndex={0}
                       onClick={() => setSelectedBatchKey(batch.key)}
-                      className={`w-full rounded-xl border px-3 py-2.5 text-left text-sm ${
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault()
+                          setSelectedBatchKey(batch.key)
+                        }
+                      }}
+                      className={`w-full cursor-pointer rounded-xl border px-3 py-2.5 text-left text-sm outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 ${
                         selected
                           ? 'border-neutral-900 bg-neutral-900 text-white'
                           : 'border-neutral-200 bg-neutral-50 text-neutral-700 hover:border-neutral-300'
@@ -1106,7 +1160,40 @@ export default function AdInboxStudioPage() {
                           </span>
                         ) : null}
                       </div>
-                    </button>
+                      <div className="mt-2 flex flex-wrap items-center gap-1">
+                        {workState.channels.map((channelState) => {
+                          const label = adInboxChannelShortLabel(channelState.channel)
+                          const className =
+                            'inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-tight ' +
+                            channelPublishButtonClass(channelState.status, selected)
+                          const title = channelPublishTitle(channelState)
+                          if (channelState.status === 'published' && channelState.externalPostUrl) {
+                            return (
+                              <a
+                                key={channelState.channel}
+                                href={channelState.externalPostUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                title={title}
+                                className={className + ' underline-offset-2 hover:underline'}
+                                onClick={(event) => event.stopPropagation()}
+                              >
+                                {label}
+                              </a>
+                            )
+                          }
+                          return (
+                            <span
+                              key={channelState.channel}
+                              title={title}
+                              className={className}
+                            >
+                              {label}
+                            </span>
+                          )
+                        })}
+                      </div>
+                    </div>
                   )
                 })}
               </div>

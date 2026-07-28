@@ -28,6 +28,8 @@ import {
   validateBeforeAfterSelection,
   type ShowroomShortsChannel,
   type ShowroomShortsJobRecord,
+  type ShowroomShortsPublishStatus,
+  type ShowroomShortsTargetRecord,
 } from '@/lib/showroomShorts'
 import { SHOWROOM_SHORTS_TIMELAPSE_PROMPT } from '@/lib/showroomShortsTimelapsePrompt'
 
@@ -42,8 +44,16 @@ export const AD_INBOX_DEFAULT_PROMPT = SHOWROOM_SHORTS_TIMELAPSE_PROMPT
 export type AdInboxRole = 'before' | 'after' | 'unset'
 export type AdInboxSiteStatus = 'open' | 'promoted' | 'archived'
 
-/** 현장 카드 작업 진행: 사진만 → 릴스 제작 → 채널 업로드 완료 */
+/** 현장 카드 작업 진행: 사진만 → 릴스 제작 → 합성(최종 MP4) 완료 */
 export type AdInboxWorkProgress = 'waiting' | 'working' | 'done'
+
+export type AdInboxChannelPublishState = {
+  channel: ShowroomShortsChannel
+  /** 타깃 없음이면 none */
+  status: ShowroomShortsPublishStatus | 'none'
+  externalPostUrl: string | null
+  publishedAt: string | null
+}
 
 export type AdInboxAsset = ShowroomImageAsset & {
   photo_date: string | null
@@ -89,8 +99,10 @@ export type AdInboxBatch = {
 
 export type AdInboxBatchWorkState = {
   progress: AdInboxWorkProgress
-  /** 채널 게시가 모두 끝난 시각(가장 늦은 published_at) */
+  /** 합성(최종 MP4) 완료 시각 — job.updated_at 기준 */
   completedAt: string | null
+  /** 채널별 업로드(게시) 상태 — 카드 버튼용 */
+  channels: AdInboxChannelPublishState[]
 }
 
 export function formatAdInboxWorkCompletedDate(value: string | null | undefined): string | null {
@@ -116,37 +128,94 @@ export function adInboxWorkProgressLabel(
   return '대기중'
 }
 
+export function adInboxChannelShortLabel(channel: ShowroomShortsChannel): string {
+  if (channel === 'youtube') return 'YT'
+  if (channel === 'facebook') return 'FB'
+  return 'IG'
+}
+
+/** 콜백 URL이 비어도 channel+id로 열 수 있는 주소 추정 */
+export function resolveAdInboxChannelPostUrl(
+  target: Pick<ShowroomShortsTargetRecord, 'channel' | 'external_post_id' | 'external_post_url'>,
+): string | null {
+  const direct = target.external_post_url?.trim()
+  if (direct) return direct
+  const id = target.external_post_id?.trim()
+  if (!id) return null
+  if (target.channel === 'youtube') return `https://www.youtube.com/shorts/${id}`
+  if (target.channel === 'facebook') return `https://www.facebook.com/watch/?v=${id}`
+  if (target.channel === 'instagram') {
+    // shortcode면 reel 경로, 숫자 media id면 Graph permalink이 없어 p/ 로 시도
+    return `https://www.instagram.com/reel/${id}/`
+  }
+  return null
+}
+
+function emptyAdInboxChannelStates(): AdInboxChannelPublishState[] {
+  return SHOWROOM_SHORTS_CHANNELS.map((channel) => ({
+    channel,
+    status: 'none',
+    externalPostUrl: null,
+    publishedAt: null,
+  }))
+}
+
+function deriveAdInboxChannelStates(
+  targets: ShowroomShortsTargetRecord[] | undefined,
+): AdInboxChannelPublishState[] {
+  const byChannel = new Map((targets ?? []).map((target) => [target.channel, target]))
+  return SHOWROOM_SHORTS_CHANNELS.map((channel) => {
+    const target = byChannel.get(channel)
+    if (!target) {
+      return { channel, status: 'none', externalPostUrl: null, publishedAt: null }
+    }
+    return {
+      channel,
+      status: target.publish_status,
+      externalPostUrl: resolveAdInboxChannelPostUrl(target),
+      publishedAt: target.published_at,
+    }
+  })
+}
+
 function isAdInboxJobFailed(job: ShowroomShortsJobRecord): boolean {
   return job.status === 'failed' || job.kling_status === 'request_failed'
 }
 
+function isAdInboxCompositionDone(job: ShowroomShortsJobRecord): boolean {
+  if (job.final_video_url?.trim()) return true
+  return job.status === 'composited' || job.status === 'ready_for_review'
+}
+
 /**
- * 대기중: 사진만(또는 실패만) / 작업중: 릴스·론칭 진행 / 작업완료: 채널 업로드(게시) 완료
+ * 대기중: 사진만(또는 실패만) / 작업중: 클링·합성 진행 / 작업완료: 합성(최종 MP4) 완료
+ * 채널 업로드는 channels[]로 따로 본다.
  */
 export function deriveAdInboxWorkProgress(jobs: ShowroomShortsJobRecord[]): AdInboxWorkProgress {
   return deriveAdInboxBatchWorkState(jobs).progress
 }
 
-/** 작업완료일: 전 채널 published 일 때 가장 늦은 published_at */
+/** 작업완료일: 합성 완료 시점(job.updated_at) */
 export function deriveAdInboxWorkCompletedAt(jobs: ShowroomShortsJobRecord[]): string | null {
   return deriveAdInboxBatchWorkState(jobs).completedAt
 }
 
 export function deriveAdInboxBatchWorkState(jobs: ShowroomShortsJobRecord[]): AdInboxBatchWorkState {
   const latest = jobs.find((job) => !isAdInboxJobFailed(job))
-  if (!latest) return { progress: 'waiting', completedAt: null }
-
-  const targets = latest.targets ?? []
-  if (targets.length > 0 && targets.every((target) => target.publish_status === 'published')) {
-    const times = targets
-      .map((target) => target.published_at?.trim())
-      .filter((value): value is string => Boolean(value))
-    const sorted = [...times].sort()
-    const completedAt = sorted.length > 0 ? sorted[sorted.length - 1] ?? null : null
-    return { progress: 'done', completedAt }
+  if (!latest) {
+    return { progress: 'waiting', completedAt: null, channels: emptyAdInboxChannelStates() }
   }
 
-  return { progress: 'working', completedAt: null }
+  const channels = deriveAdInboxChannelStates(latest.targets)
+  if (isAdInboxCompositionDone(latest)) {
+    return {
+      progress: 'done',
+      completedAt: latest.updated_at?.trim() || latest.created_at?.trim() || null,
+      channels,
+    }
+  }
+
+  return { progress: 'working', completedAt: null, channels }
 }
 
 function trimOrNull(value: string | null | undefined): string | null {
