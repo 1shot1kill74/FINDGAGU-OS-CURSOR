@@ -49,13 +49,11 @@ import { appendShowroomConcernQuery, openShowroomConsultationChat } from '@/page
 import { trackShowroomAbmEvent } from '@/lib/showroomAbmTracking'
 import { validateBeforeAfterSelection } from '@/lib/showroomShorts'
 import {
-  createAdInboxTimelapseFromAfterOnly,
-  createAdInboxTimelapseJobFromShowroom,
   listExistingShowroomShortsAfterAssetIds,
   listExistingShowroomShortsPairKeys,
   showroomBaReelPairKey,
-  synthesizeBeforeFromAfterImage,
 } from '@/lib/adInboxStudio'
+import ShowroomSendToAdInboxDialog from '@/components/showroom/ShowroomSendToAdInboxDialog'
 
 import {
   CONCERN_CARDS,
@@ -148,7 +146,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
   const [baReelPairKeys, setBaReelPairKeys] = useState<Set<string>>(() => new Set())
   /** After-only(또는 After가 job에 연결된) 릴스 반영 */
   const [baReelAfterIds, setBaReelAfterIds] = useState<Set<string>>(() => new Set())
-  const [sendingBaToAdInboxByKey, setSendingBaToAdInboxByKey] = useState<Record<string, boolean>>({})
+  const [sendToAdInboxGroup, setSendToAdInboxGroup] = useState<SiteGroup | null>(null)
   const [basicShortsDialogOpen, setBasicShortsDialogOpen] = useState(false)
   const [basicShortsImageOrder, setBasicShortsImageOrder] = useState<string[]>([])
   const [draggingBasicShortsImageId, setDraggingBasicShortsImageId] = useState<string | null>(null)
@@ -1353,75 +1351,6 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
     [baReelAfterIds, baReelPairKeys],
   )
 
-  const handleSendBaToAdInbox = useCallback(
-    async (
-      group: SiteGroup,
-      after: ShowroomImageAsset,
-      before: ShowroomImageAsset | null,
-    ) => {
-      const sendKey = before
-        ? showroomBaReelPairKey(before.id, after.id)
-        : `after-only:${after.id}`
-      const alreadyHasReel =
-        (before
-          ? baReelPairKeys.has(showroomBaReelPairKey(before.id, after.id))
-          : baReelAfterIds.has(after.id)) || groupHasBaReelJob(group)
-      if (alreadyHasReel) {
-        const ok = window.confirm(
-          `「${group.siteName}」은(는) 이미 릴스 작업이 있습니다. 광고대기실에 새 작업카드를 다시 만들까요?`,
-        )
-        if (!ok) return
-      }
-
-      if (!before) {
-        const ok = window.confirm(
-          `「${group.siteName}」은(는) After만 있습니다. Before를 합성한 뒤 광고대기실 카드를 만들까요?`,
-        )
-        if (!ok) return
-      }
-
-      setSendingBaToAdInboxByKey((prev) => ({ ...prev, [sendKey]: true }))
-      try {
-        const result = before
-          ? await createAdInboxTimelapseJobFromShowroom({
-              before,
-              after,
-              siteName: group.siteName,
-            })
-          : await (async () => {
-              const imageUrl = after.cloudinary_url || after.thumbnail_url
-              if (!imageUrl?.trim()) throw new Error('After 이미지 URL이 없습니다.')
-              toast.message('Before 합성 중… 잠시만 기다려 주세요.')
-              const synth = await synthesizeBeforeFromAfterImage(imageUrl)
-              return createAdInboxTimelapseFromAfterOnly({
-                after,
-                synthesizedBefore: synth,
-                siteName: group.siteName,
-              })
-            })()
-
-        setBaReelPairKeys((prev) => {
-          if (!before) return prev
-          const next = new Set(prev)
-          next.add(showroomBaReelPairKey(before.id, after.id))
-          return next
-        })
-        setBaReelAfterIds((prev) => {
-          const next = new Set(prev)
-          next.add(after.id)
-          return next
-        })
-        toast.success(`「${result.shortName}」 광고대기실 카드를 만들고 타임랩스를 시작했습니다.`)
-        navigate('/admin/ad-inbox')
-      } catch (error) {
-        toast.error(error instanceof Error ? error.message : '광고대기실로 보내지 못했습니다.')
-      } finally {
-        setSendingBaToAdInboxByKey((prev) => ({ ...prev, [sendKey]: false }))
-      }
-    },
-    [baReelAfterIds, baReelPairKeys, groupHasBaReelJob, navigate],
-  )
-
   const getBeforeAfterProfileDraft = useCallback((group: SiteGroup): ShowroomCaseProfileDraftState => {
     const publicLabel = getGroupPublicLabel(group)
     const imageAliases = collectShowroomAliasNamesFromImages(group.images)
@@ -1839,10 +1768,6 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
             </p>
             {(() => {
               const hasReel = groupHasBaReelJob(group)
-              const sendKey = beforeImage
-                ? showroomBaReelPairKey(beforeImage.id, afterImage.id)
-                : `after-only:${afterImage.id}`
-              const isSending = sendingBaToAdInboxByKey[sendKey] === true
               return (
                 <div className="space-y-2 rounded-xl border border-neutral-200 bg-white px-3 py-2.5">
                   <div className="flex flex-wrap items-center gap-2">
@@ -1858,7 +1783,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                     )}
                     {isAfterOnly ? (
                       <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-800">
-                        After만 · Before 합성
+                        After만
                       </span>
                     ) : null}
                   </div>
@@ -1866,19 +1791,10 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                     type="button"
                     variant="outline"
                     className="h-10 w-full gap-1.5 text-sm"
-                    disabled={isSending}
-                    onClick={() => void handleSendBaToAdInbox(group, afterImage, beforeImage)}
+                    onClick={() => setSendToAdInboxGroup(group)}
                   >
-                    {isSending ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Video className="h-4 w-4" />
-                    )}
-                    {hasReel
-                      ? '광고대기실에 다시 만들기'
-                      : isAfterOnly
-                        ? 'Before 합성 후 대기실로'
-                        : '광고대기실로 보내기'}
+                    <Video className="h-4 w-4" />
+                    광고대기실로 보내기
                   </Button>
                 </div>
               )
@@ -3387,6 +3303,18 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
           </div>
         </DialogContent>
       </Dialog>
+      {showInternalControls ? (
+        <ShowroomSendToAdInboxDialog
+          open={sendToAdInboxGroup != null}
+          group={sendToAdInboxGroup}
+          onOpenChange={(next) => {
+            if (!next) setSendToAdInboxGroup(null)
+          }}
+          onSent={() => {
+            navigate('/admin/ad-inbox')
+          }}
+        />
+      ) : null}
       <ShowroomShortsCreateDialog
         open={shortsDialogOpen}
         onOpenChange={setShortsDialogOpen}

@@ -1340,6 +1340,99 @@ export async function listShowroomAfterOnlyGroupsForImport(
   return groups
 }
 
+/**
+ * 내부 쇼룸에서 고른 사진을 새 대기실 카드로만 보냅니다.
+ * 쇼룸 원본은 건드리지 않고, 같은 Cloudinary URL로 ad_inbox 자산을 추가합니다.
+ * 타임랩스/릴스 job은 만들지 않습니다.
+ */
+export async function createAdInboxSiteFromShowroomPhotos(input: {
+  images: ShowroomImageAsset[]
+  /** 대기실 카드명. 없으면 첫 사진 현장명 */
+  siteName?: string | null
+}): Promise<{ siteId: string; siteBatchKey: string; shortName: string; assetCount: number }> {
+  const images = input.images.filter((image) => Boolean(image?.id && (image.cloudinary_url || image.thumbnail_url)))
+  if (images.length === 0) {
+    throw new Error('보낼 사진을 선택하세요.')
+  }
+
+  const seed = images[0]
+  const shortName =
+    trimOrNull(input.siteName) ||
+    trimOrNull(seed.canonical_site_name) ||
+    trimOrNull(seed.site_name) ||
+    trimOrNull(seed.raw_site_name) ||
+    trimOrNull(seed.external_display_name) ||
+    '이름미상'
+
+  const photoDate =
+    images
+      .map((image) => (image.created_at ? image.created_at.slice(0, 10) : null))
+      .find((value) => Boolean(value)) || null
+
+  const site = await createAdInboxSite({ shortName, photoDate })
+  const siteBatchKey = buildAdInboxSiteGroupId(site.id)
+  let assetCount = 0
+  const errors: string[] = []
+
+  for (const image of images) {
+    const url = (image.cloudinary_url || image.thumbnail_url || '').trim()
+    if (!url) {
+      errors.push(`${image.id}: 이미지 URL이 없습니다.`)
+      continue
+    }
+    const role =
+      image.before_after_role === 'before' || image.before_after_role === 'after'
+        ? image.before_after_role
+        : undefined
+
+    const result = await insertImageAsset({
+      cloudinary_url: url,
+      thumbnail_url: image.thumbnail_url || url,
+      public_watermark_status: 'skipped',
+      site_name: shortName,
+      photo_date: photoDate || (image.created_at ? image.created_at.slice(0, 10) : null),
+      location: image.location,
+      business_type: image.business_type,
+      color_name: image.color_name,
+      product_name: image.product_name,
+      category: AD_INBOX_CATEGORY,
+      is_main: false,
+      is_consultation: false,
+      storage_type: 'cloudinary',
+      memo: '광고 대기실 · 쇼룸에서 선택 입고',
+      metadata: {
+        source: AD_INBOX_SOURCE,
+        ad_inbox: true,
+        ad_inbox_site_id: site.id,
+        before_after_role: role,
+        before_after_group_id: siteBatchKey,
+        ad_inbox_label: shortName,
+        imported_from_showroom_asset_id: image.id,
+        original_name: `showroom-${image.id}.jpg`,
+      },
+    })
+
+    if ('error' in result) {
+      errors.push(`${image.id}: ${result.error.message}`)
+      continue
+    }
+    assetCount += 1
+  }
+
+  if (assetCount === 0) {
+    throw new Error(errors[0] || '대기실로 사진을 보내지 못했습니다.')
+  }
+
+  await touchAdInboxSite(site.id)
+
+  return {
+    siteId: site.id,
+    siteBatchKey,
+    shortName: site.short_name,
+    assetCount,
+  }
+}
+
 /** 오픈쇼룸 BA → 쇼룸 현장명으로 새 대기실 카드 생성 후 job 연결 (사진 복사/승격 없음) */
 export async function createAdInboxTimelapseJobFromShowroom(input: {
   before: ShowroomImageAsset
