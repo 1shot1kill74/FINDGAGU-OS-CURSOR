@@ -629,10 +629,6 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
     () => resolveConcernBeforeAfterGroups(beforeAfterGroups, selectedConcernTag, concernIndustryFilter),
     [beforeAfterGroups, concernIndustryFilter, selectedConcernTag]
   )
-  const featuredBeforeAfterGroups = useMemo(
-    () => visibleBeforeAfterGroups.slice(0, 3),
-    [visibleBeforeAfterGroups]
-  )
   const concernBeforeAfterTotalPages = useMemo(
     () => Math.max(1, Math.ceil(concernBeforeAfterGroups.length / INDUSTRY_PAGE_SIZE)),
     [concernBeforeAfterGroups.length]
@@ -2722,29 +2718,69 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
           </section>
         )}
 
-        {showInternalControls && viewMode === 'industry' && featuredBeforeAfterGroups.length > 0 && (
-          <section className="mb-8 rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4 md:p-5">
-            <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+        {showInternalControls && viewMode === 'industry' && visibleBeforeAfterGroups.length > 0 && (
+          <section
+            id="showroom-before-after-section"
+            className="mb-8 rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4 md:p-5 scroll-mt-28"
+          >
+            <div className="flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
               <div>
-                <h2 className="text-base font-semibold text-neutral-900">대표 Before/After 사례</h2>
+                <h2 className="text-base font-semibold text-neutral-900">
+                  전후 비교 · 문제와 솔루션
+                </h2>
                 <p className="text-sm text-neutral-600">
-                  전후 컷과 함께, 현장 과제(문제 제기)와 적용 방향(해결)을 한 세트로 보여줍니다. 더 많은 사례는 아래 전후·솔루션 섹션으로 이동하세요.
+                  리뉴얼 전후를 비교하고, 등록된 현장은 과제(문제)와 적용 방향(솔루션) 요약을 함께 확인할 수 있습니다. 카드를 열면 상세 사진과 설명을 이어갈 수 있습니다.
                 </p>
               </div>
-              <Button
-                type="button"
-                variant="outline"
-                className="gap-2 shrink-0"
-                onClick={scrollToBeforeAfterSection}
-                aria-label="전체 전후 비교 및 문제·솔루션 사례 섹션으로 이동"
-              >
-                <FileCheck className="h-4 w-4" />
-                전후·솔루션 전체 보기
-              </Button>
+              <p className="text-xs text-neutral-500">{visibleBeforeAfterGroups.length}개 현장</p>
             </div>
-            <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
-              {featuredBeforeAfterGroups.map((group) => renderBeforeAfterCard(group))}
+            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+              {pagedBeforeAfterGroups.map((group) => renderBeforeAfterCard(group))}
             </div>
+            {beforeAfterTotalPages > 1 && (
+              <div className="mt-4 flex flex-wrap items-center justify-center gap-2 pt-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5"
+                  disabled={currentBeforeAfterPage <= 1}
+                  onClick={() => setBeforeAfterPage(currentBeforeAfterPage - 1)}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                  이전
+                </Button>
+                <div className="flex flex-wrap items-center justify-center gap-1">
+                  {Array.from({ length: beforeAfterTotalPages }, (_, index) => {
+                    const pageNumber = index + 1
+                    const isCurrent = pageNumber === currentBeforeAfterPage
+                    return (
+                      <Button
+                        key={`before-after-page-${pageNumber}`}
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className={cn('min-w-9 px-0', isCurrent && selectedBrowseButtonClass)}
+                        onClick={() => setBeforeAfterPage(pageNumber)}
+                      >
+                        {pageNumber}
+                      </Button>
+                    )
+                  })}
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5"
+                  disabled={currentBeforeAfterPage >= beforeAfterTotalPages}
+                  onClick={() => setBeforeAfterPage(currentBeforeAfterPage + 1)}
+                >
+                  다음
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
           </section>
         )}
 
@@ -3077,72 +3113,6 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                 </section>
               ))}
             </div>
-
-            {showInternalControls && visibleBeforeAfterGroups.length > 0 && (
-              <section
-                id="showroom-before-after-section"
-                className="mt-10 rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4 md:p-5 scroll-mt-28"
-              >
-                <div className="flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
-                  <div>
-                    <h3 className="text-base font-semibold text-neutral-900">
-                      전후 비교 · 문제와 솔루션
-                    </h3>
-                    <p className="text-sm text-neutral-600">
-                      리뉴얼 전후를 비교하고, 등록된 현장은 과제(문제)와 적용 방향(솔루션) 요약을 함께 확인할 수 있습니다. 카드를 열면 상세 사진과 설명을 이어갈 수 있습니다.
-                    </p>
-                  </div>
-                  <p className="text-xs text-neutral-500">{visibleBeforeAfterGroups.length}개 현장</p>
-                </div>
-                <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {pagedBeforeAfterGroups.map((group) => renderBeforeAfterCard(group))}
-                </div>
-                {beforeAfterTotalPages > 1 && (
-                  <div className="mt-4 flex flex-wrap items-center justify-center gap-2 pt-1">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="gap-1.5"
-                      disabled={currentBeforeAfterPage <= 1}
-                      onClick={() => setBeforeAfterPage(currentBeforeAfterPage - 1)}
-                    >
-                      <ChevronLeft className="h-4 w-4" />
-                      이전
-                    </Button>
-                    <div className="flex flex-wrap items-center justify-center gap-1">
-                      {Array.from({ length: beforeAfterTotalPages }, (_, index) => {
-                        const pageNumber = index + 1
-                        const isCurrent = pageNumber === currentBeforeAfterPage
-                        return (
-                          <Button
-                            key={`before-after-page-${pageNumber}`}
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className={cn('min-w-9 px-0', isCurrent && selectedBrowseButtonClass)}
-                            onClick={() => setBeforeAfterPage(pageNumber)}
-                          >
-                            {pageNumber}
-                          </Button>
-                        )
-                      })}
-                    </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="gap-1.5"
-                      disabled={currentBeforeAfterPage >= beforeAfterTotalPages}
-                      onClick={() => setBeforeAfterPage(currentBeforeAfterPage + 1)}
-                    >
-                      다음
-                      <ChevronRight className="h-4 w-4" />
-                    </Button>
-                  </div>
-                )}
-              </section>
-            )}
           </>
         )}
 
