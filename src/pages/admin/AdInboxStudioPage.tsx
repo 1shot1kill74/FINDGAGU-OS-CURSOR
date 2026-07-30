@@ -134,15 +134,32 @@ function isJobGenerating(job: AdInboxTimelapseJob) {
     kling === 'submitted' ||
     kling === 'processing' ||
     kling === 'segments_ready' ||
-    kling.startsWith('demo:')
+    kling.startsWith('demo:') ||
+    kling.startsWith('align:')
   )
 }
 
 function jobStatusLabel(job: AdInboxTimelapseJob) {
   if (job.status === 'failed' || job.kling_status === 'request_failed') return '실패'
-  if (job.kling_status === 'segments_ready') return '철거·설치 이어붙이는 중'
+  if (job.kling_status === 'segments_ready') {
+    const prompt = job.prompt_text ?? ''
+    return prompt.includes('[empty_room_v1]')
+      ? '구도 맞춤·설치 이어붙이는 중'
+      : '철거·설치 이어붙이는 중'
+  }
   if (isJobGenerating(job)) {
     const kling = job.kling_status ?? ''
+    if (kling.startsWith('align:')) {
+      if (/install:awaiting_start_frame/i.test(kling)) return '구도 맞춤 끝프레임 → 설치 시작 중'
+      if (/install:pending/i.test(kling) && !/align:(succeed|completed)/i.test(kling)) {
+        return '구도 맞춤 생성 중'
+      }
+      const alignDone = /align:(succeed|completed)/i.test(kling)
+      const installDone = /install:(succeed|completed)/i.test(kling)
+      if (alignDone && !installDone) return '빈 방 설치 생성 중'
+      if (!alignDone) return '구도 맞춤 생성 중'
+      return '구도 맞춤·설치 이어붙이는 중'
+    }
     if (kling.startsWith('demo:')) {
       if (/install:awaiting_start_frame/i.test(kling)) return '철거 끝프레임 → 설치 시작 중'
       if (/install:pending/i.test(kling) && !/demo:(succeed|completed)/i.test(kling)) return '철거 5초 생성 중'
@@ -216,11 +233,19 @@ function generatingHint(job: AdInboxTimelapseJob) {
   if (job.status === 'failed' || job.kling_status === 'request_failed') {
     return '생성에 실패했습니다. 아래에서 다시 요청하세요.'
   }
+  const emptyRoom = (job.prompt_text ?? '').includes('[empty_room_v1]')
   if (job.kling_status === 'segments_ready') {
-    return '철거·설치 원본이 준비됐습니다. 워커가 10초로 이어붙이는 중입니다.'
+    return emptyRoom
+      ? '구도 맞춤·설치 원본이 준비됐습니다. 워커가 이어붙이는 중입니다.'
+      : '철거·설치 원본이 준비됐습니다. 워커가 10초로 이어붙이는 중입니다.'
   }
   if (/install:awaiting_start_frame/i.test(job.kling_status ?? '')) {
-    return '철거가 끝났습니다. 마지막 장면을 뽑아 설치 5초를 시작하는 중입니다.'
+    return emptyRoom
+      ? '구도 맞춤이 끝났습니다. 마지막 장면을 뽑아 설치 8초를 시작하는 중입니다.'
+      : '철거가 끝났습니다. 마지막 장면을 뽑아 설치 5초를 시작하는 중입니다.'
+  }
+  if ((job.kling_status ?? '').startsWith('align:')) {
+    return '구도 맞춤 3초 → (마지막 프레임) → 설치 8초 순서로 만들고, 끝나면 이어붙입니다.'
   }
   if ((job.kling_status ?? '').startsWith('demo:')) {
     return '철거 5초 → (마지막 프레임) → 설치 5초 순서로 만들고, 끝나면 이어붙입니다.'
@@ -638,7 +663,7 @@ export default function AdInboxStudioPage() {
     }
   }
 
-  const handleCreateTimelapse = async () => {
+  const handleCreateTimelapse = async (mode: 'standard' | 'empty_room' = 'standard') => {
     if (!beforeAsset || !afterAsset) {
       toast.error('Before 1장과 After 1장을 선택하세요.')
       return
@@ -648,9 +673,14 @@ export default function AdInboxStudioPage() {
       const { jobId } = await createAdInboxTimelapseJob({
         before: beforeAsset,
         after: afterAsset,
+        mode,
       })
       await adoptCreatedTimelapseJob(jobId)
-      toast.success('클링 생성을 시작했습니다. 아래에서 원본을 검수하세요.')
+      toast.success(
+        mode === 'empty_room'
+          ? '빈 방 타임랩스(구도 맞춤→설치)를 시작했습니다. 아래에서 원본을 검수하세요.'
+          : '클링 생성을 시작했습니다. 아래에서 원본을 검수하세요.',
+      )
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '타임랩스 생성 실패')
     } finally {
@@ -1429,7 +1459,7 @@ export default function AdInboxStudioPage() {
                     </Button>
                     <Button
                       type="button"
-                      onClick={() => void handleCreateTimelapse()}
+                      onClick={() => void handleCreateTimelapse('standard')}
                       disabled={creating || !beforeAsset || !afterAsset}
                     >
                       {creating ? (
@@ -1439,9 +1469,23 @@ export default function AdInboxStudioPage() {
                       )}
                       타임랩스 만들기
                     </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => void handleCreateTimelapse('empty_room')}
+                      disabled={creating || !beforeAsset || !afterAsset}
+                    >
+                      {creating ? (
+                        <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Video className="mr-1.5 h-4 w-4" />
+                      )}
+                      빈 방 타임랩스
+                    </Button>
                   </div>
                   <p className="mt-2 text-xs text-neutral-500">
                     사람이 찍힌 Before는 타임랩스 전에 「사람 제거 보정」→ 새 컷 확인 → 그다음 타임랩스.
+                    Before가 이미 빈 방이면 「빈 방 타임랩스」(구도 맞춤 후 설치만)를 쓰세요.
                   </p>
 
                   <div className="mt-6 rounded-2xl border border-neutral-200 bg-neutral-50/80 p-4">

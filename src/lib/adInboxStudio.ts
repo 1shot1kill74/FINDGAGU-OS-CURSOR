@@ -31,7 +31,10 @@ import {
   type ShowroomShortsPublishStatus,
   type ShowroomShortsTargetRecord,
 } from '@/lib/showroomShorts'
-import { SHOWROOM_SHORTS_TIMELAPSE_PROMPT } from '@/lib/showroomShortsTimelapsePrompt'
+import {
+  SHOWROOM_SHORTS_EMPTY_ROOM_TIMELAPSE_PROMPT,
+  SHOWROOM_SHORTS_TIMELAPSE_PROMPT,
+} from '@/lib/showroomShortsTimelapsePrompt'
 
 export type { ShowroomShortsJobRecord as AdInboxTimelapseJob }
 
@@ -1076,6 +1079,8 @@ export async function createAdInboxTimelapseJob(input: {
   after: AdInboxAsset
   channels?: ShowroomShortsChannel[]
   promptText?: string
+  /** empty_room: 구도 맞춤 + 설치만 (철거 없음) */
+  mode?: 'standard' | 'empty_room'
 }): Promise<{ jobId: string }> {
   const images: ShowroomImageAsset[] = [input.before, input.after]
   const selection = validateBeforeAfterSelection(images)
@@ -1083,10 +1088,17 @@ export async function createAdInboxTimelapseJob(input: {
     throw new Error(selection.message)
   }
 
+  const emptyRoom = input.mode === 'empty_room'
+  const promptText = (
+    input.promptText ||
+    (emptyRoom ? SHOWROOM_SHORTS_EMPTY_ROOM_TIMELAPSE_PROMPT : AD_INBOX_DEFAULT_PROMPT)
+  ).trim()
+
   const created = await createShowroomShortsJob({
-    promptText: (input.promptText || AD_INBOX_DEFAULT_PROMPT).trim(),
+    promptText,
     channels: input.channels?.length ? input.channels : [...SHOWROOM_SHORTS_CHANNELS],
     images,
+    timelapseMode: emptyRoom ? 'empty_room' : 'standard',
   })
 
   return { jobId: created.job.id }

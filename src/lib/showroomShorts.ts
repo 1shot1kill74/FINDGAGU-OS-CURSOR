@@ -312,12 +312,16 @@ export function buildShowroomShortsDraft(images: ShowroomImageAsset[]) {
   }
 }
 
+export type ShowroomShortsTimelapseMode = 'standard' | 'empty_room'
+
 export async function createShowroomShortsJob(payload: {
   promptText: string
   channels: ShowroomShortsChannel[]
   images: ShowroomImageAsset[]
   /** 있으면 selection.groupKey 대신 사용 (광고 대기실 현장 카드 키 등) */
   beforeAfterGroupKey?: string
+  /** empty_room: 구도 맞춤 3초 + 설치 8초 (철거 없음) */
+  timelapseMode?: ShowroomShortsTimelapseMode
 }) {
   const selection = validateBeforeAfterSelection(payload.images)
   if (!selection.ok) {
@@ -333,6 +337,7 @@ export async function createShowroomShortsJob(payload: {
   const draft = buildShowroomShortsDraft(payload.images)
   const now = new Date().toISOString()
   const groupKeyOverride = payload.beforeAfterGroupKey?.trim() || null
+  const emptyRoom = payload.timelapseMode === 'empty_room'
 
   const { data: authData } = await supabase.auth.getUser()
   const createdBy = authData.user?.id ?? null
@@ -350,7 +355,7 @@ export async function createShowroomShortsJob(payload: {
       requested_channels: payload.channels,
       source_aspect_ratio: '16:9',
       final_aspect_ratio: '9:16',
-      duration_seconds: 10,
+      duration_seconds: emptyRoom ? 11 : 10,
       is_muted: true,
       created_by: createdBy,
       updated_at: now,

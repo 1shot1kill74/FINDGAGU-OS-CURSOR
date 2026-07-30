@@ -2,6 +2,9 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from "npm:@supabase/supabase-js@2"
 import {
   encodeSplitState,
+  getFirstSegment,
+  getFirstSegmentLabel,
+  isAlignInstallSplit,
   isSplitReady,
   needsInstallStart,
   parseSplitState,
@@ -352,19 +355,21 @@ Deno.serve(async (req) => {
         return { response, rawText, parsed, activeBaseUrl, requestPath }
       }
 
-      const demoPoll = await pollSegment(splitState.demo.taskId)
+      const first = getFirstSegment(splitState)
+      const firstLabel = getFirstSegmentLabel(splitState)
+      const firstPoll = await pollSegment(first.taskId)
       const installPoll = splitState.install.taskId
         ? await pollSegment(splitState.install.taskId)
         : null
 
-      if (!demoPoll.response.ok || (installPoll && !installPoll.response.ok)) {
-        const failed = !demoPoll.response.ok ? demoPoll : installPoll!
+      if (!firstPoll.response.ok || (installPoll && !installPoll.response.ok)) {
+        const failed = !firstPoll.response.ok ? firstPoll : installPoll!
         await insertLog(supabase, {
           jobId,
           stage: "kling_poll_failed",
           message: `분할 원본 상태 조회 실패 (${failed.response.status})`,
           payload: {
-            demo: demoPoll.parsed ?? { rawText: demoPoll.rawText },
+            [firstLabel]: firstPoll.parsed ?? { rawText: firstPoll.rawText },
             install: installPoll ? (installPoll.parsed ?? { rawText: installPoll.rawText }) : null,
           },
         })
@@ -376,47 +381,88 @@ Deno.serve(async (req) => {
         })
       }
 
-      const next: SplitKlingState = {
-        mode: "split_demo_install_v1",
-        startFrameUrl: splitState.startFrameUrl ?? null,
-        demo: {
-          taskId: splitState.demo.taskId,
-          status: extractStatus(demoPoll.parsed),
-          url: splitState.demo.url ?? null,
-        },
-        install: {
-          taskId: splitState.install.taskId,
-          status: installPoll
-            ? extractStatus(installPoll.parsed)
-            : (splitState.install.status || "pending"),
-          url: splitState.install.url ?? null,
-        },
-      }
+      const next: SplitKlingState = isAlignInstallSplit(splitState)
+        ? {
+          mode: "split_align_install_v1",
+          startFrameUrl: splitState.startFrameUrl ?? null,
+          align: {
+            taskId: splitState.align.taskId,
+            status: extractStatus(firstPoll.parsed),
+            url: splitState.align.url ?? null,
+            duration: splitState.align.duration,
+          },
+          install: {
+            taskId: splitState.install.taskId,
+            status: installPoll
+              ? extractStatus(installPoll.parsed)
+              : (splitState.install.status || "pending"),
+            url: splitState.install.url ?? null,
+            duration: splitState.install.duration,
+          },
+        }
+        : {
+          mode: "split_demo_install_v1",
+          startFrameUrl: splitState.startFrameUrl ?? null,
+          demo: {
+            taskId: splitState.demo.taskId,
+            status: extractStatus(firstPoll.parsed),
+            url: splitState.demo.url ?? null,
+            duration: splitState.demo.duration,
+          },
+          install: {
+            taskId: splitState.install.taskId,
+            status: installPoll
+              ? extractStatus(installPoll.parsed)
+              : (splitState.install.status || "pending"),
+            url: splitState.install.url ?? null,
+            duration: splitState.install.duration,
+          },
+        }
 
-      const persistIfReady = async (label: "demo" | "install", status: string, remoteUrl: string | null) => {
+      const persistIfReady = async (
+        label: "demo" | "align" | "install",
+        status: string,
+        remoteUrl: string | null,
+        existingUrl: string | null | undefined,
+      ) => {
         if (mapJobStatus(status) !== "generated" || !remoteUrl) return null
-        if (label === "demo" && next.demo.url) return next.demo.url
-        if (label === "install" && next.install.url) return next.install.url
+        if (existingUrl) return existingUrl
         const persisted = await persistSourceVideoToStorage(supabase, {
           jobId,
           sourceVideoUrl: remoteUrl,
           segmentLabel: label,
         })
+        const labelKo =
+          label === "install" ? "설치" : label === "align" ? "구도 맞춤" : "철거"
         await insertLog(supabase, {
           jobId,
           stage: "source_segment_persisted",
-          message: `${label === "demo" ? "철거" : "설치"} 5초 원본을 Storage에 저장했습니다.`,
+          message: `${labelKo} 원본을 Storage에 저장했습니다.`,
           payload: { label, original: remoteUrl, persisted },
         })
         return persisted
       }
 
       try {
-        const demoRemote = extractVideoUrl(demoPoll.parsed)
+        const firstRemote = extractVideoUrl(firstPoll.parsed)
         const installRemote = installPoll ? extractVideoUrl(installPoll.parsed) : null
-        const demoUrl = await persistIfReady("demo", next.demo.status || "", demoRemote)
-        const installUrl = await persistIfReady("install", next.install.status || "", installRemote)
-        if (demoUrl) next.demo.url = demoUrl
+        const firstSeg = getFirstSegment(next)
+        const firstUrl = await persistIfReady(
+          firstLabel,
+          firstSeg.status || "",
+          firstRemote,
+          firstSeg.url,
+        )
+        const installUrl = await persistIfReady(
+          "install",
+          next.install.status || "",
+          installRemote,
+          next.install.url,
+        )
+        if (firstUrl) {
+          if (isAlignInstallSplit(next)) next.align.url = firstUrl
+          else next.demo.url = firstUrl
+        }
         if (installUrl) next.install.url = installUrl
       } catch (error) {
         const message = error instanceof Error ? error.message : "분할 원본 Storage 복사 실패"
@@ -428,12 +474,13 @@ Deno.serve(async (req) => {
         return json({ ok: false, message }, 500)
       }
 
-      const demoFailed = mapJobStatus(next.demo.status || "") === "failed"
+      const firstFailed = mapJobStatus(getFirstSegment(next).status || "") === "failed"
       const installFailed = next.install.taskId
         ? mapJobStatus(next.install.status || "") === "failed"
         : false
       const awaitingInstall = needsInstallStart(next)
       const ready = isSplitReady(next)
+      const emptyRoom = isAlignInstallSplit(next)
 
       let status = "generating"
       let installStatusLabel = next.install.taskId
@@ -441,8 +488,8 @@ Deno.serve(async (req) => {
         : awaitingInstall
           ? "awaiting_start_frame"
           : "pending"
-      let klingStatus = `demo:${next.demo.status || "processing"}|install:${installStatusLabel}`
-      if (demoFailed || installFailed) {
+      let klingStatus = `${firstLabel}:${getFirstSegment(next).status || "processing"}|install:${installStatusLabel}`
+      if (firstFailed || installFailed) {
         status = "failed"
         klingStatus = "request_failed"
       } else if (ready) {
@@ -466,9 +513,13 @@ Deno.serve(async (req) => {
         jobId,
         stage: "kling_polled_split",
         message: ready
-          ? "철거·설치 세그먼트가 준비됐습니다. 이어붙이기를 진행합니다."
+          ? emptyRoom
+            ? "구도 맞춤·설치 세그먼트가 준비됐습니다. 이어붙이기를 진행합니다."
+            : "철거·설치 세그먼트가 준비됐습니다. 이어붙이기를 진행합니다."
           : awaitingInstall
-            ? "철거 원본이 준비됐습니다. 마지막 프레임으로 설치 생성을 시작합니다."
+            ? emptyRoom
+              ? "구도 맞춤 원본이 준비됐습니다. 마지막 프레임으로 설치 생성을 시작합니다."
+              : "철거 원본이 준비됐습니다. 마지막 프레임으로 설치 생성을 시작합니다."
             : `분할 생성 진행 중 (${klingStatus})`,
         payload: { split: next },
       })
@@ -484,12 +535,18 @@ Deno.serve(async (req) => {
         message: ready
           ? getString(job.source_video_url)
             ? "이어붙인 원본이 준비됐습니다."
-            : "철거·설치 원본이 준비됐습니다. 워커가 이어붙입니다."
+            : emptyRoom
+              ? "구도 맞춤·설치 원본이 준비됐습니다. 워커가 이어붙입니다."
+              : "철거·설치 원본이 준비됐습니다. 워커가 이어붙입니다."
           : awaitingInstall
-            ? "철거가 끝났습니다. 워커가 마지막 프레임으로 설치를 요청합니다."
+            ? emptyRoom
+              ? "구도 맞춤이 끝났습니다. 워커가 마지막 프레임으로 설치를 요청합니다."
+              : "철거가 끝났습니다. 워커가 마지막 프레임으로 설치를 요청합니다."
           : status === "failed"
             ? "분할 생성 중 한쪽이 실패했습니다."
-            : "철거/설치 생성이 아직 진행 중입니다.",
+            : emptyRoom
+              ? "구도 맞춤/설치 생성이 아직 진행 중입니다."
+              : "철거/설치 생성이 아직 진행 중입니다.",
       })
     }
 

@@ -1,5 +1,8 @@
 /** Keep in sync with src/lib/showroomShortsTimelapsePrompt.ts */
 export const KLING_SPLIT_SEGMENT_SECONDS = 5
+export const KLING_EMPTY_ALIGN_SECONDS = 3
+export const KLING_EMPTY_INSTALL_SECONDS = 8
+export const EMPTY_ROOM_TIMELAPSE_MARKER = "[empty_room_v1]"
 
 /** API `negative_prompt` 전용 — 비상구/워터마크/모프 억제 */
 export const SHOWROOM_SHORTS_COMMON_NEGATIVE_PROMPT = [
@@ -42,6 +45,25 @@ export const SHOWROOM_SHORTS_INSTALL_NEGATIVE_PROMPT = [
   "magical remodel",
 ].join(", ")
 
+export const SHOWROOM_SHORTS_ALIGN_NEGATIVE_PROMPT = [
+  SHOWROOM_SHORTS_COMMON_NEGATIVE_PROMPT,
+  "demolition",
+  "dismantling furniture",
+  "workers carrying out desks",
+  "debris",
+  "construction mess",
+  "installing new furniture",
+  "finished after interior",
+  "after image look",
+].join(", ")
+
+export const SHOWROOM_SHORTS_EMPTY_INSTALL_NEGATIVE_PROMPT = [
+  SHOWROOM_SHORTS_INSTALL_NEGATIVE_PROMPT,
+  "fake demolition",
+  "clearing already empty room",
+  "removing furniture that is not there",
+].join(", ")
+
 export const SHOWROOM_SHORTS_DEMOLISH_PROMPT = `Create a realistic 5-second renovation DEMOLITION timelapse from the reference BEFORE image only.
 
 Managed study cafe / learning space. Fixed wide camera matching the photo. Photoreal indoor light.
@@ -79,3 +101,43 @@ Rules:
 - no morph, no furniture rising from floor, no popping into existence
 - do NOT show demolition of old furniture
 - do NOT add exit signs, watermarks, logos, or UI icons`
+
+export const SHOWROOM_SHORTS_ALIGN_PROMPT = `Create a realistic 3-second CAMERA FRAMING settle from the reference BEFORE image only.
+
+The BEFORE room is ALREADY EMPTY / CLEARED. Managed study cafe / learning space. Photoreal indoor light.
+
+Show ONLY a subtle camera/framing alignment:
+1) start exactly on the BEFORE empty room
+2) very slight pan/tilt/zoom to settle composition as if matching the final install camera
+3) end on a still empty room — same walls, floor, windows; still no furniture
+
+Rules:
+- room stays empty the entire time
+- NO demolition, NO workers removing furniture, NO debris, NO fake clear-out
+- NO installing desks/shelves; NO jump to a finished after look
+- keep motion minimal and calm (about 2–3 seconds of settle)
+- do NOT add exit signs, watermarks, logos, or UI icons`
+
+export const SHOWROOM_SHORTS_EMPTY_INSTALL_PROMPT = `Create a realistic 8-second renovation INSTALLATION timelapse.
+START image = already-empty room (last frame after framing settle). END image = finished AFTER. Never start from AFTER.
+
+Managed study cafe. Fixed wide camera matching the photos. Photoreal indoor light.
+
+Show ONLY installation with workers visible the whole time:
+1) empty cleared room (same camera as start image)
+2) workers carry in new desks, partitions, shelves
+3) workers set down, screw, and assemble every piece by hand
+4) workers adjust layout and clean
+5) final frame matches the AFTER image
+
+Rules:
+- keep the start-frame room geometry; only add furniture via workers
+- workers on screen for all major changes
+- every piece carried/assembled by people — never self-assemble
+- no morph, no furniture rising from floor, no popping into existence
+- do NOT show demolition or clearing of old furniture (room starts empty)
+- do NOT add exit signs, watermarks, logos, or UI icons`
+
+export function isEmptyRoomTimelapsePrompt(promptText: string | null | undefined): boolean {
+  return (promptText ?? "").includes(EMPTY_ROOM_TIMELAPSE_MARKER)
+}

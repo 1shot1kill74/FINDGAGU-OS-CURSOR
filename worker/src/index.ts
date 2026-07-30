@@ -105,13 +105,31 @@ type SplitSegmentState = {
   taskId: string
   status?: string
   url?: string | null
+  duration?: number
 }
 
-type SplitKlingState = {
+type DemoInstallSplitState = {
   mode: 'split_demo_install_v1'
   startFrameUrl?: string | null
   demo: SplitSegmentState
   install: SplitSegmentState
+}
+
+type AlignInstallSplitState = {
+  mode: 'split_align_install_v1'
+  startFrameUrl?: string | null
+  align: SplitSegmentState
+  install: SplitSegmentState
+}
+
+type SplitKlingState = DemoInstallSplitState | AlignInstallSplitState
+
+function getSplitFirstSegment(state: SplitKlingState): SplitSegmentState {
+  return state.mode === 'split_align_install_v1' ? state.align : state.demo
+}
+
+function isAlignSplit(state: SplitKlingState): state is AlignInstallSplitState {
+  return state.mode === 'split_align_install_v1'
 }
 let showroomGenerationPollRunning = false
 
@@ -432,31 +450,53 @@ async function requestShowroomShortsPoll(jobId: string) {
   return responseBody
 }
 
+function parseSplitSegment(raw: unknown): SplitSegmentState | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const row = raw as Record<string, unknown>
+  const taskId = typeof row.taskId === 'string' ? row.taskId.trim() : ''
+  if (!taskId) return null
+  return {
+    taskId,
+    status: typeof row.status === 'string' ? row.status : undefined,
+    url: typeof row.url === 'string' ? row.url : null,
+    duration: typeof row.duration === 'number' && Number.isFinite(row.duration) ? row.duration : undefined,
+  }
+}
+
 function parseSplitKlingState(raw: unknown): SplitKlingState | null {
   if (typeof raw !== 'string' || !raw.trim().startsWith('{')) return null
   try {
-    const parsed = JSON.parse(raw) as Partial<SplitKlingState>
-    if (parsed?.mode !== 'split_demo_install_v1') return null
-    const demoTaskId = typeof parsed.demo?.taskId === 'string' ? parsed.demo.taskId.trim() : ''
-    if (!demoTaskId) return null
-    const installTaskId = typeof parsed.install?.taskId === 'string' ? parsed.install.taskId.trim() : ''
-    return {
-      mode: 'split_demo_install_v1',
-      startFrameUrl:
-        typeof parsed.startFrameUrl === 'string' && parsed.startFrameUrl.trim()
-          ? parsed.startFrameUrl.trim()
-          : null,
-      demo: {
-        taskId: demoTaskId,
-        status: typeof parsed.demo?.status === 'string' ? parsed.demo.status : undefined,
-        url: typeof parsed.demo?.url === 'string' ? parsed.demo.url : null,
-      },
-      install: {
-        taskId: installTaskId,
-        status: typeof parsed.install?.status === 'string' ? parsed.install.status : undefined,
-        url: typeof parsed.install?.url === 'string' ? parsed.install.url : null,
-      },
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    const mode = parsed?.mode
+    const startFrameUrl =
+      typeof parsed.startFrameUrl === 'string' && parsed.startFrameUrl.trim()
+        ? parsed.startFrameUrl.trim()
+        : null
+    const install = parseSplitSegment(parsed.install) ?? { taskId: '', status: 'pending', url: null }
+
+    if (mode === 'split_align_install_v1') {
+      const align = parseSplitSegment(parsed.align)
+      if (!align) return null
+      return {
+        mode: 'split_align_install_v1',
+        startFrameUrl,
+        align,
+        install,
+      }
     }
+
+    if (mode === 'split_demo_install_v1') {
+      const demo = parseSplitSegment(parsed.demo)
+      if (!demo) return null
+      return {
+        mode: 'split_demo_install_v1',
+        startFrameUrl,
+        demo,
+        install,
+      }
+    }
+
+    return null
   } catch {
     return null
   }
@@ -481,7 +521,7 @@ async function requestShowroomShortsCreateInstall(jobId: string, startImageUrl: 
   return responseBody
 }
 
-/** 철거 원본이 있으면 마지막 프레임을 뽑아 설치 5초 클링을 요청 */
+/** 첫 세그먼트(철거/구도 맞춤) 원본이 있으면 마지막 프레임을 뽑아 설치 클링을 요청 */
 async function startInstallFromDemoLastFrameIfReady(jobId: string) {
   if (startingInstallJobs.has(jobId)) return
   startingInstallJobs.add(jobId)
@@ -501,23 +541,31 @@ async function startInstallFromDemoLastFrameIfReady(jobId: string) {
     if (getString(job.source_video_url)) return
 
     const split = parseSplitKlingState(job.kling_job_id)
-    const demoUrl = getString(split?.demo.url)
-    if (!split || !demoUrl || getString(split.install.taskId)) return
+    if (!split || getString(split.install.taskId)) return
+    const first = getSplitFirstSegment(split)
+    const firstUrl = getString(first.url)
+    if (!firstUrl) return
 
-    console.log(`[showroom-shorts-worker] extract demo last frame job=${jobId}`)
-    await insertLog(jobId, 'split_install_frame_started', '철거 마지막 프레임을 추출해 설치를 시작합니다.', {
-      demo_url: demoUrl,
-    })
+    const emptyRoom = isAlignSplit(split)
+    const firstLabel = emptyRoom ? '구도 맞춤' : '철거'
+    console.log(`[showroom-shorts-worker] extract ${emptyRoom ? 'align' : 'demo'} last frame job=${jobId}`)
+    await insertLog(
+      jobId,
+      'split_install_frame_started',
+      `${firstLabel} 마지막 프레임을 추출해 설치를 시작합니다.`,
+      { first_url: firstUrl, mode: split.mode },
+    )
 
     await fs.mkdir(workDir, { recursive: true })
-    const demoPath = path.join(workDir, 'demo.mp4')
-    const framePath = path.join(workDir, 'demo-last.jpg')
-    await downloadToFile(demoUrl, demoPath)
+    const firstPath = path.join(workDir, 'first.mp4')
+    const framePath = path.join(workDir, 'first-last.jpg')
+    await downloadToFile(firstUrl, firstPath)
 
+    const seekNearEnd = Math.max(0, (first.duration || (emptyRoom ? 3 : 5)) - 0.1)
     const extractAttempts = [
-      ['-y', '-sseof', '-0.05', '-i', demoPath, '-frames:v', '1', '-q:v', '2', framePath],
-      ['-y', '-ss', '4.9', '-i', demoPath, '-frames:v', '1', '-q:v', '2', framePath],
-      ['-y', '-sseof', '-1', '-i', demoPath, '-frames:v', '1', '-q:v', '2', framePath],
+      ['-y', '-sseof', '-0.05', '-i', firstPath, '-frames:v', '1', '-q:v', '2', framePath],
+      ['-y', '-ss', String(seekNearEnd), '-i', firstPath, '-frames:v', '1', '-q:v', '2', framePath],
+      ['-y', '-sseof', '-1', '-i', firstPath, '-frames:v', '1', '-q:v', '2', framePath],
     ] as const
 
     let extracted = false
@@ -532,24 +580,27 @@ async function startInstallFromDemoLastFrameIfReady(jobId: string) {
       }
     }
     if (!extracted) {
-      throw new Error('철거 영상 마지막 프레임 추출에 실패했습니다.')
+      throw new Error(`${firstLabel} 영상 마지막 프레임 추출에 실패했습니다.`)
     }
 
     const frameBuffer = await fs.readFile(framePath)
-    const objectPath = `source/${jobId}/demo-last-frame-${Date.now()}.jpg`
+    const objectPath = `source/${jobId}/${emptyRoom ? 'align' : 'demo'}-last-frame-${Date.now()}.jpg`
     const { error: uploadError } = await supabase.storage.from(VIDEO_BUCKET).upload(objectPath, frameBuffer, {
       contentType: 'image/jpeg',
       upsert: true,
     })
     if (uploadError) {
-      throw new Error(`철거 마지막 프레임 업로드 실패: ${uploadError.message}`)
+      throw new Error(`${firstLabel} 마지막 프레임 업로드 실패: ${uploadError.message}`)
     }
 
     const startImageUrl = supabase.storage.from(VIDEO_BUCKET).getPublicUrl(objectPath).data.publicUrl
     await requestShowroomShortsCreateInstall(jobId, startImageUrl)
-    await insertLog(jobId, 'split_install_requested', '철거 마지막 프레임으로 설치 5초를 요청했습니다.', {
-      start_image_url: startImageUrl,
-    })
+    await insertLog(
+      jobId,
+      'split_install_requested',
+      `${firstLabel} 마지막 프레임으로 설치를 요청했습니다.`,
+      { start_image_url: startImageUrl, mode: split.mode },
+    )
     console.log(`[showroom-shorts-worker] install create requested job=${jobId}`)
   } catch (error) {
     const message = error instanceof Error ? error.message : '설치 시작 프레임 처리에 실패했습니다.'
@@ -561,7 +612,7 @@ async function startInstallFromDemoLastFrameIfReady(jobId: string) {
   }
 }
 
-/** 철거 5초 + 설치 5초가 둘 다 준비되면 ffmpeg로 이어붙여 source_video_url에 저장 */
+/** 첫 세그먼트 + 설치가 둘 다 준비되면 ffmpeg로 이어붙여 source_video_url에 저장 */
 async function stitchSplitSegmentsIfReady(jobId: string) {
   if (stitchingSplitJobs.has(jobId)) return
   stitchingSplitJobs.add(jobId)
@@ -581,27 +632,41 @@ async function stitchSplitSegmentsIfReady(jobId: string) {
     if (getString(job.source_video_url)) return
 
     const split = parseSplitKlingState(job.kling_job_id)
-    const demoUrl = getString(split?.demo.url)
-    const installUrl = getString(split?.install.url)
-    if (!split || !demoUrl || !installUrl) return
+    if (!split) return
+    const first = getSplitFirstSegment(split)
+    const firstUrl = getString(first.url)
+    const installUrl = getString(split.install.url)
+    if (!firstUrl || !installUrl) return
 
-    console.log(`[showroom-shorts-worker] split stitch start job=${jobId}`)
-    await insertLog(jobId, 'split_stitch_started', '철거·설치 5초 원본을 이어붙이기 시작했습니다.', {
-      demo_url: demoUrl,
-      install_url: installUrl,
-    })
+    const emptyRoom = isAlignSplit(split)
+    const totalDuration =
+      (first.duration || (emptyRoom ? 3 : 5)) + (split.install.duration || (emptyRoom ? 8 : 5))
+
+    console.log(`[showroom-shorts-worker] split stitch start job=${jobId} mode=${split.mode}`)
+    await insertLog(
+      jobId,
+      'split_stitch_started',
+      emptyRoom
+        ? '구도 맞춤·설치 원본을 이어붙이기 시작했습니다.'
+        : '철거·설치 원본을 이어붙이기 시작했습니다.',
+      {
+        first_url: firstUrl,
+        install_url: installUrl,
+        mode: split.mode,
+      },
+    )
 
     await fs.mkdir(workDir, { recursive: true })
-    const demoPath = path.join(workDir, 'demo.mp4')
+    const firstPath = path.join(workDir, 'first.mp4')
     const installPath = path.join(workDir, 'install.mp4')
     const concatListPath = path.join(workDir, 'concat.txt')
     const outputPath = path.join(workDir, 'stitched.mp4')
 
-    await downloadToFile(demoUrl, demoPath)
+    await downloadToFile(firstUrl, firstPath)
     await downloadToFile(installUrl, installPath)
     await fs.writeFile(
       concatListPath,
-      [`file '${demoPath.replace(/'/g, "'\\''")}'`, `file '${installPath.replace(/'/g, "'\\''")}'`].join('\n')
+      [`file '${firstPath.replace(/'/g, "'\\''")}'`, `file '${installPath.replace(/'/g, "'\\''")}'`].join('\n')
     )
 
     try {
@@ -622,7 +687,7 @@ async function stitchSplitSegmentsIfReady(jobId: string) {
       await runCommand('ffmpeg', [
         '-y',
         '-i',
-        demoPath,
+        firstPath,
         '-i',
         installPath,
         '-filter_complex',
@@ -656,14 +721,23 @@ async function stitchSplitSegmentsIfReady(jobId: string) {
         status: 'generated',
         kling_status: 'succeed',
         source_video_url: publicUrl,
-        duration_seconds: 10,
+        duration_seconds: totalDuration,
         updated_at: new Date().toISOString(),
       })
       .eq('id', jobId)
 
-    await insertLog(jobId, 'split_stitch_completed', '철거·설치 원본을 이어붙여 10초 원본을 만들었습니다.', {
-      source_video_url: publicUrl,
-    })
+    await insertLog(
+      jobId,
+      'split_stitch_completed',
+      emptyRoom
+        ? `구도 맞춤·설치 원본을 이어붙여 약 ${totalDuration}초 원본을 만들었습니다.`
+        : `철거·설치 원본을 이어붙여 약 ${totalDuration}초 원본을 만들었습니다.`,
+      {
+        source_video_url: publicUrl,
+        duration_seconds: totalDuration,
+        mode: split.mode,
+      },
+    )
     console.log(`[showroom-shorts-worker] split stitch done job=${jobId}`)
   } catch (error) {
     const message = error instanceof Error ? error.message : '분할 원본 이어붙이기에 실패했습니다.'
