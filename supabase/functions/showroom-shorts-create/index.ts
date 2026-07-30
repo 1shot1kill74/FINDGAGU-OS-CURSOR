@@ -370,18 +370,19 @@ Deno.serve(async (req) => {
         }, 400)
       }
 
-      const installSeconds = isAlignInstallSplit(existing)
+      const emptyInstall = emptyRoom || isAlignInstallSplit(existing)
+      const installSeconds = emptyInstall
         ? (existing.install.duration || KLING_EMPTY_INSTALL_SECONDS)
-        : KLING_SPLIT_SEGMENT_SECONDS
+        : (existing.install.duration || KLING_SPLIT_SEGMENT_SECONDS)
       const installBody = buildKlingRequestBody({
         mode: apiMode,
         modelName: klingModelName,
         beforeUrl: startImageUrl,
         afterUrl,
-        promptText: isAlignInstallSplit(existing)
+        promptText: emptyInstall
           ? SHOWROOM_SHORTS_EMPTY_INSTALL_PROMPT
           : SHOWROOM_SHORTS_INSTALL_PROMPT,
-        negativePrompt: isAlignInstallSplit(existing)
+        negativePrompt: emptyInstall
           ? SHOWROOM_SHORTS_EMPTY_INSTALL_NEGATIVE_PROMPT
           : SHOWROOM_SHORTS_INSTALL_NEGATIVE_PROMPT,
         durationSeconds: installSeconds,
@@ -415,7 +416,7 @@ Deno.serve(async (req) => {
             start_image_url: startImageUrl,
             request_path: requestPath,
             model_name: klingModelName,
-            empty_room: isAlignInstallSplit(existing),
+            empty_room: emptyInstall,
           },
         })
         return json({
@@ -459,7 +460,7 @@ Deno.serve(async (req) => {
       await insertLog(supabase, {
         jobId,
         stage: "kling_requested_install",
-        message: isAlignInstallSplit(existing)
+        message: emptyInstall
           ? `구도 맞춤 마지막 프레임을 시작으로 설치 ${installSeconds}초 생성을 요청했습니다.`
           : `철거 마지막 프레임을 시작으로 설치 ${installSeconds}초 생성을 요청했습니다.`,
         payload: {
@@ -467,7 +468,7 @@ Deno.serve(async (req) => {
           start_image_url: startImageUrl,
           first_task_id: firstTaskId,
           segment_seconds: installSeconds,
-          empty_room: isAlignInstallSplit(existing),
+          empty_room: emptyInstall,
         },
       })
 
@@ -482,136 +483,33 @@ Deno.serve(async (req) => {
       })
     }
 
-    if (useSplit && emptyRoom) {
-      const alignBody = buildKlingRequestBody({
-        mode: apiMode,
-        modelName: klingModelName,
-        beforeUrl,
-        afterUrl: null,
-        promptText: SHOWROOM_SHORTS_ALIGN_PROMPT,
-        negativePrompt: SHOWROOM_SHORTS_ALIGN_NEGATIVE_PROMPT,
-        durationSeconds: KLING_EMPTY_ALIGN_SECONDS,
-        aspectRatio,
-        externalTaskId: `${jobId}-align-${stamp}`,
-        callbackUrl: callback,
-      })
-
-      const alignResult = await postKlingCreate({
-        token,
-        baseUrls: candidateBaseUrls,
-        requestPath,
-        requestBody: alignBody,
-      })
-
-      if (!alignResult.response.ok) {
-        await supabase
-          .from("showroom_shorts_jobs")
-          .update({
-            status: "failed",
-            kling_status: "request_failed",
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", jobId)
-        await insertLog(supabase, {
-          jobId,
-          stage: "kling_request_failed",
-          message: `구도 맞춤 ${KLING_EMPTY_ALIGN_SECONDS}초 생성 요청 실패 (${alignResult.response.status})`,
-          payload: {
-            align: alignResult.parsed ?? { rawText: alignResult.rawText },
-            request_path: requestPath,
-            request_mode: apiMode,
-            model_name: klingModelName,
-          },
-        })
-        return json({
-          ok: false,
-          provider: "kling",
-          upstreamStatus: alignResult.response.status,
-          message: getKlingErrorMessage(alignResult.parsed, alignResult.rawText, alignResult.response.status),
-        })
-      }
-
-      const alignTaskId = extractTaskId(alignResult.parsed)
-      if (!alignTaskId) {
-        return json({ ok: false, message: "구도 맞춤 생성 task_id를 받지 못했습니다." }, 502)
-      }
-
-      const splitState = encodeSplitState({
-        mode: "split_align_install_v1",
-        startFrameUrl: null,
-        align: {
-          taskId: alignTaskId,
-          status: "submitted",
-          url: null,
-          duration: KLING_EMPTY_ALIGN_SECONDS,
-        },
-        install: {
-          taskId: "",
-          status: "pending",
-          url: null,
-          duration: KLING_EMPTY_INSTALL_SECONDS,
-        },
-      })
-
-      await supabase
-        .from("showroom_shorts_jobs")
-        .update({
-          status: "generating",
-          kling_status: "align:submitted|install:pending",
-          kling_job_id: splitState,
-          source_video_url: null,
-          duration_seconds: KLING_EMPTY_ALIGN_SECONDS + KLING_EMPTY_INSTALL_SECONDS,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", jobId)
-
-      await insertLog(supabase, {
-        jobId,
-        stage: "kling_requested_align",
-        message: `빈 방 구도 맞춤 ${KLING_EMPTY_ALIGN_SECONDS}초를 먼저 요청했습니다. 완료 후 마지막 프레임으로 설치 ${KLING_EMPTY_INSTALL_SECONDS}초를 시작합니다.`,
-        payload: {
-          align_task_id: alignTaskId,
-          align_seconds: KLING_EMPTY_ALIGN_SECONDS,
-          install_seconds: KLING_EMPTY_INSTALL_SECONDS,
-          request_path: requestPath,
-          model_name: klingModelName,
-        },
-      })
-
-      return json({
-        ok: true,
-        jobId,
-        status: "generating",
-        klingTaskId: alignTaskId,
-        split: true,
-        phase: "align",
-        alignTaskId,
-        message: `구도 맞춤 ${KLING_EMPTY_ALIGN_SECONDS}초 생성을 시작했습니다. 끝나면 설치 ${KLING_EMPTY_INSTALL_SECONDS}초를 만듭니다.`,
-      })
-    }
-
     if (useSplit) {
-      const demolishBody = buildKlingRequestBody({
+      // 빈 방: 기존 워커 호환을 위해 mode는 demo/install 구조를 쓰되, 프롬프트·길이만 구도맞춤/설치로 바꾼다.
+      const firstSeconds = emptyRoom ? KLING_EMPTY_ALIGN_SECONDS : KLING_SPLIT_SEGMENT_SECONDS
+      const secondSeconds = emptyRoom ? KLING_EMPTY_INSTALL_SECONDS : KLING_SPLIT_SEGMENT_SECONDS
+      const firstBody = buildKlingRequestBody({
         mode: apiMode,
         modelName: klingModelName,
         beforeUrl,
         afterUrl: null,
-        promptText: SHOWROOM_SHORTS_DEMOLISH_PROMPT,
-        negativePrompt: SHOWROOM_SHORTS_DEMOLISH_NEGATIVE_PROMPT,
-        durationSeconds: KLING_SPLIT_SEGMENT_SECONDS,
+        promptText: emptyRoom ? SHOWROOM_SHORTS_ALIGN_PROMPT : SHOWROOM_SHORTS_DEMOLISH_PROMPT,
+        negativePrompt: emptyRoom
+          ? SHOWROOM_SHORTS_ALIGN_NEGATIVE_PROMPT
+          : SHOWROOM_SHORTS_DEMOLISH_NEGATIVE_PROMPT,
+        durationSeconds: firstSeconds,
         aspectRatio,
-        externalTaskId: `${jobId}-demo-${stamp}`,
+        externalTaskId: `${jobId}-${emptyRoom ? "align" : "demo"}-${stamp}`,
         callbackUrl: callback,
       })
 
-      const demolishResult = await postKlingCreate({
+      const firstResult = await postKlingCreate({
         token,
         baseUrls: candidateBaseUrls,
         requestPath,
-        requestBody: demolishBody,
+        requestBody: firstBody,
       })
 
-      if (!demolishResult.response.ok) {
+      if (!firstResult.response.ok) {
         await supabase
           .from("showroom_shorts_jobs")
           .update({
@@ -623,25 +521,33 @@ Deno.serve(async (req) => {
         await insertLog(supabase, {
           jobId,
           stage: "kling_request_failed",
-          message: `철거 5초 생성 요청 실패 (${demolishResult.response.status})`,
+          message: emptyRoom
+            ? `구도 맞춤 ${firstSeconds}초 생성 요청 실패 (${firstResult.response.status})`
+            : `철거 5초 생성 요청 실패 (${firstResult.response.status})`,
           payload: {
-            demolish: demolishResult.parsed ?? { rawText: demolishResult.rawText },
+            first: firstResult.parsed ?? { rawText: firstResult.rawText },
             request_path: requestPath,
             request_mode: apiMode,
             model_name: klingModelName,
+            empty_room: emptyRoom,
           },
         })
         return json({
           ok: false,
           provider: "kling",
-          upstreamStatus: demolishResult.response.status,
-          message: getKlingErrorMessage(demolishResult.parsed, demolishResult.rawText, demolishResult.response.status),
+          upstreamStatus: firstResult.response.status,
+          message: getKlingErrorMessage(firstResult.parsed, firstResult.rawText, firstResult.response.status),
         })
       }
 
-      const demoTaskId = extractTaskId(demolishResult.parsed)
+      const demoTaskId = extractTaskId(firstResult.parsed)
       if (!demoTaskId) {
-        return json({ ok: false, message: "철거 생성 task_id를 받지 못했습니다." }, 502)
+        return json({
+          ok: false,
+          message: emptyRoom
+            ? "구도 맞춤 생성 task_id를 받지 못했습니다."
+            : "철거 생성 task_id를 받지 못했습니다.",
+        }, 502)
       }
 
       const splitState = encodeSplitState({
@@ -651,13 +557,13 @@ Deno.serve(async (req) => {
           taskId: demoTaskId,
           status: "submitted",
           url: null,
-          duration: KLING_SPLIT_SEGMENT_SECONDS,
+          duration: firstSeconds,
         },
         install: {
           taskId: "",
           status: "pending",
           url: null,
-          duration: KLING_SPLIT_SEGMENT_SECONDS,
+          duration: secondSeconds,
         },
       })
 
@@ -668,18 +574,22 @@ Deno.serve(async (req) => {
           kling_status: "demo:submitted|install:pending",
           kling_job_id: splitState,
           source_video_url: null,
-          duration_seconds: KLING_SPLIT_SEGMENT_SECONDS * 2,
+          duration_seconds: firstSeconds + secondSeconds,
           updated_at: new Date().toISOString(),
         })
         .eq("id", jobId)
 
       await insertLog(supabase, {
         jobId,
-        stage: "kling_requested_demolish",
-        message: "철거 5초 생성을 먼저 요청했습니다. 완료 후 마지막 프레임으로 설치를 시작합니다.",
+        stage: emptyRoom ? "kling_requested_align" : "kling_requested_demolish",
+        message: emptyRoom
+          ? `빈 방 구도 맞춤 ${firstSeconds}초를 먼저 요청했습니다. 완료 후 마지막 프레임으로 설치 ${secondSeconds}초를 시작합니다.`
+          : "철거 5초 생성을 먼저 요청했습니다. 완료 후 마지막 프레임으로 설치를 시작합니다.",
         payload: {
           demo_task_id: demoTaskId,
-          segment_seconds: KLING_SPLIT_SEGMENT_SECONDS,
+          first_seconds: firstSeconds,
+          install_seconds: secondSeconds,
+          empty_room: emptyRoom,
           request_path: requestPath,
           model_name: klingModelName,
         },
@@ -691,9 +601,11 @@ Deno.serve(async (req) => {
         status: "generating",
         klingTaskId: demoTaskId,
         split: true,
-        phase: "demolish",
+        phase: emptyRoom ? "align" : "demolish",
         demoTaskId,
-        message: "철거 5초 생성을 시작했습니다. 끝나면 마지막 프레임으로 설치 5초를 만듭니다.",
+        message: emptyRoom
+          ? `구도 맞춤 ${firstSeconds}초 생성을 시작했습니다. 끝나면 설치 ${secondSeconds}초를 만듭니다.`
+          : "철거 5초 생성을 시작했습니다. 끝나면 마지막 프레임으로 설치 5초를 만듭니다.",
       })
     }
 

@@ -161,13 +161,18 @@ function jobStatusLabel(job: AdInboxTimelapseJob) {
       return '구도 맞춤·설치 이어붙이는 중'
     }
     if (kling.startsWith('demo:')) {
-      if (/install:awaiting_start_frame/i.test(kling)) return '철거 끝프레임 → 설치 시작 중'
-      if (/install:pending/i.test(kling) && !/demo:(succeed|completed)/i.test(kling)) return '철거 5초 생성 중'
+      const emptyRoom = (job.prompt_text ?? '').includes('[empty_room_v1]')
+      if (/install:awaiting_start_frame/i.test(kling)) {
+        return emptyRoom ? '구도 맞춤 끝프레임 → 설치 시작 중' : '철거 끝프레임 → 설치 시작 중'
+      }
+      if (/install:pending/i.test(kling) && !/demo:(succeed|completed)/i.test(kling)) {
+        return emptyRoom ? '구도 맞춤 생성 중' : '철거 5초 생성 중'
+      }
       const demoDone = /demo:(succeed|completed)/i.test(kling)
       const installDone = /install:(succeed|completed)/i.test(kling)
-      if (demoDone && !installDone) return '설치 5초 생성 중'
-      if (!demoDone) return '철거 5초 생성 중'
-      return '철거·설치 이어붙이는 중'
+      if (demoDone && !installDone) return emptyRoom ? '빈 방 설치 생성 중' : '설치 5초 생성 중'
+      if (!demoDone) return emptyRoom ? '구도 맞춤 생성 중' : '철거 5초 생성 중'
+      return emptyRoom ? '구도 맞춤·설치 이어붙이는 중' : '철거·설치 이어붙이는 중'
     }
     return '원본 생성 중'
   }
@@ -248,7 +253,9 @@ function generatingHint(job: AdInboxTimelapseJob) {
     return '구도 맞춤 3초 → (마지막 프레임) → 설치 8초 순서로 만들고, 끝나면 이어붙입니다.'
   }
   if ((job.kling_status ?? '').startsWith('demo:')) {
-    return '철거 5초 → (마지막 프레임) → 설치 5초 순서로 만들고, 끝나면 이어붙입니다.'
+    return emptyRoom
+      ? '구도 맞춤 3초 → (마지막 프레임) → 설치 8초 순서로 만들고, 끝나면 이어붙입니다.'
+      : '철거 5초 → (마지막 프레임) → 설치 5초 순서로 만들고, 끝나면 이어붙입니다.'
   }
   return '원본 생성 중입니다. 자동으로 상태를 갱신합니다.'
 }
