@@ -46,6 +46,7 @@ import {
   listAdInboxSites,
   listAdInboxTimelapseJobsForBatch,
   listAdInboxWorkProgressByBatches,
+  resolveAdInboxChannelPostUrl,
   updateAdInboxAssetRole,
   uploadAdInboxPhotos,
   type AdInboxAsset,
@@ -169,12 +170,7 @@ function jobStatusLabel(job: AdInboxTimelapseJob) {
   return job.status
 }
 
-function workProgressBadgeClass(progress: AdInboxWorkProgress, selected: boolean) {
-  if (selected) {
-    if (progress === 'working') return 'bg-sky-400/20 text-sky-100'
-    if (progress === 'done') return 'bg-emerald-400/20 text-emerald-100'
-    return 'bg-white/10 text-neutral-200'
-  }
+function workProgressBadgeClass(progress: AdInboxWorkProgress) {
   if (progress === 'working') return 'bg-sky-50 text-sky-800'
   if (progress === 'done') return 'bg-emerald-50 text-emerald-800'
   return 'bg-neutral-100 text-neutral-600'
@@ -191,17 +187,8 @@ function channelPublishTone(
   return 'idle'
 }
 
-function channelPublishButtonClass(
-  status: AdInboxChannelPublishState['status'],
-  selected: boolean,
-): string {
+function channelPublishButtonClass(status: AdInboxChannelPublishState['status']): string {
   const tone = channelPublishTone(status)
-  if (selected) {
-    if (tone === 'done') return 'bg-emerald-400/35 text-emerald-50 ring-1 ring-emerald-300/40'
-    if (tone === 'failed') return 'bg-red-400/25 text-red-100 ring-1 ring-red-300/30'
-    if (tone === 'active') return 'bg-amber-400/25 text-amber-50 ring-1 ring-amber-300/30'
-    return 'bg-white/10 text-neutral-400'
-  }
   if (tone === 'done') return 'bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200'
   if (tone === 'failed') return 'bg-red-50 text-red-700 ring-1 ring-red-200'
   if (tone === 'active') return 'bg-amber-50 text-amber-800 ring-1 ring-amber-200'
@@ -216,7 +203,9 @@ function channelPublishTitle(state: AdInboxChannelPublishState): string {
         ? 'Facebook'
         : 'Instagram'
   if (state.status === 'published') {
-    return state.externalPostUrl ? `${label} 게시물 열기` : `${label} 게시 완료`
+    return state.externalPostUrl
+      ? `${label} 게시물 열기`
+      : `${label} 게시 완료 (공개 링크 없음)`
   }
   if (state.status === 'failed') return `${label} 실패`
   if (channelPublishTone(state.status) === 'active') return `${label} 업로드 진행 중`
@@ -1125,35 +1114,25 @@ export default function AdInboxStudioPage() {
                           setSelectedBatchKey(batch.key)
                         }
                       }}
-                      className={`w-full cursor-pointer rounded-xl border px-3 py-2.5 text-left text-sm outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 ${
+                      className={`w-full cursor-pointer rounded-xl border px-3 py-2.5 text-left text-sm outline-none focus-visible:ring-2 focus-visible:ring-sky-400 ${
                         selected
-                          ? 'border-neutral-900 bg-neutral-900 text-white'
+                          ? 'border-sky-500 bg-white text-neutral-900 ring-2 ring-sky-500/30'
                           : 'border-neutral-200 bg-neutral-50 text-neutral-700 hover:border-neutral-300'
                       }`}
                     >
                       <div className="font-medium leading-snug">{batch.shortName}</div>
                       <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                         <span
-                          className={`rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-tight ${workProgressBadgeClass(progress, selected)}`}
+                          className={`rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-tight ${workProgressBadgeClass(progress)}`}
                         >
                           {adInboxWorkProgressLabel(progress, workState.completedAt)}
                         </span>
-                        <span
-                          className={`text-[11px] ${
-                            selected ? 'text-neutral-300' : 'text-neutral-500'
-                          }`}
-                        >
+                        <span className="text-[11px] text-neutral-500">
                           B{batch.beforeCount} · A{batch.afterCount}
                           {batch.unsetCount ? ` · ?${batch.unsetCount}` : ''} · {batch.assets.length}장
                         </span>
                         {batch.promotedCount > 0 || batch.status === 'promoted' ? (
-                          <span
-                            className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
-                              selected
-                                ? 'bg-emerald-500/30 text-emerald-100'
-                                : 'bg-emerald-50 text-emerald-800'
-                            }`}
-                          >
+                          <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800">
                             {batch.status === 'promoted'
                               ? '쇼룸 완료'
                               : `쇼룸 ${batch.promotedCount}/${batch.assets.length}`}
@@ -1165,7 +1144,7 @@ export default function AdInboxStudioPage() {
                           const label = adInboxChannelShortLabel(channelState.channel)
                           const className =
                             'inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-tight ' +
-                            channelPublishButtonClass(channelState.status, selected)
+                            channelPublishButtonClass(channelState.status)
                           const title = channelPublishTitle(channelState)
                           if (channelState.status === 'published' && channelState.externalPostUrl) {
                             return (
@@ -1839,17 +1818,21 @@ export default function AdInboxStudioPage() {
                                               ) : null}
                                               준비 다시 요청
                                             </Button>
-                                            {target.external_post_url ? (
-                                              <a
-                                                href={target.external_post_url}
-                                                target="_blank"
-                                                rel="noreferrer"
-                                                className="inline-flex items-center gap-1 text-[11px] text-neutral-600 underline-offset-2 hover:underline"
-                                              >
-                                                게시물 열기
-                                                <ExternalLink className="h-3 w-3" />
-                                              </a>
-                                            ) : null}
+                                            {(() => {
+                                              const postUrl = resolveAdInboxChannelPostUrl(target)
+                                              if (!postUrl) return null
+                                              return (
+                                                <a
+                                                  href={postUrl}
+                                                  target="_blank"
+                                                  rel="noreferrer"
+                                                  className="inline-flex items-center gap-1 text-[11px] text-neutral-600 underline-offset-2 hover:underline"
+                                                >
+                                                  게시물 열기
+                                                  <ExternalLink className="h-3 w-3" />
+                                                </a>
+                                              )
+                                            })()}
                                             {target.preparation_error ? (
                                               <p className="text-[11px] text-red-600">
                                                 {target.preparation_error}

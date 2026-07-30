@@ -92,6 +92,13 @@ Instagram 게시 모듈:
 - URL: `https://graph.facebook.com/v23.0/{{instagramBusinessAccountId}}/media_publish`
 - 본문: `creation_id`
 
+Instagram permalink 조회 모듈 (**필수**):
+- URL: `https://graph.facebook.com/v23.0/{{media_publish.id}}`
+- Query: `fields=permalink,shortcode`
+- 토큰: `meta.instagramAccessToken`
+- callback의 `externalPostUrl`에는 **`permalink`만** 넣습니다.  
+  `https://www.instagram.com/p/{숫자 media id}/` 는 열리지 않습니다.
+
 Supabase callback 모듈:
 - URL: `callback.url`
 - 헤더명: `callback.secretHeaderName`

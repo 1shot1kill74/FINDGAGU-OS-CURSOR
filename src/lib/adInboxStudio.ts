@@ -134,21 +134,203 @@ export function adInboxChannelShortLabel(channel: ShowroomShortsChannel): string
   return 'IG'
 }
 
+/** Instagram Graph media id(숫자)를 /p|/reel 경로에 넣은 URL은 공개 웹에서 열리지 않음 */
+function isBrokenInstagramMediaIdWebUrl(url: string): boolean {
+  return /(?:www\.)?instagram\.com\/(?:p|reel|tv)\/\d+\/?(?:\?.*)?$/i.test(url.trim())
+}
+
+/** n8n 실패 시 placeholder로 남은 youtube-{timestamp} 형태는 공개 URL로 쓸 수 없음 */
+function isPlaceholderYoutubeId(id: string): boolean {
+  return /^youtube-\d+$/i.test(id.trim())
+}
+
+function normalizeFacebookPostUrl(url: string): string {
+  const trimmed = url.trim()
+  const bareId = trimmed.match(/^(?:https?:\/\/)?(?:www\.)?facebook\.com\/(\d+)\/?(?:\?.*)?$/i)
+  if (bareId?.[1]) return `https://www.facebook.com/watch/?v=${bareId[1]}`
+  return trimmed
+}
+
+function buildChannelPostUrl(channel: ShowroomShortsChannel, id: string): string | null {
+  const trimmed = id.trim()
+  if (!trimmed) return null
+  if (channel === 'youtube') {
+    if (isPlaceholderYoutubeId(trimmed)) return null
+    return `https://www.youtube.com/shorts/${trimmed}`
+  }
+  if (channel === 'facebook') {
+    if (!/^\d+$/.test(trimmed)) return null
+    return `https://www.facebook.com/watch/?v=${trimmed}`
+  }
+  // Graph media id(숫자)로는 공개 URL을 만들 수 없음. shortcode/permalink만 사용.
+  if (/^\d+$/.test(trimmed)) return null
+  return `https://www.instagram.com/reel/${trimmed}/`
+}
+
 /** 콜백 URL이 비어도 channel+id로 열 수 있는 주소 추정 */
 export function resolveAdInboxChannelPostUrl(
   target: Pick<ShowroomShortsTargetRecord, 'channel' | 'external_post_id' | 'external_post_url'>,
 ): string | null {
   const direct = target.external_post_url?.trim()
-  if (direct) return direct
+  if (direct) {
+    // Make가 media id를 그대로 URL에 넣은 경우 — 깨진 링크 노출 방지
+    if (target.channel === 'instagram' && isBrokenInstagramMediaIdWebUrl(direct)) {
+      return null
+    }
+    if (target.channel === 'youtube') {
+      const fromUrl =
+        direct.match(/(?:youtube\.com\/(?:shorts|watch\?v=)|youtu\.be\/)([A-Za-z0-9_-]{6,})/i)?.[1] ??
+        null
+      if (fromUrl && !isPlaceholderYoutubeId(fromUrl)) {
+        return `https://www.youtube.com/shorts/${fromUrl}`
+      }
+      // placeholder URL이면 id로 재시도
+    } else if (target.channel === 'facebook') {
+      return normalizeFacebookPostUrl(direct)
+    } else {
+      return direct
+    }
+  }
   const id = target.external_post_id?.trim()
   if (!id) return null
-  if (target.channel === 'youtube') return `https://www.youtube.com/shorts/${id}`
-  if (target.channel === 'facebook') return `https://www.facebook.com/watch/?v=${id}`
-  if (target.channel === 'instagram') {
-    // shortcode면 reel 경로, 숫자 media id면 Graph permalink이 없어 p/ 로 시도
-    return `https://www.instagram.com/reel/${id}/`
+  return buildChannelPostUrl(target.channel, id)
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  return value as Record<string, unknown>
+}
+
+function pickString(record: Record<string, unknown> | null, keys: string[]): string | null {
+  if (!record) return null
+  for (const key of keys) {
+    const value = record[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
   }
   return null
+}
+
+/** publish_completed 로그에서 공개로 열 수 있는 원본 링크 추출 */
+function extractPostUrlFromPublishLogPayload(
+  channel: ShowroomShortsChannel,
+  payload: unknown,
+): { externalPostId: string | null; externalPostUrl: string | null } {
+  const root = asRecord(payload)
+  const nested = asRecord(root?.payload)
+  const youtubeResponse = asRecord(nested?.youtubeResponse) ?? asRecord(root?.youtubeResponse)
+
+  const uploadId =
+    pickString(youtubeResponse, ['uploadId', 'id']) ||
+    pickString(asRecord(youtubeResponse?.snippet), ['videoId'])
+
+  const firstCommentUrl = pickString(nested, ['firstCommentUrl']) ?? pickString(root, ['firstCommentUrl'])
+  const firstCommentVideoId = firstCommentUrl
+    ? firstCommentUrl.match(/(?:[?&]v=|shorts\/)([A-Za-z0-9_-]{6,})/i)?.[1] ?? null
+    : null
+
+  const rawId =
+    (channel === 'youtube' ? uploadId || firstCommentVideoId : null) ||
+    pickString(root, ['external_post_id', 'externalPostId']) ||
+    pickString(nested, ['external_post_id', 'externalPostId'])
+
+  const rawUrl =
+    pickString(root, ['external_post_url', 'externalPostUrl']) ||
+    pickString(nested, ['external_post_url', 'externalPostUrl', 'permalink']) ||
+    (channel === 'youtube' && uploadId ? `https://www.youtube.com/shorts/${uploadId}` : null) ||
+    (channel === 'youtube' && firstCommentUrl
+      ? firstCommentUrl.replace(/\?lc=[^&#]+/i, '').replace(/&lc=[^&#]+/i, '')
+      : null)
+
+  const resolved = resolveAdInboxChannelPostUrl({
+    channel,
+    external_post_id: rawId,
+    external_post_url: rawUrl,
+  })
+
+  return {
+    externalPostId: rawId && !isPlaceholderYoutubeId(rawId) ? rawId : uploadId || firstCommentVideoId,
+    externalPostUrl: resolved,
+  }
+}
+
+/**
+ * 게시 완료인데 URL이 비었거나(유튜브 콜백 덮어쓰기) 깨진 경우,
+ * publish_completed 로그에서 원본 링크를 복구해 메모리·DB에 반영합니다.
+ */
+async function recoverPublishedPostUrlsForJobs(
+  jobs: ShowroomShortsJobRecord[],
+): Promise<ShowroomShortsJobRecord[]> {
+  if (jobs.length === 0) return jobs
+
+  const missingTargets = jobs.flatMap((job) =>
+    (job.targets ?? []).filter(
+      (target) => target.publish_status === 'published' && !resolveAdInboxChannelPostUrl(target),
+    ),
+  )
+  if (missingTargets.length === 0) return jobs
+
+  const jobIds = [...new Set(missingTargets.map((target) => target.shorts_job_id))]
+  const { data, error } = await supabase
+    .from('showroom_shorts_logs')
+    .select('shorts_job_id, target_id, payload, created_at')
+    .in('shorts_job_id', jobIds)
+    .eq('stage', 'publish_completed')
+    .order('created_at', { ascending: false })
+
+  if (error || !data?.length) return jobs
+
+  const bestByTargetId = new Map<string, { externalPostId: string | null; externalPostUrl: string }>()
+  for (const row of data) {
+    const targetId = typeof row.target_id === 'string' ? row.target_id : null
+    const jobId = String(row.shorts_job_id ?? '')
+    const matching =
+      (targetId ? missingTargets.find((target) => target.id === targetId) : null) ||
+      missingTargets.find((target) => {
+        if (target.shorts_job_id !== jobId) return false
+        const channel = pickString(asRecord(row.payload), ['channel'])
+        return channel === target.channel
+      })
+    if (!matching || bestByTargetId.has(matching.id)) continue
+
+    const extracted = extractPostUrlFromPublishLogPayload(matching.channel, row.payload)
+    if (!extracted.externalPostUrl) continue
+    bestByTargetId.set(matching.id, {
+      externalPostId: extracted.externalPostId,
+      externalPostUrl: extracted.externalPostUrl,
+    })
+  }
+
+  if (bestByTargetId.size === 0) return jobs
+
+  const nowIso = new Date().toISOString()
+  await Promise.all(
+    [...bestByTargetId.entries()].map(async ([targetId, recovered]) => {
+      const { error: updateError } = await supabase
+        .from('showroom_shorts_targets')
+        .update({
+          external_post_id: recovered.externalPostId,
+          external_post_url: recovered.externalPostUrl,
+          updated_at: nowIso,
+        })
+        .eq('id', targetId)
+      if (updateError) {
+        console.warn('[ad-inbox] failed to persist recovered post url', targetId, updateError.message)
+      }
+    }),
+  )
+
+  return jobs.map((job) => ({
+    ...job,
+    targets: (job.targets ?? []).map((target) => {
+      const recovered = bestByTargetId.get(target.id)
+      if (!recovered) return target
+      return {
+        ...target,
+        external_post_id: recovered.externalPostId ?? target.external_post_id,
+        external_post_url: recovered.externalPostUrl,
+      }
+    }),
+  }))
 }
 
 function emptyAdInboxChannelStates(): AdInboxChannelPublishState[] {
@@ -855,14 +1037,17 @@ export async function listAdInboxJobLinkedAssets(
 
 export async function listAdInboxTimelapseJobsForBatch(batch: AdInboxBatch): Promise<ShowroomShortsJobRecord[]> {
   const byGroup = await listShowroomShortsJobsForGroupKey(buildAdInboxShortsGroupKey(batch.key))
-  if (byGroup.length > 0) return byGroup
+  if (byGroup.length > 0) return recoverPublishedPostUrlsForJobs(byGroup)
 
   const assetIds = batch.assets.map((asset) => asset.id)
   if (assetIds.length === 0) return []
 
   const assetSet = new Set(assetIds)
   const byAssets = await listShowroomShortsJobsByBeforeAssetIds(assetIds)
-  return byAssets.filter((job) => assetSet.has(job.before_asset_id) && assetSet.has(job.after_asset_id))
+  const filtered = byAssets.filter(
+    (job) => assetSet.has(job.before_asset_id) && assetSet.has(job.after_asset_id),
+  )
+  return recoverPublishedPostUrlsForJobs(filtered)
 }
 
 /** 현장 카드 목록용: 배치별 진행상태·작업완료일 (최신 job 기준) */
@@ -880,7 +1065,10 @@ export async function listAdInboxWorkProgressByBatches(
 }
 
 export async function getAdInboxTimelapseJob(jobId: string): Promise<ShowroomShortsJobRecord | null> {
-  return getShowroomShortsJob(jobId)
+  const job = await getShowroomShortsJob(jobId)
+  if (!job) return null
+  const [recovered] = await recoverPublishedPostUrlsForJobs([job])
+  return recovered ?? job
 }
 
 export async function createAdInboxTimelapseJob(input: {
@@ -1005,27 +1193,76 @@ export async function listShowroomBaGroupsForImport(query?: string): Promise<Sho
   })
 
   const beforeIds = [...new Set(groups.flatMap((g) => g.beforeAssets.map((a) => a.id)))]
+  const pairKeys = await listExistingShowroomShortsPairKeys(beforeIds)
+
+  return groups.map((g) => {
+    const hasExistingJob = g.beforeAssets.some((before) =>
+      g.afterAssets.some((after) => pairKeys.has(showroomBaReelPairKey(before.id, after.id))),
+    )
+    return { ...g, hasExistingJob }
+  })
+}
+
+/** 쇼룸 BA before/after 자산 쌍이 이미 릴스(숏츠) job에 있는지 판별용 키 */
+export function showroomBaReelPairKey(beforeAssetId: string, afterAssetId: string): string {
+  return `${beforeAssetId.trim()}:${afterAssetId.trim()}`
+}
+
+/**
+ * before_asset_id 기준으로 이미 존재하는 릴스 job의 before:after 쌍 키 집합.
+ * 광고대기실 가져오기·오픈쇼룸 카드의「릴스 반영」표시에 공통 사용.
+ */
+export async function listExistingShowroomShortsPairKeys(
+  beforeAssetIds: string[],
+): Promise<Set<string>> {
+  const beforeIds = [...new Set(beforeAssetIds.map((id) => id.trim()).filter(Boolean))]
   const pairKeys = new Set<string>()
-  if (beforeIds.length > 0) {
+  if (beforeIds.length === 0) return pairKeys
+
+  // supabase .in() 한도·응답 크기 대비 청크
+  const chunkSize = 80
+  for (let i = 0; i < beforeIds.length; i += chunkSize) {
+    const chunk = beforeIds.slice(i, i + chunkSize)
     const { data: existingRows, error: existingError } = await supabase
       .from('showroom_shorts_jobs')
       .select('before_asset_id, after_asset_id')
-      .in('before_asset_id', beforeIds)
-      .limit(200)
+      .in('before_asset_id', chunk)
+      .limit(400)
     if (existingError) throw new Error(existingError.message)
     for (const row of existingRows ?? []) {
       const beforeId = typeof row.before_asset_id === 'string' ? row.before_asset_id : ''
       const afterId = typeof row.after_asset_id === 'string' ? row.after_asset_id : ''
-      if (beforeId && afterId) pairKeys.add(`${beforeId}:${afterId}`)
+      if (beforeId && afterId) pairKeys.add(showroomBaReelPairKey(beforeId, afterId))
     }
   }
+  return pairKeys
+}
 
-  return groups.map((g) => {
-    const hasExistingJob = g.beforeAssets.some((before) =>
-      g.afterAssets.some((after) => pairKeys.has(`${before.id}:${after.id}`)),
-    )
-    return { ...g, hasExistingJob }
-  })
+/**
+ * After 자산이 이미 릴스 job에 쓰였는지 (After-only · 합성 Before 경로 포함).
+ */
+export async function listExistingShowroomShortsAfterAssetIds(
+  afterAssetIds: string[],
+): Promise<Set<string>> {
+  const afterIds = [...new Set(afterAssetIds.map((id) => id.trim()).filter(Boolean))]
+  const found = new Set<string>()
+  if (afterIds.length === 0) return found
+
+  const chunkSize = 80
+  for (let i = 0; i < afterIds.length; i += chunkSize) {
+    const chunk = afterIds.slice(i, i + chunkSize)
+    const { data: existingRows, error: existingError } = await supabase
+      .from('showroom_shorts_jobs')
+      .select('after_asset_id')
+      .in('after_asset_id', chunk)
+      .limit(400)
+    if (existingError) throw new Error(existingError.message)
+    for (const row of existingRows ?? []) {
+      const afterId = typeof row.after_asset_id === 'string' ? row.after_asset_id.trim() : ''
+      if (afterId) found.add(afterId)
+    }
+  }
+  return found
 }
 
 /**

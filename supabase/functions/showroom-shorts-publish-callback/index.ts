@@ -181,8 +181,9 @@ Deno.serve(async (req) => {
     if (action === "launch") {
       if (["completed", "published"].includes(status)) {
         updatePatch.publish_status = "published"
-        updatePatch.external_post_id = externalPostId
-        updatePatch.external_post_url = externalPostUrl
+        // null로 덮어쓰면 콜백/디스패치 경합에서 원본 링크가 사라짐
+        if (externalPostId) updatePatch.external_post_id = externalPostId
+        if (externalPostUrl) updatePatch.external_post_url = externalPostUrl
         updatePatch.published_at = completedAt
         updatePatch.preparation_error = null
       } else if (status === "failed") {

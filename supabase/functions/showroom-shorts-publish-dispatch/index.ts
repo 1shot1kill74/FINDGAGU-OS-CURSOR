@@ -425,17 +425,22 @@ Deno.serve(async (req) => {
     }
 
     if (action === "launch" && ["completed", "published"].includes(returnedStatus)) {
-      await supabase
-        .from(tables.targets)
-        .update({
-          publish_status: "published",
-          external_post_id: trimOrNull(parsed?.externalPostId) ?? trimOrNull(parsed?.external_post_id),
-          external_post_url: trimOrNull(parsed?.externalPostUrl) ?? trimOrNull(parsed?.external_post_url) ?? trimOrNull(parsed?.publishUrl),
-          published_at: new Date().toISOString(),
-          preparation_error: null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", targetId)
+      const externalPostId =
+        trimOrNull(parsed?.externalPostId) ?? trimOrNull(parsed?.external_post_id)
+      const externalPostUrl =
+        trimOrNull(parsed?.externalPostUrl) ??
+        trimOrNull(parsed?.external_post_url) ??
+        trimOrNull(parsed?.publishUrl)
+      const launchPatch: Record<string, unknown> = {
+        publish_status: "published",
+        published_at: new Date().toISOString(),
+        preparation_error: null,
+        updated_at: new Date().toISOString(),
+      }
+      // null로 덮어쓰면 콜백이 먼저 저장한 원본 링크가 지워짐
+      if (externalPostId) launchPatch.external_post_id = externalPostId
+      if (externalPostUrl) launchPatch.external_post_url = externalPostUrl
+      await supabase.from(tables.targets).update(launchPatch).eq("id", targetId)
     }
 
     return json({

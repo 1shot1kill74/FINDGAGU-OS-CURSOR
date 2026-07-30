@@ -247,6 +247,48 @@
               }
             },
             {
+              "id": 23,
+              "module": "http:ActionSendData",
+              "version": 3,
+              "parameters": {
+                "handleErrors": true,
+                "useNewZLibDeCompress": true
+              },
+              "mapper": {
+                "url": "https://graph.facebook.com/v23.0/{{21.id}}",
+                "method": "get",
+                "headers": [
+                  {
+                    "name": "Authorization",
+                    "value": "Bearer {{1.meta.instagramAccessToken}}"
+                  }
+                ],
+                "qs": [
+                  {
+                    "name": "fields",
+                    "value": "permalink,shortcode"
+                  }
+                ],
+                "bodyType": "raw",
+                "authUser": "",
+                "authPass": "",
+                "timeout": 40,
+                "gzip": true,
+                "parseResponse": true,
+                "shareCookies": false,
+                "followRedirect": true,
+                "useQuerystring": false,
+                "serializeUrl": false,
+                "rejectUnauthorized": true
+              },
+              "metadata": {
+                "designer": {
+                  "x": 1050,
+                  "y": 420
+                }
+              }
+            },
+            {
               "id": 22,
               "module": "http:ActionSendData",
               "version": 3,
@@ -269,7 +311,7 @@
                 ],
                 "qs": [],
                 "bodyType": "raw",
-                "body": "{\n  \"targetId\": \"{{1.targetId}}\",\n  \"action\": \"launch\",\n  \"status\": \"published\",\n  \"message\": \"published\",\n  \"completedAt\": \"{{formatDate(now; \"YYYY-MM-DDTHH:mm:ss.SSS[Z]\")}}\",\n  \"externalPostId\": \"{{21.id}}\",\n  \"externalPostUrl\": \"https://www.instagram.com/reel/{{21.id}}/\",\n  \"payload\": {\n    \"channel\": \"instagram\",\n    \"provider\": \"make\",\n    \"finalVideoUrl\": \"{{1.finalVideoUrl}}\"\n  }\n}",
+                "body": "{\n  \"targetId\": \"{{1.targetId}}\",\n  \"action\": \"launch\",\n  \"status\": \"published\",\n  \"message\": \"published\",\n  \"completedAt\": \"{{formatDate(now; \"YYYY-MM-DDTHH:mm:ss.SSS[Z]\")}}\",\n  \"externalPostId\": \"{{21.id}}\",\n  \"externalPostUrl\": \"{{ifempty(23.permalink; \"https://www.instagram.com/reel/\" + 23.shortcode + \"/\")}}\",\n  \"payload\": {\n    \"channel\": \"instagram\",\n    \"provider\": \"make\",\n    \"finalVideoUrl\": \"{{1.finalVideoUrl}}\",\n    \"shortcode\": \"{{23.shortcode}}\"\n  }\n}",
                 "authUser": "",
                 "authPass": "",
                 "timeout": 40,

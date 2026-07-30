@@ -92,9 +92,11 @@ Make 시나리오는 하나로 시작하는 것이 가장 단순합니다.
    - `Sleep`
    - 성공 시 `externalPostId`, `externalPostUrl` 구성
 5. `instagram`
-   - Reels 업로드 실행
-   - `Sleep`
-   - 성공 시 `externalPostId`, `externalPostUrl` 구성
+   - Reels 컨테이너 생성 → `media_publish`
+   - **필수:** `GET /{media-id}?fields=permalink,shortcode` 로 공개 링크 조회
+   - `externalPostId` = media id (숫자)
+   - `externalPostUrl` = **`permalink` 값** (shortcode URL).  
+     `https://www.instagram.com/p/{media-id}/` 처럼 **숫자를 경로에 넣으면 열리지 않음**
 6. Supabase callback 호출
 
 권장 검증 항목:

@@ -24,7 +24,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useColorChips } from '@/hooks/useColorChips'
 import { cn } from '@/lib/utils'
-import { Search, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Package, Images, FileText, MousePointerClick, MessageCircle, FileCheck, Users, Wrench, ClipboardCheck, ArrowRight, ArrowLeft, Copy, Check, Video, BarChart3, Building2, Palette } from 'lucide-react'
+import { Search, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Package, Images, FileText, MousePointerClick, MessageCircle, FileCheck, Users, Wrench, ClipboardCheck, ArrowRight, ArrowLeft, Copy, Check, Video, BarChart3, Building2, Palette, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { shareGalleryKakao } from '@/lib/kakaoShare'
 import { createSharedGallery, snapshotShowroomImageAsset } from '@/lib/sharedGalleryService'
@@ -48,6 +48,14 @@ import { collectShowroomAliasNamesFromImages, collectShowroomIdentityKeys } from
 import { appendShowroomConcernQuery, openShowroomConsultationChat } from '@/pages/showroom/showroomStoryCta'
 import { trackShowroomAbmEvent } from '@/lib/showroomAbmTracking'
 import { validateBeforeAfterSelection } from '@/lib/showroomShorts'
+import {
+  createAdInboxTimelapseFromAfterOnly,
+  createAdInboxTimelapseJobFromShowroom,
+  listExistingShowroomShortsAfterAssetIds,
+  listExistingShowroomShortsPairKeys,
+  showroomBaReelPairKey,
+  synthesizeBeforeFromAfterImage,
+} from '@/lib/adInboxStudio'
 
 import {
   CONCERN_CARDS,
@@ -130,11 +138,17 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
   const [selectedImageIds, setSelectedImageIds] = useState<Set<string>>(new Set())
   const [industryPageBySection, setIndustryPageBySection] = useState<Record<string, number>>({})
   const [beforeAfterPage, setBeforeAfterPage] = useState(1)
+  const [concernBeforeAfterPage, setConcernBeforeAfterPage] = useState(1)
   const [priorityInputByKey, setPriorityInputByKey] = useState<Record<string, string>>({})
   const [savingPriorityByKey, setSavingPriorityByKey] = useState<Record<string, boolean>>({})
   const [priorityEditorOpenByKey, setPriorityEditorOpenByKey] = useState<Record<string, boolean>>({})
   const [caseProfileDraftBySite, setCaseProfileDraftBySite] = useState<Record<string, ShowroomCaseProfileDraftState>>({})
   const [shortsDialogOpen, setShortsDialogOpen] = useState(false)
+  /** 오픈쇼룸 BA → 릴스 job 존재 여부 (before:after 쌍) */
+  const [baReelPairKeys, setBaReelPairKeys] = useState<Set<string>>(() => new Set())
+  /** After-only(또는 After가 job에 연결된) 릴스 반영 */
+  const [baReelAfterIds, setBaReelAfterIds] = useState<Set<string>>(() => new Set())
+  const [sendingBaToAdInboxByKey, setSendingBaToAdInboxByKey] = useState<Record<string, boolean>>({})
   const [basicShortsDialogOpen, setBasicShortsDialogOpen] = useState(false)
   const [basicShortsImageOrder, setBasicShortsImageOrder] = useState<string[]>([])
   const [draggingBasicShortsImageId, setDraggingBasicShortsImageId] = useState<string | null>(null)
@@ -351,10 +365,51 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
   const siteGroups = useMemo(() => buildSiteGroups(showroomAssets, siteOverrideMap, 'industry'), [showroomAssets, siteOverrideMap])
   const productGroups = useMemo(() => buildProductGroups(showroomAssets), [showroomAssets])
   const colorGroups = useMemo(() => buildColorGroups(showroomAssets), [showroomAssets])
-  const beforeAfterGroups = useMemo(
-    () => buildSiteGroups(beforeAfterAssets, siteOverrideMap, 'before_after').filter((group) => group.hasBeforeAfter),
-    [beforeAfterAssets, siteOverrideMap]
-  )
+  const beforeAfterGroups = useMemo(() => {
+    const groups = buildSiteGroups(beforeAfterAssets, siteOverrideMap, 'before_after')
+    // 내부: After만 있는 현장도 릴스 상태·대기실 보내기 대상. 공개: BA 쌍만.
+    return groups.filter((group) =>
+      showInternalControls
+        ? group.images.some((image) => image.before_after_role === 'after')
+        : group.hasBeforeAfter,
+    )
+  }, [beforeAfterAssets, siteOverrideMap, showInternalControls])
+
+  useEffect(() => {
+    if (!showInternalControls || beforeAfterGroups.length === 0) {
+      setBaReelPairKeys(new Set())
+      setBaReelAfterIds(new Set())
+      return
+    }
+    let cancelled = false
+    const beforeIds = beforeAfterGroups.flatMap((group) =>
+      group.images.filter((image) => image.before_after_role === 'before').map((image) => image.id),
+    )
+    const afterIds = beforeAfterGroups.flatMap((group) =>
+      group.images.filter((image) => image.before_after_role === 'after').map((image) => image.id),
+    )
+    void (async () => {
+      try {
+        const [keys, afterJobIds] = await Promise.all([
+          listExistingShowroomShortsPairKeys(beforeIds),
+          listExistingShowroomShortsAfterAssetIds(afterIds),
+        ])
+        if (!cancelled) {
+          setBaReelPairKeys(keys)
+          setBaReelAfterIds(afterJobIds)
+        }
+      } catch {
+        if (!cancelled) {
+          setBaReelPairKeys(new Set())
+          setBaReelAfterIds(new Set())
+        }
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [showInternalControls, beforeAfterGroups])
+
   const productOptions = useMemo(
     () => productGroups.map((group) => group.productName),
     [productGroups]
@@ -583,7 +638,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
     [concernBeforeAfterGroups.length]
   )
   const currentConcernBeforeAfterPage = Math.min(
-    Math.max(beforeAfterPage, 1),
+    Math.max(concernBeforeAfterPage, 1),
     concernBeforeAfterTotalPages
   )
   const pagedConcernBeforeAfterGroups = useMemo(() => {
@@ -1282,6 +1337,95 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
     }))
   }, [])
 
+  const groupHasBaReelJob = useCallback(
+    (group: SiteGroup) => {
+      const beforeIds = group.images
+        .filter((image) => image.before_after_role === 'before')
+        .map((image) => image.id)
+      const afterIds = group.images
+        .filter((image) => image.before_after_role === 'after')
+        .map((image) => image.id)
+      if (
+        beforeIds.some((beforeId) =>
+          afterIds.some((afterId) => baReelPairKeys.has(showroomBaReelPairKey(beforeId, afterId))),
+        )
+      ) {
+        return true
+      }
+      return afterIds.some((afterId) => baReelAfterIds.has(afterId))
+    },
+    [baReelAfterIds, baReelPairKeys],
+  )
+
+  const handleSendBaToAdInbox = useCallback(
+    async (
+      group: SiteGroup,
+      after: ShowroomImageAsset,
+      before: ShowroomImageAsset | null,
+    ) => {
+      const sendKey = before
+        ? showroomBaReelPairKey(before.id, after.id)
+        : `after-only:${after.id}`
+      const alreadyHasReel =
+        (before
+          ? baReelPairKeys.has(showroomBaReelPairKey(before.id, after.id))
+          : baReelAfterIds.has(after.id)) || groupHasBaReelJob(group)
+      if (alreadyHasReel) {
+        const ok = window.confirm(
+          `「${group.siteName}」은(는) 이미 릴스 작업이 있습니다. 광고대기실에 새 작업카드를 다시 만들까요?`,
+        )
+        if (!ok) return
+      }
+
+      if (!before) {
+        const ok = window.confirm(
+          `「${group.siteName}」은(는) After만 있습니다. Before를 합성한 뒤 광고대기실 카드를 만들까요?`,
+        )
+        if (!ok) return
+      }
+
+      setSendingBaToAdInboxByKey((prev) => ({ ...prev, [sendKey]: true }))
+      try {
+        const result = before
+          ? await createAdInboxTimelapseJobFromShowroom({
+              before,
+              after,
+              siteName: group.siteName,
+            })
+          : await (async () => {
+              const imageUrl = after.cloudinary_url || after.thumbnail_url
+              if (!imageUrl?.trim()) throw new Error('After 이미지 URL이 없습니다.')
+              toast.message('Before 합성 중… 잠시만 기다려 주세요.')
+              const synth = await synthesizeBeforeFromAfterImage(imageUrl)
+              return createAdInboxTimelapseFromAfterOnly({
+                after,
+                synthesizedBefore: synth,
+                siteName: group.siteName,
+              })
+            })()
+
+        setBaReelPairKeys((prev) => {
+          if (!before) return prev
+          const next = new Set(prev)
+          next.add(showroomBaReelPairKey(before.id, after.id))
+          return next
+        })
+        setBaReelAfterIds((prev) => {
+          const next = new Set(prev)
+          next.add(after.id)
+          return next
+        })
+        toast.success(`「${result.shortName}」 광고대기실 카드를 만들고 타임랩스를 시작했습니다.`)
+        navigate('/admin/ad-inbox')
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : '광고대기실로 보내지 못했습니다.')
+      } finally {
+        setSendingBaToAdInboxByKey((prev) => ({ ...prev, [sendKey]: false }))
+      }
+    },
+    [baReelAfterIds, baReelPairKeys, groupHasBaReelJob, navigate],
+  )
+
   const getBeforeAfterProfileDraft = useCallback((group: SiteGroup): ShowroomCaseProfileDraftState => {
     const publicLabel = getGroupPublicLabel(group)
     const imageAliases = collectShowroomAliasNamesFromImages(group.images)
@@ -1367,6 +1511,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
 
   useEffect(() => {
     setBeforeAfterPage(1)
+    setConcernBeforeAfterPage(1)
   }, [selectedConcernTag])
 
   useEffect(() => {
@@ -1376,10 +1521,10 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
   }, [beforeAfterPage, beforeAfterTotalPages])
 
   useEffect(() => {
-    if (beforeAfterPage > concernBeforeAfterTotalPages) {
-      setBeforeAfterPage(concernBeforeAfterTotalPages)
+    if (concernBeforeAfterPage > concernBeforeAfterTotalPages) {
+      setConcernBeforeAfterPage(concernBeforeAfterTotalPages)
     }
-  }, [beforeAfterPage, concernBeforeAfterTotalPages])
+  }, [concernBeforeAfterPage, concernBeforeAfterTotalPages])
 
   const scrollToBeforeAfterSection = useCallback(() => {
     setViewMode('industry')
@@ -1578,6 +1723,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
     const afterImages = group.images.filter((image) => image.before_after_role === 'after')
     const beforeImage = beforeImages[0] ?? null
     const afterImage = afterImages.find((image) => image.is_main) ?? afterImages[0] ?? null
+    const isAfterOnly = !beforeImage && Boolean(afterImage)
     const priorityKey = buildShowroomSiteKey(group.sectionKey, group.industryLabel, group.siteName)
     const priorityValue = priorityInputByKey[priorityKey] ?? (group.manualPriority != null ? String(group.manualPriority) : '')
     const isSavingPriority = savingPriorityByKey[priorityKey] === true
@@ -1587,36 +1733,53 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
     const cardNewsStudioHref = `/admin/showroom-case-studio?site=${encodeURIComponent(group.siteName)}&focus=cardnews`
     const blogStudioHref = `/admin/showroom-case-studio?site=${encodeURIComponent(group.siteName)}&focus=blog`
     const storyHref = !showInternalControls && options?.linkToStory ? getBeforeAfterStoryHref(group) : null
-    if (!beforeImage || !afterImage) return null
+    // 공개는 BA만, 내부는 After-only도 카드로 표시
+    if (!afterImage) return null
+    if (!showInternalControls && !beforeImage) return null
 
     const beforeAfterPreview = (
       <>
-        <div className="grid grid-cols-2">
-          <div className="relative aspect-[4/3] bg-neutral-100">
-            <img
-              src={beforeImage.thumbnail_url || beforeImage.cloudinary_url}
-              alt={`${showInternalControls ? group.siteName : publicLabel} before`}
-              className="w-full h-full object-cover"
-              loading="lazy"
-              decoding="async"
-            />
-            <span className="absolute left-2 top-2 rounded-full bg-black/75 px-2 py-1 text-[11px] font-semibold text-white">
-              Before
-            </span>
-          </div>
+        {isAfterOnly ? (
           <div className="relative aspect-[4/3] bg-neutral-100">
             <img
               src={afterImage.thumbnail_url || afterImage.cloudinary_url}
               alt={`${showInternalControls ? group.siteName : publicLabel} after`}
-              className="w-full h-full object-cover"
+              className="h-full w-full object-cover"
               loading="lazy"
               decoding="async"
             />
             <span className="absolute left-2 top-2 rounded-full bg-emerald-600/90 px-2 py-1 text-[11px] font-semibold text-white">
-              After
+              After만
             </span>
           </div>
-        </div>
+        ) : (
+          <div className="grid grid-cols-2">
+            <div className="relative aspect-[4/3] bg-neutral-100">
+              <img
+                src={beforeImage!.thumbnail_url || beforeImage!.cloudinary_url}
+                alt={`${showInternalControls ? group.siteName : publicLabel} before`}
+                className="h-full w-full object-cover"
+                loading="lazy"
+                decoding="async"
+              />
+              <span className="absolute left-2 top-2 rounded-full bg-black/75 px-2 py-1 text-[11px] font-semibold text-white">
+                Before
+              </span>
+            </div>
+            <div className="relative aspect-[4/3] bg-neutral-100">
+              <img
+                src={afterImage.thumbnail_url || afterImage.cloudinary_url}
+                alt={`${showInternalControls ? group.siteName : publicLabel} after`}
+                className="h-full w-full object-cover"
+                loading="lazy"
+                decoding="async"
+              />
+              <span className="absolute left-2 top-2 rounded-full bg-emerald-600/90 px-2 py-1 text-[11px] font-semibold text-white">
+                After
+              </span>
+            </div>
+          </div>
+        )}
         <div className={showInternalControls ? 'p-4' : 'flex min-h-[5.5rem] items-start p-4'}>
           <h4 className="font-semibold leading-snug text-neutral-900">{showInternalControls ? group.siteName : publicLabel}</h4>
         </div>
@@ -1678,6 +1841,52 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
             <p className="text-xs text-neutral-500">
               이 쇼룸은 직원과 고객이 같은 화면으로 사례를 설명하는 용도입니다. 콘텐츠 작성·수정은 케이스 작업실에서 진행하세요.
             </p>
+            {(() => {
+              const hasReel = groupHasBaReelJob(group)
+              const sendKey = beforeImage
+                ? showroomBaReelPairKey(beforeImage.id, afterImage.id)
+                : `after-only:${afterImage.id}`
+              const isSending = sendingBaToAdInboxByKey[sendKey] === true
+              return (
+                <div className="space-y-2 rounded-xl border border-neutral-200 bg-white px-3 py-2.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-medium text-neutral-800">릴스</span>
+                    {hasReel ? (
+                      <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800 ring-1 ring-amber-200">
+                        반영됨
+                      </span>
+                    ) : (
+                      <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] font-medium text-neutral-600">
+                        미반영
+                      </span>
+                    )}
+                    {isAfterOnly ? (
+                      <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-800">
+                        After만 · Before 합성
+                      </span>
+                    ) : null}
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-10 w-full gap-1.5 text-sm"
+                    disabled={isSending}
+                    onClick={() => void handleSendBaToAdInbox(group, afterImage, beforeImage)}
+                  >
+                    {isSending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Video className="h-4 w-4" />
+                    )}
+                    {hasReel
+                      ? '광고대기실에 다시 만들기'
+                      : isAfterOnly
+                        ? 'Before 합성 후 대기실로'
+                        : '광고대기실로 보내기'}
+                  </Button>
+                </div>
+              )
+            })()}
             <div className="grid grid-cols-2 gap-2">
               <Link to={cardNewsStudioHref}>
                 <Button type="button" variant="outline" className="h-10 w-full gap-1.5 text-sm">
@@ -2517,7 +2726,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                       size="sm"
                       className="gap-1.5"
                       disabled={currentConcernBeforeAfterPage <= 1}
-                      onClick={() => setBeforeAfterPage(currentConcernBeforeAfterPage - 1)}
+                      onClick={() => setConcernBeforeAfterPage(currentConcernBeforeAfterPage - 1)}
                     >
                       <ChevronLeft className="h-4 w-4" />
                       이전
@@ -2533,7 +2742,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                             variant="outline"
                             size="sm"
                             className={cn('min-w-9 px-0', isCurrent && selectedBrowseButtonClass)}
-                            onClick={() => setBeforeAfterPage(pageNumber)}
+                            onClick={() => setConcernBeforeAfterPage(pageNumber)}
                           >
                             {pageNumber}
                           </Button>
@@ -2546,7 +2755,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                       size="sm"
                       className="gap-1.5"
                       disabled={currentConcernBeforeAfterPage >= concernBeforeAfterTotalPages}
-                      onClick={() => setBeforeAfterPage(currentConcernBeforeAfterPage + 1)}
+                      onClick={() => setConcernBeforeAfterPage(currentConcernBeforeAfterPage + 1)}
                     >
                       다음
                       <ChevronRight className="h-4 w-4" />
