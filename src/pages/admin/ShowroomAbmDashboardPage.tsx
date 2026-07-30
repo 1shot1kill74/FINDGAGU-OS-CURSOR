@@ -237,9 +237,9 @@ export default function ShowroomAbmDashboardPage() {
       <div className="mx-auto max-w-7xl space-y-6">
         <div className="flex flex-col gap-4 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm md:flex-row md:items-start md:justify-between">
           <div className="space-y-2">
-            <Link to="/showroom" className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-900">
+            <Link to="/dashboard" className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-900">
               <ArrowLeft className="h-4 w-4" />
-              내부 쇼룸으로 돌아가기
+              대시보드
             </Link>
             <div className="flex items-center gap-2">
               <BarChart3 className="h-5 w-5 text-slate-900" />

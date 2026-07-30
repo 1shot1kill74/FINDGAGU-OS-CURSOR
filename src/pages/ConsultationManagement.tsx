@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { RefreshCw, Zap, Phone, User, Images, MessageCircle, Loader2, Search, EyeOff, LayoutDashboard } from 'lucide-react'
+import { RefreshCw, Zap, Phone, User, MessageCircle, Loader2, Search, EyeOff, LayoutDashboard } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { supabase } from '@/lib/supabase'
@@ -2452,7 +2452,6 @@ export default function ConsultationManagement() {
         <div className="flex items-center justify-between mb-4">
           <h1 className="text-xl font-bold text-foreground">상담 관리</h1>
           <div className="flex items-center gap-2">
-
             <Link to="/dashboard">
               <Button
                 type="button"
@@ -2461,21 +2460,6 @@ export default function ConsultationManagement() {
               >
                 <LayoutDashboard className="h-4 w-4" />
                 대시보드
-              </Button>
-            </Link>
-            <Link to="/showroom">
-              <Button
-                type="button"
-                variant="outline"
-                className="h-9 gap-1.5 px-4 text-sm"
-              >
-                <Images className="h-4 w-4" />
-                시공사례 쇼룸
-              </Button>
-            </Link>
-            <Link to="/image-assets">
-              <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
-                이미지 자산 관리
               </Button>
             </Link>
           </div>

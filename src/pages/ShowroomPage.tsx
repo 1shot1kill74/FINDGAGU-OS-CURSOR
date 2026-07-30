@@ -24,7 +24,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useColorChips } from '@/hooks/useColorChips'
 import { cn } from '@/lib/utils'
-import { Search, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Package, Images, FileText, MousePointerClick, MessageCircle, FileCheck, Users, Wrench, ClipboardCheck, ArrowRight, ArrowLeft, Copy, Check, Video, BarChart3, Building2, Palette, Loader2 } from 'lucide-react'
+import { Search, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Package, Images, FileText, MousePointerClick, MessageCircle, FileCheck, Users, Wrench, ClipboardCheck, ArrowRight, ArrowLeft, Copy, Check, Video, BarChart3, Building2, Palette, Loader2, LayoutDashboard } from 'lucide-react'
 import { toast } from 'sonner'
 import { shareGalleryKakao } from '@/lib/kakaoShare'
 import { createSharedGallery, snapshotShowroomImageAsset } from '@/lib/sharedGalleryService'
@@ -2209,58 +2209,13 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
               )}
             </div>
             {showInternalControls && (
-              <div className="flex flex-col gap-2 lg:items-end">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Link to={originalArchivePath}>
-                    <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
-                      <Images className="h-4 w-4" />
-                      원자료 보기
-                    </Button>
-                  </Link>
-                  <Link to="/admin/showroom-case-studio">
-                    <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
-                      <FileText className="h-4 w-4" />
-                      케이스 작업실
-                    </Button>
-                  </Link>
-                  <Link to="/admin/showroom-ads">
-                    <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
-                      <BarChart3 className="h-4 w-4" />
-                      광고 대시보드
-                    </Button>
-                  </Link>
-                  <Link to="/admin/showroom-abm">
-                    <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
-                      <BarChart3 className="h-4 w-4" />
-                      ABM 퍼널
-                    </Button>
-                  </Link>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Link to="/admin/showroom-shorts">
-                    <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
-                      <Video className="h-4 w-4" />
-                      B/A 검수 대기
-                    </Button>
-                  </Link>
-                  <Link to="/admin/showroom-basic-shorts">
-                    <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
-                      <Images className="h-4 w-4" />
-                      기본 쇼츠 대기
-                    </Button>
-                  </Link>
-                  <Link to="/consultation">
-                    <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
-                      <Users className="h-4 w-4" />
-                      상담 관리
-                    </Button>
-                  </Link>
-                  <Link to="/image-assets">
-                    <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
-                      이미지 자산 관리
-                    </Button>
-                  </Link>
-                </div>
+              <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+                <Link to="/dashboard">
+                  <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
+                    <LayoutDashboard className="h-4 w-4" />
+                    대시보드
+                  </Button>
+                </Link>
               </div>
             )}
           </div>

@@ -308,9 +308,9 @@ export default function ShowroomBasicShortsQueuePage() {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <Link to="/showroom">
+            <Link to="/dashboard">
               <Button type="button" variant="outline" className="gap-2">
-                내부 쇼룸으로 돌아가기
+                대시보드
               </Button>
             </Link>
             <Button type="button" variant="outline" className="gap-2" onClick={() => void load()} disabled={refreshing}>

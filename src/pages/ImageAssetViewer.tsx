@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
-import { X, Copy, CheckCircle, AlertCircle, Search, Link2, ImageIcon, ChevronLeft, ChevronRight, Upload, Users, Images } from 'lucide-react'
+import { X, Copy, CheckCircle, AlertCircle, Search, Link2, ImageIcon, ChevronLeft, ChevronRight, Upload, LayoutDashboard } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -1041,16 +1041,10 @@ export default function ImageAssetViewer() {
             )}
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            <Link to="/consultation">
+            <Link to="/dashboard">
               <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
-                <Users className="h-4 w-4" />
-                상담 관리
-              </Button>
-            </Link>
-            <Link to="/showroom">
-              <Button type="button" variant="outline" className="h-9 gap-1.5 px-4 text-sm">
-                <Images className="h-4 w-4" />
-                시공사례 쇼룸
+                <LayoutDashboard className="h-4 w-4" />
+                대시보드
               </Button>
             </Link>
           </div>

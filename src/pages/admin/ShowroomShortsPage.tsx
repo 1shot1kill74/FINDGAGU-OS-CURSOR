@@ -449,7 +449,7 @@ export default function ShowroomShortsPage() {
       <div className="mx-auto max-w-6xl space-y-6">
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-4">
-            <Link to="/dashboard" className="text-sm text-muted-foreground hover:text-foreground">← 홈</Link>
+            <Link to="/dashboard" className="text-sm text-muted-foreground hover:text-foreground">← 대시보드</Link>
             <h1 className="flex items-center gap-2 text-2xl font-bold text-foreground">
               <Video className="h-6 w-6" />
               쇼룸 숏츠 검수 대기

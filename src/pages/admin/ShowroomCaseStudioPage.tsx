@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { ArrowRight, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, Download, Eye, Hash, Loader2, Send } from 'lucide-react'
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, Download, Eye, Hash, Loader2, Send } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -851,10 +851,9 @@ export default function ShowroomCaseStudioPage() {
           상담용 쇼룸 화면과 분리되어 있습니다.
         </p>
         <div className="mt-4">
-          <Link to="/showroom#showroom-before-after-section">
+          <Link to="/dashboard">
             <Button type="button" variant="outline" className="gap-2">
-              내부 쇼룸으로 이동
-              <ArrowRight className="h-4 w-4" />
+              대시보드
             </Button>
           </Link>
         </div>

@@ -312,6 +312,13 @@ export default function DashboardPage() {
       icon: MonitorCog,
     },
     {
+      title: '오픈 쇼룸',
+      description: '고객용 공개 쇼룸을 새 탭에서 확인합니다.',
+      href: openShowroomUrl,
+      external: true as const,
+      icon: ExternalLink,
+    },
+    {
       title: '광고 대기실',
       description: '분류 전 BA 사진 입고 후 클링 타임랩스로 보냅니다.',
       to: '/admin/ad-inbox',
@@ -378,14 +385,11 @@ export default function DashboardPage() {
             <nav className={`space-y-1 ${quickNavCollapsed ? 'p-2' : 'p-3'}`}>
               {quickActions.map((item) => {
                 const Icon = item.icon
-                return (
-                  <Link
-                    key={item.to}
-                    to={item.to}
-                    className={`group relative flex items-center rounded-2xl border border-transparent text-neutral-700 transition-colors hover:border-neutral-200 hover:bg-neutral-50 ${
-                      quickNavCollapsed ? 'justify-center p-2.5' : 'gap-3 px-3 py-2.5'
-                    }`}
-                  >
+                const className = `group relative flex items-center rounded-2xl border border-transparent text-neutral-700 transition-colors hover:border-neutral-200 hover:bg-neutral-50 ${
+                  quickNavCollapsed ? 'justify-center p-2.5' : 'gap-3 px-3 py-2.5'
+                }`
+                const content = (
+                  <>
                     <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-neutral-900 text-white">
                       <Icon className="h-4 w-4" />
                     </span>
@@ -401,6 +405,24 @@ export default function DashboardPage() {
                         </span>
                       </span>
                     )}
+                  </>
+                )
+                if ('href' in item) {
+                  return (
+                    <a
+                      key={item.href}
+                      href={item.href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={className}
+                    >
+                      {content}
+                    </a>
+                  )
+                }
+                return (
+                  <Link key={item.to} to={item.to} className={className}>
+                    {content}
                   </Link>
                 )
               })}
@@ -429,12 +451,10 @@ export default function DashboardPage() {
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               {quickActions.map((item) => {
                 const Icon = item.icon
-                return (
-                  <Link
-                    key={item.to}
-                    to={item.to}
-                    className="group flex items-start gap-3 rounded-2xl border border-neutral-200 bg-neutral-50 p-4 transition-colors hover:border-neutral-300 hover:bg-white"
-                  >
+                const className =
+                  'group flex items-start gap-3 rounded-2xl border border-neutral-200 bg-neutral-50 p-4 transition-colors hover:border-neutral-300 hover:bg-white'
+                const content = (
+                  <>
                     <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-neutral-900 text-white">
                       <Icon className="h-5 w-5" />
                     </span>
@@ -442,6 +462,24 @@ export default function DashboardPage() {
                       <span className="block font-medium text-neutral-900">{item.title}</span>
                       <span className="mt-1 block text-sm leading-5 text-neutral-500">{item.description}</span>
                     </span>
+                  </>
+                )
+                if ('href' in item) {
+                  return (
+                    <a
+                      key={item.href}
+                      href={item.href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={className}
+                    >
+                      {content}
+                    </a>
+                  )
+                }
+                return (
+                  <Link key={item.to} to={item.to} className={className}>
+                    {content}
                   </Link>
                 )
               })}
