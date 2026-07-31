@@ -114,6 +114,13 @@ import type {
   SiteGroup,
   ViewMode,
 } from '@/pages/showroom/showroomPageTypes'
+import {
+  EMPTY_SHOWROOM_CASE_PROFILE_DRAFT,
+  blogPublicationFromPost,
+  preferCanonicalBlogPost,
+  showroomBlogPublicationBadgeClass,
+  showroomBlogPublicationLabel,
+} from '@/pages/showroom/showroomPageTypes'
 
 export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
   const showInternalControls = mode === 'internal'
@@ -750,7 +757,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
               cardNewsPublication: row.cardNewsPublication.isPublished
                 ? row.cardNewsPublication
                 : existing.cardNewsPublication,
-              canonicalBlogPost: existing.canonicalBlogPost ?? row.canonicalBlogPost,
+              canonicalBlogPost: preferCanonicalBlogPost(existing.canonicalBlogPost, row.canonicalBlogPost),
             })
           })
 
@@ -780,13 +787,14 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
               ...aliasKeys,
               ...identityKeys,
             ]))
-            const value = {
+            const value: ShowroomCaseProfileDraftState = {
               painPoint: row.painPoint ?? '',
               headlineHook: row.headlineHook ?? '',
               cardNewsPublication: {
                 isPublished: row.cardNewsPublication.isPublished,
                 siteKey: row.cardNewsPublication.siteKey,
               },
+              blogPublication: blogPublicationFromPost(row.canonicalBlogPost),
               blogTeaserLine: openShowroomBlogTeaserLine(row.canonicalBlogPost),
             }
             keys.forEach((key) => {
@@ -1387,15 +1395,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
       ?? caseProfileDraftBySite[group.siteName]
       ?? (group.externalDisplayName ? caseProfileDraftBySite[group.externalDisplayName] : undefined)
       ?? (publicLabel ? caseProfileDraftBySite[publicLabel] : undefined)
-      ?? {
-      painPoint: '',
-      headlineHook: '',
-      cardNewsPublication: {
-        isPublished: false,
-        siteKey: null,
-      },
-      blogTeaserLine: null,
-    }
+      ?? EMPTY_SHOWROOM_CASE_PROFILE_DRAFT
   }, [caseProfileDraftBySite])
 
   const getBeforeAfterStoryHref = useCallback((group: SiteGroup) => {
@@ -1812,6 +1812,19 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                       className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${reelBadgeClass}`}
                     >
                       {reelLabel}
+                    </span>
+                    <span className="text-xs font-medium text-neutral-800">블로그</span>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${showroomBlogPublicationBadgeClass(caseProfileDraft.blogPublication)}`}
+                      title={
+                        caseProfileDraft.blogPublication.status === 'approved'
+                          ? '쇼룸 사례 블로그가 공개(발행)된 상태입니다.'
+                          : caseProfileDraft.blogPublication.status
+                            ? '블로그 정본이 있으나 아직 공개되지 않았습니다.'
+                            : '사례 블로그 정본이 아직 없습니다.'
+                      }
+                    >
+                      {showroomBlogPublicationLabel(caseProfileDraft.blogPublication)}
                     </span>
                     {isAfterOnly ? (
                       <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-800">

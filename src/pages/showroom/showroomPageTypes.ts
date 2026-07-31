@@ -1,4 +1,8 @@
 import type { ShowroomImageAsset, ShowroomSiteOverrideSectionKey } from '@/lib/imageAssetService'
+import type {
+  ShowroomCaseCanonicalBlogPost,
+  ShowroomCaseCanonicalBlogStatus,
+} from '@/lib/showroomCaseCanonicalBlog'
 
 export type ViewMode = 'product' | 'industry' | 'color'
 
@@ -64,8 +68,72 @@ export interface ShowroomCaseProfileDraftState {
     isPublished: boolean
     siteKey: string | null
   }
+  /** 블로그 정본 발행 상태. status null = 미제작 */
+  blogPublication: {
+    status: ShowroomCaseCanonicalBlogStatus | null
+    autoPublished: boolean
+  }
   /** 승인된 블로그 정본 기준 티저 한 줄 (없으면 null) */
   blogTeaserLine: string | null
+}
+
+export const EMPTY_SHOWROOM_CASE_PROFILE_DRAFT: ShowroomCaseProfileDraftState = {
+  painPoint: '',
+  headlineHook: '',
+  cardNewsPublication: {
+    isPublished: false,
+    siteKey: null,
+  },
+  blogPublication: {
+    status: null,
+    autoPublished: false,
+  },
+  blogTeaserLine: null,
+}
+
+/** 내부 쇼룸 전후비교 카드용 블로그 발행 뱃지 문구 */
+export function showroomBlogPublicationLabel(
+  publication: ShowroomCaseProfileDraftState['blogPublication'],
+): string {
+  const status = publication.status
+  if (!status) return '미제작'
+  if (status === 'approved') {
+    return publication.autoPublished ? '자동 발행완료' : '발행완료'
+  }
+  if (status === 'scheduled') return '발행예정'
+  if (status === 'archived') return '보관'
+  if (status === 'review') return '검수중'
+  return '초안'
+}
+
+export function showroomBlogPublicationBadgeClass(
+  publication: ShowroomCaseProfileDraftState['blogPublication'],
+): string {
+  const status = publication.status
+  if (status === 'approved') return 'bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200'
+  if (status === 'scheduled') return 'bg-sky-50 text-sky-800 ring-1 ring-sky-200'
+  if (status === 'review') return 'bg-amber-50 text-amber-900 ring-1 ring-amber-200'
+  if (status === 'archived') return 'bg-neutral-100 text-neutral-600'
+  if (status) return 'bg-amber-50 text-amber-800 ring-1 ring-amber-200'
+  return 'bg-neutral-100 text-neutral-600'
+}
+
+export function preferCanonicalBlogPost(
+  a: ShowroomCaseCanonicalBlogPost | null | undefined,
+  b: ShowroomCaseCanonicalBlogPost | null | undefined,
+): ShowroomCaseCanonicalBlogPost | null {
+  if (a?.status === 'approved') return a
+  if (b?.status === 'approved') return b
+  return a ?? b ?? null
+}
+
+export function blogPublicationFromPost(
+  post: ShowroomCaseCanonicalBlogPost | null | undefined,
+): ShowroomCaseProfileDraftState['blogPublication'] {
+  return {
+    status: post?.status ?? null,
+    autoPublished: post?.qaReview?.autoPublished === true,
+  }
 }
 
 export type ShowroomPageProps = {

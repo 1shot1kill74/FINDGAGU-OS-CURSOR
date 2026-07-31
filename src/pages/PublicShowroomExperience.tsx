@@ -81,6 +81,11 @@ import type {
   SiteGroup,
   ViewMode,
 } from '@/pages/showroom/showroomPageTypes'
+import {
+  EMPTY_SHOWROOM_CASE_PROFILE_DRAFT,
+  blogPublicationFromPost,
+  preferCanonicalBlogPost,
+} from '@/pages/showroom/showroomPageTypes'
 
 const DETAIL_ZOOM_MIN = 1
 const DETAIL_ZOOM_MAX = 4
@@ -669,7 +674,7 @@ export default function PublicShowroomExperience() {
               cardNewsPublication: row.cardNewsPublication.isPublished
                 ? row.cardNewsPublication
                 : existing.cardNewsPublication,
-              canonicalBlogPost: existing.canonicalBlogPost ?? row.canonicalBlogPost,
+              canonicalBlogPost: preferCanonicalBlogPost(existing.canonicalBlogPost, row.canonicalBlogPost),
             })
           })
 
@@ -699,13 +704,14 @@ export default function PublicShowroomExperience() {
               ...aliasKeys,
               ...identityKeys,
             ]))
-            const value = {
+            const value: ShowroomCaseProfileDraftState = {
               painPoint: row.painPoint ?? '',
               headlineHook: row.headlineHook ?? '',
               cardNewsPublication: {
                 isPublished: row.cardNewsPublication.isPublished,
                 siteKey: row.cardNewsPublication.siteKey,
               },
+              blogPublication: blogPublicationFromPost(row.canonicalBlogPost),
               blogTeaserLine: openShowroomBlogTeaserLine(row.canonicalBlogPost),
             }
             keys.forEach((key) => {
@@ -948,15 +954,7 @@ export default function PublicShowroomExperience() {
       ?? caseProfileDraftBySite[group.siteName]
       ?? (group.externalDisplayName ? caseProfileDraftBySite[group.externalDisplayName] : undefined)
       ?? (publicLabel ? caseProfileDraftBySite[publicLabel] : undefined)
-      ?? {
-      painPoint: '',
-      headlineHook: '',
-      cardNewsPublication: {
-        isPublished: false,
-        siteKey: null,
-      },
-      blogTeaserLine: null,
-    }
+      ?? EMPTY_SHOWROOM_CASE_PROFILE_DRAFT
   }, [caseProfileDraftBySite])
 
   const getBeforeAfterStoryHref = useCallback((group: SiteGroup) => {
