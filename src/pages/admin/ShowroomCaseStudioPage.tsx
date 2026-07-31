@@ -29,6 +29,14 @@ import {
   type ShowroomCaseCanonicalBlogPost,
 } from '@/lib/showroomCaseCanonicalBlog'
 import {
+  buildShowroomBlogQaRevisionPayload,
+  formatShowroomBlogQaSummary,
+  scoreAndRepairShowroomCaseBlogQa,
+  SHOWROOM_BLOG_QA_AUTO_PUBLISH_THRESHOLD,
+  SHOWROOM_BLOG_QA_MAX_REGENERATE,
+  type ShowroomBlogQaRevisionPayload,
+} from '@/lib/showroomCaseBlogQa'
+import {
   fetchShowroomCaseProfileDrafts,
   saveShowroomCaseCanonicalBlogPost,
   saveShowroomCaseGenerationState,
@@ -391,8 +399,20 @@ export default function ShowroomCaseStudioPage() {
       }
     })
     if (!options?.silent) {
-      toast.success('브리프를 승인했습니다. 이제 블로그 만들기를 진행할 수 있습니다.')
+      toast.success('브리프를 승인했습니다.')
     }
+  }
+
+  /** 브리프 승인 직후 블로그 생성까지 한 번에 진행 (단건 CTA) */
+  const approveBriefAndGenerateBlog = async (row: CaseDraftState) => {
+    approveBriefForRow(row.siteName, { silent: true })
+    toast.success('브리프 승인 · 블로그 만들기를 시작합니다.')
+    const generationSeed = deriveStudioSeedFromSlides(row)
+    const payload = buildShowroomCaseN8nPayload(generationSeed, {
+      cardNewsPackage: buildShowroomCaseCardNewsPackage(generationSeed),
+      projectImages: row.projectImages,
+    })
+    await requestContentGeneration({ row, payload })
   }
 
   const requestContentGeneration = async (params: {
@@ -434,32 +454,102 @@ export default function ShowroomCaseStudioPage() {
         if (error) throw error
       }
 
-      const response = await fetch('/api/showroom-case-content', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${sessionData.session.access_token}`,
-        },
-        body: JSON.stringify({
-          ...params.payload,
-          channel: 'blog',
-        }),
-      })
+      let qaRevision: ShowroomBlogQaRevisionPayload | undefined
+      let regenerateAttempts = 0
+      let finalCanonicalBlog: ShowroomCaseCanonicalBlogPost | null = null
+      let qaAutoPublished = false
+      let qaSummary: string | null = null
+      let lastParsed: unknown = null
+      let lastReviewPassed = false
 
-      const rawText = await response.text()
-      let parsed: unknown = null
-      try {
-        parsed = rawText ? JSON.parse(rawText) : null
-      } catch {
-        parsed = rawText
-      }
+      while (true) {
+        const response = await fetch('/api/showroom-case-content', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${sessionData.session.access_token}`,
+          },
+          body: JSON.stringify({
+            ...params.payload,
+            channel: 'blog',
+            ...(qaRevision ? { qaRevision } : {}),
+          }),
+        })
 
-      if (!response.ok) {
-        const message =
-          parsed && typeof parsed === 'object' && 'message' in parsed && typeof parsed.message === 'string'
-            ? parsed.message
-            : '블로그 생성 요청에 실패했습니다.'
-        throw new Error(message)
+        const rawText = await response.text()
+        let parsed: unknown = null
+        try {
+          parsed = rawText ? JSON.parse(rawText) : null
+        } catch {
+          parsed = rawText
+        }
+
+        if (!response.ok) {
+          const message =
+            parsed && typeof parsed === 'object' && 'message' in parsed && typeof parsed.message === 'string'
+              ? parsed.message
+              : '블로그 생성 요청에 실패했습니다.'
+          throw new Error(message)
+        }
+
+        lastParsed = parsed
+
+        const savedCanonicalBlog = buildCanonicalBlogPostFromN8nBlogResponse({
+          siteName: params.row.siteName,
+          n8nResponse: parsed,
+          beforeImageUrl: params.row.beforeUrl,
+          afterImageUrl: params.row.afterUrl,
+          imageContext: buildShowroomCaseN8nImageContext(params.row.projectImages),
+          existingCreatedAt:
+            finalCanonicalBlog?.createdAt
+            ?? params.row.canonicalBlogPost?.createdAt
+            ?? null,
+        })
+
+        if (!savedCanonicalBlog) {
+          finalCanonicalBlog = null
+          qaSummary = null
+          qaAutoPublished = false
+          break
+        }
+
+        const { post: scoredPost, review } = scoreAndRepairShowroomCaseBlogQa(savedCanonicalBlog, {
+          industry: params.row.industry,
+          regenerateAttempts,
+        })
+        finalCanonicalBlog = scoredPost
+        qaAutoPublished = review.autoPublished
+        qaSummary = formatShowroomBlogQaSummary(review)
+        lastReviewPassed = review.passed
+
+        if (review.passed || regenerateAttempts >= SHOWROOM_BLOG_QA_MAX_REGENERATE) {
+          break
+        }
+
+        regenerateAttempts += 1
+        qaRevision = buildShowroomBlogQaRevisionPayload(review, regenerateAttempts)
+
+        if (!params.silent) {
+          toast.message(
+            `${qaSummary} · SEO/AEO 수정 후 재생성 중 (${regenerateAttempts}/${SHOWROOM_BLOG_QA_MAX_REGENERATE})`,
+          )
+        }
+
+        setRows((prev) =>
+          prev.map((row) =>
+            row.siteName === params.row.siteName
+              ? {
+                  ...row,
+                  blogGeneration: {
+                    ...row.blogGeneration,
+                    status: 'processing',
+                    errorMessage: null,
+                  },
+                  canonicalBlogPost: scoredPost,
+                }
+              : row
+          )
+        )
       }
 
       {
@@ -467,26 +557,20 @@ export default function ShowroomCaseStudioPage() {
           siteName: params.row.siteName,
           channel: 'blog',
           status: 'completed',
-          response: parsed,
+          response: lastParsed,
         })
         if (error) throw error
       }
 
-      const savedCanonicalBlog = buildCanonicalBlogPostFromN8nBlogResponse({
-        siteName: params.row.siteName,
-        n8nResponse: parsed,
-        beforeImageUrl: params.row.beforeUrl,
-        afterImageUrl: params.row.afterUrl,
-        imageContext: buildShowroomCaseN8nImageContext(params.row.projectImages),
-        existingCreatedAt: params.row.canonicalBlogPost?.createdAt ?? null,
-      })
-      if (savedCanonicalBlog) {
+      if (finalCanonicalBlog) {
         const { error: canonError } = await saveShowroomCaseCanonicalBlogPost({
           siteName: params.row.siteName,
-          post: savedCanonicalBlog,
+          post: finalCanonicalBlog,
         })
         if (canonError) {
           toast.warning(`블로그 정본 저장에 실패했습니다: ${canonError.message}`)
+        } else if (qaAutoPublished) {
+          requestDeployHookTrigger(`blog-auto-qa-approved:${params.row.siteName}`)
         }
       }
 
@@ -500,15 +584,28 @@ export default function ShowroomCaseStudioPage() {
               status: 'completed',
               completedAt: new Date().toISOString(),
               errorMessage: null,
-              response: parsed,
+              response: lastParsed,
             },
-            canonicalBlogPost: savedCanonicalBlog ?? row.canonicalBlogPost,
+            canonicalBlogPost: finalCanonicalBlog ?? row.canonicalBlogPost,
           }
         })
       )
 
       if (!params.silent) {
-        toast.success('블로그 생성 요청을 보냈습니다.')
+        if (qaAutoPublished && qaSummary) {
+          const repairNote = finalCanonicalBlog?.qaReview?.localRepairApplied ? ' · 자동 수정 반영' : ''
+          const regenNote =
+            regenerateAttempts > 0 ? ` · 재생성 ${regenerateAttempts}회` : ''
+          toast.success(`블로그 생성 완료 · ${qaSummary} → 자동 발행${repairNote}${regenNote}`)
+        } else if (qaSummary && !lastReviewPassed) {
+          toast.message(
+            `블로그 생성 완료 · ${qaSummary} (수정·재생성 후에도 기준 ${SHOWROOM_BLOG_QA_AUTO_PUBLISH_THRESHOLD}점 미달). 「지금 발행」으로 수동 공개할 수 있습니다.`,
+          )
+        } else if (qaSummary) {
+          toast.success(`블로그 생성 완료 · ${qaSummary}`)
+        } else {
+          toast.success('블로그 생성 요청을 보냈습니다.')
+        }
       }
       return true
     } catch (error) {
@@ -669,7 +766,7 @@ export default function ShowroomCaseStudioPage() {
         if (success) ok += 1
         else failed += 1
       }
-      toast.success(`블로그 초안 ${ok}건 생성${failed ? ` · 실패 ${failed}` : ''}`)
+      toast.success(`블로그 초안 ${ok}건 생성${failed ? ` · 실패 ${failed}` : ''} (SEO/AEO ${SHOWROOM_BLOG_QA_AUTO_PUBLISH_THRESHOLD}점↑ 자동 발행)`)
     } finally {
       setBatchBusy(null)
     }
@@ -698,7 +795,7 @@ export default function ShowroomCaseStudioPage() {
         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">Case Content Studio</p>
         <h1 className="mt-2 text-2xl font-bold text-slate-900 md:text-3xl">비포어/애프터 케이스 작업실</h1>
         <p className="mt-2 text-sm leading-6 text-slate-600">
-          BA 사례를 초안 만든 뒤 바로 공개합니다. 목표는 정독 글이 아니라{' '}
+          BA 사례를 초안 만든 뒤 SEO/AEO 자동 검수를 통과하면 바로 공개합니다. 목표는 정독 글이 아니라{' '}
           <span className="font-medium text-slate-800">“정리된 회사” 에비던스 URL</span>을 쌓는 것입니다.
         </p>
         <div className="mt-4">
@@ -1031,7 +1128,7 @@ export default function ShowroomCaseStudioPage() {
                           <div>
                             <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">LLM·n8n 자동 작성</p>
                             <p className="mt-1 text-sm text-slate-500">
-                              BA 사진으로 AI 브리프 초안을 받은 뒤 검토·승인하면, 아래 브리프로 블로그를 만듭니다. 이미지·현장 메타는 함께 실립니다.
+                              브리프 승인 시 블로그를 만들고, SEO/AEO 자동 검수({SHOWROOM_BLOG_QA_AUTO_PUBLISH_THRESHOLD}점 이상) 통과하면 바로 공개합니다. 미달이면 자동 수정 후 재생성합니다.
                             </p>
                             <div className="mt-3 flex flex-wrap gap-2 text-xs">
                               <span className={`rounded-full px-2.5 py-1 font-medium ${getGenerationStatusTone(row.blogGeneration.status)}`}>
@@ -1044,12 +1141,55 @@ export default function ShowroomCaseStudioPage() {
                               }`}>
                                 블로그{' '}
                                 {row.canonicalBlogPost?.status === 'approved'
-                                  ? '공개'
+                                  ? row.canonicalBlogPost.qaReview?.autoPublished
+                                    ? '자동 공개'
+                                    : '공개'
                                   : row.canonicalBlogPost
                                     ? '초안'
                                     : '미제작'}
                               </span>
+                              {row.canonicalBlogPost?.qaReview ? (
+                                <span
+                                  className={`rounded-full px-2.5 py-1 font-medium ${
+                                    row.canonicalBlogPost.qaReview.passed
+                                      ? 'bg-sky-50 text-sky-800 ring-1 ring-sky-200'
+                                      : 'bg-amber-50 text-amber-900 ring-1 ring-amber-200'
+                                  }`}
+                                  title={row.canonicalBlogPost.qaReview.checks
+                                    .map((c) => `${c.label}: ${c.score}/${c.maxScore} — ${c.detail}`)
+                                    .join('\n')}
+                                >
+                                  {formatShowroomBlogQaSummary(row.canonicalBlogPost.qaReview)}
+                                </span>
+                              ) : null}
+                              {row.canonicalBlogPost?.qaReview?.localRepairApplied ? (
+                                <span className="rounded-full bg-violet-50 px-2.5 py-1 font-medium text-violet-800 ring-1 ring-violet-200">
+                                  자동 수정
+                                </span>
+                              ) : null}
+                              {(row.canonicalBlogPost?.qaReview?.regenerateAttempts ?? 0) > 0 ? (
+                                <span className="rounded-full bg-indigo-50 px-2.5 py-1 font-medium text-indigo-800 ring-1 ring-indigo-200">
+                                  재생성 {row.canonicalBlogPost?.qaReview?.regenerateAttempts}회
+                                </span>
+                              ) : null}
                             </div>
+                            {row.canonicalBlogPost?.qaReview?.revisionNotes?.length ? (
+                              <p className="mt-2 text-xs text-slate-500">
+                                수정: {row.canonicalBlogPost.qaReview.revisionNotes.join(' · ')}
+                              </p>
+                            ) : null}
+                            {row.canonicalBlogPost?.qaReview && !row.canonicalBlogPost.qaReview.passed ? (
+                              <ul className="mt-2 space-y-0.5 text-xs text-amber-900/90">
+                                {row.canonicalBlogPost.qaReview.checks
+                                  .filter((c) => !c.passed)
+                                  .slice(0, 4)
+                                  .map((c) => (
+                                    <li key={c.id}>
+                                      {c.label}: {c.detail}
+                                    </li>
+                                  ))}
+                              </ul>
+                            ) : null}
                             {row.blogGeneration.errorMessage ? (
                               <p className="mt-2 text-xs text-rose-600">
                                 {row.blogGeneration.errorMessage}
@@ -1083,12 +1223,14 @@ export default function ShowroomCaseStudioPage() {
                               disabled={requestingKey === `${row.siteName}:blog` || blogBlockedByBriefDraft}
                               title={
                                 blogBlockedByBriefDraft
-                                  ? 'AI 브리프 초안을 검토한 뒤 「브리프 승인」을 눌러 주세요.'
-                                  : undefined
+                                  ? 'AI 브리프 초안을 검토한 뒤 「승인 후 블로그 만들기」를 눌러 주세요.'
+                                  : briefReview.status === 'approved'
+                                    ? '이미 승인된 브리프로 블로그를 다시 만듭니다.'
+                                    : undefined
                               }
                               onClick={() => {
                                 if (blogBlockedByBriefDraft) {
-                                  toast.message('AI 브리프 초안을 검토한 뒤 「브리프 승인」을 먼저 눌러 주세요.')
+                                  toast.message('AI 브리프 초안을 검토한 뒤 「승인 후 블로그 만들기」를 먼저 눌러 주세요.')
                                   return
                                 }
                                 void requestContentGeneration({
@@ -1098,7 +1240,7 @@ export default function ShowroomCaseStudioPage() {
                               }}
                             >
                               {requestingKey === `${row.siteName}:blog` ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                              블로그 만들기
+                              {briefReview.status === 'approved' ? '블로그 다시 만들기' : '블로그 만들기'}
                             </Button>
                             <Button
                               type="button"
@@ -1155,7 +1297,7 @@ export default function ShowroomCaseStudioPage() {
                             <div>
                               <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-900">자동 작성용 브리프</p>
                               <p className="mt-1 text-xs leading-relaxed text-slate-600">
-                                BA 사진을 AI가 읽고 초안을 채웁니다. 수정·승인 후에만 블로그 만들기가 열립니다. 직접 입력만 한 경우에는 승인 없이 진행할 수 있습니다.
+                                BA 사진을 AI가 읽고 초안을 채웁니다. 수정 후 승인하면 바로 블로그 만들기가 시작됩니다. 직접 입력만 한 경우에는 「블로그 만들기」로 바로 진행할 수 있습니다.
                               </p>
                             </div>
                             <div className="flex shrink-0 flex-wrap gap-2">
@@ -1178,10 +1320,14 @@ export default function ShowroomCaseStudioPage() {
                                 type="button"
                                 variant="default"
                                 size="sm"
-                                disabled={briefReview.status !== 'draft'}
-                                onClick={() => approveBriefForRow(row.siteName)}
+                                className="gap-1.5"
+                                disabled={
+                                  briefReview.status !== 'draft'
+                                  || requestingKey === `${row.siteName}:blog`
+                                }
+                                onClick={() => void approveBriefAndGenerateBlog(row)}
                               >
-                                브리프 승인
+                                승인 후 블로그 만들기
                               </Button>
                             </div>
                           </div>
@@ -1195,8 +1341,8 @@ export default function ShowroomCaseStudioPage() {
                             >
                               <p className="font-medium">
                                 {briefReview.status === 'approved'
-                                  ? '브리프 승인됨 · 블로그 만들기 가능'
-                                  : 'AI 초안 · 검토 후 「브리프 승인」 필요'}
+                                  ? '브리프 승인됨 · 블로그 생성 진행'
+                                  : 'AI 초안 · 검토 후 「승인 후 블로그 만들기」'}
                                 {briefReview.confidence ? ` · 신뢰도 ${briefReview.confidence}` : ''}
                               </p>
                               {briefReview.notes ? <p className="mt-1 opacity-90">{briefReview.notes}</p> : null}

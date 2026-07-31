@@ -85,6 +85,8 @@ import {
   EMPTY_SHOWROOM_CASE_PROFILE_DRAFT,
   blogPublicationFromPost,
   preferCanonicalBlogPost,
+  resolveShowroomBlogPublicationForSiteGroup,
+  showroomCaseProfileExactSiteKeys,
 } from '@/pages/showroom/showroomPageTypes'
 
 const DETAIL_ZOOM_MIN = 1
@@ -678,6 +680,11 @@ export default function PublicShowroomExperience() {
             })
           })
 
+          const allExactSiteKeys = new Set<string>()
+          mergedRows.forEach((row) => {
+            showroomCaseProfileExactSiteKeys(row).forEach((key) => allExactSiteKeys.add(key))
+          })
+
           mergedRows.forEach((row) => {
             const publicSiteName = getBroadPublicLabel(row.siteName, null)
             const publicCanonicalSiteName = getBroadPublicLabel(row.canonicalSiteName, null)
@@ -687,9 +694,10 @@ export default function PublicShowroomExperience() {
             const canonicalBlogSeoTitle = row.canonicalBlogPost?.seo.title?.trim() ?? ''
             const cardNewsDisplayName = readGeneratedDisplayName(row.cardNewsGeneration.response)
             const blogDisplayName = readGeneratedDisplayName(row.blogGeneration.response)
+            const exactKeys = showroomCaseProfileExactSiteKeys(row)
+            const exactKeySet = new Set(exactKeys)
             const aliasKeys = [
-              row.siteName.trim(),
-              row.canonicalSiteName?.trim() ?? '',
+              ...exactKeys,
               publicSiteName,
               publicCanonicalSiteName,
               industryAwareSiteName,
@@ -704,6 +712,7 @@ export default function PublicShowroomExperience() {
               ...aliasKeys,
               ...identityKeys,
             ]))
+            const blogPublication = blogPublicationFromPost(row.canonicalBlogPost)
             const value: ShowroomCaseProfileDraftState = {
               painPoint: row.painPoint ?? '',
               headlineHook: row.headlineHook ?? '',
@@ -711,11 +720,20 @@ export default function PublicShowroomExperience() {
                 isPublished: row.cardNewsPublication.isPublished,
                 siteKey: row.cardNewsPublication.siteKey,
               },
-              blogPublication: blogPublicationFromPost(row.canonicalBlogPost),
+              blogPublication,
               blogTeaserLine: openShowroomBlogTeaserLine(row.canonicalBlogPost),
             }
+            const looseValue: ShowroomCaseProfileDraftState = {
+              ...value,
+              blogPublication: { status: null },
+            }
             keys.forEach((key) => {
-              next[key] = value
+              if (exactKeySet.has(key)) {
+                next[key] = value
+                return
+              }
+              if (allExactSiteKeys.has(key)) return
+              next[key] = looseValue
             })
           })
           return next
@@ -950,11 +968,15 @@ export default function PublicShowroomExperience() {
     const matched = aliases
       .map((key) => caseProfileDraftBySite[key])
       .find(Boolean)
-    return matched
+    const base = matched
       ?? caseProfileDraftBySite[group.siteName]
       ?? (group.externalDisplayName ? caseProfileDraftBySite[group.externalDisplayName] : undefined)
       ?? (publicLabel ? caseProfileDraftBySite[publicLabel] : undefined)
       ?? EMPTY_SHOWROOM_CASE_PROFILE_DRAFT
+    return {
+      ...base,
+      blogPublication: resolveShowroomBlogPublicationForSiteGroup(group, caseProfileDraftBySite),
+    }
   }, [caseProfileDraftBySite])
 
   const getBeforeAfterStoryHref = useCallback((group: SiteGroup) => {

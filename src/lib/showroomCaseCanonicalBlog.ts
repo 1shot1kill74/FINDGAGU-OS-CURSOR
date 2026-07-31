@@ -11,6 +11,11 @@
  */
 
 import type { ShowroomCaseN8nImageContextItem } from '@/lib/showroomCaseContentPackage'
+import {
+  parseShowroomBlogQaReview,
+  serializeShowroomBlogQaReview,
+  type ShowroomBlogQaReview,
+} from '@/lib/showroomCaseBlogQa'
 
 export const CANONICAL_BLOG_METADATA_KEY = 'canonical_blog_post'
 
@@ -81,6 +86,8 @@ export type ShowroomCaseCanonicalBlogPostV1 = {
   scheduledAt?: string | null
   approvedAt?: string | null
   approvedBy?: string | null
+  /** SEO/AEO 자동 검수 결과 (생성 직후 채점) */
+  qaReview?: ShowroomBlogQaReview | null
 }
 
 export type ShowroomCaseCanonicalBlogPost = ShowroomCaseCanonicalBlogPostV1
@@ -232,6 +239,9 @@ export function parseCanonicalBlogPostFromMetadata(metadata: unknown): ShowroomC
   const scheduledAt = readString(record, 'scheduledAt') ?? readString(record, 'scheduled_at')
   const approvedAt = readString(record, 'approvedAt') ?? readString(record, 'approved_at')
   const approvedBy = readString(record, 'approvedBy') ?? readString(record, 'approved_by')
+  const qaReview =
+    parseShowroomBlogQaReview(record.qaReview) ??
+    parseShowroomBlogQaReview(record.qa_review)
 
   return {
     schemaVersion: 1,
@@ -249,6 +259,7 @@ export function parseCanonicalBlogPostFromMetadata(metadata: unknown): ShowroomC
     scheduledAt: scheduledAt ?? null,
     approvedAt: approvedAt ?? null,
     approvedBy: approvedBy ?? null,
+    qaReview: qaReview ?? null,
   }
 }
 
@@ -310,6 +321,12 @@ export function serializeCanonicalBlogPost(post: ShowroomCaseCanonicalBlogPost):
     approvedAt: post.approvedAt ?? null,
     approved_by: post.approvedBy ?? null,
     approvedBy: post.approvedBy ?? null,
+    ...(post.qaReview
+      ? {
+          qa_review: serializeShowroomBlogQaReview(post.qaReview),
+          qaReview: serializeShowroomBlogQaReview(post.qaReview),
+        }
+      : { qa_review: null, qaReview: null }),
   }
 }
 

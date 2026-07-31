@@ -345,6 +345,16 @@ export type ShowroomCaseN8nPayload = {
   blogDraftMarkdown: string
   /** 현장 컷 메타(제품·컬러·비포애프 등) — 블로그 분량·구체성 보강용 */
   imageContext: ShowroomCaseN8nImageContextItem[]
+  /** SEO/AEO 검수 미달 시 재생성 지시 (선택) */
+  qaRevision?: {
+    mode: 'seo-aeo-fix'
+    attempt: number
+    threshold: number
+    previousScore: number
+    previousMaxScore: number
+    failedChecks: Array<{ id: string; label: string; detail: string }>
+    instructions: string
+  }
 }
 
 function clean(value: string | null | undefined): string {

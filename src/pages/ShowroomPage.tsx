@@ -118,8 +118,10 @@ import {
   EMPTY_SHOWROOM_CASE_PROFILE_DRAFT,
   blogPublicationFromPost,
   preferCanonicalBlogPost,
+  resolveShowroomBlogPublicationForSiteGroup,
   showroomBlogPublicationBadgeClass,
   showroomBlogPublicationLabel,
+  showroomCaseProfileExactSiteKeys,
 } from '@/pages/showroom/showroomPageTypes'
 
 export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
@@ -761,6 +763,11 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
             })
           })
 
+          const allExactSiteKeys = new Set<string>()
+          mergedRows.forEach((row) => {
+            showroomCaseProfileExactSiteKeys(row).forEach((key) => allExactSiteKeys.add(key))
+          })
+
           mergedRows.forEach((row) => {
             const publicSiteName = getBroadPublicLabel(row.siteName, null)
             const publicCanonicalSiteName = getBroadPublicLabel(row.canonicalSiteName, null)
@@ -770,9 +777,10 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
             const canonicalBlogSeoTitle = row.canonicalBlogPost?.seo.title?.trim() ?? ''
             const cardNewsDisplayName = readGeneratedDisplayName(row.cardNewsGeneration.response)
             const blogDisplayName = readGeneratedDisplayName(row.blogGeneration.response)
+            const exactKeys = showroomCaseProfileExactSiteKeys(row)
+            const exactKeySet = new Set(exactKeys)
             const aliasKeys = [
-              row.siteName.trim(),
-              row.canonicalSiteName?.trim() ?? '',
+              ...exactKeys,
               publicSiteName,
               publicCanonicalSiteName,
               industryAwareSiteName,
@@ -787,6 +795,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
               ...aliasKeys,
               ...identityKeys,
             ]))
+            const blogPublication = blogPublicationFromPost(row.canonicalBlogPost)
             const value: ShowroomCaseProfileDraftState = {
               painPoint: row.painPoint ?? '',
               headlineHook: row.headlineHook ?? '',
@@ -794,11 +803,22 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                 isPublished: row.cardNewsPublication.isPublished,
                 siteKey: row.cardNewsPublication.siteKey,
               },
-              blogPublication: blogPublicationFromPost(row.canonicalBlogPost),
+              blogPublication,
               blogTeaserLine: openShowroomBlogTeaserLine(row.canonicalBlogPost),
             }
+            const looseValue: ShowroomCaseProfileDraftState = {
+              ...value,
+              // 느슨한 키로는 티저만 공유 — 발행 상태가 다른 현장으로 새지 않게 한다
+              blogPublication: { status: null },
+            }
             keys.forEach((key) => {
-              next[key] = value
+              if (exactKeySet.has(key)) {
+                next[key] = value
+                return
+              }
+              // 다른 현장의 site_name / canonical 슬롯은 공개명·제목 키로 덮지 않음
+              if (allExactSiteKeys.has(key)) return
+              next[key] = looseValue
             })
           })
           return next
@@ -1391,11 +1411,15 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
     const matched = aliases
       .map((key) => caseProfileDraftBySite[key])
       .find(Boolean)
-    return matched
+    const base = matched
       ?? caseProfileDraftBySite[group.siteName]
       ?? (group.externalDisplayName ? caseProfileDraftBySite[group.externalDisplayName] : undefined)
       ?? (publicLabel ? caseProfileDraftBySite[publicLabel] : undefined)
       ?? EMPTY_SHOWROOM_CASE_PROFILE_DRAFT
+    return {
+      ...base,
+      blogPublication: resolveShowroomBlogPublicationForSiteGroup(group, caseProfileDraftBySite),
+    }
   }, [caseProfileDraftBySite])
 
   const getBeforeAfterStoryHref = useCallback((group: SiteGroup) => {

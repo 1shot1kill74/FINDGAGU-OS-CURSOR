@@ -131,6 +131,42 @@ export function blogPublicationFromPost(
   }
 }
 
+/** 블로그 발행 상태를 저장·조회할 때 쓰는 정확 키 (현장명 / canonical만) */
+export function showroomCaseProfileExactSiteKeys(row: {
+  siteName: string
+  canonicalSiteName?: string | null
+}): string[] {
+  return Array.from(new Set(
+    [row.siteName.trim(), (row.canonicalSiteName ?? '').trim()].filter(Boolean),
+  ))
+}
+
+/**
+ * 전후비교 카드용 블로그 발행 상태.
+ * 지역·견적번호·공개 표시명 같은 느슨한 키는 쓰지 않고, 이미지/그룹의 실제 현장명만 본다.
+ */
+export function resolveShowroomBlogPublicationForSiteGroup(
+  group: Pick<SiteGroup, 'siteName' | 'images'>,
+  draftBySite: Record<string, ShowroomCaseProfileDraftState>,
+): ShowroomCaseProfileDraftState['blogPublication'] {
+  const candidates = new Set<string>()
+  const push = (value: string | null | undefined) => {
+    const trimmed = (value ?? '').trim()
+    if (trimmed) candidates.add(trimmed)
+  }
+  push(group.siteName)
+  group.images.forEach((image) => {
+    push(image.site_name)
+    push(image.canonical_site_name)
+    push(image.raw_site_name)
+  })
+  for (const key of candidates) {
+    const draft = draftBySite[key]
+    if (draft) return draft.blogPublication
+  }
+  return { status: null }
+}
+
 export type ShowroomPageProps = {
   mode?: 'internal' | 'public'
 }
