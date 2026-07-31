@@ -20,7 +20,9 @@ import AdInboxImportShowroomDialog, {
   type AdInboxImportShowroomResult,
 } from '@/components/admin/AdInboxImportShowroomDialog'
 import AdInboxImportShowroomAfterOnlyDialog from '@/components/admin/AdInboxImportShowroomAfterOnlyDialog'
-import AdInboxPromoteToShowroomDialog from '@/components/admin/AdInboxPromoteToShowroomDialog'
+import AdInboxPromoteToShowroomDialog, {
+  type AdInboxPromotePrefill,
+} from '@/components/admin/AdInboxPromoteToShowroomDialog'
 import AdInboxImagePreviewDialog, {
   getAdInboxFullPreviewUrl,
   prefetchAdInboxEnlarge,
@@ -330,6 +332,7 @@ export default function AdInboxStudioPage() {
   const [importShowroomOpen, setImportShowroomOpen] = useState(false)
   const [importAfterOnlyOpen, setImportAfterOnlyOpen] = useState(false)
   const [promoteShowroomOpen, setPromoteShowroomOpen] = useState(false)
+  const [promotePrefill, setPromotePrefill] = useState<AdInboxPromotePrefill | null>(null)
   const [previewOpen, setPreviewOpen] = useState(false)
   const [previewMode, setPreviewMode] = useState<AdInboxPreviewMode>('single')
   const [previewIndex, setPreviewIndex] = useState(0)
@@ -790,6 +793,17 @@ export default function AdInboxStudioPage() {
     }
   }
 
+  const openPromoteWithBa = (beforeAssetId: string, afterAssetId?: string | null) => {
+    const assetIds = [beforeAssetId]
+    const perAssetRoles: Record<string, 'before' | 'after'> = { [beforeAssetId]: 'before' }
+    if (afterAssetId) {
+      assetIds.push(afterAssetId)
+      perAssetRoles[afterAssetId] = 'after'
+    }
+    setPromotePrefill({ assetIds, perAssetRoles })
+    setPromoteShowroomOpen(true)
+  }
+
   const handleCreateTimelapse = async (mode: 'standard' | 'empty_room' = 'standard') => {
     if (!beforeAsset || !afterAsset) {
       toast.error('Before 1장과 After 1장을 선택하세요.')
@@ -803,10 +817,18 @@ export default function AdInboxStudioPage() {
         mode,
       })
       await adoptCreatedTimelapseJob(jobId)
+      const baBeforeId = beforeAsset.id
+      const baAfterId = afterAsset.id
       toast.success(
         mode === 'empty_room'
           ? '빈 방 타임랩스(구도 맞춤→설치)를 시작했습니다. 아래에서 원본을 검수하세요.'
           : '클링 생성을 시작했습니다. 아래에서 원본을 검수하세요.',
+        {
+          action: {
+            label: '쇼룸으로',
+            onClick: () => openPromoteWithBa(baBeforeId, baAfterId),
+          },
+        },
       )
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '타임랩스 생성 실패')
@@ -822,6 +844,15 @@ export default function AdInboxStudioPage() {
     const job = await getAdInboxTimelapseJob(result.jobId)
     if (job) {
       setJobs((prev) => [job, ...prev.filter((row) => row.id !== job.id)])
+    }
+    if (result.beforeAssetId) {
+      setBeforeId(result.beforeAssetId)
+    }
+    if (result.afterAssetId) {
+      setAfterId(result.afterAssetId)
+    }
+    if (result.openPromote && result.beforeAssetId) {
+      openPromoteWithBa(result.beforeAssetId, result.afterAssetId)
     }
   }
 
@@ -1358,7 +1389,14 @@ export default function AdInboxStudioPage() {
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => setPromoteShowroomOpen(true)}
+                  onClick={() => {
+                    if (beforeId && afterId) {
+                      openPromoteWithBa(beforeId, afterId)
+                      return
+                    }
+                    setPromotePrefill(null)
+                    setPromoteShowroomOpen(true)
+                  }}
                   disabled={creating}
                 >
                   <Send className="mr-1.5 h-4 w-4" />
@@ -1879,10 +1917,26 @@ export default function AdInboxStudioPage() {
                       )}
                       빈 방 타임랩스
                     </Button>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => {
+                        if (!beforeAsset || !afterAsset) {
+                          toast.error('Before/After를 선택한 뒤 쇼룸으로 보내세요.')
+                          return
+                        }
+                        openPromoteWithBa(beforeAsset.id, afterAsset.id)
+                      }}
+                      disabled={creating || !beforeAsset || !afterAsset}
+                    >
+                      <Send className="mr-1.5 h-4 w-4" />
+                      선택 BA 쇼룸으로
+                    </Button>
                   </div>
                   <p className="mt-2 text-xs text-neutral-500">
                     사람이 찍힌 Before는 타임랩스 전에 「사람 제거 보정」→ 새 컷 확인 → 그다음 타임랩스.
-                    Before가 이미 빈 방이면 「빈 방 타임랩스」(구도 맞춤 후 설치만)를 쓰세요.
+                    Before가 이미 빈 방이면 「빈 방 타임랩스」(구도 맞춤 후 설치만)를 쓰세요. 합성
+                    Before가 준비되면 「선택 BA 쇼룸으로」로 블로그·전후비교에 연결하세요.
                   </p>
 
                   <div className="mt-6 rounded-2xl border border-neutral-200 bg-neutral-50/80 p-4">
@@ -2322,8 +2376,12 @@ export default function AdInboxStudioPage() {
       />
       <AdInboxPromoteToShowroomDialog
         open={promoteShowroomOpen}
-        onOpenChange={setPromoteShowroomOpen}
+        onOpenChange={(open) => {
+          setPromoteShowroomOpen(open)
+          if (!open) setPromotePrefill(null)
+        }}
         batch={selectedBatch}
+        prefill={promotePrefill}
         onPromoted={() => {
           void refresh()
         }}

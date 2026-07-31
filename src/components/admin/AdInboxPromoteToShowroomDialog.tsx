@@ -17,11 +17,18 @@ import {
   type PromoteAdInboxResult,
 } from '@/lib/adInboxStudio'
 
+export type AdInboxPromotePrefill = {
+  assetIds?: string[]
+  perAssetRoles?: Record<string, 'before' | 'after'>
+}
+
 type Props = {
   open: boolean
   onOpenChange: (open: boolean) => void
   batch: AdInboxBatch | null
   onPromoted: (result: PromoteAdInboxResult) => void
+  /** 합성 BA 등 — 열릴 때 대기 사진 자동 선택 */
+  prefill?: AdInboxPromotePrefill | null
 }
 
 export default function AdInboxPromoteToShowroomDialog({
@@ -29,10 +36,12 @@ export default function AdInboxPromoteToShowroomDialog({
   onOpenChange,
   batch,
   onPromoted,
+  prefill = null,
 }: Props) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [mainAssetId, setMainAssetId] = useState<string | null>(null)
   const [justPromotedIds, setJustPromotedIds] = useState<Set<string>>(new Set())
+  const [roleOverrides, setRoleOverrides] = useState<Record<string, 'before' | 'after'>>({})
   const [meta, setMeta] = useState<ImageAssetCommonMetaValue>({
     ...EMPTY_IMAGE_ASSET_COMMON_META,
   })
@@ -53,9 +62,8 @@ export default function AdInboxPromoteToShowroomDialog({
 
   useEffect(() => {
     if (!open || !batch) return
-    setSelectedIds(new Set())
-    setMainAssetId(null)
     setJustPromotedIds(new Set())
+    setMainAssetId(null)
     // 대기실 임시 이름은 현장명에 넣지 않음 — 상담카드 목록에서 골라야 함
     setMeta({
       ...EMPTY_IMAGE_ASSET_COMMON_META,
@@ -63,7 +71,21 @@ export default function AdInboxPromoteToShowroomDialog({
       selectedSpaceOption: null,
       photo_date: batch.photoDate && batch.photoDate !== '날짜미상' ? batch.photoDate : '',
     })
-  }, [open, batch?.key, batch?.photoDate])
+
+    const waiting = (batch.assets ?? []).filter((asset) => !asset.is_consultation)
+    const waitingIds = new Set(waiting.map((asset) => asset.id))
+    const preferred = (prefill?.assetIds ?? []).filter((id) => waitingIds.has(id))
+    setSelectedIds(new Set(preferred))
+
+    const nextRoles: Record<string, 'before' | 'after'> = { ...(prefill?.perAssetRoles ?? {}) }
+    for (const asset of waiting) {
+      if (nextRoles[asset.id]) continue
+      if (asset.before_after_role === 'before' || asset.before_after_role === 'after') {
+        nextRoles[asset.id] = asset.before_after_role
+      }
+    }
+    setRoleOverrides(nextRoles)
+  }, [open, batch?.key, batch?.photoDate, prefill])
 
   const toggleSelect = (asset: AdInboxAsset) => {
     if (isPromotedAsset(asset)) return
@@ -88,6 +110,22 @@ export default function AdInboxPromoteToShowroomDialog({
     setMainAssetId(null)
   }
 
+  const resolvePerAssetRoles = (): Record<string, 'before' | 'after'> => {
+    const roles: Record<string, 'before' | 'after'> = {}
+    for (const id of selectedIds) {
+      const override = roleOverrides[id]
+      if (override === 'before' || override === 'after') {
+        roles[id] = override
+        continue
+      }
+      const asset = (batch?.assets ?? []).find((row) => row.id === id)
+      if (asset?.before_after_role === 'before' || asset?.before_after_role === 'after') {
+        roles[id] = asset.before_after_role
+      }
+    }
+    return roles
+  }
+
   const handlePromote = async () => {
     if (!batch) return
     if (selectedIds.size === 0) {
@@ -109,10 +147,12 @@ export default function AdInboxPromoteToShowroomDialog({
 
     setSubmitting(true)
     try {
+      const perAssetRoles = resolvePerAssetRoles()
       const result = await promoteAdInboxAssetsToShowroom({
         siteId: batch.siteId,
         assetIds: [...selectedIds],
         mainAssetId,
+        perAssetRoles,
         meta: {
           site_name: meta.site_name,
           selectedSpaceOption: meta.selectedSpaceOption,
@@ -126,11 +166,19 @@ export default function AdInboxPromoteToShowroomDialog({
           before_after_role: meta.beforeAfterRole,
         },
       })
+      const linkHint =
+        result.linkedExisting && result.linkedExisting > 0
+          ? ` 기존 쇼룸 After ${result.linkedExisting}장과 그룹 연결`
+          : ''
       const remainHint =
         result.remaining > 0
           ? ` 남은 ${result.remaining}장으로 제품 추가 가능`
           : ' 대기실 사진 전부 쇼룸 등록됨'
-      toast.success(`${result.promoted}장 쇼룸 등록.${remainHint}`)
+      toast.success(
+        result.promoted > 0
+          ? `${result.promoted}장 쇼룸 등록.${linkHint}${remainHint}`
+          : `쇼룸 After와 연결했습니다.${linkHint}${remainHint}`,
+      )
       setJustPromotedIds((prev) => new Set([...prev, ...selectedIds]))
       setSelectedIds(new Set())
       setMainAssetId(null)
@@ -179,7 +227,8 @@ export default function AdInboxPromoteToShowroomDialog({
           <DialogTitle>쇼룸으로 보내기</DialogTitle>
           <DialogDescription>
             대기실 임시 이름이 아니라 상담카드 스페이스와 매칭해야 쇼룸에 올바르게 묶입니다. 파일
-            재업로드는 없고, 같은 상담 현장으로 제품별 패스를 여러 번 보낼 수 있습니다.
+            재업로드는 없고, 같은 상담 현장으로 제품별 패스를 여러 번 보낼 수 있습니다. 합성
+            Before를 보내면 기존 쇼룸 After와 전후 그룹이 맞춰집니다.
           </DialogDescription>
         </DialogHeader>
 
@@ -190,6 +239,7 @@ export default function AdInboxPromoteToShowroomDialog({
             <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
               <span>
                 {batch.shortName} · 쇼룸 {promotedAssets.length}장 / 대기 {waitingAssets.length}장
+                {selectedIds.size > 0 ? ` · 선택 ${selectedIds.size}장` : ''}
               </span>
               <div className="flex gap-2">
                 <Button
@@ -219,6 +269,11 @@ export default function AdInboxPromoteToShowroomDialog({
                 const promoted = isPromotedAsset(asset)
                 const selected = selectedIds.has(asset.id)
                 const isMain = mainAssetId === asset.id
+                const role =
+                  roleOverrides[asset.id] ||
+                  (asset.before_after_role === 'before' || asset.before_after_role === 'after'
+                    ? asset.before_after_role
+                    : null)
                 return (
                   <button
                     key={asset.id}
@@ -246,6 +301,15 @@ export default function AdInboxPromoteToShowroomDialog({
                     ) : selected ? (
                       <span className="absolute left-1 top-1 rounded bg-neutral-900 px-1.5 py-0.5 text-[10px] font-medium text-white">
                         선택
+                      </span>
+                    ) : null}
+                    {role && !promoted ? (
+                      <span
+                        className={`absolute right-1 top-1 rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                          role === 'before' ? 'bg-amber-600 text-white' : 'bg-sky-700 text-white'
+                        }`}
+                      >
+                        {role === 'before' ? 'Before' : 'After'}
                       </span>
                     ) : null}
                     {selected && !promoted ? (
@@ -280,7 +344,7 @@ export default function AdInboxPromoteToShowroomDialog({
                 showRecommendedHints
                 requireSpaceSelection
                 siteNameHint={batch.shortName || undefined}
-                beforeAfterRoleHint="이번 패스에서 선택한 사진 전체에 동일하게 적용됩니다. 제품이 섞인 장면은 사진을 나눠 여러 번 보내세요."
+                beforeAfterRoleHint="선택한 사진에 Before/After 배지가 있으면 그 역할을 우선합니다. 배지가 없는 사진만 아래 기본값을 씁니다."
               />
             )}
           </div>
@@ -310,7 +374,7 @@ export default function AdInboxPromoteToShowroomDialog({
               ) : (
                 <Send className="mr-1.5 h-4 w-4" />
               )}
-              {selectedIds.size}장 이 패스 승격
+              쇼룸 등록
             </Button>
           </div>
         </DialogFooter>

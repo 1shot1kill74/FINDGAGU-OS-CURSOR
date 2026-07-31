@@ -22,6 +22,10 @@ export type AdInboxImportShowroomResult = {
   siteId: string
   siteBatchKey: string
   shortName: string
+  /** After-only 합성 후 승격 prefill용 */
+  beforeAssetId?: string
+  afterAssetId?: string
+  openPromote?: boolean
 }
 
 type CleanupOverride = {

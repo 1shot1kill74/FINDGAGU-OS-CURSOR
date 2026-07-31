@@ -162,12 +162,17 @@ export default function AdInboxImportShowroomAfterOnlyDialog({
         synthesizedBefore: synth,
         siteName: selectedGroup.siteName,
       })
-      toast.success(`「${result.shortName}」 카드를 만들고 타임랩스를 시작했습니다.`)
+      toast.success(
+        `「${result.shortName}」에 Before 합성·대기실 입고·타임랩스를 시작했습니다. 이어서 쇼룸으로 보내 주세요.`,
+      )
       onCreated({
         jobId: result.jobId,
         siteId: result.siteId,
         siteBatchKey: result.siteBatchKey,
         shortName: result.shortName,
+        beforeAssetId: result.beforeAssetId,
+        afterAssetId: result.afterAssetId,
+        openPromote: true,
       })
       onOpenChange(false)
     } catch (error) {
@@ -186,8 +191,8 @@ export default function AdInboxImportShowroomAfterOnlyDialog({
             Before 없는 After
           </DialogTitle>
           <DialogDescription>
-            After만 있는 쇼룸 컷을 고르면 Before를 합성한 뒤, 쇼룸 현장명으로 새 대기실 카드를 만들고
-            타임랩스를 시작합니다. 합성 Before는 쇼룸에 Before로 저장됩니다.
+            After만 있는 쇼룸 컷을 고르면 Before를 합성해 대기실 카드에 넣고 타임랩스를 시작합니다.
+            작업이 끝나면 「쇼룸으로 보내기」로 합성 Before를 내부/공개 쇼룸·블로그에 연결하세요.
           </DialogDescription>
         </DialogHeader>
 

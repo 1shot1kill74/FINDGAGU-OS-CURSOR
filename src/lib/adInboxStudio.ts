@@ -1698,37 +1698,52 @@ export async function listShowroomAfterOnlyGroupsForImport(
 }
 
 /**
- * 내부 쇼룸에서 고른 사진을 새 대기실 카드로만 보냅니다.
- * 쇼룸 원본은 건드리지 않고, 같은 Cloudinary URL로 ad_inbox 자산을 추가합니다.
- * 타임랩스/릴스 job은 만들지 않습니다.
+ * 기존 대기실 카드에 쇼룸 사진을 추가합니다.
+ * 쇼룸 원본은 건드리지 않고, 같은 Cloudinary URL로 ad_inbox 자산을 만듭니다.
  */
-export async function createAdInboxSiteFromShowroomPhotos(input: {
+export async function addShowroomPhotosToAdInboxSite(input: {
+  siteId: string
   images: ShowroomImageAsset[]
-  /** 대기실 카드명. 없으면 첫 사진 현장명 */
-  siteName?: string | null
-}): Promise<{ siteId: string; siteBatchKey: string; shortName: string; assetCount: number }> {
+}): Promise<{
+  siteId: string
+  siteBatchKey: string
+  shortName: string
+  assetCount: number
+  createdAssetIds: string[]
+  createdBySourceId: Record<string, string>
+}> {
+  const siteId = trimOrNull(input.siteId)
+  if (!siteId) {
+    throw new Error('대기실 카드를 선택하세요.')
+  }
+
   const images = input.images.filter((image) => Boolean(image?.id && (image.cloudinary_url || image.thumbnail_url)))
   if (images.length === 0) {
     throw new Error('보낼 사진을 선택하세요.')
   }
 
-  const seed = images[0]
-  const shortName =
-    trimOrNull(input.siteName) ||
-    trimOrNull(seed.canonical_site_name) ||
-    trimOrNull(seed.site_name) ||
-    trimOrNull(seed.raw_site_name) ||
-    trimOrNull(seed.external_display_name) ||
-    '이름미상'
+  const { data: siteRow, error: siteError } = await supabase
+    .from('ad_inbox_sites')
+    .select('id, short_name, photo_date, status, created_at, updated_at')
+    .eq('id', siteId)
+    .maybeSingle()
 
+  if (siteError || !siteRow) {
+    throw new Error(siteError?.message || '대기실 카드를 찾을 수 없습니다.')
+  }
+
+  const site = mapSiteRow(siteRow as Record<string, unknown>)
+  const shortName = site.short_name
+  const siteBatchKey = buildAdInboxSiteGroupId(site.id)
   const photoDate =
+    site.photo_date ||
     images
       .map((image) => (image.created_at ? image.created_at.slice(0, 10) : null))
-      .find((value) => Boolean(value)) || null
+      .find((value) => Boolean(value)) ||
+    null
 
-  const site = await createAdInboxSite({ shortName, photoDate })
-  const siteBatchKey = buildAdInboxSiteGroupId(site.id)
-  let assetCount = 0
+  const createdAssetIds: string[] = []
+  const createdBySourceId: Record<string, string> = {}
   const errors: string[] = []
 
   for (const image of images) {
@@ -1773,10 +1788,11 @@ export async function createAdInboxSiteFromShowroomPhotos(input: {
       errors.push(`${image.id}: ${result.error.message}`)
       continue
     }
-    assetCount += 1
+    createdAssetIds.push(result.id)
+    createdBySourceId[image.id] = result.id
   }
 
-  if (assetCount === 0) {
+  if (createdAssetIds.length === 0) {
     throw new Error(errors[0] || '대기실로 사진을 보내지 못했습니다.')
   }
 
@@ -1786,8 +1802,88 @@ export async function createAdInboxSiteFromShowroomPhotos(input: {
     siteId: site.id,
     siteBatchKey,
     shortName: site.short_name,
-    assetCount,
+    assetCount: createdAssetIds.length,
+    createdAssetIds,
+    createdBySourceId,
   }
+}
+
+/**
+ * 내부 쇼룸에서 고른 사진을 새 대기실 카드로 보냅니다.
+ * 기존 카드에 붙이려면 {@link addShowroomPhotosToAdInboxSite}를 사용하세요.
+ */
+export async function createAdInboxSiteFromShowroomPhotos(input: {
+  images: ShowroomImageAsset[]
+  /** 대기실 카드명. 없으면 첫 사진 현장명 */
+  siteName?: string | null
+}): Promise<{ siteId: string; siteBatchKey: string; shortName: string; assetCount: number }> {
+  const images = input.images.filter((image) => Boolean(image?.id && (image.cloudinary_url || image.thumbnail_url)))
+  if (images.length === 0) {
+    throw new Error('보낼 사진을 선택하세요.')
+  }
+
+  const seed = images[0]
+  const shortName =
+    trimOrNull(input.siteName) ||
+    trimOrNull(seed.canonical_site_name) ||
+    trimOrNull(seed.site_name) ||
+    trimOrNull(seed.raw_site_name) ||
+    trimOrNull(seed.external_display_name) ||
+    '이름미상'
+
+  const photoDate =
+    images
+      .map((image) => (image.created_at ? image.created_at.slice(0, 10) : null))
+      .find((value) => Boolean(value)) || null
+
+  const site = await createAdInboxSite({ shortName, photoDate })
+  return addShowroomPhotosToAdInboxSite({ siteId: site.id, images })
+}
+
+/** 쇼룸 현장명·사진 메타로 대기실 카드 자동 추천 (견적번호·부분 문자열) */
+export function suggestAdInboxSiteForShowroom(input: {
+  sites: AdInboxSite[]
+  siteName?: string | null
+  images?: Array<Pick<ShowroomImageAsset, 'site_name' | 'canonical_site_name' | 'raw_site_name' | 'external_display_name'>>
+}): AdInboxSite | null {
+  if (input.sites.length === 0) return null
+
+  const needles = new Set<string>()
+  const push = (value: string | null | undefined) => {
+    const trimmed = (value ?? '').trim().toLowerCase()
+    if (trimmed) needles.add(trimmed)
+  }
+  push(input.siteName)
+  input.images?.forEach((image) => {
+    push(image.site_name)
+    push(image.canonical_site_name)
+    push(image.raw_site_name)
+    push(image.external_display_name)
+  })
+
+  const quoteDigits = new Set<string>()
+  needles.forEach((needle) => {
+    const matches = needle.match(/\d{4}/g) ?? []
+    matches.forEach((digits) => quoteDigits.add(digits))
+  })
+
+  let best: { site: AdInboxSite; score: number } | null = null
+  for (const site of input.sites) {
+    const name = site.short_name.trim().toLowerCase()
+    if (!name) continue
+    let score = 0
+    for (const needle of needles) {
+      if (name === needle) score += 100
+      else if (name.includes(needle) || needle.includes(name)) score += 40
+    }
+    for (const digits of quoteDigits) {
+      if (name.includes(digits)) score += 60
+    }
+    if (!best || score > best.score) best = { site, score }
+  }
+
+  if (best && best.score > 0) return best.site
+  return null
 }
 
 /** 오픈쇼룸 BA → 쇼룸 현장명으로 새 대기실 카드 생성 후 job 연결 (사진 복사/승격 없음) */
@@ -1999,8 +2095,8 @@ export async function synthesizeBeforeFromAfterImage(imageUrl: string): Promise<
 }
 
 /**
- * After만 있는 쇼룸 컷 → Before 합성본을 쇼룸에 Before로 저장한 뒤
- * 새 대기실 카드 + 타임랩스 job 생성.
+ * After만 있는 쇼룸 컷 → 합성 Before를 **쇼룸 정본**으로 저장한 뒤
+ * 대기실 카드에 BA를 복사 입고하고 타임랩스 job을 시작합니다.
  */
 export async function createAdInboxTimelapseFromAfterOnly(input: {
   after: ShowroomImageAsset
@@ -2010,7 +2106,19 @@ export async function createAdInboxTimelapseFromAfterOnly(input: {
     public_id?: string | null
   }
   siteName?: string | null
-}): Promise<{ jobId: string; siteId: string; siteBatchKey: string; shortName: string; beforeAssetId: string }> {
+}): Promise<{
+  jobId: string
+  siteId: string
+  siteBatchKey: string
+  shortName: string
+  /** 대기실 합성 Before (승격 대상) */
+  beforeAssetId: string
+  /** 대기실 After 복사본 */
+  afterAssetId: string
+  /** 쇼룸 After 원본 — 승격 시 그룹 연결용 */
+  sourceAfterAssetId: string
+  inboxAssetCount: number
+}> {
   const after = input.after
   const siteName =
     trimOrNull(input.siteName) ||
@@ -2020,27 +2128,32 @@ export async function createAdInboxTimelapseFromAfterOnly(input: {
     trimOrNull(after.external_display_name) ||
     '이름미상'
 
-  const groupId =
-    after.before_after_group_id?.trim() ||
-    `synth-ba:${after.id}`
-
   const photoDate = after.created_at ? after.created_at.slice(0, 10) : null
+  const site = await createAdInboxSite({ shortName: siteName, photoDate })
+  const siteBatchKey = buildAdInboxSiteGroupId(site.id)
 
-  const inserted = await insertImageAsset({
+  const beforeInsert = await insertImageAsset({
     cloudinary_url: input.synthesizedBefore.cloudinary_url,
     thumbnail_url: input.synthesizedBefore.thumbnail_url,
     public_watermark_status: 'skipped',
-    site_name: siteName,
+    site_name: site.short_name,
     photo_date: photoDate,
     location: after.location,
     business_type: after.business_type,
+    color_name: after.color_name,
+    product_name: after.product_name,
+    category: AD_INBOX_CATEGORY,
     is_main: false,
-    is_consultation: true,
+    is_consultation: false,
     storage_type: 'cloudinary',
     memo: '광고 대기실 · After 기반 Before 합성',
     metadata: {
+      source: AD_INBOX_SOURCE,
+      ad_inbox: true,
+      ad_inbox_site_id: site.id,
       before_after_role: 'before',
-      before_after_group_id: groupId,
+      before_after_group_id: siteBatchKey,
+      ad_inbox_label: site.short_name,
       synthesized_from_after_id: after.id,
       synthesized_before: true,
       public_id: input.synthesizedBefore.public_id ?? undefined,
@@ -2048,53 +2161,225 @@ export async function createAdInboxTimelapseFromAfterOnly(input: {
     },
   })
 
-  if ('error' in inserted) {
-    throw inserted.error
+  if ('error' in beforeInsert) {
+    throw beforeInsert.error
   }
 
-  // After에 group_id가 없으면 맞춰 줘서 BA 검증이 안정적으로 통과하도록 함
-  if (!after.before_after_group_id?.trim()) {
-    const { data: afterRow } = await supabase
-      .from('image_assets')
-      .select('metadata')
-      .eq('id', after.id)
-      .maybeSingle()
-    const prev =
-      afterRow?.metadata && typeof afterRow.metadata === 'object' && !Array.isArray(afterRow.metadata)
-        ? { ...(afterRow.metadata as Record<string, unknown>) }
-        : {}
-    prev.before_after_role = prev.before_after_role || 'after'
-    prev.before_after_group_id = groupId
-    await supabase.from('image_assets').update({ metadata: prev }).eq('id', after.id)
-  }
-
-  const beforeAsset: ShowroomImageAsset = {
+  const afterForInbox: ShowroomImageAsset = {
     ...after,
-    id: inserted.id,
+    before_after_role: 'after',
+    before_after_group_id: siteBatchKey,
+  }
+
+  const copied = await addShowroomPhotosToAdInboxSite({
+    siteId: site.id,
+    images: [afterForInbox],
+  })
+
+  const afterAssetId = copied.createdBySourceId[after.id] ?? copied.createdAssetIds[0]
+  if (!afterAssetId) {
+    throw new Error('대기실 After 복사본을 만들지 못했습니다.')
+  }
+
+  const beforeForJob: ShowroomImageAsset = {
+    ...after,
+    id: beforeInsert.id,
     cloudinary_url: input.synthesizedBefore.cloudinary_url,
     thumbnail_url: input.synthesizedBefore.thumbnail_url,
-    site_name: siteName,
+    site_name: site.short_name,
     before_after_role: 'before',
-    before_after_group_id: groupId,
+    before_after_group_id: siteBatchKey,
     is_main: false,
   }
 
-  const afterAsset: ShowroomImageAsset = {
+  const afterForJob: ShowroomImageAsset = {
     ...after,
+    id: afterAssetId,
     before_after_role: 'after',
-    before_after_group_id: groupId,
-    site_name: after.site_name || siteName,
+    before_after_group_id: siteBatchKey,
   }
 
-  const created = await createAdInboxTimelapseJobFromShowroom({
-    before: beforeAsset,
-    after: afterAsset,
-    siteName,
+  const created = await createShowroomShortsJob({
+    promptText: AD_INBOX_DEFAULT_PROMPT.trim(),
+    channels: [...SHOWROOM_SHORTS_CHANNELS],
+    images: [beforeForJob, afterForJob],
+    beforeAfterGroupKey: buildAdInboxShortsGroupKey(siteBatchKey),
   })
 
   return {
-    ...created,
-    beforeAssetId: inserted.id,
+    jobId: created.job.id,
+    siteId: site.id,
+    siteBatchKey,
+    shortName: site.short_name,
+    beforeAssetId: beforeInsert.id,
+    afterAssetId,
+    sourceAfterAssetId: after.id,
+    inboxAssetCount: 1 + copied.assetCount,
+  }
+}
+
+/**
+ * 고아 합성 Before(ad_inbox 전용·카테고리 누락 등)를 쇼룸 정본으로 정규화하고
+ * 대기실 카드에 Before 복사본이 없으면 추가합니다.
+ */
+export async function normalizeSynthesizedBeforeToShowroom(beforeAssetId: string): Promise<{
+  beforeAssetId: string
+  afterAssetId: string | null
+  showroomCategory: string | null
+  inboxCopied: boolean
+}> {
+  const id = beforeAssetId.trim()
+  if (!id) throw new Error('Before 자산 ID가 없습니다.')
+
+  const { data: beforeRow, error: beforeError } = await supabase
+    .from('image_assets')
+    .select(
+      'id, category, site_name, location, business_type, color_name, product_name, memo, metadata, cloudinary_url, thumbnail_url, created_at',
+    )
+    .eq('id', id)
+    .maybeSingle()
+
+  if (beforeError || !beforeRow) {
+    throw new Error(beforeError?.message || '합성 Before를 찾지 못했습니다.')
+  }
+
+  const beforeMeta =
+    beforeRow.metadata && typeof beforeRow.metadata === 'object' && !Array.isArray(beforeRow.metadata)
+      ? { ...(beforeRow.metadata as Record<string, unknown>) }
+      : {}
+
+  if (beforeMeta.synthesized_before !== true && beforeMeta.synthesized_before !== 'true') {
+    throw new Error('합성 Before 자산이 아닙니다.')
+  }
+
+  const afterId =
+    typeof beforeMeta.synthesized_from_after_id === 'string'
+      ? beforeMeta.synthesized_from_after_id.trim()
+      : ''
+
+  let afterCategory: string | null = null
+  let afterSiteName: string | null =
+    typeof beforeRow.site_name === 'string' ? beforeRow.site_name.trim() : null
+  let groupId =
+    typeof beforeMeta.before_after_group_id === 'string' && beforeMeta.before_after_group_id.trim()
+      ? beforeMeta.before_after_group_id.trim()
+      : afterId
+        ? `synth-ba:${afterId}`
+        : `synth-ba:${id}`
+
+  const inboxSiteId =
+    typeof beforeMeta.ad_inbox_site_id === 'string' && beforeMeta.ad_inbox_site_id.trim()
+      ? beforeMeta.ad_inbox_site_id.trim()
+      : null
+
+  if (afterId) {
+    const { data: afterRow } = await supabase
+      .from('image_assets')
+      .select('id, category, site_name, metadata, is_consultation')
+      .eq('id', afterId)
+      .maybeSingle()
+    if (afterRow) {
+      afterCategory =
+        typeof afterRow.category === 'string' &&
+        afterRow.category.trim() &&
+        afterRow.category !== AD_INBOX_CATEGORY
+          ? afterRow.category.trim()
+          : null
+      afterSiteName =
+        (typeof afterRow.site_name === 'string' && afterRow.site_name.trim()) || afterSiteName
+      const afterMeta =
+        afterRow.metadata && typeof afterRow.metadata === 'object' && !Array.isArray(afterRow.metadata)
+          ? { ...(afterRow.metadata as Record<string, unknown>) }
+          : {}
+      if (typeof afterMeta.before_after_group_id === 'string' && afterMeta.before_after_group_id.trim()) {
+        groupId = afterMeta.before_after_group_id.trim()
+      }
+      afterMeta.before_after_role = afterMeta.before_after_role || 'after'
+      afterMeta.before_after_group_id = groupId
+      await supabase
+        .from('image_assets')
+        .update({
+          metadata: afterMeta,
+          ...(afterRow.is_consultation === true ? {} : { is_consultation: true }),
+        })
+        .eq('id', afterId)
+    }
+  }
+
+  const showroomMeta: Record<string, unknown> = {
+    ...beforeMeta,
+    before_after_role: 'before',
+    before_after_group_id: groupId,
+    synthesized_before: true,
+  }
+  if (afterId) showroomMeta.synthesized_from_after_id = afterId
+  delete showroomMeta.source
+  delete showroomMeta.ad_inbox
+  delete showroomMeta.ad_inbox_site_id
+  delete showroomMeta.ad_inbox_label
+  delete showroomMeta.restored_at
+  delete showroomMeta.restored_reason
+
+  const { error: updateError } = await supabase
+    .from('image_assets')
+    .update({
+      category: afterCategory,
+      site_name: afterSiteName,
+      is_consultation: true,
+      memo: '쇼룸 · After 기반 Before 합성',
+      metadata: showroomMeta,
+    })
+    .eq('id', id)
+
+  if (updateError) {
+    throw new Error(updateError.message || '쇼룸 정본 정규화에 실패했습니다.')
+  }
+
+  let inboxCopied = false
+  if (inboxSiteId) {
+    const { data: inboxRows } = await supabase
+      .from('image_assets')
+      .select('id, metadata')
+      .eq('category', AD_INBOX_CATEGORY)
+      .filter('metadata->>ad_inbox_site_id', 'eq', inboxSiteId)
+      .limit(100)
+
+    const hasInboxBeforeCopy = (inboxRows ?? []).some((row) => {
+      const meta =
+        row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
+          ? (row.metadata as Record<string, unknown>)
+          : null
+      return meta?.imported_from_showroom_asset_id === id
+    })
+
+    if (!hasInboxBeforeCopy) {
+      const beforeAsset: ShowroomImageAsset = {
+        id,
+        cloudinary_url: String(beforeRow.cloudinary_url ?? ''),
+        thumbnail_url: beforeRow.thumbnail_url != null ? String(beforeRow.thumbnail_url) : null,
+        site_name: afterSiteName,
+        location: beforeRow.location != null ? String(beforeRow.location) : null,
+        business_type: beforeRow.business_type != null ? String(beforeRow.business_type) : null,
+        color_name: beforeRow.color_name != null ? String(beforeRow.color_name) : null,
+        product_name: beforeRow.product_name != null ? String(beforeRow.product_name) : null,
+        is_main: false,
+        created_at: beforeRow.created_at != null ? String(beforeRow.created_at) : null,
+        view_count: 0,
+        share_count: 0,
+        internal_score: null,
+        before_after_role: 'before',
+        before_after_group_id: groupId,
+      }
+      await addShowroomPhotosToAdInboxSite({ siteId: inboxSiteId, images: [beforeAsset] })
+      inboxCopied = true
+    }
+  }
+
+  return {
+    beforeAssetId: id,
+    afterAssetId: afterId || null,
+    showroomCategory: afterCategory,
+    inboxCopied,
   }
 }
 
@@ -2127,6 +2412,8 @@ export type PromoteAdInboxResult = {
   promoted: number
   remaining: number
   siteStatus: AdInboxSiteStatus
+  /** 이미 쇼룸에 있는 After 원본과만 연결하고 복제 승격은 생략한 장수 */
+  linkedExisting?: number
 }
 
 export async function updateAdInboxSiteStatus(
@@ -2273,6 +2560,31 @@ export async function promoteAdInboxAssetsToShowroom(input: {
 
   const byId = new Map((rows ?? []).map((row) => [String(row.id), row as Record<string, unknown>]))
   let promoted = 0
+  let linkedExisting = 0
+
+  const linkShowroomAfterGroup = async (sourceAfterId: string, groupId: string) => {
+    const { data: afterRow, error: afterError } = await supabase
+      .from('image_assets')
+      .select('id, metadata, is_consultation')
+      .eq('id', sourceAfterId)
+      .maybeSingle()
+    if (afterError || !afterRow) return
+
+    const afterMeta =
+      afterRow.metadata && typeof afterRow.metadata === 'object' && !Array.isArray(afterRow.metadata)
+        ? { ...(afterRow.metadata as Record<string, unknown>) }
+        : {}
+    afterMeta.before_after_role = afterMeta.before_after_role || 'after'
+    afterMeta.before_after_group_id = groupId
+
+    await supabase
+      .from('image_assets')
+      .update({
+        metadata: afterMeta as Json,
+        ...(afterRow.is_consultation === true ? {} : { is_consultation: true }),
+      })
+      .eq('id', sourceAfterId)
+  }
 
   for (const assetId of assetIds) {
     const row = byId.get(assetId)
@@ -2294,6 +2606,28 @@ export async function promoteAdInboxAssetsToShowroom(input: {
     }
 
     const role = input.perAssetRoles?.[assetId] ?? defaultRole
+
+    // 쇼룸 After 원본이 이미 있으면 대기실 복사본은 승격하지 않고 그룹만 맞춤
+    const importedFrom =
+      typeof prevMeta.imported_from_showroom_asset_id === 'string'
+        ? prevMeta.imported_from_showroom_asset_id.trim()
+        : ''
+    if (importedFrom && role === 'after') {
+      const { data: sourceRow } = await supabase
+        .from('image_assets')
+        .select('id, is_consultation, metadata')
+        .eq('id', importedFrom)
+        .maybeSingle()
+      if (sourceRow?.is_consultation === true) {
+        const groupId =
+          (typeof prevMeta.before_after_group_id === 'string' && prevMeta.before_after_group_id.trim()) ||
+          `synth-ba:${importedFrom}`
+        await linkShowroomAfterGroup(importedFrom, groupId)
+        linkedExisting += 1
+        continue
+      }
+    }
+
     const snapshot = {
       site_name: prevMeta.space_display_name ?? null,
       product_name: prevMeta.product_name ?? null,
@@ -2301,6 +2635,14 @@ export async function promoteAdInboxAssetsToShowroom(input: {
       before_after_role: prevMeta.before_after_role ?? null,
       snapped_at: promotedAt,
     }
+
+    const sourceAfterId =
+      typeof prevMeta.synthesized_from_after_id === 'string'
+        ? prevMeta.synthesized_from_after_id.trim()
+        : ''
+    const groupId =
+      (typeof prevMeta.before_after_group_id === 'string' && prevMeta.before_after_group_id.trim()) ||
+      (sourceAfterId ? `synth-ba:${sourceAfterId}` : undefined)
 
     const nextMeta: Record<string, unknown> = {
       ...prevMeta,
@@ -2317,6 +2659,7 @@ export async function promoteAdInboxAssetsToShowroom(input: {
       before_after_role: role,
       external_display_name: externalDisplayName || undefined,
       broad_external_display_name: broadExternalDisplayName || undefined,
+      ...(groupId ? { before_after_group_id: groupId } : {}),
     }
 
     const { error: updateError } = await supabase
@@ -2339,7 +2682,16 @@ export async function promoteAdInboxAssetsToShowroom(input: {
     if (updateError) {
       throw new Error(updateError.message || '쇼룸 승격 저장에 실패했습니다.')
     }
+
+    if (role === 'before' && sourceAfterId && groupId) {
+      await linkShowroomAfterGroup(sourceAfterId, groupId)
+    }
+
     promoted += 1
+  }
+
+  if (promoted === 0 && linkedExisting === 0) {
+    throw new Error('승격할 대기실 사진이 없습니다.')
   }
 
   const mainAssetId = input.mainAssetId?.trim()
@@ -2365,7 +2717,7 @@ export async function promoteAdInboxAssetsToShowroom(input: {
     siteStatus = sites.find((site) => site.id === siteId)?.status ?? 'open'
   }
 
-  return { promoted, remaining, siteStatus }
+  return { promoted, remaining, siteStatus, linkedExisting }
 }
 
 export async function cleanupPeopleFromAdInboxAsset(asset: AdInboxAsset): Promise<{ id: string }> {
