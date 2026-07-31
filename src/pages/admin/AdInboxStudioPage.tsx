@@ -37,6 +37,7 @@ import {
   createAdInboxSite,
   createAdInboxTimelapseJob,
   deleteAdInboxAsset,
+  deleteAdInboxSite,
   deriveAdInboxBatchWorkState,
   ensureAdInboxSitesFromLegacyAssets,
   getAdInboxTimelapseJob,
@@ -279,6 +280,7 @@ export default function AdInboxStudioPage() {
   const [recommendation, setRecommendation] = useState<AdInboxPairRecommendation | null>(null)
   const [cleaningId, setCleaningId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [deletingSiteId, setDeletingSiteId] = useState<string | null>(null)
   const [jobs, setJobs] = useState<AdInboxTimelapseJob[]>([])
   const [activeJobId, setActiveJobId] = useState<string | null>(null)
   const [jobsLoading, setJobsLoading] = useState(false)
@@ -576,6 +578,41 @@ export default function AdInboxStudioPage() {
       toast.error(error instanceof Error ? error.message : '삭제 실패')
     } finally {
       setDeletingId(null)
+    }
+  }
+
+  const handleDeleteSite = async (batch: AdInboxBatch) => {
+    const siteId = batch.siteId?.trim()
+    if (!siteId || !sites.some((site) => site.id === siteId)) {
+      toast.error('삭제할 현장 카드를 찾지 못했습니다.')
+      return
+    }
+    const photoNote =
+      batch.assets.length > 0
+        ? `\n미승격 사진 ${batch.assets.filter((a) => !a.is_consultation).length}장도 함께 삭제됩니다.`
+        : ''
+    if (
+      !window.confirm(
+        `「${batch.shortName}」 현장 카드를 대기실에서 삭제할까요?${photoNote}\n삭제 후에는 목록에 다시 나타나지 않습니다.`,
+      )
+    ) {
+      return
+    }
+    setDeletingSiteId(siteId)
+    try {
+      await deleteAdInboxSite(siteId)
+      if (selectedBatchKey === batch.key) {
+        setSelectedBatchKey(null)
+        setBeforeId(null)
+        setAfterId(null)
+      }
+      if (targetSiteId === siteId) setTargetSiteId('')
+      await refresh()
+      toast.success('현장 카드를 삭제했습니다.')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '카드 삭제 실패')
+    } finally {
+      setDeletingSiteId(null)
     }
   }
 
@@ -1139,6 +1176,8 @@ export default function AdInboxStudioPage() {
                     channels: deriveAdInboxBatchWorkState([]).channels,
                   }
                   const progress = workState.progress
+                  const canDeleteSite = sites.some((site) => site.id === batch.siteId)
+                  const siteDeleting = deletingSiteId === batch.siteId
                   return (
                     <div
                       key={batch.key}
@@ -1157,7 +1196,28 @@ export default function AdInboxStudioPage() {
                           : 'border-neutral-200 bg-neutral-50 text-neutral-700 hover:border-neutral-300'
                       }`}
                     >
-                      <div className="font-medium leading-snug">{batch.shortName}</div>
+                      <div className="flex items-start gap-1">
+                        <div className="min-w-0 flex-1 font-medium leading-snug">{batch.shortName}</div>
+                        {canDeleteSite ? (
+                          <button
+                            type="button"
+                            title="현장 카드 삭제"
+                            aria-label={`${batch.shortName} 현장 카드 삭제`}
+                            disabled={siteDeleting || Boolean(deletingSiteId)}
+                            className="shrink-0 rounded p-1 text-neutral-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              void handleDeleteSite(batch)
+                            }}
+                          >
+                            {siteDeleting ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-3.5 w-3.5" />
+                            )}
+                          </button>
+                        ) : null}
+                      </div>
                       <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                         <span
                           className={`rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-tight ${workProgressBadgeClass(progress)}`}

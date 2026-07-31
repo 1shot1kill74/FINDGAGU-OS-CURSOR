@@ -1806,6 +1806,62 @@ export async function updateAdInboxSiteStatus(
 }
 
 /**
+ * 현장 카드를 대기실에서 제거합니다(archived).
+ * - 미승격 대기실 사진은 DB에서 삭제
+ * - 이미 쇼룸 승격된 사진은 카드 연결만 끊음(쇼룸 자산 유지)
+ */
+export async function deleteAdInboxSite(siteId: string): Promise<void> {
+  const id = siteId.trim()
+  if (!id) throw new Error('현장 카드 ID가 없습니다.')
+
+  const { data: site, error: siteError } = await supabase
+    .from('ad_inbox_sites')
+    .select('id, short_name, status')
+    .eq('id', id)
+    .maybeSingle()
+
+  if (siteError) {
+    throw new Error(siteError.message || '현장 카드를 찾지 못했습니다.')
+  }
+  if (!site) {
+    throw new Error('현장 카드를 찾지 못했습니다.')
+  }
+  if (site.status === 'archived') {
+    return
+  }
+
+  const assets = (await listAdInboxAssets()).filter((asset) => asset.ad_inbox_site_id === id)
+  for (const asset of assets) {
+    if (asset.is_consultation) {
+      const { data: row, error: readError } = await supabase
+        .from('image_assets')
+        .select('metadata')
+        .eq('id', asset.id)
+        .single()
+      if (readError || !row) {
+        throw new Error(readError?.message || '승격된 사진 연결을 끊지 못했습니다.')
+      }
+      const prev =
+        row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
+          ? { ...(row.metadata as Record<string, unknown>) }
+          : {}
+      delete prev.ad_inbox_site_id
+      const { error: unlinkError } = await supabase
+        .from('image_assets')
+        .update({ metadata: prev })
+        .eq('id', asset.id)
+      if (unlinkError) {
+        throw new Error(unlinkError.message || '승격된 사진 연결을 끊지 못했습니다.')
+      }
+    } else {
+      await deleteAdInboxAsset(asset.id)
+    }
+  }
+
+  await updateAdInboxSiteStatus(id, 'archived')
+}
+
+/**
  * 대기실 사진을 재업로드 없이 외부 쇼룸으로 승격.
  * - is_consultation=true, 메타 채움
  * - category=ad_inbox 유지 (대기실 목록·계보)
