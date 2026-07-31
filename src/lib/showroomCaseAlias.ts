@@ -100,6 +100,12 @@ const REGION_CITY_PREFIXES: Array<[string, string]> = [
   ['청주', '충청권'],
   ['천안', '충청권'],
   ['아산', '충청권'],
+  ['춘천', '강원권'],
+  ['강릉', '강원권'],
+  ['원주', '강원권'],
+  ['압구정', '서울권'],
+  ['대치', '서울권'],
+  ['강남', '서울권'],
 ]
 
 function extractTrailingFourDigits(value: string): string | null {
@@ -143,6 +149,11 @@ function extractBroadRegion(value: string): string | null {
   return null
 }
 
+/**
+ * 현장 교차 식별용 강한 키만 반환한다.
+ * - region-suffix:권역:끝4자리 (공개 표시명·전화 끝자리)
+ * - quote:YYYY 는 같은 견적월에 여러 현장이 있어 블로그/사례가 섞이므로 제외
+ */
 export function collectShowroomIdentityKeys(values: Array<string | null | undefined>): string[] {
   const keys = new Set<string>()
   values.forEach((value) => {
@@ -151,8 +162,36 @@ export function collectShowroomIdentityKeys(values: Array<string | null | undefi
     const suffix = extractTrailingFourDigits(normalized)
     const region = extractBroadRegion(normalized)
     if (suffix && region) keys.add(`region-suffix:${region}:${suffix}`)
+  })
+  return Array.from(keys)
+}
+
+/**
+ * 견적번호(월) 키. 단독 매칭에 쓰면 안 되며, 후보가 1개일 때만 레거시 연결용으로 쓴다.
+ */
+export function collectShowroomQuoteKeys(values: Array<string | null | undefined>): string[] {
+  const keys = new Set<string>()
+  values.forEach((value) => {
+    const normalized = (value ?? '').trim()
+    if (!normalized) return
     const quote = extractQuoteFourDigits(normalized)
     if (quote) keys.add(`quote:${quote}`)
   })
   return Array.from(keys)
+}
+
+/** quote 키가 유일 후보일 때만 매칭에 쓸 수 있는지 */
+export function findUniqueProfileByQuoteKey<T>(
+  candidates: T[],
+  lookupValues: Array<string | null | undefined>,
+  getAliases: (item: T) => string[],
+): T | null {
+  const lookupQuotes = new Set(collectShowroomQuoteKeys(lookupValues))
+  if (lookupQuotes.size === 0) return null
+
+  const matched = candidates.filter((item) => {
+    const itemQuotes = new Set(collectShowroomQuoteKeys(getAliases(item)))
+    return [...lookupQuotes].some((key) => itemQuotes.has(key))
+  })
+  return matched.length === 1 ? matched[0] : null
 }

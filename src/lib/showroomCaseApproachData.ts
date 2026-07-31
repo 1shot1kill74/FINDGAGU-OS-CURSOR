@@ -4,7 +4,7 @@
 import type { ShowroomImageAsset } from '@/lib/imageAssetService'
 import { fetchShowroomImageAssets } from '@/lib/imageAssetService'
 import { loadPublicShowroomCardNewsBundle } from '@/lib/publicShowroomCardNewsService'
-import { collectShowroomAliasNamesFromImages, collectShowroomIdentityKeys } from '@/lib/showroomCaseAlias'
+import { collectShowroomAliasNamesFromImages, collectShowroomIdentityKeys, findUniqueProfileByQuoteKey } from '@/lib/showroomCaseAlias'
 import { groupBeforeAfterAssets } from '@/lib/showroomImageAssetGrouping'
 import { fetchPublicShowroomAssets } from '@/lib/showroomShareService'
 import { broadenPublicDisplayName } from '@/lib/showroomShareService'
@@ -40,8 +40,9 @@ function getPreferredExternalLabel(images: ShowroomImageAsset[]): string | null 
 }
 
 function getDraftLookupNames(images: ShowroomImageAsset[], query: string): string[] {
+  // DB site_name 조회용 — 실제 현장명/표시명만. quote·region-suffix 합성키는 넣지 않는다.
   const aliases = [query.trim(), ...collectShowroomAliasNamesFromImages(images)].filter(Boolean)
-  return Array.from(new Set([...aliases, ...collectShowroomIdentityKeys(aliases)]))
+  return Array.from(new Set(aliases))
 }
 
 function getProfileLookupAliases(profile: Pick<
@@ -64,6 +65,7 @@ function profileMatchesLookupNames(profile: ShowroomCaseProfileDraft, lookupName
   const profileAliases = getProfileLookupAliases(profile)
   if (profileAliases.some((alias) => lookupAliasSet.has(alias))) return true
 
+  // 강한 키(권역+끝4자리)만 교차 매칭. quote:견적월 은 제외됨.
   const lookupIdentitySet = new Set(collectShowroomIdentityKeys(lookupNames))
   if (lookupIdentitySet.size === 0) return false
   return collectShowroomIdentityKeys(profileAliases).some((key) => lookupIdentitySet.has(key))
@@ -71,7 +73,15 @@ function profileMatchesLookupNames(profile: ShowroomCaseProfileDraft, lookupName
 
 async function findApprovedBlogProfileByLookupNames(lookupNames: string[]): Promise<ShowroomCaseProfileDraft | null> {
   const approvedBlogProfiles = await fetchApprovedBlogShowroomCaseProfileDrafts()
-  return approvedBlogProfiles.find((profile) => profileMatchesLookupNames(profile, lookupNames)) ?? null
+  const strongMatch = approvedBlogProfiles.find((profile) => profileMatchesLookupNames(profile, lookupNames))
+  if (strongMatch) return strongMatch
+
+  // 레거시: 견적월 키가 전 승인 블로그 중 유일할 때만 허용
+  return findUniqueProfileByQuoteKey(
+    approvedBlogProfiles,
+    lookupNames,
+    (profile) => getProfileLookupAliases(profile),
+  )
 }
 
 function getImageIdentityKeys(images: ShowroomImageAsset[], extraValues: string[] = []): string[] {
@@ -298,12 +308,13 @@ export async function loadShowroomCaseApproachBundle(
 
     const siteName = getPreferredShowroomSiteName(matched)
     const draftLookupNames = getDraftLookupNames(matched, query)
+    const matchNames = Array.from(new Set([siteName, query, ...draftLookupNames].filter(Boolean)))
 
     const drafts = await fetchShowroomCaseProfileDrafts(draftLookupNames)
     const profile =
-      drafts.find((draft) => draft.siteName === siteName)
-      ?? drafts.find((draft) => profileMatchesLookupNames(draft, [siteName, ...draftLookupNames]))
-      ?? await findApprovedBlogProfileByLookupNames([siteName, ...draftLookupNames])
+      drafts.find((draft) => draft.siteName === siteName || draft.canonicalSiteName === siteName)
+      ?? drafts.find((draft) => profileMatchesLookupNames(draft, matchNames))
+      ?? await findApprovedBlogProfileByLookupNames(matchNames)
 
     const hasApprovedBlog = hasApprovedCanonicalBlog(profile)
     const { before, after } = pickBeforeAfterPair(matched)
