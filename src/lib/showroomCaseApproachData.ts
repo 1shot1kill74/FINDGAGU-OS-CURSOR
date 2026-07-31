@@ -113,7 +113,8 @@ function getDraftLookupAliases(draft: ShowroomCaseHrefDraft): string[] {
 }
 
 function getPublicCaseUrlKeyFromImages(images: ShowroomImageAsset[]): string | null {
-  const urlKey = getPreferredExternalLabel(images) || getPreferredShowroomSiteName(images)
+  // 단일 키 = 내부 현장명 (상담카드 site_name). 익스터널 표시명은 URL에 쓰지 않는다.
+  const urlKey = getPreferredShowroomSiteName(images)
   return urlKey && urlKey !== '미지정' ? urlKey : null
 }
 
@@ -216,10 +217,11 @@ export function resolvePublicShowroomCaseHref(
   }
 
   const fallback =
-    draft.canonicalSiteName?.trim()
-    || draft.cardNewsPublication.siteKey?.trim()
+    draft.siteName.trim()
     || draft.canonicalBlogPost?.siteName?.trim()
-    || draft.siteName.trim()
+    || draft.canonicalSiteName?.trim()
+    || draft.cardNewsPublication.siteKey?.trim()
+    || '미지정'
   return `/public/showroom/case/${encodeURIComponent(fallback)}`
 }
 
@@ -251,7 +253,7 @@ async function loadShowroomCaseApproachBundleFromProfileQuery(
 
   return {
     siteName: profile!.siteName,
-    externalLabel: profile!.canonicalSiteName?.trim() || profile!.siteName,
+    externalLabel: null,
     businessTypes: profile!.industry?.trim() ? [profile!.industry.trim()] : [],
     beforeImage: null,
     afterImage: null,
@@ -294,28 +296,21 @@ export async function loadShowroomCaseApproachBundle(
       return { ok: false, reason: 'not_found' }
     }
 
+    const siteName = getPreferredShowroomSiteName(matched)
     const draftLookupNames = getDraftLookupNames(matched, query)
 
     const drafts = await fetchShowroomCaseProfileDrafts(draftLookupNames)
-    const profile = drafts[0] ?? await findPublishedProfileByLookupNames(draftLookupNames)
+    const profile =
+      drafts.find((draft) => draft.siteName === siteName)
+      ?? drafts.find((draft) => profileMatchesLookupNames(draft, [siteName, ...draftLookupNames]))
+      ?? await findPublishedProfileByLookupNames([siteName, ...draftLookupNames])
 
     const hasApprovedBlog = hasApprovedCanonicalBlog(profile)
-
-    const siteName = getPreferredShowroomSiteName(matched)
     const { before, after } = pickBeforeAfterPair(matched)
 
     const businessTypes = Array.from(
       new Set(matched.map((i) => i.business_type?.trim()).filter(Boolean) as string[])
     )
-
-    let externalLabel: string | null = null
-    for (const i of matched) {
-      const v = i.broad_external_display_name?.trim() || broadenPublicDisplayName(i.external_display_name?.trim() ?? null)
-      if (v) {
-        externalLabel = v
-        break
-      }
-    }
 
     if ((!before || !after) && !hasApprovedBlog) {
       return { ok: false, reason: 'incomplete' }
@@ -325,7 +320,7 @@ export async function loadShowroomCaseApproachBundle(
       ok: true,
       data: {
         siteName,
-        externalLabel,
+        externalLabel: null,
         businessTypes,
         beforeImage: before,
         afterImage: after,

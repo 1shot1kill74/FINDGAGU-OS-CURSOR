@@ -108,6 +108,19 @@ function extractTrailingFourDigits(value: string): string | null {
   return match?.[1] ?? null
 }
 
+/** 견적번호(예: 견적 2604_…, 2604 경기 …) — 레거시 익스터널 URL 연결용 */
+function extractQuoteFourDigits(value: string): string | null {
+  const normalized = value.trim().replace(/\s+/g, ' ')
+  if (!normalized) return null
+  const fromEstimate = normalized.match(/견적\s*(\d{4})\b/)
+  if (fromEstimate?.[1]) return fromEstimate[1]
+  const leading = normalized.match(/^(\d{4})(?:[\s_]|$)/)
+  if (leading?.[1]) return leading[1]
+  const underscored = normalized.match(/(?:^|[_\s])(\d{4})(?=_)/)
+  if (underscored?.[1]) return underscored[1]
+  return null
+}
+
 function extractBroadRegion(value: string): string | null {
   const normalized = value.trim().replace(/\s+/g, ' ')
   if (!normalized) return null
@@ -138,6 +151,8 @@ export function collectShowroomIdentityKeys(values: Array<string | null | undefi
     const suffix = extractTrailingFourDigits(normalized)
     const region = extractBroadRegion(normalized)
     if (suffix && region) keys.add(`region-suffix:${region}:${suffix}`)
+    const quote = extractQuoteFourDigits(normalized)
+    if (quote) keys.add(`quote:${quote}`)
   })
   return Array.from(keys)
 }

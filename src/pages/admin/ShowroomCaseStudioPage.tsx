@@ -1113,7 +1113,12 @@ export default function ShowroomCaseStudioPage() {
                   onChange={() => toggleSiteSelected(row.siteName)}
                   className="h-4 w-4 rounded border-slate-300"
                 />
-                배치 선택 · {getBlogQueueStatus(row)}
+                배치 선택 · {{
+                  missing: '미제작',
+                  draft: '초안',
+                  scheduled: '예약',
+                  approved: '공개',
+                }[getBlogQueueStatus(row)]}
               </label>
               {row.canonicalBlogPost?.status === 'scheduled' && row.canonicalBlogPost.scheduledAt ? (
                 <span className="text-[11px] font-medium text-amber-700">
@@ -1134,12 +1139,10 @@ export default function ShowroomCaseStudioPage() {
                   </div>
                 </div>
                 <div className="px-4 py-4">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">익스터널라벨</p>
-                  <h2 className="mt-1 text-lg font-semibold text-slate-900">{row.externalLabel || row.siteName}</h2>
-                  <p className="mt-3 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                    {row.externalLabel ? '내부 현장명' : '업종'}
-                  </p>
-                  <p className="mt-1 text-sm text-slate-500">{row.externalLabel ? row.siteName : row.industry}</p>
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">현장명</p>
+                  <h2 className="mt-1 text-lg font-semibold text-slate-900">{row.siteName}</h2>
+                  <p className="mt-3 text-[11px] font-semibold uppercase tracking-wide text-slate-500">업종</p>
+                  <p className="mt-1 text-sm text-slate-500">{row.industry}</p>
                 </div>
               </div>
 
@@ -1206,7 +1209,7 @@ export default function ShowroomCaseStudioPage() {
                               <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-emerald-700">
                                 <span>사례 블로그 공개 링크 준비됨</span>
                                 <Link
-                                  to={`/public/showroom/case/${encodeURIComponent(row.externalLabel || row.siteName)}`}
+                                  to={`/public/showroom/case/${encodeURIComponent(row.siteName)}`}
                                   target="_blank"
                                   rel="noreferrer"
                                   className="font-medium underline underline-offset-2"

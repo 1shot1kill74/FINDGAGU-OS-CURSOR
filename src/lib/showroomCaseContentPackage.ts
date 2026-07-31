@@ -1,4 +1,3 @@
-import { broadenPublicDisplayName } from '@/lib/showroomShareService'
 import type { ShowroomImageAsset } from '@/lib/imageAssetService'
 import { getShowroomImagePreviewUrl } from '@/lib/imageAssetService'
 
@@ -357,9 +356,8 @@ function compactLines(values: Array<string | null | undefined>): string[] {
 }
 
 export function getShowroomCasePublicDisplayName(seed: ShowroomCaseContentSeed): string {
-  return clean(broadenPublicDisplayName(seed.externalLabel ?? null))
+  return clean(seed.siteName)
     || clean(seed.externalLabel)
-    || clean(seed.siteName)
     || '시공 사례'
 }
 
