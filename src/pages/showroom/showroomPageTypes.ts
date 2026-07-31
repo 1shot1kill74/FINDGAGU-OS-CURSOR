@@ -71,7 +71,6 @@ export interface ShowroomCaseProfileDraftState {
   /** 블로그 정본 발행 상태. status null = 미제작 */
   blogPublication: {
     status: ShowroomCaseCanonicalBlogStatus | null
-    autoPublished: boolean
   }
   /** 승인된 블로그 정본 기준 티저 한 줄 (없으면 null) */
   blogTeaserLine: string | null
@@ -86,7 +85,6 @@ export const EMPTY_SHOWROOM_CASE_PROFILE_DRAFT: ShowroomCaseProfileDraftState = 
   },
   blogPublication: {
     status: null,
-    autoPublished: false,
   },
   blogTeaserLine: null,
 }
@@ -97,9 +95,7 @@ export function showroomBlogPublicationLabel(
 ): string {
   const status = publication.status
   if (!status) return '미제작'
-  if (status === 'approved') {
-    return publication.autoPublished ? '자동 발행완료' : '발행완료'
-  }
+  if (status === 'approved') return '발행완료'
   if (status === 'scheduled') return '발행예정'
   if (status === 'archived') return '보관'
   if (status === 'review') return '검수중'
@@ -132,7 +128,6 @@ export function blogPublicationFromPost(
 ): ShowroomCaseProfileDraftState['blogPublication'] {
   return {
     status: post?.status ?? null,
-    autoPublished: post?.qaReview?.autoPublished === true,
   }
 }
 
