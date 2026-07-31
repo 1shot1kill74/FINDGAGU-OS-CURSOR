@@ -9,7 +9,7 @@ import { groupBeforeAfterAssets } from '@/lib/showroomImageAssetGrouping'
 import { fetchPublicShowroomAssets } from '@/lib/showroomShareService'
 import { broadenPublicDisplayName } from '@/lib/showroomShareService'
 import {
-  fetchPublishedShowroomCaseProfileDrafts,
+  fetchApprovedBlogShowroomCaseProfileDrafts,
   fetchShowroomCaseProfileDrafts,
   type ShowroomCaseProfileDraft,
 } from '@/lib/showroomCaseProfileService'
@@ -69,9 +69,9 @@ function profileMatchesLookupNames(profile: ShowroomCaseProfileDraft, lookupName
   return collectShowroomIdentityKeys(profileAliases).some((key) => lookupIdentitySet.has(key))
 }
 
-async function findPublishedProfileByLookupNames(lookupNames: string[]): Promise<ShowroomCaseProfileDraft | null> {
-  const publishedProfiles = await fetchPublishedShowroomCaseProfileDrafts()
-  return publishedProfiles.find((profile) => profileMatchesLookupNames(profile, lookupNames)) ?? null
+async function findApprovedBlogProfileByLookupNames(lookupNames: string[]): Promise<ShowroomCaseProfileDraft | null> {
+  const approvedBlogProfiles = await fetchApprovedBlogShowroomCaseProfileDrafts()
+  return approvedBlogProfiles.find((profile) => profileMatchesLookupNames(profile, lookupNames)) ?? null
 }
 
 function getImageIdentityKeys(images: ShowroomImageAsset[], extraValues: string[] = []): string[] {
@@ -303,7 +303,7 @@ export async function loadShowroomCaseApproachBundle(
     const profile =
       drafts.find((draft) => draft.siteName === siteName)
       ?? drafts.find((draft) => profileMatchesLookupNames(draft, [siteName, ...draftLookupNames]))
-      ?? await findPublishedProfileByLookupNames([siteName, ...draftLookupNames])
+      ?? await findApprovedBlogProfileByLookupNames([siteName, ...draftLookupNames])
 
     const hasApprovedBlog = hasApprovedCanonicalBlog(profile)
     const { before, after } = pickBeforeAfterPair(matched)
