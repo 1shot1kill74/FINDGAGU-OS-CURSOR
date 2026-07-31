@@ -29,15 +29,10 @@ import {
   type ShowroomCaseCanonicalBlogPost,
 } from '@/lib/showroomCaseCanonicalBlog'
 import {
-  buildStaggeredBlogScheduleTimes,
-  cancelShowroomCaseBlogSchedule,
   fetchShowroomCaseProfileDrafts,
-  formatShowroomCaseBlogScheduledAt,
   saveShowroomCaseCanonicalBlogPost,
   saveShowroomCaseGenerationState,
   saveShowroomCaseProfileDraft,
-  scheduleShowroomCaseBlog,
-  toShowroomCaseBlogScheduleInputValue,
 } from '@/lib/showroomCaseProfileService'
 import { supabase } from '@/lib/supabase'
 import {
@@ -60,7 +55,6 @@ import { getPrimaryIndustryLabel } from '@/pages/showroom/showroomPageGrouping'
 import {
   BLOG_BATCH_MAX,
   BLOG_QUEUE_FILTERS,
-  defaultBlogScheduleStartLocalInput,
   getBlogQueueStatus,
   mapPool,
   type BlogQueueFilter,
@@ -84,10 +78,7 @@ export default function ShowroomCaseStudioPage() {
   const [industryFilter, setIndustryFilter] = useState<string | null>(null)
   const [blogQueueFilter, setBlogQueueFilter] = useState<BlogQueueFilter>('all')
   const [selectedSiteNames, setSelectedSiteNames] = useState<string[]>([])
-  const [scheduleDraftBySite, setScheduleDraftBySite] = useState<Record<string, string>>({})
-  const [schedulingSite, setSchedulingSite] = useState<string | null>(null)
-  const [batchBusy, setBatchBusy] = useState<null | 'brief' | 'blog' | 'schedule'>(null)
-  const [batchScheduleStart, setBatchScheduleStart] = useState(defaultBlogScheduleStartLocalInput)
+  const [batchBusy, setBatchBusy] = useState<null | 'brief' | 'blog'>(null)
   const [blogViewer, setBlogViewer] = useState<{ displayLabel: string; post: ShowroomCaseCanonicalBlogPost; html: string } | null>(null)
   const [naverPackageState, setNaverPackageState] = useState<{
     displayLabel: string
@@ -585,60 +576,6 @@ export default function ShowroomCaseStudioPage() {
     }
   }
 
-  const scheduleBlogForRow = async (row: CaseDraftState, whenInput?: string) => {
-    if (!row.canonicalBlogPost) {
-      toast.error('예약하려면 먼저 블로그 초안을 만들어 주세요.')
-      return
-    }
-    const raw = (whenInput ?? scheduleDraftBySite[row.siteName] ?? '').trim()
-    if (!raw) {
-      toast.error('예약 시각을 선택해 주세요.')
-      return
-    }
-    const when = new Date(raw)
-    setSchedulingSite(row.siteName)
-    try {
-      const { error, post } = await scheduleShowroomCaseBlog({
-        siteName: row.siteName,
-        when,
-        post: row.canonicalBlogPost,
-      })
-      if (error || !post) throw error ?? new Error('예약에 실패했습니다.')
-      setRows((prev) =>
-        prev.map((item) => (item.siteName === row.siteName ? { ...item, canonicalBlogPost: post } : item)),
-      )
-      setScheduleDraftBySite((prev) => ({
-        ...prev,
-        [row.siteName]: toShowroomCaseBlogScheduleInputValue(post.scheduledAt),
-      }))
-      toast.success(`블로그 예약: ${formatShowroomCaseBlogScheduledAt(post.scheduledAt)}`)
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : '예약에 실패했습니다.')
-    } finally {
-      setSchedulingSite(null)
-    }
-  }
-
-  const cancelBlogScheduleForRow = async (row: CaseDraftState) => {
-    if (!row.canonicalBlogPost || row.canonicalBlogPost.status !== 'scheduled') return
-    setSchedulingSite(row.siteName)
-    try {
-      const { error, post } = await cancelShowroomCaseBlogSchedule({
-        siteName: row.siteName,
-        post: row.canonicalBlogPost,
-      })
-      if (error || !post) throw error ?? new Error('예약 취소에 실패했습니다.')
-      setRows((prev) =>
-        prev.map((item) => (item.siteName === row.siteName ? { ...item, canonicalBlogPost: post } : item)),
-      )
-      toast.success('블로그 예약을 취소했습니다.')
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : '예약 취소에 실패했습니다.')
-    } finally {
-      setSchedulingSite(null)
-    }
-  }
-
   const industryRows = useMemo(() => {
     if (!industryFilter) return rows
     return rows.filter((row) => {
@@ -652,7 +589,6 @@ export default function ShowroomCaseStudioPage() {
       all: industryRows.length,
       missing: 0,
       draft: 0,
-      scheduled: 0,
       approved: 0,
     }
     for (const row of industryRows) {
@@ -739,54 +675,6 @@ export default function ShowroomCaseStudioPage() {
     }
   }
 
-  const runBatchScheduleDrain = async () => {
-    const candidates = selectedRows.filter((row) => row.canonicalBlogPost)
-    if (candidates.length === 0) {
-      toast.message('예약할 블로그 초안이 있는 케이스를 선택해 주세요.')
-      return
-    }
-    const startAt = new Date(batchScheduleStart)
-    if (Number.isNaN(startAt.getTime())) {
-      toast.error('배치 예약 시작 시각이 올바르지 않습니다.')
-      return
-    }
-    setBatchBusy('schedule')
-    let ok = 0
-    let failed = 0
-    try {
-      const times = buildStaggeredBlogScheduleTimes({
-        count: candidates.length,
-        startAt,
-        intervalDays: 1,
-      })
-      for (let i = 0; i < candidates.length; i += 1) {
-        const row = candidates[i]
-        const when = times[i]
-        try {
-          const { error, post } = await scheduleShowroomCaseBlog({
-            siteName: row.siteName,
-            when,
-            post: row.canonicalBlogPost!,
-          })
-          if (error || !post) throw error ?? new Error('예약 실패')
-          setRows((prev) =>
-            prev.map((item) => (item.siteName === row.siteName ? { ...item, canonicalBlogPost: post } : item)),
-          )
-          setScheduleDraftBySite((prev) => ({
-            ...prev,
-            [row.siteName]: toShowroomCaseBlogScheduleInputValue(post.scheduledAt),
-          }))
-          ok += 1
-        } catch {
-          failed += 1
-        }
-      }
-      toast.success(`예약 소진 ${ok}건 등록${failed ? ` · 실패 ${failed}` : ''} (1일 간격)`)
-    } finally {
-      setBatchBusy(null)
-    }
-  }
-
   if (showInitialLoader) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-50">
@@ -810,8 +698,8 @@ export default function ShowroomCaseStudioPage() {
         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">Case Content Studio</p>
         <h1 className="mt-2 text-2xl font-bold text-slate-900 md:text-3xl">비포어/애프터 케이스 작업실</h1>
         <p className="mt-2 text-sm leading-6 text-slate-600">
-          BA 사례를 몰아 초안 만든 뒤 예약으로 소진합니다. 목표는 정독 글이 아니라{' '}
-          <span className="font-medium text-slate-800">“정리된 회사” 에비던스 URL</span>을 꾸준히 쌓는 것입니다.
+          BA 사례를 초안 만든 뒤 바로 공개합니다. 목표는 정독 글이 아니라{' '}
+          <span className="font-medium text-slate-800">“정리된 회사” 에비던스 URL</span>을 쌓는 것입니다.
         </p>
         <div className="mt-4">
           <Link to="/dashboard">
@@ -882,29 +770,6 @@ export default function ShowroomCaseStudioPage() {
               {batchBusy === 'blog' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
               선택 블로그 만들기
             </Button>
-          </div>
-          <div className="flex flex-wrap items-end gap-2">
-            <label className="text-xs text-slate-600">
-              예약 시작 (1일 간격)
-              <input
-                type="datetime-local"
-                value={batchScheduleStart}
-                onChange={(event) => setBatchScheduleStart(event.target.value)}
-                className="mt-1 block rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-800"
-              />
-            </label>
-            <Button
-              type="button"
-              size="sm"
-              disabled={Boolean(batchBusy) || selectedRows.length === 0}
-              onClick={() => void runBatchScheduleDrain()}
-            >
-              {batchBusy === 'schedule' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-              선택 예약 소진
-            </Button>
-            <p className="text-[11px] leading-relaxed text-slate-500">
-              초안이 있는 선택 건만 예약됩니다. 시각이 되면 자동 공개됩니다.
-            </p>
           </div>
         </div>
       </section>
@@ -1116,15 +981,9 @@ export default function ShowroomCaseStudioPage() {
                 배치 선택 · {{
                   missing: '미제작',
                   draft: '초안',
-                  scheduled: '예약',
                   approved: '공개',
                 }[getBlogQueueStatus(row)]}
               </label>
-              {row.canonicalBlogPost?.status === 'scheduled' && row.canonicalBlogPost.scheduledAt ? (
-                <span className="text-[11px] font-medium text-amber-700">
-                  예약 {formatShowroomCaseBlogScheduledAt(row.canonicalBlogPost.scheduledAt)}
-                </span>
-              ) : null}
             </div>
             <div className="grid gap-0 lg:grid-cols-[340px_1fr]">
               <div className="border-b border-slate-200 bg-slate-50 lg:border-b-0 lg:border-r">
@@ -1181,18 +1040,14 @@ export default function ShowroomCaseStudioPage() {
                               <span className={`rounded-full px-2.5 py-1 font-medium ${
                                 row.canonicalBlogPost?.status === 'approved'
                                   ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200'
-                                  : row.canonicalBlogPost?.status === 'scheduled'
-                                    ? 'bg-amber-50 text-amber-800 ring-1 ring-amber-200'
-                                    : 'bg-slate-100 text-slate-600'
+                                  : 'bg-slate-100 text-slate-600'
                               }`}>
                                 블로그{' '}
                                 {row.canonicalBlogPost?.status === 'approved'
                                   ? '공개'
-                                  : row.canonicalBlogPost?.status === 'scheduled'
-                                    ? `예약 ${formatShowroomCaseBlogScheduledAt(row.canonicalBlogPost.scheduledAt)}`
-                                    : row.canonicalBlogPost
-                                      ? '초안'
-                                      : '미제작'}
+                                  : row.canonicalBlogPost
+                                    ? '초안'
+                                    : '미제작'}
                               </span>
                             </div>
                             {row.blogGeneration.errorMessage ? (
@@ -1291,56 +1146,6 @@ export default function ShowroomCaseStudioPage() {
                             >
                               <Send className="h-4 w-4" aria-hidden />
                               네이버 패키지
-                            </Button>
-                          </div>
-                          <div className="mt-3 flex flex-wrap items-end gap-2 rounded-xl border border-amber-200 bg-amber-50/50 px-3 py-2">
-                            <label className="text-[11px] text-amber-950">
-                              발행 예약
-                              <input
-                                type="datetime-local"
-                                value={
-                                  scheduleDraftBySite[row.siteName]
-                                  || toShowroomCaseBlogScheduleInputValue(row.canonicalBlogPost?.scheduledAt)
-                                  || defaultBlogScheduleStartLocalInput()
-                                }
-                                onChange={(event) =>
-                                  setScheduleDraftBySite((prev) => ({
-                                    ...prev,
-                                    [row.siteName]: event.target.value,
-                                  }))
-                                }
-                                disabled={!row.canonicalBlogPost || row.canonicalBlogPost.status === 'approved'}
-                                className="mt-1 block rounded-lg border border-amber-200 bg-white px-2 py-1.5 text-sm text-slate-800 disabled:opacity-50"
-                              />
-                            </label>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              className="border-amber-300"
-                              disabled={
-                                !row.canonicalBlogPost
-                                || row.canonicalBlogPost.status === 'approved'
-                                || schedulingSite === row.siteName
-                              }
-                              onClick={() => void scheduleBlogForRow(row)}
-                            >
-                              {schedulingSite === row.siteName ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              ) : null}
-                              예약
-                            </Button>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="ghost"
-                              disabled={
-                                row.canonicalBlogPost?.status !== 'scheduled'
-                                || schedulingSite === row.siteName
-                              }
-                              onClick={() => void cancelBlogScheduleForRow(row)}
-                            >
-                              예약 취소
                             </Button>
                           </div>
                         </div>

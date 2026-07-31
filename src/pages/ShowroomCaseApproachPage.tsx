@@ -430,7 +430,7 @@ export default function ShowroomCaseApproachPage({ mode = 'public' }: { mode?: M
                 <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">전후 비교</p>
                 <h2 id="approach-ba-hero" className="text-xl font-semibold text-neutral-900">이 현장의 변화</h2>
                 <p className="text-sm leading-relaxed text-neutral-600">
-                  Before·After로 공간 변화를 먼저 확인한 뒤, 아래에서 사례 이야기를 이어 보세요.
+                  Before·After로 공간 변화를 확인해 보세요.
                 </p>
               </div>
             ) : (
@@ -457,46 +457,8 @@ export default function ShowroomCaseApproachPage({ mode = 'public' }: { mode?: M
           </section>
         ) : null}
 
-        {isStoryLayout ? (
-          <div className={cn(
-            'rounded-2xl px-4 py-4 md:px-5',
-            showCanonicalBlogSection
-              ? 'border border-emerald-100 bg-emerald-50/80'
-              : 'border border-dashed border-neutral-200 bg-neutral-50/80',
-          )}>
-            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <div>
-                <p className="text-sm leading-relaxed text-neutral-700">
-                  <span className="font-semibold text-neutral-900">사례 이야기</span>{' '}
-                  {showCanonicalBlogSection
-                    ? '현장 배경·설계 이유·디테일을 이어서 볼 수 있습니다.'
-                    : '이 현장의 상세 글은 아직 준비 중입니다.'}
-                </p>
-                <p className="mt-1 text-xs text-neutral-500">
-                  {showCanonicalBlogSection
-                    ? '전후 사진과 함께 실제 판단 근거를 짧게 정리해 두었습니다.'
-                    : '자세한 상담은 채팅으로 바로 문의할 수 있습니다.'}
-                </p>
-              </div>
-              {showCanonicalBlogSection ? (
-                <Button asChild className="shrink-0 gap-1.5 bg-emerald-700 hover:bg-emerald-600">
-                  <a href="#case-blog-more">
-                    <FileText className="h-4 w-4" />
-                    사례 이야기 보기
-                  </a>
-                </Button>
-              ) : (
-                <Button type="button" disabled className="shrink-0 gap-1.5">
-                  <FileText className="h-4 w-4" />
-                  블로그 준비 중
-                </Button>
-              )}
-            </div>
-          </div>
-        ) : null}
-
         {showCanonicalBlogSection && displayBlog ? (
-          <section id="case-blog-more" className="scroll-mt-24 space-y-3" aria-labelledby="canonical-blog-article">
+          <section className="space-y-3" aria-labelledby="canonical-blog-article">
             <div className="space-y-1">
               <div className="flex flex-wrap items-center gap-2 text-neutral-900">
                 <FileText className="h-5 w-5 text-emerald-700" aria-hidden />
@@ -509,11 +471,6 @@ export default function ShowroomCaseApproachPage({ mode = 'public' }: { mode?: M
                   </span>
                 ) : null}
               </div>
-              {isStoryLayout ? (
-                <p className="text-sm leading-relaxed text-neutral-600">
-                  전후 비교를 바탕으로, 궁금한 점을 더 알고 싶을 때 이어서 읽어 보세요.
-                </p>
-              ) : null}
             </div>
             {(() => {
               const previewHtml = renderCanonicalBlogPostHtml(displayBlog)

@@ -327,7 +327,7 @@ export default function DashboardPage() {
     },
     {
       title: '케이스 작업실',
-      description: '사례 블로그 초안 생성과 예약·공개를 관리합니다.',
+      description: '사례 블로그 초안 생성과 즉시 공개를 관리합니다.',
       to: '/admin/showroom-case-studio',
       icon: Sparkles,
     },
