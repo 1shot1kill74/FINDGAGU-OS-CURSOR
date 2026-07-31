@@ -249,7 +249,7 @@ Deno.serve(async (req) => {
       return json({ ok: false, message: `현재 상태(${publishStatus})에서는 업로드 준비를 시작할 수 없습니다.` }, 400)
     }
 
-    if (action === "launch" && !["launch_ready", "approved"].includes(publishStatus)) {
+    if (action === "launch" && !["launch_ready", "approved", "scheduled"].includes(publishStatus)) {
       return json({ ok: false, message: `현재 상태(${publishStatus})에서는 론칭 승인을 진행할 수 없습니다.` }, 400)
     }
 
@@ -264,7 +264,11 @@ Deno.serve(async (req) => {
       publish_status: acceptedStatus,
       updated_at: nowIso,
     }
-    if (action === "launch") optimisticPatch.approved_at = nowIso
+    if (action === "launch") {
+      optimisticPatch.approved_at = nowIso
+      // 예약 발행 후 재예약 혼선을 막기 위해 클리어
+      optimisticPatch.scheduled_at = null
+    }
 
     const { error: updateError } = await supabase
       .from(tables.targets)

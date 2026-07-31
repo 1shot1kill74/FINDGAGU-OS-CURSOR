@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Findgagu OS — WTP 가격대별 월 매출</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg0: #0f1412;
+      --bg1: #17201c;
+      --bg2: #1e2a24;
+      --line: rgba(214, 232, 220, 0.14);
+      --text: #e8f0ea;
+      --muted: #9aafa3;
+      --accent: #6ecf9a;
+      --accent-dim: rgba(110, 207, 154, 0.14);
+      --warn: #e0b15a;
+      --hot: #7eb8ff;
+      --hot-dim: rgba(126, 184, 255, 0.14);
+      --font: "IBM Plex Sans KR", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: var(--font);
+      color: var(--text);
+      background:
+        radial-gradient(900px 500px at 10% -10%, rgba(110, 207, 154, 0.12), transparent 55%),
+        radial-gradient(700px 400px at 90% 0%, rgba(126, 184, 255, 0.08), transparent 50%),
+        linear-gradient(180deg, var(--bg0), #121816 40%, var(--bg0));
+      min-height: 100vh;
+      line-height: 1.55;
+    }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 40px 24px 80px; }
+    .eyebrow {
+      font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--accent); font-weight: 600; margin-bottom: 10px;
+    }
+    h1 {
+      font-size: clamp(26px, 4vw, 40px); font-weight: 700;
+      letter-spacing: -0.03em; margin: 0 0 10px; line-height: 1.15;
+    }
+    h2 {
+      font-size: 18px; font-weight: 600; margin: 36px 0 8px;
+      letter-spacing: -0.02em;
+    }
+    .sub { color: var(--muted); font-size: 14px; margin: 0 0 24px; max-width: 70ch; }
+    .note { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
+    .verdict {
+      background: var(--accent-dim);
+      border: 1px solid rgba(110, 207, 154, 0.35);
+      border-radius: 14px; padding: 16px 18px; margin-bottom: 24px;
+      font-size: 14px;
+    }
+    .warn-box {
+      background: rgba(224, 177, 90, 0.12);
+      border: 1px solid rgba(224, 177, 90, 0.35);
+      border-radius: 14px; padding: 14px 16px; margin-bottom: 24px;
+      font-size: 13px; color: #e8d9b8;
+    }
+    .stats {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
+      margin-bottom: 8px;
+    }
+    @media (max-width: 800px) {
+      .stats { grid-template-columns: repeat(2, 1fr); }
+    }
+    .stat {
+      background: var(--bg1); border: 1px solid var(--line);
+      border-radius: 12px; padding: 14px 16px;
+    }
+    .stat .v {
+      font-size: 22px; font-weight: 700; letter-spacing: -0.02em;
+      color: var(--accent);
+    }
+    .stat .v.blue { color: var(--hot); }
+    .stat .l { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .panel {
+      background: var(--bg1); border: 1px solid var(--line);
+      border-radius: 14px; padding: 20px 18px 16px; margin-top: 12px;
+    }
+    .chart-bars {
+      display: flex; align-items: flex-end; gap: 10px;
+      height: 220px; padding: 8px 0 0;
+    }
+    .col {
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; height: 100%; justify-content: flex-end; gap: 6px;
+      min-width: 0;
+    }
+    .bars { display: flex; align-items: flex-end; gap: 4px; width: 100%; height: 170px; }
+    .bar-wrap {
+      flex: 1; height: 100%; display: flex; align-items: flex-end;
+      position: relative;
+    }
+    .bar {
+      width: 100%; border-radius: 6px 6px 2px 2px;
+      min-height: 2px; transition: height 0.4s ease;
+    }
+    .bar.pool { background: var(--hot); }
+    .bar.primary { background: var(--accent); }
+    .bar.scenario { background: var(--accent); }
+    .bar.peak { outline: 2px solid rgba(255,255,255,0.35); outline-offset: 1px; }
+    .val {
+      font-size: 10px; color: var(--muted); text-align: center;
+      line-height: 1.2; white-space: nowrap;
+    }
+    .lbl {
+      font-size: 11px; font-weight: 600; color: var(--text);
+      text-align: center;
+    }
+    .legend {
+      display: flex; gap: 16px; flex-wrap: wrap;
+      margin-top: 14px; font-size: 12px; color: var(--muted);
+    }
+    .legend i {
+      display: inline-block; width: 10px; height: 10px;
+      border-radius: 2px; margin-right: 6px; vertical-align: middle;
+    }
+    .legend .pool { background: var(--hot); }
+    .legend .primary { background: var(--accent); }
+    .line-wrap { width: 100%; overflow-x: auto; }
+    svg.line-chart { width: 100%; height: 220px; display: block; }
+    .cards {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;
+      margin-top: 14px;
+    }
+    @media (max-width: 800px) {
+      .cards { grid-template-columns: 1fr; }
+    }
+    .card {
+      background: var(--bg2); border: 1px solid var(--line);
+      border-radius: 12px; padding: 14px 16px;
+    }
+    .card h3 { margin: 0 0 8px; font-size: 13px; color: var(--muted); font-weight: 500; }
+    .card .big { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; }
+    .card .big.ok { color: var(--accent); }
+    .card .big.info { color: var(--hot); }
+    .card .big.warn { color: var(--warn); }
+    .card .meta { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    table {
+      width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px;
+    }
+    th, td {
+      text-align: left; padding: 10px 8px;
+      border-bottom: 1px solid var(--line);
+    }
+    th { color: var(--muted); font-weight: 500; font-size: 12px; }
+    tr.rec td { background: var(--accent-dim); }
+    tr.peak td { background: var(--hot-dim); }
+    .footer {
+      margin-top: 40px; font-size: 12px; color: var(--muted);
+      border-top: 1px solid var(--line); padding-top: 16px;
+    }
+    .ctrl {
+      display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+      margin: 8px 0 4px; font-size: 13px;
+    }
+    .ctrl label { color: var(--muted); }
+    .ctrl input[type="range"] { width: min(280px, 100%); accent-color: var(--accent); }
+    .ctrl #touchVal { color: var(--accent); font-weight: 700; min-width: 3ch; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="eyebrow">Findgagu OS · ABM WTP</div>
+    <h1>가격대별 월 매출 예상</h1>
+    <p class="sub">
+      제품: 광고Ops 루프 (대기실 · B/A릴스 · 중간랜딩 · 쇼룸형홈 · 자동발행).<br />
+      Source: <code>abm_target_wtp_result.json</code> · 2026-07-28 · 에이전트 5,000 · 설문 아님(ICP prior ABM).
+    </p>
+
+    <div class="warn-box">
+      풀·1차 ICP 그래프는 <strong>상대 비교</strong>(어느 가격이 매출 기여를 키우는지)입니다.
+      아래 시나리오는 「월 ICP 접근 수 × 구매율」가정 MRR이며 실측 WTP가 아닙니다.
+    </div>
+
+    <div class="stats">
+      <div class="stat">
+        <div class="v blue" id="peakPrice">9.9만</div>
+        <div class="l">풀 매출 피크 가격</div>
+      </div>
+      <div class="stat">
+        <div class="v blue" id="peakPool">20,681만</div>
+        <div class="l">풀 기준 피크 매출(상대)</div>
+      </div>
+      <div class="stat">
+        <div class="v">7.9만</div>
+        <div class="l">ABM 권장가</div>
+      </div>
+      <div class="stat">
+        <div class="v" id="scenarioPeak">—</div>
+        <div class="l">시나리오 피크 MRR</div>
+      </div>
+    </div>
+
+    <h2>1. ABM 풀 기준 — 가격 × 구매자 (상대 월 매출)</h2>
+    <p class="note">단위: 만원 · 5,000명 시뮬에서 해당 가격에 산다고 나온 인원 × 가격</p>
+    <div class="panel">
+      <div class="chart-bars" id="poolChart"></div>
+      <div class="legend">
+        <span><i class="pool"></i>전체 풀</span>
+        <span><i class="primary"></i>1차 ICP</span>
+      </div>
+      <p class="note">풀 전체 피크는 9.9만, 1차 ICP 피크·권장가는 7.9만.</p>
+    </div>
+
+    <h2>2. 구매율 vs 가격</h2>
+    <div class="panel">
+      <div class="line-wrap">
+        <svg class="line-chart" id="lineChart" viewBox="0 0 640 220" preserveAspectRatio="none"></svg>
+      </div>
+      <div class="legend">
+        <span><i class="pool"></i>전체 구매율</span>
+        <span><i class="primary"></i>1차 ICP 구매율</span>
+      </div>
+    </div>
+
+    <h2>3. 실무 시나리오 — 월 ICP 접근 × 구매율 → MRR</h2>
+    <div class="ctrl">
+      <label for="touch">월 ICP 접근</label>
+      <input type="range" id="touch" min="50" max="500" step="10" value="200" />
+      <span><span id="touchVal">200</span>명</span>
+    </div>
+    <div class="panel">
+      <div class="chart-bars" id="scenarioChart"></div>
+      <div class="legend">
+        <span><i class="primary"></i>예상 월 매출(만)</span>
+      </div>
+    </div>
+    <div class="cards" id="cards"></div>
+
+    <h2>4. 숫자 표</h2>
+    <div class="panel" style="overflow-x: auto;">
+      <table>
+        <thead>
+          <tr>
+            <th>월가</th>
+            <th>구매율</th>
+            <th>풀 매출(만)</th>
+            <th>1차ICP 매출(만)</th>
+            <th>시나리오 MRR(만)</th>
+            <th>시나리오 유료</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+
+    <div class="verdict" style="margin-top: 24px;">
+      <strong>스케일 감각</strong> — 터치 수를 바꾸면 MRR은 비례합니다.
+      사업계획 Base(국내 MRR ~2,475만)에 가려면 9.9만 기준 유료 ~250명, 또는 7.9만 기준 ~313명 규모가 필요합니다.
+    </div>
+
+    <div class="footer">
+      Findgagu OS · ABM WTP monthly revenue · 로컬 HTML · 더블클릭 또는 브라우저에서 열기
+    </div>
+  </div>
+
+  <script>
+    const LABELS = ['4.9만', '7.9만', '9.9만', '12.9만', '14.9만', '19.9만'];
+    const PRICES = [49000, 79000, 99000, 129000, 149000, 199000];
+    const BUY_RATE_ALL = [0.6088, 0.5068, 0.4178, 0.3116, 0.2358, 0.117];
+    const BUY_N_ALL = [3044, 2534, 2089, 1558, 1179, 585];
+    const BUY_RATE_PRIMARY = [0.6853, 0.5657, 0.4388, 0.2671, 0.1783, 0.0371];
+    const PRIMARY_N = 3343;
+
+    const mrrMan = (price, buyers) => Math.round((price * buyers) / 10000);
+    const poolRev = PRICES.map((p, i) => mrrMan(p, BUY_N_ALL[i]));
+    const primaryRev = PRICES.map((p, i) => mrrMan(p, BUY_RATE_PRIMARY[i] * PRIMARY_N));
+    const peakPoolIdx = poolRev.indexOf(Math.max(...poolRev));
+    const peakPrimaryIdx = primaryRev.indexOf(Math.max(...primaryRev));
+
+    document.getElementById('peakPrice').textContent = LABELS[peakPoolIdx];
+    document.getElementById('peakPool').textContent = poolRev[peakPoolIdx].toLocaleString() + '만';
+
+    function renderGrouped(elId, seriesA, seriesB, peakIdxA, peakIdxB) {
+      const max = seriesB
+        ? Math.max(...seriesA, ...seriesB)
+        : Math.max(...seriesA, 1);
+      const root = document.getElementById(elId);
+      if (!root) return;
+      root.innerHTML = '';
+      LABELS.forEach((lab, i) => {
+        const col = document.createElement('div');
+        col.className = 'col';
+        const vals = document.createElement('div');
+        vals.className = 'val';
+        vals.innerHTML = seriesB
+          ? `${seriesA[i].toLocaleString()}<br>${seriesB[i].toLocaleString()}`
+          : `${seriesA[i].toLocaleString()}`;
+        const bars = document.createElement('div');
+        bars.className = 'bars';
+        const mk = (v, cls, peak) => {
+          const wrap = document.createElement('div');
+          wrap.className = 'bar-wrap';
+          const b = document.createElement('div');
+          b.className = 'bar ' + cls + (peak ? ' peak' : '');
+          b.style.height = Math.max(2, (v / max) * 100) + '%';
+          wrap.appendChild(b);
+          return wrap;
+        };
+        bars.appendChild(mk(seriesA[i], seriesB ? 'pool' : 'scenario', i === peakIdxA));
+        if (seriesB) bars.appendChild(mk(seriesB[i], 'primary', i === peakIdxB));
+        const lbl = document.createElement('div');
+        lbl.className = 'lbl';
+        lbl.textContent = lab;
+        col.appendChild(vals);
+        col.appendChild(bars);
+        col.appendChild(lbl);
+        root.appendChild(col);
+      });
+    }
+
+    function renderLine() {
+      const svg = document.getElementById('lineChart');
+      const W = 640, H = 220, pad = { t: 20, r: 16, b: 36, l: 36 };
+      const iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
+      const all = [...BUY_RATE_ALL.map(r => r * 100), ...BUY_RATE_PRIMARY.map(r => r * 100)];
+      const maxY = 100;
+      const x = (i) => pad.l + (iw * i) / (LABELS.length - 1);
+      const y = (v) => pad.t + ih * (1 - v / maxY);
+      const path = (arr) => arr.map((r, i) => `${i ? 'L' : 'M'}${x(i)},${y(r * 100)}`).join(' ');
+      let html = '';
+      for (let g = 0; g <= 4; g++) {
+        const yy = pad.t + (ih * g) / 4;
+        html += `<line x1="${pad.l}" y1="${yy}" x2="${W - pad.r}" y2="${yy}" stroke="rgba(214,232,220,0.12)" />`;
+        html += `<text x="8" y="${yy + 4}" fill="#9aafa3" font-size="10">${100 - g * 25}%</text>`;
+      }
+      html += `<path d="${path(BUY_RATE_ALL)}" fill="none" stroke="#7eb8ff" stroke-width="2.5" />`;
+      html += `<path d="${path(BUY_RATE_PRIMARY)}" fill="none" stroke="#6ecf9a" stroke-width="2.5" />`;
+      BUY_RATE_ALL.forEach((r, i) => {
+        html += `<circle cx="${x(i)}" cy="${y(r * 100)}" r="3.5" fill="#7eb8ff" />`;
+        html += `<circle cx="${x(i)}" cy="${y(BUY_RATE_PRIMARY[i] * 100)}" r="3.5" fill="#6ecf9a" />`;
+        html += `<text x="${x(i)}" y="${H - 10}" text-anchor="middle" fill="#e8f0ea" font-size="11" font-weight="600">${LABELS[i]}</text>`;
+      });
+      svg.innerHTML = html;
+    }
+
+    function renderScenario(touch) {
+      const rev = PRICES.map((p, i) => mrrMan(p, touch * BUY_RATE_ALL[i]));
+      const buyers = BUY_RATE_ALL.map((r) => Math.round(touch * r));
+      const peak = rev.indexOf(Math.max(...rev));
+      document.getElementById('scenarioPeak').textContent =
+        rev[peak].toLocaleString() + '만 · ' + LABELS[peak];
+      renderGrouped('scenarioChart', rev, null, peak, -1);
+
+      const cards = [
+        { i: 1, title: '7.9만 (권장)', cls: 'ok' },
+        { i: 2, title: '9.9만 (문서 ARPU)', cls: 'info' },
+        { i: 3, title: '12.9만', cls: 'warn' },
+      ];
+      document.getElementById('cards').innerHTML = cards.map((c) => `
+        <div class="card">
+          <h3>${c.title}</h3>
+          <div class="big ${c.cls}">${rev[c.i].toLocaleString()}만</div>
+          <div class="meta">유료 ~${buyers[c.i]}명 / 월 (터치 ${touch})</div>
+        </div>
+      `).join('');
+
+      const tbody = document.getElementById('tbody');
+      tbody.innerHTML = LABELS.map((lab, i) => {
+        const cls = i === peak ? 'peak' : i === 1 ? 'rec' : '';
+        return `<tr class="${cls}">
+          <td>${lab}</td>
+          <td>${(BUY_RATE_ALL[i] * 100).toFixed(1)}%</td>
+          <td>${poolRev[i].toLocaleString()}</td>
+          <td>${primaryRev[i].toLocaleString()}</td>
+          <td>${rev[i].toLocaleString()}</td>
+          <td>${buyers[i]}명</td>
+        </tr>`;
+      }).join('');
+    }
+
+    renderGrouped('poolChart', poolRev, primaryRev, peakPoolIdx, peakPrimaryIdx);
+    renderLine();
+
+    const touchEl = document.getElementById('touch');
+    const touchVal = document.getElementById('touchVal');
+    const sync = () => {
+      const t = Number(touchEl.value);
+      touchVal.textContent = String(t);
+      renderScenario(t);
+    };
+    touchEl.addEventListener('input', sync);
+    sync();
+  </script>
+</body>
+</html>

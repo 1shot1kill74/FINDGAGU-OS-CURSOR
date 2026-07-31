@@ -22,6 +22,7 @@ import { cn } from '@/lib/utils'
 import { Search, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Package, Images, FileText, MousePointerClick, MessageCircle, FileCheck, Users, Wrench, ClipboardCheck, ArrowRight, ArrowLeft, Copy, Check, Video, BarChart3, Building2, Palette, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react'
 import { toast } from 'sonner'
 import { parseShowroomCtaAttribution, trackShowroomCtaVisit } from '@/lib/showroomCtaTracking'
+import { captureShowroomAbmAttribution } from '@/lib/showroomAbmTraffic'
 import { openShowroomBlogTeaserLine } from '@/lib/showroomCaseCanonicalBlog'
 import {
   fetchApprovedBlogShowroomCaseProfileDrafts,
@@ -184,8 +185,23 @@ export default function PublicShowroomExperience() {
   }, [mode, searchParams])
 
   useEffect(() => {
+    if (mode !== 'public') return
+    captureShowroomAbmAttribution({
+      pathname: window.location.pathname,
+      search: window.location.search,
+      jobId: searchParams.get('jobId'),
+    })
+  }, [mode, searchParams])
+
+  useEffect(() => {
     if (mode !== 'public' || trackedAbmEnterRef.current) return
     trackedAbmEnterRef.current = true
+
+    captureShowroomAbmAttribution({
+      pathname: window.location.pathname,
+      search: window.location.search,
+      jobId: searchParams.get('jobId'),
+    })
 
     const concern = searchParams.get('concern')
     trackShowroomAbmEvent({
@@ -1249,12 +1265,12 @@ export default function PublicShowroomExperience() {
                   })
                 }}
               >
-                블로그·카드뉴스에서 자세히 보기
+                사례 블로그에서 자세히 보기
                 <ArrowRight className="h-3.5 w-3.5" aria-hidden />
               </Link>
             ) : (
               <p className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-emerald-700">
-                블로그·카드뉴스에서 자세히 보기
+                사례 블로그에서 자세히 보기
                 <ArrowRight className="h-3.5 w-3.5" aria-hidden />
               </p>
             )
@@ -2208,7 +2224,7 @@ export default function PublicShowroomExperience() {
                   {getConcernIndustryDisplayLabel(concernIndustryFilter)} Before/After 사례
                 </h2>
                 <p className="text-sm text-neutral-600">
-                  선택하신 고민과 같은 업종의 전후 비교 사례입니다. 카드를 누르면 블로그·카드뉴스에서 사례 스토리와 사진을 이어서 볼 수 있습니다.
+                  선택하신 고민과 같은 업종의 전후 비교 사례입니다. 카드를 누르면 사례 블로그에서 스토리와 사진을 이어서 볼 수 있습니다.
                 </p>
               </div>
               {concernBeforeAfterGroups.length > 0 && (

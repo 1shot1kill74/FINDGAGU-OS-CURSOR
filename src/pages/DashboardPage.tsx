@@ -20,6 +20,7 @@ import {
   Target,
   TriangleAlert,
   Video,
+  Send,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAuth } from '@/auth/AuthProvider'
@@ -326,12 +327,12 @@ export default function DashboardPage() {
     },
     {
       title: '케이스 작업실',
-      description: '카드뉴스·블로그 초안 생성과 사례 콘텐츠를 편집합니다.',
+      description: '사례 블로그 초안 생성과 예약·공개를 관리합니다.',
       to: '/admin/showroom-case-studio',
       icon: Sparkles,
     },
     {
-      title: '쇼룸 ABM 퍼널',
+      title: '쇼룸 유입',
       description: '고민 카드·사례·상담 클릭까지 쇼룸 고객 행동을 실측합니다.',
       to: '/admin/showroom-abm',
       icon: BarChart3,
@@ -347,6 +348,12 @@ export default function DashboardPage() {
       description: '완내스 유튜브·인스타·블로그·키워드 수집 현황을 확인합니다.',
       to: '/admin/competitor-monitor',
       icon: Target,
+    },
+    {
+      title: '교육가구 아웃리치',
+      description: '학원·학교·스터디 공개 시그널을 점수화하고 승인 후 제안합니다.',
+      to: '/admin/edu-outreach',
+      icon: Send,
     },
   ] as const
 
@@ -704,8 +711,9 @@ export default function DashboardPage() {
             <Link to="/admin/migration"><Button variant="outline">데이터 통합 마이그레이션</Button></Link>
             <Link to="/admin/archive"><Button variant="outline">숨긴 상담 아카이브</Button></Link>
             <Link to="/admin/competitor-monitor"><Button variant="outline">경쟁사 모니터링</Button></Link>
+            <Link to="/admin/edu-outreach"><Button variant="outline">교육가구 아웃리치</Button></Link>
             <Link to="/admin/showroom-case-studio"><Button variant="outline">케이스 작업실</Button></Link>
-            <Link to="/admin/showroom-abm"><Button variant="outline">쇼룸 ABM 퍼널</Button></Link>
+            <Link to="/admin/showroom-abm"><Button variant="outline">쇼룸 유입</Button></Link>
             <Link to="/admin/test-console"><Button variant="outline">채널톡 시뮬레이터</Button></Link>
           </div>
         </section>

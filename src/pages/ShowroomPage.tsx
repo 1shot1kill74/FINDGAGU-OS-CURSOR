@@ -1669,7 +1669,6 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
     const isPriorityEditorOpen = priorityEditorOpenByKey[priorityKey] === true
     const caseProfileDraft = getBeforeAfterProfileDraft(group)
     const publicLabel = getGroupPublicLabel(group)
-    const cardNewsStudioHref = `/admin/showroom-case-studio?site=${encodeURIComponent(group.siteName)}&focus=cardnews`
     const blogStudioHref = `/admin/showroom-case-studio?site=${encodeURIComponent(group.siteName)}&focus=blog`
     const storyHref = !showInternalControls && options?.linkToStory ? getBeforeAfterStoryHref(group) : null
     // 공개는 BA만, 내부는 After-only도 카드로 표시
@@ -1734,7 +1733,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
           </p>
           {storyHref && (
             <p className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-emerald-700">
-              블로그·카드뉴스에서 자세히 보기
+              사례 블로그에서 자세히 보기
               <ArrowRight className="h-3.5 w-3.5" aria-hidden />
             </p>
           )}
@@ -1878,20 +1877,12 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                 </div>
               )
             })()}
-            <div className="grid grid-cols-2 gap-2">
-              <Link to={cardNewsStudioHref}>
-                <Button type="button" variant="outline" className="h-10 w-full gap-1.5 text-sm">
-                  <FileText className="h-4 w-4" />
-                  카드뉴스 제작
-                </Button>
-              </Link>
-              <Link to={blogStudioHref}>
-                <Button type="button" variant="outline" className="h-10 w-full gap-1.5 text-sm">
-                  <FileCheck className="h-4 w-4" />
-                  블로그 제작
-                </Button>
-              </Link>
-            </div>
+            <Link to={blogStudioHref}>
+              <Button type="button" variant="outline" className="h-10 w-full gap-1.5 text-sm">
+                <FileCheck className="h-4 w-4" />
+                사례 블로그 제작
+              </Button>
+            </Link>
             <div className="rounded-xl border border-neutral-200 bg-white px-3 py-2.5">
               <div className="flex items-center justify-between gap-2">
                 <p className="text-xs font-medium text-neutral-800">현장 노출 순서</p>
@@ -2648,7 +2639,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                   {getConcernIndustryDisplayLabel(concernIndustryFilter)} Before/After 사례
                 </h2>
                 <p className="text-sm text-neutral-600">
-                  선택하신 고민과 같은 업종의 전후 비교 사례입니다. 카드를 누르면 블로그·카드뉴스에서 사례 스토리와 사진을 이어서 볼 수 있습니다.
+                  선택하신 고민과 같은 업종의 전후 비교 사례입니다. 카드를 누르면 사례 블로그에서 스토리와 사진을 이어서 볼 수 있습니다.
                 </p>
               </div>
               {concernBeforeAfterGroups.length > 0 && (

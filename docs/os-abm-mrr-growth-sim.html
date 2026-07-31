@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Findgagu OS — 월 MRR 성장 시뮬 (9.9만 · ICP 200)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg0: #0f1412; --bg1: #17201c; --bg2: #1e2a24;
+      --line: rgba(214, 232, 220, 0.14);
+      --text: #e8f0ea; --muted: #9aafa3;
+      --accent: #6ecf9a; --accent-dim: rgba(110, 207, 154, 0.14);
+      --warn: #e0b15a; --hot: #7eb8ff; --danger: #e07a6a;
+      --font: "IBM Plex Sans KR", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: var(--font); color: var(--text);
+      background:
+        radial-gradient(900px 500px at 10% -10%, rgba(110, 207, 154, 0.12), transparent 55%),
+        radial-gradient(700px 400px at 90% 0%, rgba(126, 184, 255, 0.08), transparent 50%),
+        linear-gradient(180deg, var(--bg0), #121816 40%, var(--bg0));
+      min-height: 100vh; line-height: 1.55;
+    }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 40px 24px 80px; }
+    .eyebrow {
+      font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--accent); font-weight: 600; margin-bottom: 10px;
+    }
+    h1 {
+      font-size: clamp(26px, 4vw, 38px); font-weight: 700;
+      letter-spacing: -0.03em; margin: 0 0 10px; line-height: 1.15;
+    }
+    h2 { font-size: 18px; font-weight: 600; margin: 32px 0 10px; }
+    .sub { color: var(--muted); font-size: 14px; margin: 0 0 20px; max-width: 72ch; }
+    .box {
+      background: rgba(224, 177, 90, 0.12);
+      border: 1px solid rgba(224, 177, 90, 0.35);
+      border-radius: 14px; padding: 14px 16px; margin-bottom: 20px;
+      font-size: 13px; color: #e8d9b8;
+    }
+    .assumptions {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px;
+    }
+    @media (max-width: 800px) { .assumptions { grid-template-columns: repeat(2, 1fr); } }
+    .stat {
+      background: var(--bg1); border: 1px solid var(--line);
+      border-radius: 12px; padding: 14px 16px;
+    }
+    .stat .v { font-size: 20px; font-weight: 700; color: var(--accent); letter-spacing: -0.02em; }
+    .stat .v.blue { color: var(--hot); }
+    .stat .v.warn { color: var(--warn); }
+    .stat .l { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .panel {
+      background: var(--bg1); border: 1px solid var(--line);
+      border-radius: 14px; padding: 18px 16px 12px; margin-bottom: 14px;
+    }
+    .legend {
+      display: flex; flex-wrap: wrap; gap: 14px; margin: 10px 0 4px;
+      font-size: 12px; color: var(--muted);
+    }
+    .legend i {
+      display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+      margin-right: 6px; vertical-align: middle;
+    }
+    svg.chart { width: 100%; height: 280px; display: block; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: right; padding: 9px 8px; border-bottom: 1px solid var(--line); }
+    th:first-child, td:first-child { text-align: left; }
+    th { color: var(--muted); font-weight: 500; font-size: 12px; }
+    tr.hl td { background: var(--accent-dim); }
+    .formula {
+      background: var(--bg2); border: 1px solid var(--line);
+      border-radius: 12px; padding: 14px 16px; font-size: 13px; margin: 12px 0 20px;
+    }
+    .formula code { color: var(--accent); }
+    .footer {
+      margin-top: 36px; font-size: 12px; color: var(--muted);
+      border-top: 1px solid var(--line); padding-top: 16px;
+    }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 800px) { .grid2 { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="eyebrow">Findgagu OS · Subscription growth sim</div>
+    <h1>월별 매출 추이 시뮬</h1>
+    <p class="sub">
+      가격 <strong>9.9만원</strong> · 월 ICP 접근 <strong>200명</strong> · ABM 구매율 <strong>41.8%</strong>
+      → 매월 신규 유료 약 <strong>84명</strong>. 여기에 일반 SMB 구독 월 이탈률을 적용한 누적·MRR 곡선입니다.
+    </p>
+
+    <div class="box">
+      가정: 매달 ICP 200명에게 동일하게 제안하고, 그중 41.8%가 구독한다.
+      기존 구독자는 시나리오별 월 이탈률만큼 빠진다.
+      실제로는 영업 용량·리드 품질이 떨어지므로 <strong>상한에 가깝게 보기보다 형태(곡선 모양)</strong>를 보는 용도입니다.
+    </div>
+
+    <div class="assumptions">
+      <div class="stat">
+        <div class="v">9.9만</div>
+        <div class="l">월 구독가</div>
+      </div>
+      <div class="stat">
+        <div class="v blue">~84명</div>
+        <div class="l">매월 신규 (200 × 41.8%)</div>
+      </div>
+      <div class="stat">
+        <div class="v warn">3% / 5% / 8%</div>
+        <div class="l">월 이탈 시나리오</div>
+      </div>
+      <div class="stat">
+        <div class="v" id="steadyBase">—</div>
+        <div class="l">Base(5%) 정상상태 MRR</div>
+      </div>
+    </div>
+
+    <div class="formula">
+      <div><code>기말 구독자 = 기초 × (1 − 이탈률) + 신규</code></div>
+      <div style="margin-top:6px;"><code>MRR = 기말 구독자 × 99,000</code></div>
+      <div style="margin-top:6px;color:var(--muted);">
+        정상상태 구독자 ≈ 신규 ÷ 이탈률 &nbsp;|&nbsp;
+        낙관 3% → ~2,800명 · Base 5% → ~1,680명 · 비관 8% → ~1,050명
+      </div>
+    </div>
+
+    <h2>1. 월별 MRR 추이 (24개월)</h2>
+    <div class="panel">
+      <svg class="chart" id="mrrChart" viewBox="0 0 960 280" preserveAspectRatio="none"></svg>
+      <div class="legend">
+        <span><i style="background:#6ecf9a"></i>낙관 월이탈 3%</span>
+        <span><i style="background:#7eb8ff"></i>Base 월이탈 5%</span>
+        <span><i style="background:#e0b15a"></i>비관 월이탈 8%</span>
+      </div>
+    </div>
+
+    <h2>2. 유료 구독자 수 추이</h2>
+    <div class="panel">
+      <svg class="chart" id="custChart" viewBox="0 0 960 280" preserveAspectRatio="none"></svg>
+      <div class="legend">
+        <span><i style="background:#6ecf9a"></i>낙관 3%</span>
+        <span><i style="background:#7eb8ff"></i>Base 5%</span>
+        <span><i style="background:#e0b15a"></i>비관 8%</span>
+      </div>
+    </div>
+
+    <h2>3. 핵심 시점 숫자 (Base 5%)</h2>
+    <div class="grid2">
+      <div class="panel" style="overflow-x:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>월</th>
+              <th>구독자</th>
+              <th>MRR(만)</th>
+              <th>당월 이탈</th>
+              <th>순증</th>
+            </tr>
+          </thead>
+          <tbody id="tbodyBase"></tbody>
+        </table>
+      </div>
+      <div class="panel">
+        <table>
+          <thead>
+            <tr>
+              <th>시나리오</th>
+              <th>M6 MRR</th>
+              <th>M12 MRR</th>
+              <th>M24 MRR</th>
+              <th>정상상태</th>
+            </tr>
+          </thead>
+          <tbody id="tbodyCompare"></tbody>
+        </table>
+        <p class="sub" style="margin:12px 0 0;font-size:12px;">
+          SMB SaaS 월 이탈 참고: 초기·소규모 B2B는 흔히 월 3~8%(연 환산 대략 30~60%대)로 잡습니다.
+          연 이탈 20%면 월 ≈1.8%로 더 낙관적입니다.
+        </p>
+      </div>
+    </div>
+
+    <div class="footer">
+      Source: ABM buy_rate @99k = 41.78% · ICP touch 200/mo · 로컬 HTML
+    </div>
+  </div>
+
+  <script>
+    const PRICE = 99000;
+    const NEW = Math.round(200 * 0.4178); // 84
+    const MONTHS = 24;
+    const SCENARIOS = [
+      { key: 'opt', label: '낙관 3%', churn: 0.03, color: '#6ecf9a' },
+      { key: 'base', label: 'Base 5%', churn: 0.05, color: '#7eb8ff' },
+      { key: 'pes', label: '비관 8%', churn: 0.08, color: '#e0b15a' },
+    ];
+
+    function simulate(churn) {
+      const rows = [];
+      let customers = 0;
+      for (let m = 1; m <= MONTHS; m++) {
+        const churned = customers * churn;
+        const start = customers;
+        customers = start * (1 - churn) + NEW;
+        const net = customers - start;
+        rows.push({
+          m,
+          customers,
+          mrr: customers * PRICE,
+          churned,
+          net,
+          new: NEW,
+        });
+      }
+      return rows;
+    }
+
+    const sims = Object.fromEntries(SCENARIOS.map((s) => [s.key, simulate(s.churn)]));
+    const steadyBase = (NEW / 0.05) * PRICE;
+    document.getElementById('steadyBase').textContent =
+      Math.round(steadyBase / 10000).toLocaleString() + '만';
+
+    function drawLines(svgId, series, valueFn, yFmt) {
+      const svg = document.getElementById(svgId);
+      const W = 960, H = 280;
+      const pad = { t: 24, r: 20, b: 40, l: 58 };
+      const iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
+      const allVals = series.flatMap((s) => s.data.map(valueFn));
+      const maxY = Math.max(...allVals) * 1.08;
+      const x = (i) => pad.l + (iw * i) / (MONTHS - 1);
+      const y = (v) => pad.t + ih * (1 - v / maxY);
+      let html = '';
+      for (let g = 0; g <= 4; g++) {
+        const yy = pad.t + (ih * g) / 4;
+        const val = maxY * (1 - g / 4);
+        html += `<line x1="${pad.l}" y1="${yy}" x2="${W - pad.r}" y2="${yy}" stroke="rgba(214,232,220,0.12)" />`;
+        html += `<text x="8" y="${yy + 4}" fill="#9aafa3" font-size="10">${yFmt(val)}</text>`;
+      }
+      // x labels every 3 months
+      for (let m = 1; m <= MONTHS; m += 3) {
+        const i = m - 1;
+        html += `<text x="${x(i)}" y="${H - 12}" text-anchor="middle" fill="#9aafa3" font-size="11">M${m}</text>`;
+      }
+      series.forEach((s) => {
+        const d = s.data.map((row, i) => `${i ? 'L' : 'M'}${x(i)},${y(valueFn(row))}`).join(' ');
+        html += `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2.5" />`;
+        // end point
+        const last = s.data[s.data.length - 1];
+        html += `<circle cx="${x(MONTHS - 1)}" cy="${y(valueFn(last))}" r="3.5" fill="${s.color}" />`;
+      });
+      svg.innerHTML = html;
+    }
+
+    drawLines(
+      'mrrChart',
+      SCENARIOS.map((s) => ({ color: s.color, data: sims[s.key] })),
+      (r) => r.mrr,
+      (v) => Math.round(v / 10000).toLocaleString() + '만',
+    );
+    drawLines(
+      'custChart',
+      SCENARIOS.map((s) => ({ color: s.color, data: sims[s.key] })),
+      (r) => r.customers,
+      (v) => Math.round(v).toLocaleString(),
+    );
+
+    const showMonths = [1, 2, 3, 6, 9, 12, 18, 24];
+    document.getElementById('tbodyBase').innerHTML = showMonths.map((m) => {
+      const r = sims.base[m - 1];
+      const hl = m === 12 || m === 24 ? 'hl' : '';
+      return `<tr class="${hl}">
+        <td>M${m}</td>
+        <td>${Math.round(r.customers).toLocaleString()}</td>
+        <td>${Math.round(r.mrr / 10000).toLocaleString()}</td>
+        <td>${Math.round(r.churned).toLocaleString()}</td>
+        <td>+${Math.round(r.net).toLocaleString()}</td>
+      </tr>`;
+    }).join('');
+
+    document.getElementById('tbodyCompare').innerHTML = SCENARIOS.map((s) => {
+      const rows = sims[s.key];
+      const steady = (NEW / s.churn) * PRICE;
+      const cell = (m) => Math.round(rows[m - 1].mrr / 10000).toLocaleString() + '만';
+      return `<tr>
+        <td style="text-align:left">${s.label}</td>
+        <td>${cell(6)}</td>
+        <td>${cell(12)}</td>
+        <td>${cell(24)}</td>
+        <td>${Math.round(steady / 10000).toLocaleString()}만</td>
+      </tr>`;
+    }).join('');
+  </script>
+</body>
+</html>

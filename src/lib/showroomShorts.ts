@@ -26,6 +26,7 @@ export const SHOWROOM_SHORTS_PUBLISH_STATUSES = [
   'preparing',
   'launch_ready',
   'approved',
+  'scheduled',
   'publishing',
   'published',
   'failed',
@@ -50,6 +51,8 @@ export interface ShowroomShortsTargetRecord {
   approved_at: string | null
   prepared_at: string | null
   launch_ready_at: string | null
+  /** 발행예정 시각 (timestamptz ISO). scheduled 상태일 때 사용 */
+  scheduled_at: string | null
   published_at: string | null
   created_at: string
   updated_at: string
@@ -541,6 +544,7 @@ function mapShortsTargetRow(row: Record<string, unknown>): ShowroomShortsTargetR
     approved_at: trimOrNull(typeof row.approved_at === 'string' ? row.approved_at : null),
     prepared_at: trimOrNull(typeof row.prepared_at === 'string' ? row.prepared_at : null),
     launch_ready_at: trimOrNull(typeof row.launch_ready_at === 'string' ? row.launch_ready_at : null),
+    scheduled_at: trimOrNull(typeof row.scheduled_at === 'string' ? row.scheduled_at : null),
     published_at: trimOrNull(typeof row.published_at === 'string' ? row.published_at : null),
     created_at: String(row.created_at ?? ''),
     updated_at: String(row.updated_at ?? ''),
@@ -951,6 +955,58 @@ export async function requestShowroomShortsPublishLaunch(targetId: string) {
     throw new Error(data?.message ?? '론칭 승인 요청에 실패했습니다.')
   }
   return data
+}
+
+/** launch_ready/approved → scheduled + scheduled_at */
+export async function scheduleShowroomShortsTargetsLaunch(input: {
+  targetIds: string[]
+  scheduledAt: string
+}): Promise<number> {
+  const ids = [...new Set(input.targetIds.map((id) => id.trim()).filter(Boolean))]
+  const scheduledAt = input.scheduledAt.trim()
+  if (ids.length === 0) throw new Error('예약할 채널이 없습니다.')
+  if (!scheduledAt) throw new Error('예약 시각을 입력하세요.')
+  const when = new Date(scheduledAt)
+  if (Number.isNaN(when.getTime())) throw new Error('예약 시각 형식이 올바르지 않습니다.')
+  if (when.getTime() <= Date.now() - 30_000) {
+    throw new Error('예약 시각은 현재보다 미래여야 합니다.')
+  }
+
+  const nowIso = new Date().toISOString()
+  const { data, error } = await supabase
+    .from('showroom_shorts_targets')
+    .update({
+      publish_status: 'scheduled',
+      scheduled_at: when.toISOString(),
+      updated_at: nowIso,
+    })
+    .in('id', ids)
+    .in('publish_status', ['launch_ready', 'approved', 'scheduled'])
+    .select('id')
+
+  if (error) throw new Error(error.message)
+  return (data ?? []).length
+}
+
+/** scheduled → launch_ready, scheduled_at 클리어 */
+export async function cancelShowroomShortsTargetsSchedule(targetIds: string[]): Promise<number> {
+  const ids = [...new Set(targetIds.map((id) => id.trim()).filter(Boolean))]
+  if (ids.length === 0) return 0
+
+  const nowIso = new Date().toISOString()
+  const { data, error } = await supabase
+    .from('showroom_shorts_targets')
+    .update({
+      publish_status: 'launch_ready',
+      scheduled_at: null,
+      updated_at: nowIso,
+    })
+    .in('id', ids)
+    .eq('publish_status', 'scheduled')
+    .select('id')
+
+  if (error) throw new Error(error.message)
+  return (data ?? []).length
 }
 
 export async function deleteShowroomShortsJob(

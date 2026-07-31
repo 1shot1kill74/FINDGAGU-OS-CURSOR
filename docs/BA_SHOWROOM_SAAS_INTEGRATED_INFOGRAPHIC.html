@@ -1,0 +1,1286 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>B/A Showroom SaaS — 통합 검증 인포그래픽</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --ink: #0c1210;
+    --ink-2: #141c18;
+    --panel: #1a2420;
+    --panel-2: #212e28;
+    --line: rgba(232, 220, 190, 0.12);
+    --cream: #e8dcbe;
+    --muted: rgba(232, 220, 190, 0.72);
+    --amber: #e8a23a;
+    --teal: #3dbea0;
+    --coral: #e07a5f;
+    --ok: #6fbf8a;
+    --warn: #e8a23a;
+    --max: 1120px;
+    --radius: 4px;
+    /* h2「점수 카드」에 실제 렌더되던 한글 산세리프와 동일 — 한글·영문 단일 패밀리 */
+    --font: "Apple SD Gothic Neo", "Noto Sans KR", "Pretendard", "Malgun Gothic", sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: var(--font);
+    font-weight: 500;
+    background:
+      radial-gradient(ellipse 80% 50% at 10% -10%, rgba(61, 190, 160, 0.14), transparent 50%),
+      radial-gradient(ellipse 60% 40% at 90% 0%, rgba(232, 162, 58, 0.12), transparent 45%),
+      linear-gradient(180deg, #0c1210 0%, #101816 40%, #0c1210 100%);
+    color: var(--cream);
+    line-height: 1.65;
+    font-size: 16px;
+    letter-spacing: -0.01em;
+    word-break: keep-all;
+    min-height: 100vh;
+  }
+
+  .bg-grid {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background-image:
+      linear-gradient(rgba(232, 220, 190, 0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(232, 220, 190, 0.03) 1px, transparent 1px);
+    background-size: 48px 48px;
+    mask-image: radial-gradient(ellipse 70% 60% at 50% 20%, black, transparent);
+    z-index: 0;
+  }
+
+  .wrap {
+    position: relative;
+    z-index: 1;
+    max-width: var(--max);
+    margin: 0 auto;
+    padding: 40px 20px 80px;
+  }
+
+  /* Hero */
+  .hero {
+    display: grid;
+    gap: 28px;
+    padding: 36px 0 40px;
+    border-bottom: 1px solid var(--line);
+    animation: rise 0.7s ease both;
+  }
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(16px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes barGrow {
+    from { transform: scaleX(0); }
+    to { transform: scaleX(1); }
+  }
+  @keyframes pulseSoft {
+    0%, 100% { opacity: 0.7; }
+    50% { opacity: 1; }
+  }
+
+  .kicker {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--teal);
+    font-weight: 600;
+  }
+  .kicker::before {
+    content: "";
+    width: 28px;
+    height: 2px;
+    background: var(--teal);
+    animation: barGrow 0.8s 0.2s ease both;
+    transform-origin: left;
+  }
+
+  h1 {
+    font-family: var(--font);
+    font-weight: 800;
+    font-size: clamp(2rem, 5vw, 3.4rem);
+    letter-spacing: -0.03em;
+    line-height: 1.05;
+    max-width: 16ch;
+  }
+  h1 span { color: var(--amber); }
+
+  .hero-sub {
+    max-width: 52ch;
+    color: var(--muted);
+    font-size: 1.08rem;
+    font-weight: 500;
+    line-height: 1.7;
+  }
+
+  .verdict-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    border: 1px solid var(--line);
+    background: var(--panel);
+    font-family: var(--font);
+    font-weight: 700;
+    font-size: 0.95rem;
+  }
+  .badge.warn { border-color: rgba(232, 162, 58, 0.45); color: var(--amber); }
+  .badge.ok { border-color: rgba(111, 191, 138, 0.4); color: var(--ok); }
+  .badge.teal { border-color: rgba(61, 190, 160, 0.4); color: var(--teal); }
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: currentColor;
+    animation: pulseSoft 2s ease infinite;
+  }
+
+  .meta {
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+
+  /* Sections */
+  section {
+    padding: 48px 0;
+    border-bottom: 1px solid var(--line);
+    animation: rise 0.6s ease both;
+  }
+  section:nth-of-type(2) { animation-delay: 0.05s; }
+  section:nth-of-type(3) { animation-delay: 0.1s; }
+
+  .sec-head {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    margin-bottom: 22px;
+  }
+  .sec-num {
+    font-family: var(--font);
+    font-weight: 700;
+    font-size: 0.8rem;
+    color: var(--amber);
+    letter-spacing: 0.08em;
+  }
+  h1, h2, h3, h4, p, li, td, th, span, strong, .badge, .stat, .pipe, .card, .meta {
+    font-family: var(--font);
+  }
+
+  h2 {
+    font-weight: 700;
+    font-size: clamp(1.35rem, 2.5vw, 1.75rem);
+    letter-spacing: -0.02em;
+  }
+
+  /* Stats */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+  }
+  @media (max-width: 800px) {
+    .stats { grid-template-columns: repeat(2, 1fr); }
+  }
+  .stat {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    padding: 20px 18px;
+    position: relative;
+    overflow: hidden;
+  }
+  .stat::after {
+    content: "";
+    position: absolute;
+    left: 0; bottom: 0;
+    width: 100%; height: 3px;
+    background: linear-gradient(90deg, var(--teal), var(--amber));
+    transform-origin: left;
+    animation: barGrow 0.9s 0.35s ease both;
+  }
+  .stat .v {
+    font-family: var(--font);
+    font-weight: 800;
+    font-size: clamp(1.6rem, 3vw, 2.1rem);
+    letter-spacing: -0.03em;
+    line-height: 1.1;
+  }
+  .stat .l {
+    margin-top: 8px;
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+  .stat.amber .v { color: var(--amber); }
+  .stat.teal .v { color: var(--teal); }
+  .stat.ok .v { color: var(--ok); }
+
+  /* One-liner */
+  .pipeline {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 8px;
+    margin-top: 20px;
+  }
+  @media (max-width: 900px) {
+    .pipeline { grid-template-columns: 1fr; }
+  }
+  .pipe {
+    background: var(--ink-2);
+    border: 1px solid var(--line);
+    padding: 16px 14px;
+    position: relative;
+  }
+  .pipe strong {
+    display: block;
+    font-family: var(--font);
+    font-size: 0.78rem;
+    color: var(--amber);
+    margin-bottom: 6px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .pipe span { font-size: 0.88rem; color: var(--cream); }
+  .pipe:not(:last-child)::after {
+    content: "→";
+    position: absolute;
+    right: -6px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--teal);
+    font-weight: 700;
+    z-index: 2;
+    background: var(--ink);
+    padding: 0 2px;
+  }
+  @media (max-width: 900px) {
+    .pipe:not(:last-child)::after {
+      content: "↓";
+      right: auto;
+      left: 50%;
+      top: auto;
+      bottom: -14px;
+      transform: translateX(-50%);
+    }
+  }
+
+  /* Score meters */
+  .scores {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+  @media (max-width: 700px) {
+    .scores { grid-template-columns: 1fr; }
+  }
+  .score-card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    padding: 22px;
+  }
+  .score-card .top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    margin-bottom: 14px;
+  }
+  .score-card h3 {
+    font-family: var(--font);
+    font-size: 1rem;
+    font-weight: 700;
+  }
+  .score-num {
+    font-family: var(--font);
+    font-weight: 800;
+    font-size: 2rem;
+    color: var(--teal);
+  }
+  .score-num small {
+    font-size: 0.9rem;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .meter {
+    height: 10px;
+    background: rgba(232, 220, 190, 0.08);
+    overflow: hidden;
+  }
+  .meter > i {
+    display: block;
+    height: 100%;
+    transform-origin: left;
+    animation: barGrow 1s 0.4s ease both;
+  }
+  .meter.a > i { width: 88%; background: var(--teal); }
+  .meter.b > i { width: 75%; background: var(--amber); }
+  .score-card p {
+    margin-top: 12px;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+
+  /* Tables as visual grids */
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+  @media (max-width: 800px) {
+    .grid-2 { grid-template-columns: 1fr; }
+  }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    padding: 22px;
+  }
+  .card h3 {
+    font-family: var(--font);
+    font-size: 1.05rem;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .tag {
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 4px 8px;
+    border: 1px solid currentColor;
+  }
+  .tag.teal { color: var(--teal); }
+  .tag.amber { color: var(--amber); }
+
+  .list {
+    list-style: none;
+    display: grid;
+    gap: 10px;
+  }
+  .list li {
+    display: grid;
+    grid-template-columns: 72px 1fr;
+    gap: 10px;
+    font-size: 0.9rem;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--line);
+  }
+  .list li:last-child { border-bottom: none; padding-bottom: 0; }
+  .list .k { color: var(--amber); font-weight: 600; font-size: 0.78rem; }
+
+  /* Market bars */
+  .market {
+    display: grid;
+    gap: 14px;
+  }
+  .m-row {
+    display: grid;
+    grid-template-columns: 70px 1fr 100px;
+    gap: 12px;
+    align-items: center;
+  }
+  .m-row .lab {
+    font-family: var(--font);
+    font-weight: 700;
+    font-size: 0.85rem;
+  }
+  .bar-track {
+    height: 28px;
+    background: rgba(232, 220, 190, 0.06);
+    border: 1px solid var(--line);
+    position: relative;
+  }
+  .bar-fill {
+    height: 100%;
+    display: flex;
+    align-items: center;
+    padding-left: 10px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    transform-origin: left;
+    animation: barGrow 1s ease both;
+  }
+  .bar-fill.tam { width: 100%; background: rgba(61, 190, 160, 0.35); animation-delay: 0.2s; }
+  .bar-fill.sam { width: 42%; background: rgba(232, 162, 58, 0.4); animation-delay: 0.35s; }
+  .bar-fill.som { width: 14%; background: rgba(224, 122, 95, 0.45); animation-delay: 0.5s; min-width: 72px; }
+  .m-row .val { font-size: 0.82rem; color: var(--muted); text-align: right; }
+
+  /* ICP */
+  .icp-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+  }
+  @media (max-width: 800px) {
+    .icp-grid { grid-template-columns: 1fr; }
+  }
+  .icp {
+    border: 1px solid var(--line);
+    background: var(--ink-2);
+    padding: 18px;
+  }
+  .icp.pri { border-color: rgba(232, 162, 58, 0.5); background: linear-gradient(160deg, rgba(232,162,58,0.12), transparent 60%), var(--panel); }
+  .icp .rank {
+    font-family: var(--font);
+    font-size: 0.72rem;
+    letter-spacing: 0.1em;
+    color: var(--amber);
+    margin-bottom: 6px;
+  }
+  .icp h4 {
+    font-family: var(--font);
+    font-size: 1rem;
+    margin-bottom: 8px;
+  }
+  .icp p { font-size: 0.82rem; color: var(--muted); }
+  .icp .wtp {
+    margin-top: 12px;
+    font-family: var(--font);
+    font-weight: 700;
+    color: var(--teal);
+  }
+
+  /* Timeline */
+  .timeline {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0;
+    position: relative;
+  }
+  @media (max-width: 800px) {
+    .timeline { grid-template-columns: 1fr; gap: 12px; }
+  }
+  .tl {
+    padding: 20px;
+    border: 1px solid var(--line);
+    background: var(--panel);
+    position: relative;
+  }
+  .tl + .tl { border-left: none; }
+  @media (max-width: 800px) {
+    .tl + .tl { border-left: 1px solid var(--line); }
+  }
+  .tl .phase {
+    font-family: var(--font);
+    font-size: 0.72rem;
+    letter-spacing: 0.12em;
+    color: var(--teal);
+    margin-bottom: 8px;
+  }
+  .tl h4 {
+    font-family: var(--font);
+    font-size: 1.05rem;
+    margin-bottom: 10px;
+  }
+  .tl ul {
+    list-style: none;
+    display: grid;
+    gap: 6px;
+    font-size: 0.84rem;
+    color: var(--muted);
+  }
+  .tl ul li::before {
+    content: "·";
+    color: var(--amber);
+    margin-right: 6px;
+  }
+  .split-label {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+
+  /* Finance */
+  .fin {
+    display: grid;
+    grid-template-columns: 1.4fr 1fr;
+    gap: 14px;
+  }
+  @media (max-width: 800px) {
+    .fin { grid-template-columns: 1fr; }
+  }
+  table.data {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.84rem;
+  }
+  table.data th,
+  table.data td {
+    text-align: left;
+    padding: 10px 8px;
+    border-bottom: 1px solid var(--line);
+  }
+  table.data th {
+    color: var(--muted);
+    font-weight: 500;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  table.data td.hl {
+    color: var(--amber);
+    font-weight: 700;
+    font-family: var(--font);
+  }
+
+  /* Go / Stop */
+  .go-stop {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+  @media (max-width: 700px) {
+    .go-stop { grid-template-columns: 1fr; }
+  }
+  .go { border-top: 3px solid var(--ok); }
+  .stop { border-top: 3px solid var(--coral); }
+  .go-stop ol {
+    margin-top: 12px;
+    padding-left: 18px;
+    display: grid;
+    gap: 8px;
+    font-size: 0.9rem;
+    color: var(--muted);
+  }
+  .go-stop ol strong { color: var(--cream); }
+
+  /* Path */
+  .path {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 8px;
+    counter-reset: step;
+  }
+  @media (max-width: 900px) {
+    .path { grid-template-columns: 1fr; }
+  }
+  .step {
+    background: var(--ink-2);
+    border: 1px solid var(--line);
+    padding: 16px 14px;
+    counter-increment: step;
+  }
+  .step::before {
+    content: "0" counter(step);
+    font-family: var(--font);
+    font-weight: 800;
+    font-size: 0.75rem;
+    color: var(--amber);
+    display: block;
+    margin-bottom: 8px;
+  }
+  .step p { font-size: 0.86rem; }
+
+  .footnote {
+    margin-top: 36px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+    font-size: 0.78rem;
+    color: var(--muted);
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .callout {
+    margin-top: 18px;
+    padding: 16px 18px;
+    background: linear-gradient(90deg, rgba(232,162,58,0.12), rgba(61,190,160,0.08));
+    border-left: 3px solid var(--amber);
+    font-size: 0.95rem;
+  }
+  .callout strong { color: var(--amber); }
+
+  /* Scale / capacity */
+  .scale-hero {
+    margin-bottom: 20px;
+    padding: 20px;
+    border: 1px solid var(--line);
+    background:
+      linear-gradient(135deg, rgba(61,190,160,0.1), transparent 55%),
+      var(--panel);
+  }
+  .scale-hero .stack-label {
+    font-size: 0.75rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--teal);
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+  .scale-hero p {
+    font-size: 0.95rem;
+    line-height: 1.7;
+    color: var(--muted);
+  }
+  .scale-hero p strong { color: var(--cream); font-weight: 700; }
+
+  .phase-strip {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin-bottom: 18px;
+  }
+  @media (max-width: 900px) {
+    .phase-strip { grid-template-columns: repeat(2, 1fr); }
+  }
+  .phase-pill {
+    border: 1px solid var(--line);
+    background: var(--ink-2);
+    padding: 14px 12px;
+    text-align: center;
+  }
+  .phase-pill .ph {
+    font-size: 0.7rem;
+    letter-spacing: 0.12em;
+    color: var(--amber);
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+  .phase-pill .cnt {
+    font-size: 1.15rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+  }
+  .phase-pill .sub {
+    margin-top: 4px;
+    font-size: 0.75rem;
+    color: var(--muted);
+  }
+  .phase-pill.a { border-color: rgba(232,220,190,0.2); }
+  .phase-pill.b { border-color: rgba(61,190,160,0.45); }
+  .phase-pill.c { border-color: rgba(232,162,58,0.45); }
+  .phase-pill.d { border-color: rgba(111,191,138,0.45); }
+
+  .phase-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+  }
+  @media (max-width: 800px) {
+    .phase-grid { grid-template-columns: 1fr; }
+  }
+  .phase-card {
+    border: 1px solid var(--line);
+    background: var(--panel);
+    padding: 20px;
+    position: relative;
+    overflow: hidden;
+  }
+  .phase-card::before {
+    content: "";
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+    background: var(--amber);
+  }
+  .phase-card.b::before { background: var(--teal); }
+  .phase-card.c::before { background: var(--amber); }
+  .phase-card.d::before { background: var(--ok); }
+  .phase-card .ph-tag {
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    font-weight: 700;
+    color: var(--amber);
+    margin-bottom: 6px;
+  }
+  .phase-card.b .ph-tag { color: var(--teal); }
+  .phase-card.d .ph-tag { color: var(--ok); }
+  .phase-card h3 {
+    font-size: 1.05rem;
+    font-weight: 700;
+    margin-bottom: 6px;
+  }
+  .phase-card .load {
+    font-size: 0.8rem;
+    color: var(--muted);
+    margin-bottom: 12px;
+  }
+  .phase-card ul {
+    list-style: none;
+    display: grid;
+    gap: 6px;
+    font-size: 0.84rem;
+    color: var(--muted);
+  }
+  .phase-card ul li::before {
+    content: "·";
+    color: var(--amber);
+    margin-right: 6px;
+  }
+
+  .flow-row {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 8px;
+    margin: 18px 0;
+  }
+  @media (max-width: 900px) {
+    .flow-row { grid-template-columns: 1fr; }
+  }
+  .flow-cell {
+    background: var(--ink-2);
+    border: 1px solid var(--line);
+    padding: 14px 12px;
+    position: relative;
+    font-size: 0.84rem;
+    line-height: 1.45;
+  }
+  .flow-cell strong {
+    display: block;
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--teal);
+    margin-bottom: 6px;
+  }
+  .flow-cell:not(:last-child)::after {
+    content: "→";
+    position: absolute;
+    right: -7px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--amber);
+    font-weight: 700;
+    z-index: 2;
+    background: var(--ink);
+    padding: 0 2px;
+  }
+  @media (max-width: 900px) {
+    .flow-cell:not(:last-child)::after {
+      content: "↓";
+      right: auto;
+      left: 50%;
+      top: auto;
+      bottom: -14px;
+      transform: translateX(-50%);
+    }
+  }
+
+  .ctrl-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin-top: 14px;
+  }
+  @media (max-width: 900px) {
+    .ctrl-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+  .ctrl {
+    border: 1px solid var(--line);
+    background: var(--ink-2);
+    padding: 16px 14px;
+  }
+  .ctrl h4 {
+    font-size: 0.92rem;
+    font-weight: 700;
+    margin-bottom: 8px;
+    color: var(--amber);
+  }
+  .ctrl p {
+    font-size: 0.8rem;
+    color: var(--muted);
+    line-height: 1.55;
+  }
+
+  .deny {
+    margin-top: 14px;
+    padding: 16px 18px;
+    border: 1px solid rgba(224,122,95,0.35);
+    background: rgba(224,122,95,0.08);
+  }
+  .deny h4 {
+    font-size: 0.85rem;
+    color: var(--coral);
+    margin-bottom: 8px;
+    font-weight: 700;
+  }
+  .deny ul {
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 14px;
+    font-size: 0.82rem;
+    color: var(--muted);
+  }
+  .deny ul li::before {
+    content: "×";
+    color: var(--coral);
+    margin-right: 6px;
+    font-weight: 700;
+  }
+</style>
+</head>
+<body>
+  <div class="bg-grid" aria-hidden="true"></div>
+  <div class="wrap">
+
+    <!-- HERO -->
+    <header class="hero">
+      <div class="kicker">Integrated Validation · 2026.07.28</div>
+      <h1>Before / After<br /><span>Showroom SaaS</span></h1>
+      <p class="hero-sub">
+        현장사진을 영업 자산으로 — 국내 사업성 · 해외 진출 · 중진공·수출 정책자금
+        두 딥리서치를 하나로 합친 통합 검증 인포그래픽
+      </p>
+      <div class="verdict-row">
+        <div class="badge warn"><span class="dot"></span> Conditional Go</div>
+        <div class="badge teal">Domestic First → Global Fast-Follow</div>
+        <div class="badge ok">투트랙 90일</div>
+      </div>
+      <p class="meta">원천: 국내 사업성 검증 + 해외·중진공 전략 딥리서치 · 수치 정합 반영</p>
+    </header>
+
+    <!-- SCORE STRIP -->
+    <section>
+      <div class="sec-head">
+        <span class="sec-num">01</span>
+        <h2>핵심 수치</h2>
+      </div>
+      <div class="stats">
+        <div class="stat amber">
+          <div class="v">9.9만</div>
+          <div class="l">국내 Pro ARPU (원/월)</div>
+        </div>
+        <div class="stat teal">
+          <div class="v">7.4–11.9만</div>
+          <div class="l">해외 팀 ARPU (원/월)</div>
+        </div>
+        <div class="stat ok">
+          <div class="v">88</div>
+          <div class="l">중진공·정책자금 Fit /100</div>
+        </div>
+        <div class="stat">
+          <div class="v">75</div>
+          <div class="l">해외 SaaS 사업성 /100</div>
+        </div>
+      </div>
+
+      <div class="pipeline">
+        <div class="pipe"><strong>Wedge</strong><span>B/A 숏폼 자동생성</span></div>
+        <div class="pipe"><strong>Back-end</strong><span>공개 쇼룸 · 상담 CRM</span></div>
+        <div class="pipe"><strong>Economics</strong><span>Usage Cap으로 COGS 통제</span></div>
+        <div class="pipe"><strong>Trust</strong><span>초상권·현장 공개 동의</span></div>
+        <div class="pipe"><strong>Capital</strong><span>외화 증빙 → 정책자금</span></div>
+      </div>
+
+      <div class="callout">
+        <strong>한 줄 판정:</strong> 갤러리로 팔면 WTP 붕괴. 숏폼 Wedge로 국내 PMF를 잡고,
+        Export 슬림판으로 Stripe 외화 증빙을 만든 뒤 중진공·수출바우처를 레버리지한다.
+      </div>
+    </section>
+
+    <!-- SCORES -->
+    <section>
+      <div class="sec-head">
+        <span class="sec-num">02</span>
+        <h2>점수 카드</h2>
+      </div>
+      <div class="scores">
+        <div class="score-card">
+          <div class="top">
+            <h3>중진공 · 수출 정책자금 Fit</h3>
+            <div class="score-num">88 <small>/100</small></div>
+          </div>
+          <div class="meter a"><i></i></div>
+          <p>수출·AI 우대기조는 강함. 단, 외화입금 실증빙이 없으면 점수 급락. Stripe B2B 직결제 권장.</p>
+        </div>
+        <div class="score-card">
+          <div class="top">
+            <h3>해외 SaaS 사업성</h3>
+            <div class="score-num" style="color:var(--amber)">75 <small>/100</small></div>
+          </div>
+          <div class="meter b"><i></i></div>
+          <p>CompanyCam 가격·기능 비대화 공백 + 숏폼 Wedge 명확. 12개월 외화 매출 확률 Medium. CAC 검증 필요.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- MARKET -->
+    <section>
+      <div class="sec-head">
+        <span class="sec-num">03</span>
+        <h2>시장 규모 · 한국</h2>
+      </div>
+      <div class="market">
+        <div class="m-row">
+          <div class="lab">TAM</div>
+          <div class="bar-track"><div class="bar-fill tam">전체 SW 예산층</div></div>
+          <div class="val">~600억 원</div>
+        </div>
+        <div class="m-row">
+          <div class="lab">SAM</div>
+          <div class="bar-track"><div class="bar-fill sam">SNS 마케팅 수행</div></div>
+          <div class="val">~120억 원</div>
+        </div>
+        <div class="m-row">
+          <div class="lab">SOM</div>
+          <div class="bar-track"><div class="bar-fill som">3년 확보</div></div>
+          <div class="val">~5.4억 원</div>
+        </div>
+      </div>
+      <p class="meta" style="margin-top:16px">
+        리모델링 시장 30조(2020) → <strong style="color:var(--cream)">37조(2025)</strong> → 44조(2030) · 한국건설산업연구원
+        &nbsp;|&nbsp; 글로벌 TAM ~1.5조 원 / SAM ~3,000억 원 / SOM ~150억 원
+        <span style="opacity:0.7"> · 환율 1,500원/$</span>
+      </p>
+    </section>
+
+    <!-- ICP -->
+    <section>
+      <div class="sec-head">
+        <span class="sec-num">04</span>
+        <h2>ICP 우선순위</h2>
+      </div>
+      <div class="icp-grid">
+        <div class="icp pri">
+          <div class="rank">PRIORITY 01 · HIGH FIT</div>
+          <h4>중소 인테리어 디자인·시공</h4>
+          <p>사진은 쌓이는데 편집 인력 없음. 블로그/인스타 지연.</p>
+          <div class="wtp">WTP 월 9–19만 원 · Pro 타깃</div>
+        </div>
+        <div class="icp pri">
+          <div class="rank">PRIORITY 02 · HIGH FIT</div>
+          <h4>홈케어 · 부분시공 · 리폼</h4>
+          <p>단가 낮아 건당 마케팅 시간 극소. B/A 효과 극대화 업종.</p>
+          <div class="wtp">WTP 월 5–9만 원 · Starter</div>
+        </div>
+        <div class="icp">
+          <div class="rank">GLOBAL · PLG</div>
+          <h4>US Kitchen & Bath 2–5인</h4>
+          <p>CompanyCam/Houzz 부담. 마케팅 여력 부족 Owner-Operator.</p>
+          <div class="wtp">ARPU 월 7.4–11.9만 원 · Stripe</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- DUAL PRODUCT -->
+    <section>
+      <div class="sec-head">
+        <span class="sec-num">05</span>
+        <h2>제품 이원화</h2>
+      </div>
+      <div class="grid-2">
+        <div class="card">
+          <h3><span class="tag amber">Korean</span> 국내판</h3>
+          <ul class="list">
+            <li><span class="k">범위</span><span>업로드 · B/A · 숏폼 · 쇼룸 · 카톡/동의 · 상담 CRM</span></li>
+            <li><span class="k">결제</span><span>토스/카카오 PG · 채널톡 하이터치</span></li>
+            <li><span class="k">요금</span><span>Starter 3.9만 · Pro 9.9만 · Agency 19.9만 원/월</span></li>
+            <li><span class="k">마진</span><span>Pro COGS ~1.2만 원 → GM ≈ 88% (Cap 필수)</span></li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3><span class="tag teal">Export</span> 수출판</h3>
+          <ul class="list">
+            <li><span class="k">범위</span><span>캡처 · B/A 쇼룸 · AI 숏폼/캡션만 (슬림)</span></li>
+            <li><span class="k">제외</span><span>한국식 견적·하도급·하이터치 채팅</span></li>
+            <li><span class="k">결제</span><span>Stripe · 다통화 · Sales Tax · Invoice</span></li>
+            <li><span class="k">모션</span><span>100% PLG · 14일 Trial · Demo-led 금지</span></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- 90 DAY -->
+    <section>
+      <div class="sec-head">
+        <span class="sec-num">06</span>
+        <h2>투트랙 90일</h2>
+      </div>
+      <div class="split-label">
+        <span class="badge amber" style="font-size:0.8rem;padding:6px 12px">국내 = PMF · 현금</span>
+        <span class="badge teal" style="font-size:0.8rem;padding:6px 12px">해외 = 외화 증빙 · 정책자금</span>
+      </div>
+      <div class="timeline">
+        <div class="tl">
+          <div class="phase">DAY 1 – 30</div>
+          <h4>검증 · 런칭</h4>
+          <ul>
+            <li>국내: 아웃바운드 300 · 컨시어지 30사</li>
+            <li>해외: 영문 LP · Stripe · Export MVP</li>
+            <li>훅: 사진 50장 → 릴스+쇼룸</li>
+          </ul>
+        </div>
+        <div class="tl">
+          <div class="phase">DAY 31 – 60</div>
+          <h4>전환 · 파일럿</h4>
+          <ul>
+            <li>국내: 3분 UX · 유료전환 15%</li>
+            <li>해외: 북미 파일럿 3사 USD</li>
+            <li>Reddit / FB Contractor 그룹</li>
+          </ul>
+        </div>
+        <div class="tl">
+          <div class="phase">DAY 61 – 90</div>
+          <h4>확장 · 신청</h4>
+          <ul>
+            <li>국내: 제휴 · MRR 500만 원</li>
+            <li>해외: 외화입금증명서 패키지</li>
+            <li>수출기업화 자금 + 바우처</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- FINANCE -->
+    <section>
+      <div class="sec-head">
+        <span class="sec-num">07</span>
+        <h2>12개월 재무</h2>
+      </div>
+      <div class="fin">
+        <div class="card">
+          <h3>국내 Base Case</h3>
+          <table class="data">
+            <thead>
+              <tr><th>지표</th><th>Pessimistic</th><th>Base</th><th>Optimistic</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>유료 고객</td><td>80</td><td class="hl">250</td><td>600</td></tr>
+              <tr><td>ARPU</td><td>7.9만 원</td><td class="hl">9.9만 원</td><td>11.9만 원</td></tr>
+              <tr><td>Churn</td><td>7%</td><td class="hl">4%</td><td>2.5%</td></tr>
+              <tr><td>MRR</td><td>632만 원</td><td class="hl">2,475만 원</td><td>7,140만 원</td></tr>
+              <tr><td>ARR</td><td>0.76억 원</td><td class="hl">2.97억 원</td><td>8.57억 원</td></tr>
+            </tbody>
+          </table>
+          <p class="meta" style="margin-top:12px">존속선(Default Alive): 국내 MRR 1,500만 원 ≈ 150사 · 환율 1,500원/$</p>
+        </div>
+        <div class="card">
+          <h3>해외 가산 트랙</h3>
+          <ul class="list">
+            <li><span class="k">6개월</span><span>10–25사 · MRR 약 75–225만 원</span></li>
+            <li><span class="k">12개월</span><span>70–120사 · ARR 약 0.72–1.44억 원</span></li>
+            <li><span class="k">비중</span><span>중기 해외 ARR 목표 20–25%</span></li>
+            <li><span class="k">정책</span><span>약 15만 원+ 외화입금만으로도 스토리 전환</span></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- GO STOP -->
+    <section>
+      <div class="sec-head">
+        <span class="sec-num">08</span>
+        <h2>성공 · 실패 조건</h2>
+      </div>
+      <div class="go-stop">
+        <div class="card go">
+          <h3 style="color:var(--ok)">성공하면</h3>
+          <ol>
+            <li><strong>3분 UX</strong> — 업로드 → 릴스 완성</li>
+            <li><strong>+20%</strong> — 쇼룸 링크 견적 상담 전환</li>
+            <li><strong>증빙</strong> — 전자동의 + Stripe 외화입금</li>
+          </ol>
+        </div>
+        <div class="card stop">
+          <h3 style="color:var(--coral)">실패하면</h3>
+          <ol>
+            <li><strong>갤러리 포지션</strong> — 정리 귀찮음으로 이탈</li>
+            <li><strong>무제한 렌더</strong> — COGS로 마진 붕괴</li>
+            <li><strong>계획만 해외</strong> — 정책자금 감점 / 경쟁 무료화</li>
+          </ol>
+        </div>
+      </div>
+    </section>
+
+    <!-- PATH -->
+    <section>
+      <div class="sec-head">
+        <span class="sec-num">09</span>
+        <h2>권고 실행 경로</h2>
+      </div>
+      <div class="path">
+        <div class="step"><p>국내 유료 <strong>20사</strong> 확보 · PMF</p></div>
+        <div class="step"><p>≤60일 Export 슬림 MVP + <strong>Stripe</strong></p></div>
+        <div class="step"><p>북미 파일럿 <strong>3사</strong> USD 결제</p></div>
+        <div class="step"><p><strong>외화입금증명서</strong> + KITA 패키지</p></div>
+        <div class="step"><p>중진공 자금 + <strong>수출바우처</strong> 동시 신청</p></div>
+      </div>
+    </section>
+
+    <!-- SCALE / CAPACITY -->
+    <section style="border-bottom:none" id="scale-plan">
+      <div class="sec-head">
+        <span class="sec-num">10</span>
+        <h2>성장 · 버티기 구조</h2>
+      </div>
+
+      <div class="scale-hero">
+        <div class="stack-label">Stack · Supabase + Vercel + Kling + Railway</div>
+        <p>
+          <strong>원칙:</strong> Vercel은 접수, Kling·Railway가 소화.
+          GPU를 미리 사지 않고
+          <strong>Cap으로 수요 평활화 → Kling 쿼터로 공급 구매 → Railway 공유 큐로 병렬 확대 → 단가 안 맞을 때만 멀티벤더·GPU</strong>.
+        </p>
+      </div>
+
+      <div class="phase-strip">
+        <div class="phase-pill a">
+          <div class="ph">PHASE A</div>
+          <div class="cnt">0–30사</div>
+          <div class="sub">검증 · 수동 버팀</div>
+        </div>
+        <div class="phase-pill b">
+          <div class="ph">PHASE B</div>
+          <div class="cnt">30–150사</div>
+          <div class="sub">Default Alive</div>
+        </div>
+        <div class="phase-pill c">
+          <div class="ph">PHASE C</div>
+          <div class="cnt">150–400사</div>
+          <div class="sub">큐가 제품</div>
+        </div>
+        <div class="phase-pill d">
+          <div class="ph">PHASE D</div>
+          <div class="cnt">400사+</div>
+          <div class="sub">이중화 · 원가전</div>
+        </div>
+      </div>
+
+      <div class="flow-row" aria-label="성장 대응 흐름">
+        <div class="flow-cell"><strong>01 수요</strong>청구 · Usage Cap으로 월/동시 잡 상한</div>
+        <div class="flow-cell"><strong>02 공급</strong>Kling 쿼터·단가로 Capa 구매</div>
+        <div class="flow-cell"><strong>03 처리</strong>Railway 워커 · 공유 큐 확장</div>
+        <div class="flow-cell"><strong>04 저장</strong>Supabase Storage·DB · 수명 정책</div>
+        <div class="flow-cell"><strong>05 나중</strong>멀티벤더 · GPU 손익분기 후</div>
+      </div>
+
+      <div class="phase-grid">
+        <div class="phase-card a">
+          <div class="ph-tag">PHASE A · 0–30</div>
+          <h3>검증 · 수동 버팀</h3>
+          <p class="load">부하 감각: 월 ~750 렌더 / 일 ~25 (Pro 25개 가정)</p>
+          <ul>
+            <li>플랜 Cap · 계정당 동시 잡 1–2</li>
+            <li>Kling(비쌈) / FFmpeg 템플릿(쌈) 분리</li>
+            <li>Railway 워커 1 · 인메모리 큐 OK</li>
+            <li>장애 시 컨시어지 수동 납품 유지</li>
+          </ul>
+        </div>
+        <div class="phase-card b">
+          <div class="ph-tag">PHASE B · 30–150</div>
+          <h3>Default Alive</h3>
+          <p class="load">부하 감각: 월 ~3,750 렌더 / 일 ~125</p>
+          <ul>
+            <li>초과 숏폼 팩 · 테넌트 rate limit</li>
+            <li>실패/재시도 대시보드 · 주간 COGS vs ARPU</li>
+            <li>Railway 수직 스케일 · 큐 적체 알람</li>
+            <li>Kling 쿼터↑ · 예약 렌더로 피크 평활화</li>
+            <li>Storage 원본·실패작 자동 정리</li>
+          </ul>
+        </div>
+        <div class="phase-card c">
+          <div class="ph-tag">PHASE C · 150–400</div>
+          <h3>큐가 제품이 됨</h3>
+          <p class="load">부하 감각: 월 ~10,000 렌더 / 일 ~330</p>
+          <ul>
+            <li>인메모리 → DB/Redis 공유 큐 + 워커 N대</li>
+            <li>유료&gt;체험 우선순위 큐 · 백오프</li>
+            <li>대기열 ETA · 알림톡 비동기 UX</li>
+            <li>플랜별 COGS 하드캡 알람</li>
+            <li>티어별 보관·해상도 정책</li>
+          </ul>
+        </div>
+        <div class="phase-card d">
+          <div class="ph-tag">PHASE D · 400+</div>
+          <h3>이중화 · 원가 전쟁</h3>
+          <p class="load">피크 동시 폭주 대비 · 벤더 이중화</p>
+          <ul>
+            <li>Kling + 대체 API / 템플릿-only 폴백</li>
+            <li>자체 GPU는 OpEx≫고정비일 때만</li>
+            <li>엔터·대행사 전용 쿼터·워커 풀 분리</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="sec-head" style="margin-top:28px;margin-bottom:12px">
+        <span class="sec-num">CTRL</span>
+        <h2 style="font-size:1.2rem">항상 켜두는 4개 제어판</h2>
+      </div>
+      <div class="ctrl-grid">
+        <div class="ctrl">
+          <h4>수요 Cap</h4>
+          <p>월/일/동시 잡 한도 · 대기열 · 추가팩으로 폭주 차단</p>
+        </div>
+        <div class="ctrl">
+          <h4>공급 Capa</h4>
+          <p>Kling 잔여 · 큐 깊이 · p95 대기 → 쿼터↑ · 워커↑</p>
+        </div>
+        <div class="ctrl">
+          <h4>원가</h4>
+          <p>렌더당 원 · COGS/ARPU → 템플릿 비중↑ · Cap↓</p>
+        </div>
+        <div class="ctrl">
+          <h4>신뢰</h4>
+          <p>실패율 · 재시도 · 동의/블러 → 폴백 · 수동 에스컬레이션</p>
+        </div>
+      </div>
+
+      <div class="sec-head" style="margin-top:28px;margin-bottom:12px">
+        <span class="sec-num">90D</span>
+        <h2 style="font-size:1.2rem">90일 실행 백로그</h2>
+      </div>
+      <div class="timeline">
+        <div class="tl">
+          <div class="phase">DAY 1 – 30</div>
+          <h4>Cap · 관측</h4>
+          <ul>
+            <li>플랜 한도 강제</li>
+            <li>동시 잡 제한</li>
+            <li>일일 Kling/워커 리포트</li>
+          </ul>
+        </div>
+        <div class="tl">
+          <div class="phase">DAY 31 – 60</div>
+          <h4>비동기 UX</h4>
+          <ul>
+            <li>대기열 ETA 표시</li>
+            <li>완료·실패 알림</li>
+            <li>실패 자동 1회 재시도</li>
+          </ul>
+        </div>
+        <div class="tl">
+          <div class="phase">DAY 61 – 90</div>
+          <h4>공유 큐 PoC</h4>
+          <ul>
+            <li>인메모리 → DB 큐</li>
+            <li>워커 2화 준비</li>
+            <li>스케일 런북 문서화</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="deny">
+        <h4>초기 금지</h4>
+        <ul>
+          <li>GPU 서버 선구매</li>
+          <li>무제한 렌더 마케팅</li>
+          <li>Vercel에서 무거운 영상 처리</li>
+          <li>공유 큐 없이 워커만 복제</li>
+        </ul>
+      </div>
+
+      <div class="footnote">
+        <span>B/A Showroom & Content Ops SaaS · Integrated Infographic</span>
+        <span>성장계획: BA_SAAS_SCALE_CAPACITY_PLAN.md · 환율 1,500원/$</span>
+      </div>
+    </section>
+
+  </div>
+</body>
+</html>

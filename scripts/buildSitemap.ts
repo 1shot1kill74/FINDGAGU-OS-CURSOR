@@ -4,7 +4,6 @@
  *
  * 포함 정책:
  * - `/public/showroom/case/<siteName>`  -> `metadata.canonical_blog_post.status === 'approved'`
- * - `/public/showroom/cardnews/<siteName>`  -> `metadata.cardNewsPublication.is_published === true`
  *
  * 환경 변수:
  * - VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY (필수)
@@ -152,11 +151,9 @@ async function main(): Promise<void> {
   // 공개 진입점 (내부 /showroom 은 로그인 영역이므로 제외)
   entries.push({ loc: `${BASE_URL}/`, changefreq: 'weekly', priority: 0.7 })
   entries.push({ loc: `${BASE_URL}/public/showroom`, changefreq: 'daily', priority: 1.0 })
-  entries.push({ loc: `${BASE_URL}/public/showroom/cardnews`, changefreq: 'weekly', priority: 0.7 })
   entries.push({ loc: `${BASE_URL}/contact`, changefreq: 'monthly', priority: 0.5 })
 
   let approvedBlogCount = 0
-  let publishedCardNewsCount = 0
 
   for (const row of rows) {
     const siteName = (row.site_name ?? '').trim()
@@ -176,21 +173,6 @@ async function main(): Promise<void> {
         priority: 0.8,
       })
       approvedBlogCount += 1
-    }
-
-    const cardNewsPub = readNested<Record<string, unknown>>(metadata, 'cardNewsPublication')
-    const isCardNewsPublished = cardNewsPub && cardNewsPub['is_published'] === true
-    const cardNewsPublishedAt = cardNewsPub && typeof cardNewsPub['published_at'] === 'string' ? (cardNewsPub['published_at'] as string) : null
-    const cardNewsSlug = cardNewsPub && typeof cardNewsPub['slug'] === 'string' ? (cardNewsPub['slug'] as string).trim() : ''
-    const cardNewsKey = cardNewsSlug || siteName
-    if (isCardNewsPublished) {
-      entries.push({
-        loc: `${BASE_URL}/public/showroom/cardnews/${encodeSitePath(cardNewsKey)}`,
-        lastmod: isoDateOnly(cardNewsPublishedAt) ?? undefined,
-        changefreq: 'monthly',
-        priority: 0.7,
-      })
-      publishedCardNewsCount += 1
     }
   }
 
@@ -216,7 +198,6 @@ async function main(): Promise<void> {
 
   console.log(`[buildSitemap] wrote ${sitemapPath} (${entries.length} urls)`)
   console.log(`[buildSitemap]   - approved blog cases: ${approvedBlogCount}`)
-  console.log(`[buildSitemap]   - published card news: ${publishedCardNewsCount}`)
   console.log(`[buildSitemap] wrote ${robotsPath}`)
 }
 

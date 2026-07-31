@@ -14,7 +14,12 @@ import type { ShowroomCaseN8nImageContextItem } from '@/lib/showroomCaseContentP
 
 export const CANONICAL_BLOG_METADATA_KEY = 'canonical_blog_post'
 
-export type ShowroomCaseCanonicalBlogStatus = 'draft' | 'review' | 'approved' | 'archived'
+export type ShowroomCaseCanonicalBlogStatus =
+  | 'draft'
+  | 'review'
+  | 'scheduled'
+  | 'approved'
+  | 'archived'
 
 export type ShowroomCaseCanonicalBlogImagePlacement = 'inline' | 'full' | 'compare-row'
 
@@ -72,6 +77,8 @@ export type ShowroomCaseCanonicalBlogPostV1 = {
   structured?: ShowroomCaseCanonicalBlogStructured | null
   createdAt: string
   updatedAt: string
+  /** 예약 공개 시각 (ISO). status === 'scheduled' 일 때 사용 */
+  scheduledAt?: string | null
   approvedAt?: string | null
   approvedBy?: string | null
 }
@@ -191,7 +198,13 @@ export function parseCanonicalBlogPostFromMetadata(metadata: unknown): ShowroomC
   if (schemaVersion !== 1) return null
 
   const status = readString(record, 'status')
-  const allowedStatus: ShowroomCaseCanonicalBlogStatus[] = ['draft', 'review', 'approved', 'archived']
+  const allowedStatus: ShowroomCaseCanonicalBlogStatus[] = [
+    'draft',
+    'review',
+    'scheduled',
+    'approved',
+    'archived',
+  ]
   if (!status || !allowedStatus.includes(status as ShowroomCaseCanonicalBlogStatus)) return null
 
   const siteName = readString(record, 'siteName') ?? readString(record, 'site_name')
@@ -216,6 +229,7 @@ export function parseCanonicalBlogPostFromMetadata(metadata: unknown): ShowroomC
 
   const cardNewsGenerationRef =
     readString(record, 'cardNewsGenerationRef') ?? readString(record, 'card_news_generation_ref')
+  const scheduledAt = readString(record, 'scheduledAt') ?? readString(record, 'scheduled_at')
   const approvedAt = readString(record, 'approvedAt') ?? readString(record, 'approved_at')
   const approvedBy = readString(record, 'approvedBy') ?? readString(record, 'approved_by')
 
@@ -232,6 +246,7 @@ export function parseCanonicalBlogPostFromMetadata(metadata: unknown): ShowroomC
     cardNewsGenerationRef: cardNewsGenerationRef ?? null,
     createdAt,
     updatedAt,
+    scheduledAt: scheduledAt ?? null,
     approvedAt: approvedAt ?? null,
     approvedBy: approvedBy ?? null,
   }
@@ -289,6 +304,8 @@ export function serializeCanonicalBlogPost(post: ShowroomCaseCanonicalBlogPost):
     createdAt: post.createdAt,
     updated_at: post.updatedAt,
     updatedAt: post.updatedAt,
+    scheduled_at: post.scheduledAt ?? null,
+    scheduledAt: post.scheduledAt ?? null,
     approved_at: post.approvedAt ?? null,
     approvedAt: post.approvedAt ?? null,
     approved_by: post.approvedBy ?? null,

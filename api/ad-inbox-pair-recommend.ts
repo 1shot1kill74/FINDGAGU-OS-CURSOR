@@ -131,7 +131,7 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
       parts.push(await urlToInlinePart(c.url))
     }
 
-    const model = process.env.GOOGLE_GEMINI_MODEL?.trim() || 'gemini-2.0-flash'
+    const model = process.env.GOOGLE_GEMINI_MODEL?.trim() || 'gemini-3.5-flash'
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
     const geminiRes = await fetch(endpoint, {
       method: 'POST',

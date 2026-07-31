@@ -4,6 +4,9 @@ export type ShowroomAbmTrafficFilter = 'production' | 'exclude_local' | 'all'
 
 const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]'])
 const PUBLIC_SHOWROOM_LANDING_HOSTS = new Set(['findgagu.co.kr', 'www.findgagu.co.kr'])
+const ABM_JOB_ID_STORAGE_KEY = 'findgagu_showroom_abm_job_id'
+const JOB_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 function normalizeHostname(hostname: string | null | undefined): string {
   return hostname?.trim().toLowerCase() ?? ''
@@ -21,6 +24,76 @@ function addHostnameFromUrl(hosts: Set<string>, value: string): void {
   }
 }
 
+export function isValidShowroomAbmJobId(value: string | null | undefined): boolean {
+  if (!value?.trim()) return false
+  return JOB_ID_PATTERN.test(value.trim())
+}
+
+export function normalizeShowroomAbmJobId(value: string | null | undefined): string | null {
+  const trimmed = value?.trim() ?? ''
+  if (!isValidShowroomAbmJobId(trimmed)) return null
+  return trimmed.toLowerCase()
+}
+
+/** URL path/query에서 jobId를 읽어 sessionStorage에 1회 귀속. 이후 ABM 이벤트 metadata에 포함된다. */
+export function captureShowroomAbmAttribution(input?: {
+  pathname?: string
+  search?: string
+  jobId?: string | null
+}): string | null {
+  if (typeof window === 'undefined') return null
+
+  const existing = readStoredShowroomAbmJobId()
+  if (existing) return existing
+
+  const pathname = input?.pathname ?? window.location.pathname
+  const search = input?.search ?? window.location.search
+  const fromInput = normalizeShowroomAbmJobId(input?.jobId)
+  const fromPath = extractJobIdFromPathname(pathname)
+  const fromQuery = normalizeShowroomAbmJobId(new URLSearchParams(search).get('jobId'))
+  const resolved = fromInput ?? fromPath ?? fromQuery
+
+  if (!resolved) return null
+
+  try {
+    window.sessionStorage.setItem(ABM_JOB_ID_STORAGE_KEY, resolved)
+  } catch {
+    // private mode 등
+  }
+  return resolved
+}
+
+export function readStoredShowroomAbmJobId(): string | null {
+  if (typeof window === 'undefined') return null
+  try {
+    return normalizeShowroomAbmJobId(window.sessionStorage.getItem(ABM_JOB_ID_STORAGE_KEY))
+  } catch {
+    return null
+  }
+}
+
+export function extractJobIdFromPathname(pathname: string | null | undefined): string | null {
+  if (!pathname) return null
+  const shortsMatch = pathname.match(/^\/public\/showroom\/shorts\/([^/]+)\/?$/i)
+  if (shortsMatch?.[1]) return normalizeShowroomAbmJobId(decodeURIComponent(shortsMatch[1]))
+
+  const redirectMatch = pathname.match(/^\/r\/[^/]+\/([^/]+)\/?$/i)
+  if (redirectMatch?.[1]) return normalizeShowroomAbmJobId(decodeURIComponent(redirectMatch[1]))
+
+  return null
+}
+
+export function readAbmEventJobId(metadata: Record<string, unknown> | null | undefined): string | null {
+  if (!metadata || typeof metadata !== 'object') return null
+  return normalizeShowroomAbmJobId(
+    typeof metadata.jobId === 'string'
+      ? metadata.jobId
+      : typeof metadata.job_id === 'string'
+        ? metadata.job_id
+        : null
+  )
+}
+
 export function getShowroomAbmTrackingContext(): Record<string, string | boolean> {
   if (typeof window === 'undefined') return {}
 
@@ -30,6 +103,7 @@ export function getShowroomAbmTrackingContext(): Record<string, string | boolean
   const utmMedium = params.get('utm_medium')?.trim()
   const utmCampaign = params.get('utm_campaign')?.trim()
   const entry = params.get('entry')?.trim()
+  const jobId = captureShowroomAbmAttribution()
 
   return {
     page_hostname: hostname,
@@ -42,6 +116,7 @@ export function getShowroomAbmTrackingContext(): Record<string, string | boolean
     ...(utmMedium ? { utm_medium: utmMedium } : {}),
     ...(utmCampaign ? { utm_campaign: utmCampaign } : {}),
     ...(entry ? { entry } : {}),
+    ...(jobId ? { jobId } : {}),
   }
 }
 

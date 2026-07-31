@@ -22,7 +22,19 @@ export default defineConfig(({ mode }) => {
       host: true,
       port: 5180,
       strictPort: true,
-      open: '/dashboard',
+      // 재시작 때마다 대시보드를 새로 열면 작업 중이던 Case Studio 등이 끊김
+      open: false,
+      watch: {
+        // docs/시뮬 HTML·임시·DB 산출물이 갱신돼도 SPA 전체 리로드하지 않음
+        ignored: [
+          '**/docs/**',
+          '**/snapshots/**',
+          '**/vikunja/**',
+          '**/supabase/.temp/**',
+          '**/.tmp*/**',
+          '**/agent-tools/**',
+        ],
+      },
       proxy: {
         '/api/showroom-shorts-worker': {
           target: showroomShortsProxyTarget,
@@ -50,6 +62,9 @@ export default defineConfig(({ mode }) => {
           const routes: Record<string, () => Promise<{ default: (req: any, res: any) => Promise<void> }>> = {
             '/api/ad-inbox-pair-recommend': () => import('./api/ad-inbox-pair-recommend.ts'),
             '/api/ad-inbox-cleanup-people': () => import('./api/ad-inbox-cleanup-people.ts'),
+            '/api/showroom-case-brief-draft': () => import('./api/showroom-case-brief-draft.ts'),
+            '/api/edu-outreach-collect': () => import('./api/edu-outreach-collect.ts'),
+            '/api/edu-outreach-fetch-article': () => import('./api/edu-outreach-fetch-article.ts'),
           }
 
           server.middlewares.use(async (req, res, next) => {

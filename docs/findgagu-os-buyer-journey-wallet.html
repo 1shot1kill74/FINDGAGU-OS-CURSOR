@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Findgagu OS — 구매 여정 &amp; 지갑 오픈 시점</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg0: #0f1412;
+      --bg1: #17201c;
+      --bg2: #1e2a24;
+      --line: rgba(214, 232, 220, 0.14);
+      --text: #e8f0ea;
+      --muted: #9aafa3;
+      --accent: #6ecf9a;
+      --accent-dim: rgba(110, 207, 154, 0.14);
+      --warn: #e0b15a;
+      --warn-dim: rgba(224, 177, 90, 0.14);
+      --hot: #7eb8ff;
+      --hot-dim: rgba(126, 184, 255, 0.14);
+      --cold: #8a9690;
+      --danger: #e07a6a;
+      --danger-dim: rgba(224, 122, 106, 0.14);
+      --font: "IBM Plex Sans KR", sans-serif;
+    }
+
+    * { box-sizing: border-box; font-family: var(--font); }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: var(--font);
+      color: var(--text);
+      background:
+        radial-gradient(900px 500px at 10% -10%, rgba(110, 207, 154, 0.12), transparent 55%),
+        radial-gradient(700px 400px at 90% 0%, rgba(126, 184, 255, 0.08), transparent 50%),
+        linear-gradient(180deg, var(--bg0), #121816 40%, var(--bg0));
+      min-height: 100vh;
+      line-height: 1.55;
+    }
+
+    .wrap {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 40px 24px 80px;
+    }
+
+    .eyebrow {
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent);
+      font-weight: 600;
+      margin-bottom: 10px;
+    }
+
+    h1 {
+      font-family: var(--font);
+      font-size: clamp(28px, 4vw, 42px);
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      margin: 0 0 10px;
+      line-height: 1.15;
+    }
+
+    .sub {
+      color: var(--muted);
+      font-size: 14px;
+      margin: 0 0 28px;
+      max-width: 62ch;
+    }
+
+    .verdict {
+      background: var(--accent-dim);
+      border: 1px solid rgba(110, 207, 154, 0.35);
+      border-radius: 14px;
+      padding: 18px 20px;
+      margin-bottom: 28px;
+    }
+    .verdict strong {
+      display: block;
+      font-family: var(--font);
+      font-size: 15px;
+      margin-bottom: 6px;
+      color: var(--accent);
+    }
+    .verdict p { margin: 0; font-size: 14px; color: var(--text); }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-bottom: 36px;
+    }
+    .stat {
+      background: var(--bg1);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 16px;
+    }
+    .stat .v {
+      font-family: var(--font);
+      font-size: 26px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    .stat .l { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .stat.ok .v { color: var(--accent); }
+    .stat.warn .v { color: var(--warn); }
+    .stat.info .v { color: var(--hot); }
+    .stat.bad .v { color: var(--danger); }
+
+    h2 {
+      font-family: var(--font);
+      font-size: 20px;
+      font-weight: 700;
+      margin: 0 0 14px;
+      letter-spacing: -0.02em;
+    }
+    section { margin-bottom: 40px; }
+
+    /* Journey flow */
+    .flow {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: stretch;
+      margin-bottom: 12px;
+    }
+    .step {
+      flex: 1 1 100px;
+      min-width: 100px;
+      background: var(--bg1);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px 10px;
+      position: relative;
+      transition: border-color 0.2s, transform 0.2s;
+    }
+    .step:hover { transform: translateY(-2px); }
+    .step .n {
+      font-size: 10px;
+      color: var(--muted);
+      font-weight: 600;
+      letter-spacing: 0.04em;
+    }
+    .step .t {
+      font-family: var(--font);
+      font-size: 14px;
+      font-weight: 700;
+      margin: 4px 0 2px;
+    }
+    .step .d { font-size: 11px; color: var(--muted); }
+    .step.trigger { border-color: rgba(224, 177, 90, 0.45); background: var(--warn-dim); }
+    .step.aha, .step.pay {
+      border-color: rgba(110, 207, 154, 0.55);
+      background: var(--accent-dim);
+      box-shadow: 0 0 0 1px rgba(110, 207, 154, 0.15);
+    }
+    .step.trial { border-color: rgba(126, 184, 255, 0.4); background: var(--hot-dim); }
+    .arrow {
+      display: none;
+    }
+    @media (min-width: 900px) {
+      .flow { flex-wrap: nowrap; gap: 6px; }
+      .step { flex: 1; min-width: 0; }
+      .flow::after { content: none; }
+    }
+
+    .hint { font-size: 13px; color: var(--muted); margin: 0 0 18px; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      background: var(--bg1);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    th, td {
+      padding: 11px 12px;
+      text-align: left;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+    th {
+      background: var(--bg2);
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 11px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    tr:last-child td { border-bottom: none; }
+    tr.hot td { background: rgba(110, 207, 154, 0.06); }
+    .wallet-open { color: var(--accent); font-weight: 700; }
+    .wallet-half { color: var(--warn); }
+    .wallet-closed { color: var(--cold); }
+
+    .ranks { display: grid; gap: 12px; }
+    .rank {
+      background: var(--bg1);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 18px 20px;
+    }
+    .rank-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+    .rank-head h3 {
+      font-family: var(--font);
+      font-size: 16px;
+      margin: 0;
+      font-weight: 700;
+    }
+    .pill {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 999px;
+      white-space: nowrap;
+    }
+    .pill.g { background: var(--accent-dim); color: var(--accent); }
+    .pill.w { background: var(--warn-dim); color: var(--warn); }
+    .pill.b { background: var(--hot-dim); color: var(--hot); }
+    .pill.c { background: rgba(138, 150, 144, 0.2); color: var(--cold); }
+
+    .bar {
+      height: 8px;
+      background: rgba(255,255,255,0.06);
+      border-radius: 999px;
+      overflow: hidden;
+      margin: 12px 0 8px;
+    }
+    .bar > i {
+      display: block;
+      height: 100%;
+      border-radius: 999px;
+    }
+    .bar.g > i { background: var(--accent); width: 95%; }
+    .bar.w > i { background: var(--warn); width: 80%; }
+    .bar.b > i { background: var(--hot); width: 65%; }
+    .bar.c > i { background: var(--cold); width: 15%; }
+    .rank p { margin: 0; font-size: 13px; color: var(--muted); }
+    .rank .meta { font-size: 12px; color: var(--text); margin-top: 8px; }
+
+    .two {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .panel {
+      background: var(--bg1);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 18px;
+    }
+    .panel h3 {
+      font-family: var(--font);
+      font-size: 15px;
+      margin: 0 0 12px;
+    }
+    .panel ul {
+      margin: 0;
+      padding-left: 18px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .panel li { margin-bottom: 6px; }
+    .panel.do { border-color: rgba(110, 207, 154, 0.3); }
+    .panel.dont { border-color: rgba(224, 122, 106, 0.3); }
+
+    .seg-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+    }
+    .seg {
+      background: var(--bg1);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 16px;
+    }
+    .seg .who { font-family: var(--font); font-weight: 700; font-size: 14px; margin-bottom: 6px; }
+    .seg .sku {
+      display: inline-block;
+      margin-top: 10px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--accent);
+      background: var(--accent-dim);
+      padding: 3px 8px;
+      border-radius: 6px;
+    }
+
+    footer {
+      margin-top: 48px;
+      padding-top: 20px;
+      border-top: 1px solid var(--line);
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    @media (max-width: 720px) {
+      .stats { grid-template-columns: 1fr 1fr; }
+      .two, .seg-grid { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+
+    @media print {
+      body { background: #fff; color: #111; }
+      .stat, .step, .rank, .panel, .seg, table, .verdict {
+        background: #fff;
+        border-color: #ddd;
+        color: #111;
+      }
+      .sub, .hint, .muted, th, td, .rank p, .panel ul, footer { color: #444; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="eyebrow">Findgagu OS · Buyer Journey</div>
+    <h1>구매 여정 &amp; 지갑 오픈 시점</h1>
+    <p class="sub">
+      Primary ICP: 중소 인테리어 디자인·시공 &nbsp;·&nbsp;
+      Source: findgaguOS_사업계획.md &nbsp;·&nbsp;
+      2026-07-28 &nbsp;·&nbsp; 가설 포함
+    </p>
+
+    <div class="verdict">
+      <strong>지갑이 열리는 핵심 순간</strong>
+      <p>
+        LP나 ‘쇼룸 기능 설명’이 아니라, 체험 중 Aha 이후 —
+        「내 현장 사진으로 릴스가 나오고, 그 링크/콘텐츠로 상담·견적이 움직였다」를 체감한 직후.
+        캘린더로는 비수기 진입·대행사 계약 종료/갱신 창이 가장 세다.
+      </p>
+    </div>
+
+    <div class="stats">
+      <div class="stat ok"><div class="v">D14</div><div class="l">체험 → 유료 창</div></div>
+      <div class="stat warn"><div class="v">&gt;25%</div><div class="l">컨시어지 유료의사 게이트</div></div>
+      <div class="stat info"><div class="v">9.9만</div><div class="l">Pro 메인 ARPU</div></div>
+      <div class="stat bad"><div class="v">≠갤러리</div><div class="l">포지션 실패 시 WTP 0</div></div>
+    </div>
+
+    <section>
+      <h2>1. Primary ICP 여정 (8단)</h2>
+      <div class="flow" aria-label="구매 여정 흐름">
+        <div class="step"><div class="n">01</div><div class="t">잠재</div><div class="d">사진 쌓임·광고 대충</div></div>
+        <div class="step trigger"><div class="n">02</div><div class="t">트리거</div><div class="d">비수기·대행 종료</div></div>
+        <div class="step trigger"><div class="n">03</div><div class="t">고통</div><div class="d">CapCut 4시간</div></div>
+        <div class="step"><div class="n">04</div><div class="t">발견</div><div class="d">아웃바운드·동료</div></div>
+        <div class="step trial"><div class="n">05</div><div class="t">체험</div><div class="d">사진→릴스 무료</div></div>
+        <div class="step aha"><div class="n">06</div><div class="t">Aha</div><div class="d">3분·쇼룸 문의</div></div>
+        <div class="step pay"><div class="n">07</div><div class="t">결제</div><div class="d">Pro 9.9만</div></div>
+        <div class="step trial"><div class="n">08</div><div class="t">확장</div><div class="d">CRM·Growth</div></div>
+      </div>
+      <p class="hint">강조 단계 = Aha·결제. 지갑은 7에서 열리지만, 연료는 2(트리거)와 6(성과 체감)이다.</p>
+
+      <table>
+        <thead>
+          <tr>
+            <th>단계</th>
+            <th>고객 상태</th>
+            <th>우리가 파는 것</th>
+            <th>지갑</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>1 잠재</td>
+            <td>현장 사진 쌓임 · 인스타 들쭉날쭉 · 대행/수작업</td>
+            <td>아직 안 팜</td>
+            <td class="wallet-closed">닫힘</td>
+          </tr>
+          <tr>
+            <td>2 트리거</td>
+            <td>비수기·대행 계약 끝·광고비 대비 문의↓</td>
+            <td>문제 인식 자극</td>
+            <td class="wallet-half">반쯤 (예산 탐색)</td>
+          </tr>
+          <tr>
+            <td>3 고통</td>
+            <td>CapCut 4시간 · 직원 없음 · 릴스 압박</td>
+            <td>시간/비용 대체 스토리</td>
+            <td class="wallet-half">비교 모드</td>
+          </tr>
+          <tr>
+            <td>4 발견</td>
+            <td>아웃바운드·동료·검색</td>
+            <td>숏폼 자동 생성기 (올인원 금지)</td>
+            <td class="wallet-closed">닫힘~관심</td>
+          </tr>
+          <tr>
+            <td>5 체험</td>
+            <td>사진 50장 카톡 → 릴스+쇼룸 무료</td>
+            <td>컨시어지 훅</td>
+            <td class="wallet-closed">아직 (가치 미증명)</td>
+          </tr>
+          <tr class="hot">
+            <td>6 Aha</td>
+            <td>3분 릴스 · 쇼룸 링크 문의/관심</td>
+            <td>영업 유입 증거</td>
+            <td class="wallet-open">열리기 직전</td>
+          </tr>
+          <tr class="hot">
+            <td>7 결제</td>
+            <td>대행 100만 vs SaaS 9.9만 대비</td>
+            <td>Pro 연/월</td>
+            <td class="wallet-open">열림 ★</td>
+          </tr>
+          <tr>
+            <td>8 확장</td>
+            <td>상담 알림·스케줄·다계정</td>
+            <td>Growth / 연간</td>
+            <td class="wallet-open">추가 오픈</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>2. 지갑 오픈 시점 — 강도 순위</h2>
+      <div class="ranks">
+        <div class="rank">
+          <div class="rank-head">
+            <h3>Aha + 첫 영업 신호 (체험 D3~D14)</h3>
+            <span class="pill g">1순위 · 결제 트리거</span>
+          </div>
+          <div class="bar g"><i></i></div>
+          <p>내 사진 → 릴스/쇼룸 → 상담 CTR·견적 문의·“이거 보내드릴게요” 사용. 문서 Aha: 「현장 사진만 올리면 릴스/숏츠가 나오는가?」+ 쇼룸 전환 +20% 가설.</p>
+          <p class="meta">이때 제안: Pro 9.9만 · “대행 월 100~200만 대체” 한 장. 유료의사 게이트 &gt;25%.</p>
+        </div>
+        <div class="rank">
+          <div class="rank-head">
+            <h3>비수기 진입 · 대행사 계약 종료/갱신</h3>
+            <span class="pill w">2순위 · 캘린더</span>
+          </div>
+          <div class="bar w"><i></i></div>
+          <p>ICP Trigger 1순위. 예산이 ‘마케팅 구멍’으로 이미 잡혀 있거나, 대행비 재협상 직전이라 대체재 탐색이 정당화됨.</p>
+        </div>
+        <div class="rank">
+          <div class="rank-head">
+            <h3>쇼룸이 리드를 만든 뒤 (구독 중)</h3>
+            <span class="pill b">3순위 · 확장 결제</span>
+          </div>
+          <div class="bar b"><i></i></div>
+          <p>One-time cleanup churn 방지 구간. 상담 알림·스케줄러·Growth로 ARPU↑. 첫 결제보다 유지·업셀.</p>
+        </div>
+        <div class="rank">
+          <div class="rank-head">
+            <h3>LP 방문 · ‘포트폴리오 갤러리’ 피치</h3>
+            <span class="pill c">약한 창</span>
+          </div>
+          <div class="bar c"><i></i></div>
+          <p>문서 경고: 갤러리 포지션이면 WTP 붕괴. 기능 나열만으로는 지갑 안 열림.</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>3. 세그먼트별 지갑 타이밍</h2>
+      <div class="seg-grid">
+        <div class="seg">
+          <div class="who">중소 인테리어 (P1)</div>
+          <p class="hint" style="margin:0">Trigger: 비수기·대행 종료<br />지갑: 체험 릴스+쇼룸으로 문의/시간절감 체감 직후</p>
+          <span class="sku">Pro 9.9만</span>
+        </div>
+        <div class="seg">
+          <div class="who">홈케어/부분공사 (P2)</div>
+          <p class="hint" style="margin:0">Trigger: 당근·소셜 효율↓<br />지갑: 주 몇 건 콘텐츠가 “알아서” 나올 때</p>
+          <span class="sku">Starter 3.9~4.9만</span>
+        </div>
+        <div class="seg">
+          <div class="who">촬영·마케팅 대행사</div>
+          <p class="hint" style="margin:0">Trigger: 숏폼 요청 폭증<br />지갑: 클라이언트 N곳 납품 병목·마진 압박 시</p>
+          <span class="sku">Growth 19.9만</span>
+        </div>
+        <div class="seg">
+          <div class="who">US Kitchen &amp; Bath (나중)</div>
+          <p class="hint" style="margin:0">Trigger: LSA·CompanyCam 불만<br />지갑: Trial 중 Reels 1개 self-serve 성공 직후</p>
+          <span class="sku">$49~$79</span>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>4. 여정 × GTM 개입</h2>
+      <div class="two">
+        <div class="panel do">
+          <h3>해야 할 개입</h3>
+          <ul>
+            <li>2→3: 비수기·대행 종료 리스트 아웃바운드</li>
+            <li>5: 「사진 50장→릴스 10+쇼룸」컨시어지 (무료)</li>
+            <li>6: 쇼룸 문의/전환 숫자를 고객 앞에 보여 주기</li>
+            <li>7: 대행비 vs 9.9만 1페이지 · 14일 끝 D-2 제안</li>
+          </ul>
+        </div>
+        <div class="panel dont">
+          <h3>하면 지갑 닫힘</h3>
+          <ul>
+            <li>올인원(쇼룸+페어+CRM) 한 번에 설명</li>
+            <li>‘예쁜 포트폴리오 저장소’ 포지션</li>
+            <li>Aha 전에 요금·연간 압박</li>
+            <li>업로드 마찰 → 체험 미완료</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>5. 검증 게이트 &amp; 지금</h2>
+      <div class="stats" style="margin-bottom:16px">
+        <div class="stat ok"><div class="v" style="font-size:18px">유료의사 &gt;25%</div><div class="l">컨시어지 20사</div></div>
+        <div class="stat info"><div class="v" style="font-size:18px">신청률 &gt;8%</div><div class="l">숏폼 LP</div></div>
+        <div class="stat warn"><div class="v" style="font-size:18px">전환 +20%</div><div class="l">쇼룸 견적</div></div>
+        <div class="stat"><div class="v" style="font-size:18px">얇은 입구</div><div class="l">여정 5~6 dogfood</div></div>
+      </div>
+      <div class="verdict" style="background: var(--hot-dim); border-color: rgba(126,184,255,0.35)">
+        <strong style="color: var(--hot)">운영 함의</strong>
+        <p>
+          주말 얇은 입구(BA 2장→클링→검수)는 여정 5~6단을 내부 dogfood로 먼저 완성하는 일.
+          외부 지갑은 그 Aha를 남의 사진으로 재현한 뒤 D14에 연다.
+        </p>
+      </div>
+    </section>
+
+    <footer>
+      Findgagu OS · 구매 여정 인포그래픽 · 파일:
+      <code>docs/findgagu-os-buyer-journey-wallet.html</code>
+      · 사업 가설은 컨시어지 실험으로 검증 필요
+    </footer>
+  </div>
+</body>
+</html>

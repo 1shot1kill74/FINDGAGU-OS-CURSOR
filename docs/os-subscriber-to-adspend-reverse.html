@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Findgagu OS — 구독자 목표 → 광고비 역산</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg0: #0f1412; --bg1: #17201c; --bg2: #1e2a24;
+      --line: rgba(214, 232, 220, 0.14);
+      --text: #e8f0ea; --muted: #9aafa3;
+      --accent: #6ecf9a; --accent-dim: rgba(110, 207, 154, 0.14);
+      --warn: #e0b15a; --hot: #7eb8ff; --danger: #e07a6a;
+      --font: "IBM Plex Sans KR", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: var(--font); color: var(--text);
+      background:
+        radial-gradient(900px 500px at 10% -10%, rgba(110, 207, 154, 0.12), transparent 55%),
+        radial-gradient(700px 400px at 90% 0%, rgba(126, 184, 255, 0.08), transparent 50%),
+        linear-gradient(180deg, var(--bg0), #121816 40%, var(--bg0));
+      min-height: 100vh; line-height: 1.55;
+    }
+    .wrap { max-width: 980px; margin: 0 auto; padding: 40px 24px 80px; }
+    .eyebrow {
+      font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--accent); font-weight: 600; margin-bottom: 10px;
+    }
+    h1 {
+      font-size: clamp(26px, 4vw, 36px); font-weight: 700;
+      letter-spacing: -0.03em; margin: 0 0 10px; line-height: 1.15;
+    }
+    h2 { font-size: 17px; font-weight: 600; margin: 28px 0 10px; }
+    .sub { color: var(--muted); font-size: 14px; margin: 0 0 18px; max-width: 70ch; }
+    .box {
+      background: rgba(224, 177, 90, 0.12);
+      border: 1px solid rgba(224, 177, 90, 0.35);
+      border-radius: 14px; padding: 14px 16px; margin-bottom: 18px;
+      font-size: 13px; color: #e8d9b8;
+    }
+    .grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+    }
+    @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+    .panel {
+      background: var(--bg1); border: 1px solid var(--line);
+      border-radius: 14px; padding: 16px;
+    }
+    label {
+      display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px;
+    }
+    .field { margin-bottom: 12px; }
+    input[type="number"], select {
+      width: 100%; background: var(--bg2); border: 1px solid var(--line);
+      border-radius: 8px; color: var(--text); padding: 10px 12px;
+      font: inherit; font-size: 14px;
+    }
+    .hint { font-size: 11px; color: var(--muted); margin-top: 4px; }
+    .stats {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 8px;
+    }
+    @media (max-width: 760px) { .stats { grid-template-columns: 1fr 1fr; } }
+    .stat {
+      background: var(--bg2); border: 1px solid var(--line);
+      border-radius: 12px; padding: 12px 14px;
+    }
+    .stat .v { font-size: 20px; font-weight: 700; color: var(--accent); letter-spacing: -0.02em; }
+    .stat .v.blue { color: var(--hot); }
+    .stat .v.warn { color: var(--warn); }
+    .stat .v.bad { color: var(--danger); }
+    .stat .l { font-size: 11px; color: var(--muted); margin-top: 4px; }
+    .flow {
+      display: flex; flex-direction: column; gap: 8px; margin-top: 8px;
+    }
+    .step {
+      display: flex; justify-content: space-between; gap: 12px; align-items: baseline;
+      background: var(--bg2); border: 1px solid var(--line);
+      border-radius: 10px; padding: 10px 12px; font-size: 13px;
+    }
+    .step .name { color: var(--muted); }
+    .step .num { font-weight: 700; color: var(--text); white-space: nowrap; }
+    .arrow { text-align: center; color: var(--muted); font-size: 12px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+    th, td { text-align: right; padding: 9px 8px; border-bottom: 1px solid var(--line); }
+    th:first-child, td:first-child { text-align: left; }
+    th { color: var(--muted); font-weight: 500; font-size: 12px; }
+    .footer {
+      margin-top: 36px; font-size: 12px; color: var(--muted);
+      border-top: 1px solid var(--line); padding-top: 16px;
+    }
+    code { color: var(--accent); font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="eyebrow">Findgagu OS · Reverse planning</div>
+    <h1>구독자 목표 → 광고비 역산</h1>
+    <p class="sub">
+      앞으로 쌓을 구독자 수를 먼저 정하고, 필요한 월 신규·리드·클릭·광고비를 거꾸로 풉니다.
+      가격 기본값 9.9만 · ABM 구매율 참고값 포함.
+    </p>
+
+    <div class="box">
+      순방향(ICP→매출)과 역방향(목표→광고비)을 같이 봐야 합니다.
+      광고비 = <code>필요 신규 ÷ 전체 전환율 × CPC</code> 또는 <code>필요 신규 × CAC</code>.
+      아래 전환율·CPC는 <strong>초기 가정값</strong>이라 캠페인 나오면 바꿔야 합니다.
+    </div>
+
+    <div class="grid">
+      <div class="panel">
+        <h2 style="margin-top:0">목표·구독</h2>
+        <div class="field">
+          <label for="targetSubs">목표 유료 구독자 (명)</label>
+          <input id="targetSubs" type="number" value="250" min="10" step="10" />
+          <div class="hint">사업계획 Base MRR ~2,475만 ≈ 9.9만 × 250명</div>
+        </div>
+        <div class="field">
+          <label for="months">달성 기간 (개월)</label>
+          <input id="months" type="number" value="12" min="1" max="36" />
+        </div>
+        <div class="field">
+          <label for="churn">월 이탈률 (%)</label>
+          <input id="churn" type="number" value="5" min="1" max="20" step="0.5" />
+          <div class="hint">Base 시나리오 5%</div>
+        </div>
+        <div class="field">
+          <label for="price">월 구독가 (원)</label>
+          <input id="price" type="number" value="99000" min="1000" step="1000" />
+        </div>
+        <div class="field">
+          <label for="startSubs">현재 유료 (명)</label>
+          <input id="startSubs" type="number" value="0" min="0" step="1" />
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2 style="margin-top:0">퍼널·단가 가정</h2>
+        <div class="field">
+          <label for="paidRate">유료 전환율: ICP 제안 → 결제 (%)</label>
+          <input id="paidRate" type="number" value="41.8" min="1" max="100" step="0.1" />
+          <div class="hint">ABM @9.9만 구매율 41.8% (낙관·검증 전)</div>
+        </div>
+        <div class="field">
+          <label for="icpRate">리드 → ICP 적합 (%)</label>
+          <input id="icpRate" type="number" value="40" min="1" max="100" step="1" />
+          <div class="hint">광고 리드 중 타깃 업종·의사결정자 비율</div>
+        </div>
+        <div class="field">
+          <label for="leadRate">클릭 → 리드 (%)</label>
+          <input id="leadRate" type="number" value="8" min="0.5" max="50" step="0.5" />
+          <div class="hint">랜딩 문의·체험 신청 CTR→CVR 근사</div>
+        </div>
+        <div class="field">
+          <label for="cpc">평균 CPC (원)</label>
+          <input id="cpc" type="number" value="1200" min="100" step="100" />
+          <div class="hint">韓 B2B/업종 키워드·메타 혼합 가정 (바꿔서 민감도 볼 것)</div>
+        </div>
+        <div class="field">
+          <label for="organicShare">신규 중 비광고(오가닉·영업) 비중 (%)</label>
+          <input id="organicShare" type="number" value="30" min="0" max="100" step="5" />
+          <div class="hint">나머지는 광고로 채운다고 가정</div>
+        </div>
+      </div>
+    </div>
+
+    <h2>역산 결과</h2>
+    <div class="stats" id="stats"></div>
+
+    <div class="grid" style="margin-top:12px;">
+      <div class="panel">
+        <h2 style="margin-top:0">필요 퍼널 (월 평균)</h2>
+        <div class="flow" id="flow"></div>
+      </div>
+      <div class="panel">
+        <h2 style="margin-top:0">경제성 체크</h2>
+        <div class="stats" style="grid-template-columns:1fr 1fr;" id="econ"></div>
+        <p class="sub" style="margin-top:12px;font-size:12px;" id="verdict"></p>
+      </div>
+    </div>
+
+    <h2>기간별 참고 (같은 가정으로 목표만 바꿀 때)</h2>
+    <div class="panel" style="overflow-x:auto;">
+      <table>
+        <thead>
+          <tr>
+            <th>목표 구독자</th>
+            <th>필요 월 신규</th>
+            <th>월 광고비</th>
+            <th>기간 총 광고비</th>
+            <th>목표 MRR</th>
+          </tr>
+        </thead>
+        <tbody id="presets"></tbody>
+      </table>
+    </div>
+
+    <div class="footer">
+      역산식: 필요 월 신규 ≈ (목표 − 현재×(1−c)^T) × c / (1−(1−c)^T) &nbsp;|&nbsp;
+      광고 신규 = 월 신규 × (1 − 오가닉비중) &nbsp;|&nbsp;
+      클릭 = 광고신규 ÷ (리드율×ICP율×유료율)
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const pct = (v) => Number(v) / 100;
+
+    /** Constant new/month to hit target ending base with monthly churn */
+    function requiredMonthlyNew(start, target, churn, months) {
+      if (months <= 0) return 0;
+      if (churn <= 0) return Math.max(0, (target - start) / months);
+      const r = 1 - churn;
+      const rT = Math.pow(r, months);
+      // S_T = S0*r^T + N*(1-r^T)/c
+      // N = (S_T - S0*r^T) * c / (1-r^T)
+      const numer = target - start * rT;
+      const denom = (1 - rT) / churn;
+      return Math.max(0, numer / denom);
+    }
+
+    function calc() {
+      const target = Number($('targetSubs').value);
+      const months = Number($('months').value);
+      const churn = pct($('churn').value);
+      const price = Number($('price').value);
+      const start = Number($('startSubs').value);
+      const paidRate = pct($('paidRate').value);
+      const icpRate = pct($('icpRate').value);
+      const leadRate = pct($('leadRate').value);
+      const cpc = Number($('cpc').value);
+      const organic = pct($('organicShare').value);
+
+      const newPerMonth = requiredMonthlyNew(start, target, churn, months);
+      const maintainNew = target * churn; // 유지에 필요한 신규
+      const adNew = newPerMonth * (1 - organic);
+      const funnel = paidRate * icpRate * leadRate; // click → paid
+      const clicks = funnel > 0 ? adNew / funnel : 0;
+      const leads = clicks * leadRate;
+      const icp = leads * icpRate;
+      const adSpend = clicks * cpc;
+      const totalAd = adSpend * months;
+      const targetMrr = target * price;
+      const cac = adNew > 0 ? adSpend / adNew : 0;
+      const ltv = churn > 0 ? price / churn : price * 24;
+      const ltvCac = cac > 0 ? ltv / cac : Infinity;
+      const paybackMo = (cac > 0 && price > 0) ? cac / price : 0;
+
+      $('stats').innerHTML = `
+        <div class="stat"><div class="v">${Math.ceil(newPerMonth).toLocaleString()}명</div><div class="l">필요 월 신규(평균)</div></div>
+        <div class="stat"><div class="v blue">${Math.round(adSpend / 10000).toLocaleString()}만</div><div class="l">월 광고비(역산)</div></div>
+        <div class="stat"><div class="v warn">${Math.round(totalAd / 10000).toLocaleString()}만</div><div class="l">${months}개월 총 광고비</div></div>
+        <div class="stat"><div class="v">${Math.round(targetMrr / 10000).toLocaleString()}만</div><div class="l">목표 MRR</div></div>
+        <div class="stat"><div class="v blue">${Math.round(cac / 10000).toLocaleString()}만</div><div class="l">광고 CAC / 유료 1명</div></div>
+        <div class="stat"><div class="v ${ltvCac >= 3 ? '' : 'bad'}">${ltvCac === Infinity ? '∞' : ltvCac.toFixed(1)}x</div><div class="l">LTV/CAC (월이탈 기준)</div></div>
+      `;
+
+      $('flow').innerHTML = `
+        <div class="step"><span class="name">① 목표 구독자</span><span class="num">${target.toLocaleString()}명</span></div>
+        <div class="arrow">↓ ${months}개월 · 이탈 ${(churn * 100).toFixed(1)}%</div>
+        <div class="step"><span class="name">② 필요 월 신규</span><span class="num">${Math.ceil(newPerMonth)}명 <span style="color:var(--muted);font-weight:500">(유지만 하면 ${Math.ceil(maintainNew)})</span></span></div>
+        <div class="arrow">↓ 오가닉 ${(organic * 100).toFixed(0)}% 제외</div>
+        <div class="step"><span class="name">③ 광고로 채울 신규</span><span class="num">${Math.ceil(adNew)}명</span></div>
+        <div class="arrow">↓ ÷ 유료 ${(paidRate * 100).toFixed(1)}%</div>
+        <div class="step"><span class="name">④ 필요 ICP 제안</span><span class="num">${Math.ceil(adNew / paidRate)}건</span></div>
+        <div class="arrow">↓ ÷ ICP적합 ${(icpRate * 100).toFixed(0)}%</div>
+        <div class="step"><span class="name">⑤ 필요 리드</span><span class="num">${Math.ceil(leads)}건</span></div>
+        <div class="arrow">↓ ÷ 클릭→리드 ${(leadRate * 100).toFixed(1)}%</div>
+        <div class="step"><span class="name">⑥ 필요 클릭</span><span class="num">${Math.ceil(clicks).toLocaleString()}회</span></div>
+        <div class="arrow">↓ × CPC ${cpc.toLocaleString()}원</div>
+        <div class="step"><span class="name">⑦ 월 광고비</span><span class="num" style="color:var(--accent)">${Math.round(adSpend / 10000).toLocaleString()}만원</span></div>
+      `;
+
+      let verdict = '';
+      if (ltvCac < 1) verdict = 'LTV &lt; CAC — 이 전환·CPC면 광고로 키우면 손해. 오가닉·영업 비중을 올리거나 CPC/전환을 개선해야 함.';
+      else if (ltvCac < 3) verdict = 'LTV/CAC 1~3x — 아슬한 구간. 초기 검증용만 쓰고, 이탈·전환 개선이 선행.';
+      else if (paybackMo > 12) verdict = '회수기간 12개월 초과 — 현금 압박 시 광고 스케일 금지. CAC 낮추거나 연간결제 유도.';
+      else verdict = 'LTV/CAC 3x 이상이면 스케일 검토 가능. 다만 ABM 구매율·CPC는 아직 가정값이므로 소액 파일럿으로 실측 먼저.';
+
+      $('econ').innerHTML = `
+        <div class="stat"><div class="v">${Math.round(ltv / 10000).toLocaleString()}만</div><div class="l">LTV ≈ 가격÷월이탈</div></div>
+        <div class="stat"><div class="v warn">${paybackMo.toFixed(1)}개월</div><div class="l">단순 회수(CAC÷월가)</div></div>
+      `;
+      $('verdict').innerHTML = verdict;
+
+      const presets = [100, 250, 500, 1000];
+      $('presets').innerHTML = presets.map((t) => {
+        const n = requiredMonthlyNew(start, t, churn, months);
+        const adN = n * (1 - organic);
+        const clk = funnel > 0 ? adN / funnel : 0;
+        const spend = clk * cpc;
+        return `<tr>
+          <td>${t.toLocaleString()}명</td>
+          <td>${Math.ceil(n)}</td>
+          <td>${Math.round(spend / 10000).toLocaleString()}만</td>
+          <td>${Math.round((spend * months) / 10000).toLocaleString()}만</td>
+          <td>${Math.round((t * price) / 10000).toLocaleString()}만</td>
+        </tr>`;
+      }).join('');
+    }
+
+    ['targetSubs','months','churn','price','startSubs','paidRate','icpRate','leadRate','cpc','organicShare']
+      .forEach((id) => $(id).addEventListener('input', calc));
+    calc();
+  </script>
+</body>
+</html>

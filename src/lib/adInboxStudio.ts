@@ -57,6 +57,20 @@ export type AdInboxChannelPublishState = {
   status: ShowroomShortsPublishStatus | 'none'
   externalPostUrl: string | null
   publishedAt: string | null
+  /** 발행예정 시각 (ISO). scheduled 상태일 때 */
+  scheduledAt: string | null
+}
+
+export type AdInboxBatchWorkState = {
+  progress: AdInboxWorkProgress
+  /** 합성(최종 MP4) 완료 시각 — job.updated_at 기준 */
+  completedAt: string | null
+  /** 채널 업로드 완료일 — 세 채널 published_at 중 가장 늦은 시각 */
+  uploadedAt: string | null
+  /** 카드에 걸린 발행예정 시각 — 채널 scheduled_at 중 가장 이른 것 */
+  scheduledAt: string | null
+  /** 채널별 업로드(게시) 상태 — 카드 버튼용 */
+  channels: AdInboxChannelPublishState[]
 }
 
 export type AdInboxAsset = ShowroomImageAsset & {
@@ -101,16 +115,6 @@ export type AdInboxBatch = {
   status: AdInboxSiteStatus
 }
 
-export type AdInboxBatchWorkState = {
-  progress: AdInboxWorkProgress
-  /** 합성(최종 MP4) 완료 시각 — job.updated_at 기준 */
-  completedAt: string | null
-  /** 채널 업로드 완료일 — 세 채널 published_at 중 가장 늦은 시각 */
-  uploadedAt: string | null
-  /** 채널별 업로드(게시) 상태 — 카드 버튼용 */
-  channels: AdInboxChannelPublishState[]
-}
-
 export function formatAdInboxWorkCompletedDate(value: string | null | undefined): string | null {
   if (!value?.trim()) return null
   const parsed = new Date(value)
@@ -151,7 +155,9 @@ function adInboxChannelPublishTone(
 ): 'idle' | 'active' | 'done' | 'failed' {
   if (status === 'published') return 'done'
   if (status === 'failed') return 'failed'
-  if (['preparing', 'launch_ready', 'approved', 'publishing', 'ready'].includes(status)) {
+  if (
+    ['preparing', 'launch_ready', 'approved', 'scheduled', 'publishing', 'ready'].includes(status)
+  ) {
     return 'active'
   }
   return 'idle'
@@ -180,6 +186,10 @@ export function adInboxChannelPublishTitle(state: AdInboxChannelPublishState): s
       : `${label} 게시 완료 (공개 링크 없음)`
   }
   if (state.status === 'failed') return `${label} 실패`
+  if (state.status === 'scheduled') {
+    const when = formatAdInboxScheduledDateTime(state.scheduledAt)
+    return when ? `${label} 발행예정 ${when}` : `${label} 발행예정`
+  }
   if (adInboxChannelPublishTone(state.status) === 'active') return `${label} 업로드 진행 중`
   return `${label} 대기`
 }
@@ -389,6 +399,7 @@ function emptyAdInboxChannelStates(): AdInboxChannelPublishState[] {
     status: 'none',
     externalPostUrl: null,
     publishedAt: null,
+    scheduledAt: null,
   }))
 }
 
@@ -399,14 +410,54 @@ function deriveAdInboxChannelStates(
   return SHOWROOM_SHORTS_CHANNELS.map((channel) => {
     const target = byChannel.get(channel)
     if (!target) {
-      return { channel, status: 'none', externalPostUrl: null, publishedAt: null }
+      return {
+        channel,
+        status: 'none',
+        externalPostUrl: null,
+        publishedAt: null,
+        scheduledAt: null,
+      }
     }
     return {
       channel,
       status: target.publish_status,
       externalPostUrl: resolveAdInboxChannelPostUrl(target),
       publishedAt: target.published_at,
+      scheduledAt: target.publish_status === 'scheduled' ? target.scheduled_at : null,
     }
+  })
+}
+
+/** 채널 scheduled_at 중 가장 이른 시각 */
+export function deriveAdInboxScheduledAt(
+  channels: AdInboxChannelPublishState[],
+): string | null {
+  let earliestMs = Number.POSITIVE_INFINITY
+  let earliestIso: string | null = null
+  for (const channel of channels) {
+    if (channel.status !== 'scheduled') continue
+    const raw = channel.scheduledAt?.trim()
+    if (!raw) continue
+    const ms = new Date(raw).getTime()
+    if (Number.isNaN(ms)) continue
+    if (ms < earliestMs) {
+      earliestMs = ms
+      earliestIso = raw
+    }
+  }
+  return earliestIso
+}
+
+export function formatAdInboxScheduledDateTime(value: string | null | undefined): string | null {
+  if (!value?.trim()) return null
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return null
+  return parsed.toLocaleString('ko-KR', {
+    year: '2-digit',
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
   })
 }
 
@@ -459,22 +510,25 @@ export function deriveAdInboxBatchWorkState(jobs: ShowroomShortsJobRecord[]): Ad
       progress: 'waiting',
       completedAt: null,
       uploadedAt: null,
+      scheduledAt: null,
       channels,
     }
   }
 
   const channels = deriveAdInboxChannelStates(latest.targets)
   const uploadedAt = deriveAdInboxUploadedAt(channels)
+  const scheduledAt = deriveAdInboxScheduledAt(channels)
   if (isAdInboxCompositionDone(latest)) {
     return {
       progress: 'done',
       completedAt: latest.updated_at?.trim() || latest.created_at?.trim() || null,
       uploadedAt,
+      scheduledAt,
       channels,
     }
   }
 
-  return { progress: 'working', completedAt: null, uploadedAt, channels }
+  return { progress: 'working', completedAt: null, uploadedAt, scheduledAt, channels }
 }
 
 function trimOrNull(value: string | null | undefined): string | null {
@@ -1112,9 +1166,61 @@ export async function listAdInboxJobLinkedAssets(
   return out
 }
 
+/**
+ * 합성 완료 job에 채널 타깃이 비어 있으면(재합성 등) 같은 카드의 이전 job 타깃을 복사한다.
+ * 복사본은 final이 있으면 ready — 카드 YT/FB/IG가 draft/none으로 회색 되는 것을 막는다.
+ */
+async function healCompositionJobMissingTargets(
+  jobs: ShowroomShortsJobRecord[],
+): Promise<ShowroomShortsJobRecord[]> {
+  if (jobs.length === 0) return jobs
+
+  const primary =
+    jobs.find((job) => Boolean(job.final_video_url?.trim())) ||
+    jobs.find((job) => job.status === 'composited' || job.status === 'ready_for_review') ||
+    null
+  if (!primary) return jobs
+  if ((primary.targets ?? []).length > 0) return jobs
+
+  const donor = jobs.find((job) => job.id !== primary.id && (job.targets ?? []).length > 0)
+  if (!donor?.targets?.length) return jobs
+
+  const nowIso = new Date().toISOString()
+  const publishStatus = primary.final_video_url?.trim() ? 'ready' : 'draft'
+  const inserts = donor.targets.map((target) => ({
+    shorts_job_id: primary.id,
+    channel: target.channel,
+    title: target.title,
+    description: target.description,
+    hashtags: target.hashtags,
+    first_comment: target.first_comment,
+    publish_status: publishStatus,
+    final_video_url: primary.final_video_url,
+    preparation_payload: target.preparation_payload ?? {},
+    prepared_at: publishStatus === 'ready' ? target.prepared_at : null,
+    launch_ready_at: null,
+    scheduled_at: null,
+    updated_at: nowIso,
+  }))
+
+  const { error } = await supabase.from('showroom_shorts_targets').insert(inserts)
+  if (error) {
+    console.warn('[ad-inbox] heal composition targets failed', primary.id, error.message)
+    return jobs
+  }
+
+  // 최신 타깃을 다시 붙여 반환
+  const healed = await listShowroomShortsJobsForGroupKey(primary.before_after_group_key ?? '')
+  if (healed.length > 0) return healed
+  return jobs
+}
+
 export async function listAdInboxTimelapseJobsForBatch(batch: AdInboxBatch): Promise<ShowroomShortsJobRecord[]> {
   const byGroup = await listShowroomShortsJobsForGroupKey(buildAdInboxShortsGroupKey(batch.key))
-  if (byGroup.length > 0) return recoverPublishedPostUrlsForJobs(byGroup)
+  if (byGroup.length > 0) {
+    const healed = await healCompositionJobMissingTargets(byGroup)
+    return recoverPublishedPostUrlsForJobs(healed)
+  }
 
   const assetIds = batch.assets.map((asset) => asset.id)
   if (assetIds.length === 0) return []
@@ -1124,7 +1230,8 @@ export async function listAdInboxTimelapseJobsForBatch(batch: AdInboxBatch): Pro
   const filtered = byAssets.filter(
     (job) => assetSet.has(job.before_asset_id) && assetSet.has(job.after_asset_id),
   )
-  return recoverPublishedPostUrlsForJobs(filtered)
+  const healed = await healCompositionJobMissingTargets(filtered)
+  return recoverPublishedPostUrlsForJobs(healed)
 }
 
 /** 현장 카드 목록용: 배치별 진행상태·작업완료일 (최신 job 기준) */

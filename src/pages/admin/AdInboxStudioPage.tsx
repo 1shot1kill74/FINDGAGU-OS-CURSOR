@@ -33,7 +33,9 @@ import { getShowroomImagePreviewUrl } from '@/lib/imageAssetShowroom'
 import {
   adInboxChannelShortLabel,
   adInboxWorkProgressLabel,
+  buildAdInboxShortsGroupKey,
   buildAdInboxSiteGroupId,
+  formatAdInboxScheduledDateTime,
   formatAdInboxWorkCompletedDate,
   cleanupPeopleFromAdInboxAsset,
   createAdInboxSite,
@@ -79,6 +81,8 @@ import {
   markShowroomShortsTargetsReady,
   requestShowroomShortsPublishLaunch,
   requestShowroomShortsPublishPrepare,
+  scheduleShowroomShortsTargetsLaunch,
+  cancelShowroomShortsTargetsSchedule,
   getShowroomShortsCompositionStatus,
   stitchShowroomShortsSplit,
   updateShowroomShortsJobPrompt,
@@ -105,6 +109,20 @@ function hasActivePublish(job: AdInboxTimelapseJob) {
   return (job.targets ?? []).some((target) =>
     ['ready', 'preparing', 'publishing'].includes(target.publish_status),
   )
+}
+
+/** datetime-local 값(로컬) — ISO 저장용 */
+function toDatetimeLocalValue(iso: string | null | undefined): string {
+  if (!iso?.trim()) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+function defaultScheduleLocalValue(): string {
+  const d = new Date(Date.now() + 60 * 60 * 1000)
+  return toDatetimeLocalValue(d.toISOString())
 }
 
 function publishStatusLabel(status: string) {
@@ -306,6 +324,9 @@ export default function AdInboxStudioPage() {
   const [jobsLoading, setJobsLoading] = useState(false)
   const [actingJob, setActingJob] = useState(false)
   const [workProgressByKey, setWorkProgressByKey] = useState<Record<string, AdInboxBatchWorkState>>({})
+  /** 현장 카드별 발행예정 datetime-local 초안 */
+  const [scheduleDraftByKey, setScheduleDraftByKey] = useState<Record<string, string>>({})
+  const [schedulingBatchKey, setSchedulingBatchKey] = useState<string | null>(null)
   const [importShowroomOpen, setImportShowroomOpen] = useState(false)
   const [importAfterOnlyOpen, setImportAfterOnlyOpen] = useState(false)
   const [promoteShowroomOpen, setPromoteShowroomOpen] = useState(false)
@@ -438,11 +459,23 @@ export default function AdInboxStudioPage() {
 
   useEffect(() => {
     if (!selectedBatch) return
+    // 로딩 중·빈 jobs로 덮으면 채널이 회색으로 깜빡인다
+    if (jobsLoading) return
+    if (jobs.length === 0) return
+    const expectedKey = buildAdInboxShortsGroupKey(selectedBatch.key)
+    const belongs = jobs.some(
+      (job) =>
+        (job.before_after_group_key ?? '') === expectedKey ||
+        selectedBatch.assets.some(
+          (asset) => asset.id === job.before_asset_id || asset.id === job.after_asset_id,
+        ),
+    )
+    if (!belongs) return
     setWorkProgressByKey((prev) => ({
       ...prev,
       [selectedBatch.key]: deriveAdInboxBatchWorkState(jobs),
     }))
-  }, [selectedBatch?.key, jobs])
+  }, [selectedBatch, jobs, jobsLoading])
 
   useEffect(() => {
     if (!selectedBatch) {
@@ -965,13 +998,86 @@ export default function AdInboxStudioPage() {
     }
   }
 
+  const refreshWorkProgress = useCallback(async () => {
+    if (batches.length === 0) {
+      setWorkProgressByKey({})
+      return
+    }
+    try {
+      const map = await listAdInboxWorkProgressByBatches(batches)
+      setWorkProgressByKey(map)
+    } catch {
+      // 카드 배지 갱신 실패는 무시
+    }
+  }, [batches])
+
+  const handleSchedulePublish = async (batch: AdInboxBatch) => {
+    if (!activeJob || selectedBatch?.key !== batch.key) {
+      toast.error('예약을 걸려면 먼저 이 카드를 선택하세요.')
+      return
+    }
+    const draft =
+      scheduleDraftByKey[batch.key]?.trim() ||
+      toDatetimeLocalValue(workProgressByKey[batch.key]?.scheduledAt) ||
+      defaultScheduleLocalValue()
+    const when = new Date(draft)
+    if (Number.isNaN(when.getTime())) {
+      toast.error('예약 시각을 확인하세요.')
+      return
+    }
+    const targetIds = (activeJob.targets ?? [])
+      .filter((t) => ['launch_ready', 'approved', 'scheduled'].includes(t.publish_status))
+      .map((t) => t.id)
+    if (targetIds.length === 0) {
+      toast.error('예약 가능한 채널이 없습니다. 업로드 준비가 끝난 뒤 예약하세요.')
+      return
+    }
+    setSchedulingBatchKey(batch.key)
+    try {
+      const count = await scheduleShowroomShortsTargetsLaunch({
+        targetIds,
+        scheduledAt: when.toISOString(),
+      })
+      toast.success(`${count}개 채널 발행예정 ${formatAdInboxScheduledDateTime(when.toISOString())}`)
+      await Promise.all([refreshJobs(batch), refreshWorkProgress()])
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '발행 예약 실패')
+    } finally {
+      setSchedulingBatchKey(null)
+    }
+  }
+
+  const handleCancelSchedule = async (batch: AdInboxBatch) => {
+    if (!activeJob || selectedBatch?.key !== batch.key) {
+      toast.error('예약을 취소하려면 먼저 이 카드를 선택하세요.')
+      return
+    }
+    const targetIds = (activeJob.targets ?? [])
+      .filter((t) => t.publish_status === 'scheduled')
+      .map((t) => t.id)
+    if (targetIds.length === 0) {
+      toast.error('취소할 발행예정이 없습니다.')
+      return
+    }
+    setSchedulingBatchKey(batch.key)
+    try {
+      const count = await cancelShowroomShortsTargetsSchedule(targetIds)
+      toast.success(`${count}개 채널 예약을 취소했습니다.`)
+      await Promise.all([refreshJobs(batch), refreshWorkProgress()])
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '예약 취소 실패')
+    } finally {
+      setSchedulingBatchKey(null)
+    }
+  }
+
   const handleLaunchTarget = async (_target: ShowroomShortsTargetRecord) => {
     if (!activeJob) return
     const launchable = (activeJob.targets ?? []).filter((t) =>
       ['launch_ready', 'approved'].includes(t.publish_status),
     )
     if (launchable.length === 0) {
-      toast.error('론칭 가능한 채널이 없습니다.')
+      toast.error('론칭 가능한 채널이 없습니다. 발행예정인 채널은 예약 시각에 자동 발행됩니다.')
       return
     }
     const labels = launchable.map((t) => getChannelLabel(t.channel)).join(', ')
@@ -1307,12 +1413,39 @@ export default function AdInboxStudioPage() {
                     progress: 'waiting' as const,
                     completedAt: null,
                     uploadedAt: null,
+                    scheduledAt: null,
                     channels: deriveAdInboxBatchWorkState([]).channels,
                   }
                   const progress = workState.progress
                   const uploadedDate = formatAdInboxWorkCompletedDate(workState.uploadedAt)
+                  const scheduledLabel = formatAdInboxScheduledDateTime(workState.scheduledAt)
                   const canDeleteSite = sites.some((site) => site.id === batch.siteId)
                   const siteDeleting = deletingSiteId === batch.siteId
+                  const scheduleBusy = schedulingBatchKey === batch.key
+                  const activeJobMatchesCard =
+                    Boolean(activeJob) &&
+                    (activeJob?.before_after_group_key ?? '') ===
+                      buildAdInboxShortsGroupKey(batch.key)
+                  // 합성본+타깃만 있으면 예약 UI 유지 (ready는 준비 후 예약 가능)
+                  const canScheduleSelected =
+                    selected &&
+                    activeJobMatchesCard &&
+                    !jobsLoading &&
+                    Boolean(activeJob?.final_video_url) &&
+                    (activeJob?.targets ?? []).length > 0
+                  const hasScheduledTargets =
+                    selected &&
+                    activeJobMatchesCard &&
+                    (activeJob?.targets ?? []).some((t) => t.publish_status === 'scheduled')
+                  const canConfirmSchedule =
+                    canScheduleSelected &&
+                    (activeJob?.targets ?? []).some((t) =>
+                      ['launch_ready', 'approved', 'scheduled'].includes(t.publish_status),
+                    )
+                  const scheduleInputValue =
+                    scheduleDraftByKey[batch.key] ??
+                    toDatetimeLocalValue(workState.scheduledAt) ??
+                    ''
                   return (
                     <div
                       key={batch.key}
@@ -1377,12 +1510,19 @@ export default function AdInboxStudioPage() {
                             업로드 {uploadedDate}
                           </span>
                         ) : null}
+                        {scheduledLabel ? (
+                          <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-semibold tracking-tight text-violet-800 ring-1 ring-violet-200">
+                            발행예정 {scheduledLabel}
+                          </span>
+                        ) : null}
                         <div className="flex flex-wrap items-center gap-1">
                           {workState.channels.map((channelState) => {
                             const label = adInboxChannelShortLabel(channelState.channel)
                             const className =
                               'inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-tight ' +
-                              channelPublishButtonClass(channelState.status)
+                              (channelState.status === 'scheduled'
+                                ? 'bg-violet-50 text-violet-800 ring-1 ring-violet-200'
+                                : channelPublishButtonClass(channelState.status))
                             const title = channelPublishTitle(channelState)
                             if (channelState.status === 'published' && channelState.externalPostUrl) {
                               return (
@@ -1411,6 +1551,54 @@ export default function AdInboxStudioPage() {
                           })}
                         </div>
                       </div>
+                      {selected && canScheduleSelected ? (
+                        <div
+                          className="mt-2 space-y-1.5 border-t border-neutral-200/80 pt-2"
+                          onClick={(event) => event.stopPropagation()}
+                          onKeyDown={(event) => event.stopPropagation()}
+                        >
+                          <label className="block text-[10px] font-medium text-neutral-600">
+                            발행예정
+                            <input
+                              type="datetime-local"
+                              className="mt-0.5 w-full rounded border border-neutral-200 bg-white px-1.5 py-1 text-[11px] text-neutral-800"
+                              value={scheduleInputValue || defaultScheduleLocalValue()}
+                              onChange={(event) =>
+                                setScheduleDraftByKey((prev) => ({
+                                  ...prev,
+                                  [batch.key]: event.target.value,
+                                }))
+                              }
+                              disabled={scheduleBusy || actingJob}
+                            />
+                          </label>
+                          <div className="flex flex-wrap gap-1">
+                            <button
+                              type="button"
+                              disabled={scheduleBusy || actingJob || !canConfirmSchedule}
+                              title={
+                                canConfirmSchedule
+                                  ? '선택한 시각에 자동 발행'
+                                  : '업로드 준비가 끝난 뒤 예약할 수 있습니다'
+                              }
+                              className="rounded bg-violet-600 px-2 py-1 text-[10px] font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
+                              onClick={() => void handleSchedulePublish(batch)}
+                            >
+                              {scheduleBusy ? '저장 중…' : '예약'}
+                            </button>
+                            {hasScheduledTargets ? (
+                              <button
+                                type="button"
+                                disabled={scheduleBusy || actingJob}
+                                className="rounded border border-neutral-300 bg-white px-2 py-1 text-[10px] font-semibold text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
+                                onClick={() => void handleCancelSchedule(batch)}
+                              >
+                                예약 취소
+                              </button>
+                            ) : null}
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
                   )
                 })}

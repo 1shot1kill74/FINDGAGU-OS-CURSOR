@@ -1,9 +1,9 @@
-import { Suspense, lazy } from 'react'
+import { Suspense, lazy, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, useLocation, useParams, Navigate } from 'react-router-dom'
 import { Toaster } from 'sonner'
 import ProtectedRoute from '@/auth/ProtectedRoute'
 import { describeInternalRoute } from '@/lib/internalRouteLabel'
-import { isPublicShowroomLandingHost } from '@/lib/showroomAbmTraffic'
+import { captureShowroomAbmAttribution, isPublicShowroomLandingHost } from '@/lib/showroomAbmTraffic'
 import './App.css'
 
 const ConsultationManagement = lazy(() => import('@/pages/ConsultationManagement'))
@@ -16,7 +16,6 @@ const ShareGalleryPage = lazy(() => import('@/pages/ShareGalleryPage'))
 const PublicGalleryView = lazy(() => import('@/pages/PublicGalleryView'))
 const ShareRedirect = lazy(() => import('@/pages/ShareRedirect'))
 const PublicShowroomPage = lazy(() => import('@/pages/PublicShowroomPage'))
-const PublicShowroomCardNewsPage = lazy(() => import('@/pages/PublicShowroomCardNewsPage'))
 const PublicShowroomShortsLandingPage = lazy(() => import('@/pages/PublicShowroomShortsLandingPage'))
 const ShowroomCaseApproachPage = lazy(() => import('@/pages/ShowroomCaseApproachPage'))
 const InternalShowroomPage = lazy(() => import('@/pages/InternalShowroomPage'))
@@ -35,6 +34,7 @@ const ShowroomBasicShortsQueuePage = lazy(() => import('@/pages/admin/ShowroomBa
 const ShowroomAdsDashboardPage = lazy(() => import('@/pages/admin/ShowroomAdsDashboardPage'))
 const ShowroomAbmDashboardPage = lazy(() => import('@/pages/admin/ShowroomAbmDashboardPage'))
 const CompetitorMonitorPage = lazy(() => import('@/pages/admin/CompetitorMonitorPage'))
+const EduOutreachQueuePage = lazy(() => import('@/pages/admin/EduOutreachQueuePage'))
 const TestConsole = lazy(() => import('@/pages/admin/TestConsole'))
 
 function RouteFallback() {
@@ -63,7 +63,18 @@ function LegacyOpenShowroomRedirect(props: { targetPath: string }) {
 function LegacyOpenShowroomCardNewsDetailRedirect() {
   const location = useLocation()
   const { siteKey = '' } = useParams<{ siteKey: string }>()
-  return <Navigate replace to={`/public/showroom/cardnews/${encodeURIComponent(siteKey)}${location.search}${location.hash}`} />
+  return <Navigate replace to={`/public/showroom/case/${encodeURIComponent(siteKey)}${location.search}${location.hash}`} />
+}
+
+function LegacyPublicShowroomCardNewsListRedirect() {
+  const location = useLocation()
+  return <Navigate replace to={`/public/showroom${location.search}${location.hash}`} />
+}
+
+function LegacyPublicShowroomCardNewsDetailRedirect() {
+  const location = useLocation()
+  const { siteKey = '' } = useParams<{ siteKey: string }>()
+  return <Navigate replace to={`/public/showroom/case/${encodeURIComponent(siteKey)}${location.search}${location.hash}`} />
 }
 
 function LegacyOpenShowroomCaseDetailRedirect() {
@@ -113,7 +124,17 @@ function SnsShowroomRedirect(props: { entry?: 'sns' | 'shorts' }) {
   params.set('entry', entry)
 
   const trimmedJobId = jobId?.trim()
+
+  useEffect(() => {
+    captureShowroomAbmAttribution({
+      pathname: location.pathname,
+      search: location.search,
+      jobId: trimmedJobId,
+    })
+  }, [location.pathname, location.search, trimmedJobId])
+
   if (entry === 'shorts' && trimmedJobId) {
+    if (!params.get('jobId')) params.set('jobId', trimmedJobId)
     return (
       <Navigate
         replace
@@ -159,14 +180,14 @@ function App() {
           <Route path="/share" element={<ShareRedirect />} />
           <Route path="/share/gallery" element={<ShareGalleryPage />} />
           <Route path="/public/share" element={<PublicGalleryView />} />
-          <Route path="/public/showroom/cardnews/:siteKey" element={<ShowroomCaseApproachPage mode="public" entry="cardnews" />} />
-          <Route path="/public/showroom/cardnews" element={<PublicShowroomCardNewsPage />} />
+          <Route path="/public/showroom/cardnews/:siteKey" element={<LegacyPublicShowroomCardNewsDetailRedirect />} />
+          <Route path="/public/showroom/cardnews" element={<LegacyPublicShowroomCardNewsListRedirect />} />
           <Route path="/public/showroom/case/:siteKey" element={<ShowroomCaseApproachPage mode="public" />} />
           <Route path="/public/showroom/shorts/:jobId" element={<PublicShowroomShortsLandingPage />} />
           <Route path="/public/showroom" element={<PublicShowroomPage />} />
           <Route path="/public/showroom/original" element={<OriginalShowroomPage mode="public" />} />
           <Route path="/open-showroom/cardnews/:siteKey" element={<LegacyOpenShowroomCardNewsDetailRedirect />} />
-          <Route path="/open-showroom/cardnews" element={<LegacyOpenShowroomRedirect targetPath="/public/showroom/cardnews" />} />
+          <Route path="/open-showroom/cardnews" element={<LegacyOpenShowroomRedirect targetPath="/public/showroom" />} />
           <Route path="/open-showroom/case/:siteKey" element={<LegacyOpenShowroomCaseDetailRedirect />} />
           <Route path="/open-showroom" element={<LegacyOpenShowroomRedirect targetPath="/public/showroom" />} />
           <Route path="/open-showroom/original" element={<LegacyOpenShowroomRedirect targetPath="/public/showroom/original" />} />
@@ -197,6 +218,7 @@ function App() {
             <Route path="/admin/showroom-ads" element={<ShowroomAdsDashboardPage />} />
             <Route path="/admin/showroom-abm" element={<ShowroomAbmDashboardPage />} />
             <Route path="/admin/competitor-monitor" element={<CompetitorMonitorPage />} />
+            <Route path="/admin/edu-outreach" element={<EduOutreachQueuePage />} />
             <Route path="/admin/test-console" element={<TestConsole />} />
           </Route>
         </Routes>

@@ -1,0 +1,21 @@
+# Crawl4AI self-host (MCP + REST) — 로컬 본문 추출용
+# 사용: docker compose -f docker-compose.crawl4ai.yml up -d
+# MCP: http://127.0.0.1:11235/mcp/sse
+# REST: POST http://127.0.0.1:11235/crawl
+
+services:
+  crawl4ai:
+    image: unclecode/crawl4ai:latest
+    container_name: crawl4ai
+    ports:
+      - "11235:11235"
+    shm_size: "1gb"
+    restart: unless-stopped
+    environment:
+      # mcp.json / 업무참고용 토큰과 맞출 것
+      CRAWL4AI_API_TOKEN: ${CRAWL4AI_API_TOKEN:-}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11235/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5

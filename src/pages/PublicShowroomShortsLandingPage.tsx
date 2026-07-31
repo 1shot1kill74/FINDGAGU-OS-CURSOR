@@ -9,6 +9,7 @@ import {
   trackShowroomAbmShortsLandingEnter,
   trackShowroomAbmShortsMoreSitesClick,
 } from '@/lib/showroomAbmTracking'
+import { captureShowroomAbmAttribution } from '@/lib/showroomAbmTraffic'
 import { fetchPublicShowroomShortsLanding, type PublicShowroomShortsLanding } from '@/lib/showroomShortsLanding'
 import { openShowroomConsultationChat } from '@/pages/showroom/showroomStoryCta'
 import { usePageHead } from '@/lib/usePageHead'
@@ -34,6 +35,10 @@ export default function PublicShowroomShortsLandingPage() {
   const trackedEnterJobId = useRef<string | null>(null)
 
   useEffect(() => {
+    captureShowroomAbmAttribution({ jobId })
+  }, [jobId])
+
+  useEffect(() => {
     let cancelled = false
     setLoading(true)
     setError(null)
@@ -47,6 +52,7 @@ export default function PublicShowroomShortsLandingPage() {
           return
         }
         setLanding(result)
+        captureShowroomAbmAttribution({ jobId: result.jobId })
         if (trackedEnterJobId.current !== result.jobId) {
           trackedEnterJobId.current = result.jobId
           trackShowroomAbmShortsLandingEnter({
@@ -72,6 +78,8 @@ export default function PublicShowroomShortsLandingPage() {
   const catalogHref = (() => {
     const params = new URLSearchParams(searchParams)
     if (!params.get('entry')) params.set('entry', 'shorts')
+    const attributedJobId = landing?.jobId || jobId
+    if (attributedJobId && !params.get('jobId')) params.set('jobId', attributedJobId)
     const query = params.toString()
     return `/public/showroom${query ? `?${query}` : ''}`
   })()

@@ -556,6 +556,96 @@ export async function saveShowroomCaseCanonicalBlogPost(input: {
   return { error: error ?? null }
 }
 
+/** 블로그 정본을 예약 공개(scheduled)로 전환합니다. */
+export async function scheduleShowroomCaseBlog(input: {
+  siteName: string
+  when: Date
+  post: ShowroomCaseCanonicalBlogPost
+}): Promise<{ error: Error | null; post: ShowroomCaseCanonicalBlogPost | null }> {
+  if (!(input.when instanceof Date) || Number.isNaN(input.when.getTime())) {
+    return { error: new Error('예약 시각이 올바르지 않습니다.'), post: null }
+  }
+  if (input.when.getTime() <= Date.now() - 30_000) {
+    return { error: new Error('예약 시각은 현재 이후여야 합니다.'), post: null }
+  }
+  if (!input.post.bodyMarkdown?.trim() && !input.post.bodyHtml?.trim()) {
+    return { error: new Error('예약하려면 블로그 본문이 필요합니다.'), post: null }
+  }
+
+  const next: ShowroomCaseCanonicalBlogPost = {
+    ...input.post,
+    status: 'scheduled',
+    scheduledAt: input.when.toISOString(),
+    approvedAt: null,
+    approvedBy: null,
+    updatedAt: new Date().toISOString(),
+  }
+  const { error } = await saveShowroomCaseCanonicalBlogPost({
+    siteName: input.siteName,
+    post: next,
+  })
+  return { error, post: error ? null : next }
+}
+
+/** 예약 공개를 취소하고 draft로 되돌립니다. */
+export async function cancelShowroomCaseBlogSchedule(input: {
+  siteName: string
+  post: ShowroomCaseCanonicalBlogPost
+}): Promise<{ error: Error | null; post: ShowroomCaseCanonicalBlogPost | null }> {
+  if (input.post.status !== 'scheduled') {
+    return { error: new Error('예약 상태가 아닙니다.'), post: null }
+  }
+  const next: ShowroomCaseCanonicalBlogPost = {
+    ...input.post,
+    status: 'draft',
+    scheduledAt: null,
+    updatedAt: new Date().toISOString(),
+  }
+  const { error } = await saveShowroomCaseCanonicalBlogPost({
+    siteName: input.siteName,
+    post: next,
+  })
+  return { error, post: error ? null : next }
+}
+
+/** datetime-local 입력용 (로컬 타임존) */
+export function toShowroomCaseBlogScheduleInputValue(iso: string | null | undefined): string {
+  if (!iso?.trim()) return ''
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+export function formatShowroomCaseBlogScheduledAt(iso: string | null | undefined): string {
+  if (!iso?.trim()) return ''
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleString('ko-KR', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+/** 시작 시각 + 일 간격으로 N건 예약 시각을 만듭니다 (기본 1일 간격). */
+export function buildStaggeredBlogScheduleTimes(params: {
+  count: number
+  startAt: Date
+  intervalDays?: number
+}): Date[] {
+  const count = Math.max(0, Math.floor(params.count))
+  const intervalDays = Math.max(1, Math.floor(params.intervalDays ?? 1))
+  const out: Date[] = []
+  for (let i = 0; i < count; i += 1) {
+    const when = new Date(params.startAt.getTime())
+    when.setDate(when.getDate() + i * intervalDays)
+    out.push(when)
+  }
+  return out
+}
+
 export async function saveShowroomCaseConsultationCardDraft(input: {
   siteName: string
   headlineHook?: string | null

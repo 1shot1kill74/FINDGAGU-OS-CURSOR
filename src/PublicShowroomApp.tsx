@@ -1,10 +1,10 @@
-import { Suspense, lazy } from 'react'
+import { Suspense, lazy, useEffect } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom'
 import { Toaster } from 'sonner'
+import { captureShowroomAbmAttribution } from '@/lib/showroomAbmTraffic'
 import './App.css'
 
 const PublicShowroomPage = lazy(() => import('@/pages/PublicShowroomPage'))
-const PublicShowroomCardNewsPage = lazy(() => import('@/pages/PublicShowroomCardNewsPage'))
 const PublicShowroomShortsLandingPage = lazy(() => import('@/pages/PublicShowroomShortsLandingPage'))
 const ShowroomCaseApproachPage = lazy(() => import('@/pages/ShowroomCaseApproachPage'))
 const ContactPage = lazy(() => import('@/pages/ContactPage'))
@@ -80,7 +80,17 @@ function SnsShowroomRedirect(props: { entry?: 'sns' | 'shorts' }) {
   const { channel, jobId } = useParams<{ channel?: string; jobId?: string }>()
   const params = buildShowroomSearchParams(location.search, entry, channel)
   const trimmedJobId = jobId?.trim()
+
+  useEffect(() => {
+    captureShowroomAbmAttribution({
+      pathname: location.pathname,
+      search: location.search,
+      jobId: trimmedJobId,
+    })
+  }, [location.pathname, location.search, trimmedJobId])
+
   if (entry === 'shorts' && trimmedJobId) {
+    if (!params.get('jobId')) params.set('jobId', trimmedJobId)
     return (
       <Navigate
         replace
@@ -99,7 +109,18 @@ function LegacyOpenShowroomRedirect(props: { targetPath: string }) {
 function LegacyOpenShowroomCardNewsDetailRedirect() {
   const location = useLocation()
   const { siteKey = '' } = useParams<{ siteKey: string }>()
-  return <Navigate replace to={`/public/showroom/cardnews/${encodeURIComponent(siteKey)}${location.search}${location.hash}`} />
+  return <Navigate replace to={`/public/showroom/case/${encodeURIComponent(siteKey)}${location.search}${location.hash}`} />
+}
+
+function LegacyPublicShowroomCardNewsListRedirect() {
+  const location = useLocation()
+  return <Navigate replace to={`/public/showroom${location.search}${location.hash}`} />
+}
+
+function LegacyPublicShowroomCardNewsDetailRedirect() {
+  const location = useLocation()
+  const { siteKey = '' } = useParams<{ siteKey: string }>()
+  return <Navigate replace to={`/public/showroom/case/${encodeURIComponent(siteKey)}${location.search}${location.hash}`} />
 }
 
 function LegacyOpenShowroomCaseDetailRedirect() {
@@ -115,13 +136,13 @@ export default function PublicShowroomApp() {
       <Suspense fallback={<RouteFallback />}>
         <Routes>
           <Route path="/" element={<RootRedirect />} />
-          <Route path="/public/showroom/cardnews/:siteKey" element={<ShowroomCaseApproachPage mode="public" entry="cardnews" />} />
-          <Route path="/public/showroom/cardnews" element={<PublicShowroomCardNewsPage />} />
+          <Route path="/public/showroom/cardnews/:siteKey" element={<LegacyPublicShowroomCardNewsDetailRedirect />} />
+          <Route path="/public/showroom/cardnews" element={<LegacyPublicShowroomCardNewsListRedirect />} />
           <Route path="/public/showroom/case/:siteKey" element={<ShowroomCaseApproachPage mode="public" />} />
           <Route path="/public/showroom/shorts/:jobId" element={<PublicShowroomShortsLandingPage />} />
           <Route path="/public/showroom" element={<PublicShowroomPage />} />
           <Route path="/open-showroom/cardnews/:siteKey" element={<LegacyOpenShowroomCardNewsDetailRedirect />} />
-          <Route path="/open-showroom/cardnews" element={<LegacyOpenShowroomRedirect targetPath="/public/showroom/cardnews" />} />
+          <Route path="/open-showroom/cardnews" element={<LegacyOpenShowroomRedirect targetPath="/public/showroom" />} />
           <Route path="/open-showroom/case/:siteKey" element={<LegacyOpenShowroomCaseDetailRedirect />} />
           <Route path="/open-showroom" element={<LegacyOpenShowroomRedirect targetPath="/public/showroom" />} />
           <Route path="/sns" element={<SnsShowroomRedirect entry="sns" />} />

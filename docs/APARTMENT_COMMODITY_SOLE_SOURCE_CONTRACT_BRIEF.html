@@ -1,0 +1,922 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>아파트 공산품 수의계약 안내 자료</title>
+  <style>
+    :root {
+      --bg: #f4f6f9;
+      --surface: #ffffff;
+      --surface-muted: #f8fafc;
+      --border: #e2e8f0;
+      --text: #1e293b;
+      --text-muted: #64748b;
+      --primary: #1d4ed8;
+      --primary-soft: #eff6ff;
+      --primary-border: #bfdbfe;
+      --success: #047857;
+      --success-soft: #ecfdf5;
+      --success-border: #a7f3d0;
+      --warning: #b45309;
+      --warning-soft: #fffbeb;
+      --warning-border: #fde68a;
+      --accent: #0f766e;
+      --shadow: 0 1px 3px rgba(15, 23, 42, 0.06), 0 8px 24px rgba(15, 23, 42, 0.04);
+      --radius: 12px;
+      --radius-sm: 8px;
+      --max-width: 920px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: "Pretendard", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.65;
+      font-size: 15px;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .page {
+      max-width: var(--max-width);
+      margin: 0 auto;
+      padding: 32px 20px 64px;
+    }
+
+    /* Header */
+    .doc-header {
+      background: linear-gradient(135deg, #1e3a8a 0%, #1d4ed8 55%, #2563eb 100%);
+      color: #fff;
+      border-radius: var(--radius);
+      padding: 36px 32px 32px;
+      margin-bottom: 28px;
+      box-shadow: var(--shadow);
+    }
+
+    .doc-header .badge {
+      display: inline-block;
+      background: rgba(255,255,255,0.18);
+      border: 1px solid rgba(255,255,255,0.28);
+      border-radius: 999px;
+      padding: 4px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      margin-bottom: 14px;
+    }
+
+    .doc-header h1 {
+      font-size: 26px;
+      font-weight: 800;
+      line-height: 1.35;
+      margin-bottom: 12px;
+    }
+
+    .doc-header .meta {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 10px 20px;
+      margin-top: 20px;
+      font-size: 13.5px;
+      opacity: 0.92;
+    }
+
+    .doc-header .meta span strong {
+      display: block;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      opacity: 0.75;
+      margin-bottom: 2px;
+      font-weight: 600;
+    }
+
+    /* Conclusion banner */
+    .conclusion {
+      background: var(--success-soft);
+      border: 1px solid var(--success-border);
+      border-left: 4px solid var(--success);
+      border-radius: var(--radius-sm);
+      padding: 18px 20px;
+      margin-bottom: 28px;
+      font-size: 15px;
+    }
+
+    .conclusion strong { color: var(--success); }
+
+    /* TOC */
+    .toc {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px 24px;
+      margin-bottom: 28px;
+      box-shadow: var(--shadow);
+    }
+
+    .toc h2 {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 12px;
+    }
+
+    .toc ol {
+      padding-left: 20px;
+      columns: 2;
+      column-gap: 24px;
+    }
+
+    .toc li { margin-bottom: 6px; }
+    .toc a { color: var(--primary); text-decoration: none; font-size: 14px; }
+    .toc a:hover { text-decoration: underline; }
+
+    /* Sections */
+    section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 28px 28px 24px;
+      margin-bottom: 20px;
+      box-shadow: var(--shadow);
+    }
+
+    section h2 {
+      font-size: 18px;
+      font-weight: 800;
+      color: var(--text);
+      margin-bottom: 16px;
+      padding-bottom: 10px;
+      border-bottom: 2px solid var(--primary-soft);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    section h2 .num {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      background: var(--primary);
+      color: #fff;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+
+    section h3 {
+      font-size: 15px;
+      font-weight: 700;
+      margin: 20px 0 10px;
+      color: var(--text);
+    }
+
+    section p { margin-bottom: 12px; color: var(--text); }
+    section p.muted { color: var(--text-muted); font-size: 14px; }
+
+    /* Tables */
+    .table-wrap { overflow-x: auto; margin: 12px 0 16px; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    th {
+      background: var(--surface-muted);
+      color: var(--text);
+      font-weight: 700;
+      text-align: left;
+      padding: 10px 14px;
+      border: 1px solid var(--border);
+      white-space: nowrap;
+    }
+
+    td {
+      padding: 10px 14px;
+      border: 1px solid var(--border);
+      vertical-align: top;
+    }
+
+    tr:nth-child(even) td { background: #fafbfc; }
+
+    td.highlight { background: var(--primary-soft) !important; font-weight: 600; color: var(--primary); }
+    td.good { background: var(--success-soft) !important; }
+
+    /* Blockquote / law quote */
+    .law-quote {
+      background: var(--primary-soft);
+      border-left: 4px solid var(--primary);
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+      padding: 14px 18px;
+      margin: 12px 0;
+      font-size: 15px;
+      font-weight: 600;
+      color: #1e3a8a;
+    }
+
+    /* Key-value list */
+    .kv-list { list-style: none; margin: 8px 0 16px; }
+
+    .kv-list li {
+      display: flex;
+      gap: 12px;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 14px;
+    }
+
+    .kv-list li:last-child { border-bottom: none; }
+    .kv-list .key { font-weight: 700; min-width: 110px; color: var(--text-muted); flex-shrink: 0; }
+
+    /* Checklist */
+    .checklist { list-style: none; margin: 12px 0; }
+
+    .checklist li {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 10px 14px;
+      background: var(--surface-muted);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      margin-bottom: 8px;
+      font-size: 14px;
+    }
+
+    .checklist .box {
+      width: 18px;
+      height: 18px;
+      border: 2px solid var(--primary);
+      border-radius: 4px;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+
+    /* Compare cards */
+    .compare-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      margin: 14px 0;
+    }
+
+    @media (max-width: 640px) {
+      .compare-grid { grid-template-columns: 1fr; }
+      .toc ol { columns: 1; }
+    }
+
+    .compare-card {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+    }
+
+    .compare-card .card-head {
+      padding: 10px 14px;
+      font-weight: 700;
+      font-size: 13px;
+    }
+
+    .compare-card.bad .card-head { background: #fef2f2; color: #b91c1c; border-bottom: 1px solid #fecaca; }
+    .compare-card.good .card-head { background: var(--success-soft); color: var(--success); border-bottom: 1px solid var(--success-border); }
+
+    .compare-card ul {
+      padding: 12px 14px 12px 28px;
+      font-size: 13.5px;
+    }
+
+    .compare-card li { margin-bottom: 6px; }
+
+    /* FAQ */
+    .faq-item {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      margin-bottom: 10px;
+      overflow: hidden;
+    }
+
+    .faq-q {
+      background: var(--surface-muted);
+      padding: 12px 16px;
+      font-weight: 700;
+      font-size: 14px;
+      color: var(--primary);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .faq-a {
+      padding: 12px 16px;
+      font-size: 14px;
+      line-height: 1.7;
+    }
+
+    /* Process steps */
+    .steps { margin: 12px 0; }
+
+    .step {
+      display: flex;
+      gap: 14px;
+      margin-bottom: 0;
+      position: relative;
+    }
+
+    .step:not(:last-child)::before {
+      content: "";
+      position: absolute;
+      left: 15px;
+      top: 32px;
+      bottom: 0;
+      width: 2px;
+      background: var(--border);
+    }
+
+    .step-num {
+      width: 32px;
+      height: 32px;
+      background: var(--primary);
+      color: #fff;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      font-weight: 700;
+      flex-shrink: 0;
+      z-index: 1;
+    }
+
+    .step-body {
+      flex: 1;
+      padding-bottom: 20px;
+    }
+
+    .step-body strong { display: block; margin-bottom: 4px; font-size: 14px; }
+    .step-body span { font-size: 13px; color: var(--text-muted); }
+
+    .step-group-label {
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      margin: 16px 0 12px 46px;
+    }
+
+    /* Appendix pre */
+    .doc-pre {
+      background: #1e293b;
+      color: #e2e8f0;
+      border-radius: var(--radius-sm);
+      padding: 20px 22px;
+      font-size: 13px;
+      line-height: 1.75;
+      white-space: pre-wrap;
+      font-family: "Pretendard", "Apple SD Gothic Neo", monospace;
+      overflow-x: auto;
+      margin: 12px 0;
+    }
+
+    /* Note box */
+    .note {
+      background: var(--warning-soft);
+      border: 1px solid var(--warning-border);
+      border-radius: var(--radius-sm);
+      padding: 12px 16px;
+      font-size: 13.5px;
+      color: #92400e;
+      margin: 12px 0;
+    }
+
+    /* Footer */
+    .doc-footer {
+      text-align: center;
+      font-size: 12.5px;
+      color: var(--text-muted);
+      margin-top: 32px;
+      padding-top: 20px;
+      border-top: 1px solid var(--border);
+    }
+
+    /* Print */
+    @media print {
+      body { background: #fff; font-size: 12px; }
+      .page { padding: 0; max-width: 100%; }
+      section, .toc, .doc-header { box-shadow: none; break-inside: avoid; }
+      .doc-header { background: #1d4ed8 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      a { color: inherit; text-decoration: none; }
+      .doc-actions { display: none !important; }
+    }
+
+    /* PDF / print actions */
+    .doc-actions {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin: 0 0 20px;
+      padding: 12px 16px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      box-shadow: var(--shadow);
+    }
+
+    .doc-actions p {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin: 0;
+    }
+
+    .doc-actions .buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .doc-actions a,
+    .doc-actions button {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 14px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+      text-decoration: none;
+      border: 1px solid transparent;
+    }
+
+    .doc-actions .btn-primary {
+      background: var(--primary);
+      color: #fff;
+    }
+
+    .doc-actions .btn-primary:hover {
+      background: #1e40af;
+    }
+
+    .doc-actions .btn-secondary {
+      background: var(--surface-muted);
+      color: var(--text);
+      border-color: var(--border);
+    }
+
+    .doc-actions .btn-secondary:hover {
+      background: #eef2f7;
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+
+    <div class="doc-actions" aria-label="문서 내보내기">
+      <p>PDF로 저장하거나 인쇄할 수 있습니다.</p>
+      <div class="buttons">
+        <a class="btn-primary" href="APARTMENT_COMMODITY_SOLE_SOURCE_CONTRACT_BRIEF.pdf" download="아파트_공산품_수의계약_안내자료.pdf">PDF 다운로드</a>
+        <button type="button" class="btn-secondary" onclick="window.print()">인쇄 / PDF로 저장</button>
+      </div>
+    </div>
+
+    <header class="doc-header">
+      <div class="badge">계약 방식 안내 · 담당자 제출용</div>
+      <h1>아파트 공산품 수의계약<br>안내 자료</h1>
+      <div class="meta">
+        <span><strong>용도</strong>관리사무소·입주자대표회의 담당자 설명</span>
+        <span><strong>대상 계약</strong>공산품 구매 (총 견적 약 2,800만 원)</span>
+        <span><strong>작성 목적</strong>경쟁입찰 없이 수의계약 가능 근거 제시</span>
+      </div>
+    </header>
+
+    <div class="conclusion">
+      <strong>한 줄 결론</strong> — 본 계약은 금액(약 2,800만 원)과 관계없이
+      「공산품 구입」 수의계약 대상에 해당하며, <strong>입찰 의무가 없습니다.</strong>
+      다만 수의계약이라도 <strong>입대위 사전 의결·K-apt·홈페이지 공개</strong>는 반드시 이행해야 합니다.
+    </div>
+
+    <nav class="toc">
+      <h2>목차</h2>
+      <ol>
+        <li><a href="#s1">요약 (1분 브리핑)</a></li>
+        <li><a href="#s2">법령 근거</a></li>
+        <li><a href="#s3">공산품 vs 공사·용역 구분</a></li>
+        <li><a href="#s4">입찰 vs 수의계약 비교</a></li>
+        <li><a href="#s5">업무 처리 절차</a></li>
+        <li><a href="#s6">담당자 FAQ</a></li>
+        <li><a href="#s7">본 계약 개요</a></li>
+        <li><a href="#appendix-a">부록 A · 의결 안건</a></li>
+        <li><a href="#appendix-b">부록 B · 선정 사유서</a></li>
+        <li><a href="#appendix-c">부록 C · 참고 자료</a></li>
+      </ol>
+    </nav>
+
+    <!-- 1. 요약 -->
+    <section id="s1">
+      <h2><span class="num">1</span> 요약 (담당자 1분 브리핑)</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>항목</th><th>내용</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>일반 원칙</strong></td>
+              <td>공동주택에서 500만 원(부가세 별도)을 초과하는 물품·공사는 원칙적으로 <strong>경쟁입찰</strong></td>
+            </tr>
+            <tr>
+              <td><strong>본 건 적용 예외</strong></td>
+              <td class="highlight">「공산품을 구입하는 경우」→ 금액과 무관하게 <strong>수의계약 가능</strong></td>
+            </tr>
+            <tr>
+              <td><strong>법적 근거</strong></td>
+              <td>국토교통부 고시 「주택관리업자 및 사업자 선정지침」 제4조 제3항, [별표 2] 제2호</td>
+            </tr>
+            <tr>
+              <td><strong>본 건 성격</strong></td>
+              <td>완제품 형태의 가구·비품 <strong>물품 공급</strong> (별도 면허 공사 없음, 단순 조립·배치)</td>
+            </tr>
+            <tr>
+              <td><strong>필수 절차</strong></td>
+              <td>입주자대표회의 <strong>사전 의결</strong> → 수의계약 체결 → K-apt·단지 홈페이지 <strong>결과 공개</strong></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 2. 법령 근거 -->
+    <section id="s2">
+      <h2><span class="num">2</span> 법령 근거</h2>
+
+      <h3>2-1. 근거 규정</h3>
+      <ul class="kv-list">
+        <li><span class="key">규정명</span><span>국토교통부 고시 「주택관리업자 및 사업자 선정지침」</span></li>
+        <li><span class="key">조항</span><span><strong>제4조 제3항</strong> 및 <strong>[별표 2] 수의계약의 대상</strong></span></li>
+      </ul>
+
+      <h3>2-2. [별표 2] 제2호 (핵심)</h3>
+      <div class="law-quote">「공산품을 구입하는 경우」 수의계약을 할 수 있다.</div>
+
+      <h3>2-3. 제4조 제3항 (구조)</h3>
+      <div class="law-quote">제1항에도 불구하고 [별표 2]에 해당하는 경우에는 <strong>수의계약</strong>을 할 수 있다.</div>
+      <p class="muted">일반적인 소액 수의계약 한도(별표 2 제6호: 300만 원 이하 등)와 <strong>별개로</strong>, 공산품 구입은 <strong>금액 제한 없이</strong> 수의계약 예외에 해당합니다.</p>
+
+      <h3>2-4. 국토교통부 유권해석 요지</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>구분</th><th>해석 내용</th></tr></thead>
+          <tbody>
+            <tr><td><strong>금액</strong></td><td>공산품 수의계약 시 <strong>계약금액 제한 없음</strong></td></tr>
+            <tr><td><strong>공산품 정의</strong></td><td>공업적으로 생산된 제품으로, 소비자가 <strong>완제품 형태</strong>로 구입 가능하고 <strong>별도 가공 없이</strong> 사용 가능한 최종 제품(또는 부속품)</td></tr>
+            <tr><td><strong>단순 조립</strong></td><td>별도 가공이 아닌 <strong>단순 조립</strong>은 공산품 범위에 포함 (책상·의자 등 가구 관련 민원회신 다수)</td></tr>
+            <tr><td><strong>설치·공사</strong></td><td><strong>면허·등록이 필요한 전문 기술인력의 설치·공사</strong>를 수반하면 공산품 구입이 아님 → 500만 원 초과 시 입찰 대상</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note">
+        <strong>참고 민원회신</strong><br>
+        · 독서실 책상·의자 등 가구: 단순 조립만 필요 시 공산품 수의계약 가능 (국토교통부 전자민원, 2019.11)<br>
+        · 공산품 수의계약: 금액 제한 없으나 전문적 기술인력의 설치·공사를 수반하지 않아야 함 (주택건설공급과, 2025.4)
+      </div>
+    </section>
+
+    <!-- 3. 공산품 vs 공사 -->
+    <section id="s3">
+      <h2><span class="num">3</span> 「공산품」 vs 「공사·용역」 구분</h2>
+      <p class="muted">담당자가 가장 많이 검토하는 부분입니다. 아래 표로 본 건이 어느 쪽에 해당하는지 명확히 합니다.</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>구분</th>
+              <th>공산품 구입 (수의계약 가능)</th>
+              <th>공사·용역 (500만 원 초과 시 입찰)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>계약 본질</strong></td>
+              <td class="good">완제품 <strong>물품의 매매·공급</strong></td>
+              <td>시공·설치·배관·전기 등 <strong>공사 수행</strong></td>
+            </tr>
+            <tr>
+              <td><strong>인력</strong></td>
+              <td class="good">관리소 직원 또는 입주민이 <strong>단순 배치·조립</strong> 가능</td>
+              <td><strong>면허·등록 전문 인력</strong>의 시공 필수</td>
+            </tr>
+            <tr>
+              <td><strong>예시 (가능)</strong></td>
+              <td class="good">책상, 의자, 파티션, 조명기구, 사무가구, 소방감지기(단순 교체) 등</td>
+              <td>—</td>
+            </tr>
+            <tr>
+              <td><strong>예시 (불가)</strong></td>
+              <td>—</td>
+              <td>에어컨 구매 + <strong>배관·전기 공사</strong> 일괄, 인테리어 공사, 전기·소방 <strong>공사</strong> 포함 계약</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>본 건 해당 여부 (실제 품목에 맞게 체크)</h3>
+      <ul class="checklist">
+        <li><span class="box"></span><span>계약서 상 <strong>물품 공급(매매)</strong>이 주된 목적이다</span></li>
+        <li><span class="box"></span><span>견적 항목이 <strong>완제품 가구·비품</strong> 단위로 구분되어 있다</span></li>
+        <li><span class="box"></span><span><strong>전기·소방·배관 등 면허 공사</strong>가 포함되지 않았다 (포함 시 별도 항목 분리·입찰 검토)</span></li>
+        <li><span class="box"></span><span>설치는 <strong>단순 조립·배치</strong> 수준이며, 관리소 또는 공급업체의 일반 인력으로 가능하다</span></li>
+        <li><span class="box"></span><span>공사비·시공비가 아닌 <strong>물품 대금</strong>이 계약 금액의 대부분을 차지한다</span></li>
+      </ul>
+      <p class="muted">위 항목이 모두 해당하면 「공산품 구입」 수의계약 근거가 성립합니다.</p>
+    </section>
+
+    <!-- 4. 비교 -->
+    <section id="s4">
+      <h2><span class="num">4</span> 입찰 vs 수의계약 비교 (본 건 기준)</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>항목</th><th>경쟁입찰 (일반 원칙)</th><th>수의계약 (공산품 — 본 건)</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>적용 조건</strong></td>
+              <td>500만 원(부가세 별도) 초과 물품·공사</td>
+              <td class="highlight">[별표 2] 제2호 공산품 구입</td>
+            </tr>
+            <tr>
+              <td><strong>금액 한도</strong></td>
+              <td>해당</td>
+              <td class="highlight"><strong>없음</strong> (2,800만 원도 가능)</td>
+            </tr>
+            <tr>
+              <td><strong>절차 부담</strong></td>
+              <td>공고·입찰·개찰·계약 (수 주~수 개월)</td>
+              <td class="good">견적 검토·의결·계약 (상대적으로 신속)</td>
+            </tr>
+            <tr>
+              <td><strong>입대위 의결</strong></td>
+              <td>필요</td>
+              <td><strong>사전 의결 필수</strong> ([별표 2] 비고)</td>
+            </tr>
+            <tr>
+              <td><strong>결과 공개</strong></td>
+              <td>필요</td>
+              <td><strong>K-apt·홈페이지 공개 필수</strong></td>
+            </tr>
+            <tr>
+              <td><strong>타 단지 사례</strong></td>
+              <td>—</td>
+              <td>동일 업종·동일 품목으로 <strong>타 아파트에서도 공산품 수의계약</strong> 관행 있음</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 5. 절차 -->
+    <section id="s5">
+      <h2><span class="num">5</span> 업무 처리 절차 (체크리스트)</h2>
+      <p class="muted">수의계약은 <strong>입찰만 면제</strong>되는 것이지, 자금 집행·투명성 절차는 동일하게 지켜야 합니다.</p>
+
+      <div class="step-group-label">사전 (계약 전)</div>
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">1</div>
+          <div class="step-body">
+            <strong>견적서·품목명세서 확정</strong>
+            <span>담당: 공급업체 · 완제품 단위, 공사 항목 미포함 확인</span>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <div class="step-body">
+            <strong>입주자대표회의 사전 의결</strong>
+            <span>담당: 관리주체 · [별표 2] 비고: 수의계약 시 사전 의결 의무</span>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <div class="step-body">
+            <strong>의결 안건 작성</strong>
+            <span>담당: 관리소 · 부록 A 양식 참고</span>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num">4</div>
+          <div class="step-body">
+            <strong>(권장) 2인 이상 견적 비교</strong>
+            <span>담당: 관리소 · 법적 필수는 아니나 투명성·분쟁 예방</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="note">
+        이미 입대위 승인 예산안 내 1회성 단순 구매는 관리규약상 소장 전결 가능한 경우도 있으나,
+        <strong>2,800만 원 규모는 입대위 의결을 권장·준수</strong>하는 것이 안전합니다.
+      </div>
+
+      <div class="step-group-label">계약 체결</div>
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">5</div>
+          <div class="step-body">
+            <strong>수의계약서 작성·체결</strong>
+            <span>물품 공급 계약, 품목·수량·단가·납품일 명시</span>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num">6</div>
+          <div class="step-body">
+            <strong>사업자 선정 사유서 보관</strong>
+            <span>「공산품 구입」[별표 2] 제2호 근거 기재</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="step-group-label">사후 (계약 후)</div>
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">7</div>
+          <div class="step-body">
+            <strong>선정 결과·계약 요지 공개</strong>
+            <span>공개처: K-apt (공동주택관리정보시스템)</span>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num">8</div>
+          <div class="step-body">
+            <strong>동일 내용 게시</strong>
+            <span>공개처: 아파트 인터넷 홈페이지</span>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num">9</div>
+          <div class="step-body">
+            <strong>납품·검수·대금 지급</strong>
+            <span>관리규약·회계 규정 준수</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 6. FAQ -->
+    <section id="s6">
+      <h2><span class="num">6</span> 담당자 FAQ</h2>
+
+      <div class="faq-item">
+        <div class="faq-q">Q1. 2,800만 원인데 입찰 안 해도 되나요?</div>
+        <div class="faq-a">
+          네. 「주택관리업자 및 사업자 선정지침」 [별표 2] 제2호에 따라
+          <strong>공산품 구입은 금액과 관계없이</strong> 수의계약이 가능합니다.
+          500만 원 기준은 일반 물품·공사에 적용되는 원칙이며, 공산품은 별도 예외 규정입니다.
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-q">Q2. 가구도 공산품에 해당하나요?</div>
+        <div class="faq-a">
+          국토교통부는 책상·의자 등 <strong>공업적으로 생산된 완제품 가구</strong>를,
+          별도 가공이 아닌 <strong>단순 조립</strong>만 필요한 경우 공산품으로 보는 유권해석을 하고 있습니다.
+          본 건이 해당 조건을 충족합니다.
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-q">Q3. 배송·조립까지 포함하면 공사 아닌가요?</div>
+        <div class="faq-a">
+          <strong>면허·등록이 필요한 전문 공사</strong>를 수반하지 않는
+          <strong>단순 배송·조립·배치</strong>는 공산품 구입 범위에 포함됩니다.
+          반면 배관·전기·인테리어 <strong>공사</strong>가 계약에 포함되면 공산품이 아닐 수 있으므로,
+          견적서에서 <strong>물품과 공사를 분리</strong>하는 것이 좋습니다.
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-q">Q4. 다른 아파트는 왜 수의계약으로 했나요?</div>
+        <div class="faq-a">
+          동일하게 공산품(가구·비품) 구매 건으로, [별표 2] 제2호에 따라 수의계약을 진행한 사례입니다.
+          본 건도 동일한 법적 근거·계약 성격입니다.
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-q">Q5. 입찰 없이 진행하면 감사·분쟁 위험은?</div>
+        <div class="faq-a">
+          법령상 수의계약 사유가 명확하고,
+          <strong>입대위 사전 의결</strong>·<strong>K-apt·홈페이지 공개</strong>를 이행하면 정당한 절차입니다.
+          의결 안건에 <strong>법적 근거([별표 2] 제2호)</strong>와 <strong>공산품 해당 사유</strong>를 명시해 두면 추후 설명이 용이합니다.
+        </div>
+      </div>
+    </section>
+
+    <!-- 7. 계약 개요 -->
+    <section id="s7">
+      <h2><span class="num">7</span> 본 계약 개요 <span style="font-size:13px;font-weight:500;color:var(--text-muted);margin-left:4px;">(실제 정보로 교체)</span></h2>
+      <div class="table-wrap">
+        <table>
+          <tbody>
+            <tr><td style="width:130px;"><strong>계약명</strong></td><td>(예: ○○동 커뮤니티 독서실 가구·비품 구매)</td></tr>
+            <tr><td><strong>공급업체</strong></td><td>(업체명)</td></tr>
+            <tr><td><strong>계약 금액</strong></td><td>약 28,000,000원 (부가세 포함 / 별도 — 실제 기준 명시)</td></tr>
+            <tr><td><strong>주요 품목</strong></td><td>(예: 스터디 데스크, 의자, 파티션, 조명 등 — 견적서 품목 나열)</td></tr>
+            <tr><td><strong>계약 성격</strong></td><td>공산품 구입 (물품 공급, 단순 조립·배치)</td></tr>
+            <tr><td><strong>납품 예정일</strong></td><td>(일정)</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 부록 A -->
+    <section id="appendix-a">
+      <h2><span class="num">A</span> 입주자대표회의 의결 안건 예시</h2>
+      <div class="doc-pre">【안건】 ○○아파트 ○○동 커뮤니티 독서실 가구·비품 구매 수의계약 승인의 건
+
+1. 의결 사유
+   가. 관리주체는 커뮤니티 독서실 운영을 위한 가구·비품 구매가 필요함
+   나. 본 구매는 국토교통부 고시 「주택관리업자 및 사업자 선정지침」
+       제4조 제3항 및 [별표 2] 제2호 「공산품을 구입하는 경우」에 해당하여
+       경쟁입찰 없이 수의계약이 가능함
+   다. 계약 예정 금액은 약 28,000,000원(부가세 포함)이며,
+       완제품 형태의 공산품 공급으로 별도 면허 공사를 수반하지 않음
+
+2. 계약 주요 내용
+   - 계약 상대방: (업체명)
+   - 계약 금액: 약 28,000,000원
+   - 주요 품목: (견적서 품목 요약)
+   - 계약 방식: 수의계약 (공산품 구입)
+
+3. 의결 요청
+   위와 같이 수의계약 체결을 승인하고자 하오니 심의·의결하여 주시기 바랍니다.</div>
+    </section>
+
+    <!-- 부록 B -->
+    <section id="appendix-b">
+      <h2><span class="num">B</span> 사업자 선정 사유서 (관리소 내부 보관용)</h2>
+      <div class="doc-pre">【수의계약 사업자 선정 사유서】
+
+1. 계약명: ○○동 커뮤니티 독서실 가구·비품 구매
+2. 계약 금액: 약 28,000,000원 (부가세 포함)
+3. 선정 업체: (업체명)
+4. 계약 방식: 수의계약
+5. 수의계약 근거:
+   - 「주택관리업자 및 사업자 선정지침」 제4조 제3항
+   - [별표 2] 수의계약의 대상 제2호 「공산품을 구입하는 경우」
+6. 공산품 해당 사유:
+   - 공업적으로 생산된 완제품 가구·비품의 구입
+   - 별도 가공 없이 사용 가능(단순 조립·배치만 해당)
+   - 면허·등록 전문 인력의 공사를 수반하지 않음
+7. 입주자대표회의 의결: ○○년 ○월 ○일 제○차 회의 의결
+8. 공개 예정: K-apt 및 단지 홈페이지 게시 예정</div>
+    </section>
+
+    <!-- 부록 C -->
+    <section id="appendix-c">
+      <h2><span class="num">C</span> 참고 법령·자료</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>자료</th><th>내용</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>국토교통부 고시 「주택관리업자 및 사업자 선정지침」</td>
+              <td>제4조 제3항, [별표 2]</td>
+            </tr>
+            <tr>
+              <td>공동주택관리법 시행령 제51조</td>
+              <td>입주자대표회의 의결 방법</td>
+            </tr>
+            <tr>
+              <td>K-apt</td>
+              <td>수의계약 결과·계약 정보 공개</td>
+            </tr>
+            <tr>
+              <td>국토교통부 전자민원 (가구·공산품 관련)</td>
+              <td>책상·의자 등 단순 조립 가구 → 공산품 수의계약 가능</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer class="doc-footer">
+      본 자료는 계약 담당자 설명용이며, 최종 집행 전 해당 단지 관리규약·회계 규정 및 최신 고시를 확인하시기 바랍니다.
+    </footer>
+
+  </div>
+</body>
+</html>

@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, ChevronLeft, ChevronRight, FileText, Images } from 'lucide-react'
+import { ArrowLeft, FileText, Images } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { usePublicShowroomChannelTalk } from '@/hooks/usePublicShowroomChannelTalk'
-import { buildShowroomCaseCardNewsPackage, formatShowroomCardTextForDisplay, normalizeShowroomCardNewsSlides, resolveCardNewsSlideImageUrl } from '@/lib/showroomCaseContentPackage'
 import { buildCanonicalBlogPostFromN8nBlogResponse, renderCanonicalBlogPostHtml } from '@/lib/showroomCaseCanonicalBlog'
 import { usePageHead, type PageHeadJsonLd, type PageHeadMetaTag } from '@/lib/usePageHead'
 import { getPublicShowroomDefaultOgImageUrl } from '@/lib/publicShowroomSeo'
@@ -41,38 +40,6 @@ const SOLUTION_FRAME_SUMMARY: Record<string, string> = {
 }
 
 type Mode = 'public' | 'internal'
-type EntryType = 'case' | 'cardnews'
-
-type GeneratedCardNewsSlide = {
-  slide?: number
-  role?: string
-  title?: string
-  text?: string
-  imageRef?: string
-  imageUrl?: string
-  imageAssetId?: string
-}
-
-type GeneratedCardNewsPayload = {
-  payload?: {
-    cardNews?: {
-      master?: {
-        slides?: GeneratedCardNewsSlide[]
-        cta?: string
-      }
-    }
-  }
-  cardNews?: {
-    master?: {
-      slides?: GeneratedCardNewsSlide[]
-      cta?: string
-    }
-  }
-  master?: {
-    slides?: GeneratedCardNewsSlide[]
-    cta?: string
-  }
-}
 
 function normalizeComparableText(value: string | null | undefined): string {
   return (value ?? '').replace(/\s+/g, ' ').trim()
@@ -89,41 +56,6 @@ function isPreviewOfLongerText(preview: string | null | undefined, full: string 
   if (normalizedPreview === normalizedFull) return true
   if (normalizedPreview.length < 8) return false
   return normalizedFull.startsWith(normalizedPreview)
-}
-
-function getGeneratedCardNewsSlides(value: unknown): GeneratedCardNewsSlide[] {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return []
-  const payload = value as GeneratedCardNewsPayload
-  const slides =
-    payload.payload?.cardNews?.master?.slides
-    ?? payload.cardNews?.master?.slides
-    ?? payload.master?.slides
-
-  if (!Array.isArray(slides)) return []
-  return slides.filter((slide) => slide && typeof slide === 'object')
-}
-
-function getSlideImageUrl(params: {
-  role?: string
-  imageRef?: string
-  imageUrl?: string | null
-  beforeUrl?: string | null
-  afterUrl?: string | null
-}) {
-  const ir = params.imageRef
-  const normalizedRef =
-    ir === 'before' || ir === 'after' || ir === 'signature'
-      ? ir
-      : typeof ir === 'string' && ir.startsWith('asset:')
-        ? ir
-        : 'auto'
-  return resolveCardNewsSlideImageUrl({
-    role: params.role?.trim() ?? '',
-    imageRef: normalizedRef,
-    beforeUrl: params.beforeUrl?.trim() ?? '',
-    afterUrl: params.afterUrl?.trim() ?? '',
-    imageUrl: params.imageUrl,
-  })
 }
 
 type RelatedCase = {
@@ -225,7 +157,7 @@ function useRelatedApprovedBlogCases(params: UseRelatedApprovedBlogCasesParams):
   }, [enabled, drafts, publicAssets, currentSiteName, currentIndustry, currentProblemCode, currentSolutionCode, currentBusinessTypes])
 }
 
-export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'case' }: { mode?: Mode; entry?: EntryType }) {
+export default function ShowroomCaseApproachPage({ mode = 'public' }: { mode?: Mode }) {
   usePublicShowroomChannelTalk(mode === 'public')
 
   const { siteKey } = useParams<{ siteKey: string }>()
@@ -234,12 +166,9 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [bundle, setBundle] = useState<ShowroomCaseApproachBundle | null>(null)
-  const [activeSlideIndex, setActiveSlideIndex] = useState(0)
 
   const backHref = mode === 'public'
-    ? (entry === 'cardnews'
-      ? '/public/showroom/cardnews'
-      : buildShowroomStoryBackHref(storyConcern))
+    ? buildShowroomStoryBackHref(storyConcern)
     : '/admin/showroom-case-studio'
 
   useEffect(() => {
@@ -256,9 +185,7 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
     void (async () => {
       const result = await loadShowroomCaseApproachBundle(
         siteKey,
-        mode === 'public'
-          ? (entry === 'cardnews' ? 'published-cardnews' : 'public')
-          : 'internal'
+        mode === 'public' ? 'public' : 'internal'
       )
       if (cancelled) return
       setLoading(false)
@@ -268,11 +195,11 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
             eventName: 'abm_case_open_fail',
             siteName: siteKey,
             concern: storyConcern,
-            metadata: { reason: result.reason ?? 'unknown', entry },
+            metadata: { reason: result.reason ?? 'unknown', entry: 'case' },
           })
         }
         if (result.reason === 'not_found') {
-          setError(entry === 'cardnews' ? '해당 공개 카드뉴스를 찾을 수 없습니다.' : '해당 전후 비교 사례를 찾을 수 없습니다.')
+          setError('해당 전후 비교 사례를 찾을 수 없습니다.')
         } else if (result.reason === 'incomplete') {
           setError('이 현장은 전후 이미지 세트가 완성되지 않아 설명 페이지를 열 수 없습니다.')
         } else {
@@ -287,22 +214,17 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
           siteName: result.data.siteName,
           concern: storyConcern,
           industry: result.data.businessTypes[0] ?? null,
-          metadata: { entry },
+          metadata: { entry: 'case' },
         })
       }
       setBundle(result.data)
-      setActiveSlideIndex(0)
     })()
 
     return () => {
       cancelled = true
     }
-  }, [siteKey, mode, entry, storyConcern])
+  }, [siteKey, mode, storyConcern])
 
-  const generatedCardNewsSlides = useMemo(
-    () => getGeneratedCardNewsSlides(bundle?.profile?.cardNewsGeneration?.response),
-    [bundle?.profile?.cardNewsGeneration?.response]
-  )
   const resolvedBundle: ShowroomCaseApproachBundle = bundle ?? {
     siteName: '',
     externalLabel: null,
@@ -311,18 +233,6 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
     afterImage: null,
     profile: null,
   }
-  const cardNewsPackage = useMemo(() => buildShowroomCaseCardNewsPackage({
-    siteName: resolvedBundle.siteName,
-    externalLabel: resolvedBundle.externalLabel,
-    industry: resolvedBundle.businessTypes[0] ?? null,
-    headlineHook: resolvedBundle.profile?.headlineHook?.trim() || resolvedBundle.profile?.painPoint?.trim() || '',
-    painPoint: resolvedBundle.profile?.painPoint?.trim() || '',
-    problemDetail: resolvedBundle.profile?.problemDetail?.trim() || '',
-    solutionPoint: resolvedBundle.profile?.solutionPoint?.trim() || '',
-    solutionDetail: resolvedBundle.profile?.solutionDetail?.trim() || '',
-    evidencePoints: resolvedBundle.profile?.evidencePoints?.filter((item) => item.trim()) ?? [],
-  }), [resolvedBundle])
-
   const pain = resolvedBundle.profile?.painPoint?.trim() || (resolvedBundle.profile?.problemCode ? PROBLEM_FRAME_SUMMARY[resolvedBundle.profile.problemCode] ?? '' : '')
   const solution = resolvedBundle.profile?.solutionPoint?.trim() || (resolvedBundle.profile?.solutionCode ? SOLUTION_FRAME_SUMMARY[resolvedBundle.profile.solutionCode] ?? '' : '')
   const displayName = resolvedBundle.externalLabel?.trim() || resolvedBundle.siteName
@@ -343,77 +253,11 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
   const shouldShowSolutionDetail = Boolean(solutionDetail) && normalizedSolution !== normalizedSolutionDetail
   const evidencePoints = resolvedBundle.profile?.evidencePoints?.filter((item) => item.trim()) ?? []
   const hasCopy = Boolean(pain || solution)
-  const generatedDisplaySlides = generatedCardNewsSlides.length > 0
-    ? generatedCardNewsSlides.map((slide, index) => {
-        const rawRef = slide.imageRef
-        const fromAssetId =
-          typeof slide.imageAssetId === 'string' && slide.imageAssetId.trim()
-            ? `asset:${slide.imageAssetId.trim()}`
-            : undefined
-        const imageRef =
-          rawRef === 'before' || rawRef === 'after' || rawRef === 'signature'
-            ? rawRef
-            : typeof rawRef === 'string' && rawRef.startsWith('asset:')
-              ? rawRef
-              : fromAssetId
-        const imageUrl = typeof slide.imageUrl === 'string' ? slide.imageUrl.trim() : undefined
-        return {
-          key: `${slide.role ?? 'slide'}-${index}`,
-          role: slide.role?.trim() || '',
-          title: slide.title?.trim() || `${index + 1}장`,
-          body: slide.text?.trim() || '',
-          imageRef,
-          imageUrl,
-        }
-      })
-    : cardNewsPackage.slides.map((slide) => ({
-        key: slide.key,
-        role: slide.key,
-        title: slide.title,
-        body: slide.body,
-        imageRef: undefined,
-        imageUrl: undefined,
-      }))
-  const normalizedCardSlides = normalizeShowroomCardNewsSlides({
-    slides: generatedDisplaySlides.map((slide) => ({
-      key: (slide.role || 'hook') as any,
-      title: slide.title,
-      body: slide.body,
-      imageRef: slide.imageRef,
-      imageUrl: slide.imageUrl,
-    })),
-    fallbackSlides: cardNewsPackage.slides,
-  })
-  const displaySlides = normalizedCardSlides.map((slide, index) => ({
-    key: `${slide.key}-${index}`,
-    role: slide.key,
-    title: slide.title,
-    body: slide.body,
-    imageRef: slide.imageRef,
-    imageUrl: slide.imageUrl ?? undefined,
-  }))
-  const activeSlide = displaySlides[activeSlideIndex] ?? displaySlides[0]
-  const totalSlides = displaySlides.length
   const beforeHeroUrl = resolvedBundle.beforeImage?.thumbnail_url || resolvedBundle.beforeImage?.cloudinary_url || ''
   const afterHeroUrl = resolvedBundle.afterImage?.thumbnail_url || resolvedBundle.afterImage?.cloudinary_url || ''
   const hasBeforeAfterImages = Boolean(beforeHeroUrl.trim() && afterHeroUrl.trim())
-  const activeSlideImageUrl = getSlideImageUrl({
-    role: activeSlide?.role,
-    imageRef: activeSlide?.imageRef,
-    imageUrl: activeSlide?.imageUrl,
-    beforeUrl: beforeHeroUrl,
-    afterUrl: afterHeroUrl,
-  })
-  const heroPhotoLabel =
-    beforeHeroUrl.trim() && activeSlideImageUrl.trim() === beforeHeroUrl.trim()
-      ? 'Before'
-      : afterHeroUrl.trim() && activeSlideImageUrl.trim() === afterHeroUrl.trim()
-        ? 'After'
-        : '사진'
-  const goToPreviousSlide = () => setActiveSlideIndex((prev) => (prev - 1 + totalSlides) % totalSlides)
-  const goToNextSlide = () => setActiveSlideIndex((prev) => (prev + 1) % totalSlides)
 
-  const isStoryLayout = mode === 'public' && entry === 'case'
+  const isStoryLayout = mode === 'public'
   const canonicalBlog = resolvedBundle.profile?.canonicalBlogPost ?? null
   const generatedBlogPreview = useMemo(() => {
     if (canonicalBlog?.status === 'approved') return null
@@ -433,7 +277,7 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
       : null
   const showCanonicalBlogSection = displayBlog !== null
 
-  const showRelatedCases = mode === 'public' && entry === 'case' && Boolean(canonicalBlog?.status === 'approved')
+  const showRelatedCases = mode === 'public' && Boolean(canonicalBlog?.status === 'approved')
   const relatedCases = useRelatedApprovedBlogCases({
     enabled: showRelatedCases,
     currentSiteName: resolvedBundle.siteName,
@@ -554,14 +398,12 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
           <Button asChild variant="ghost" size="sm" className="w-fit gap-1.5 px-0 text-neutral-600 hover:text-neutral-900">
             <Link to={backHref}>
               <ArrowLeft className="h-4 w-4" />
-              {mode === 'public'
-                ? (entry === 'cardnews' ? '카드뉴스 목록' : '오픈 쇼룸')
-                : '케이스 작업실'}
+              {mode === 'public' ? '오픈 쇼룸' : '케이스 작업실'}
             </Link>
           </Button>
           <div>
             <p className="text-xs font-medium uppercase tracking-wide text-emerald-700">
-              {entry === 'cardnews' ? '공개 카드뉴스' : isStoryLayout ? '이 현장의 이야기' : '현장 기획 방식'}
+              {isStoryLayout ? '이 현장의 이야기' : '현장 기획 방식'}
             </p>
             <h1 className="mt-1 text-2xl font-bold text-neutral-900 md:text-3xl">{headlineName}</h1>
             {bundle.businessTypes.length > 0 && (
@@ -581,89 +423,39 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
       </header>
 
       <main className={cn('mx-auto max-w-3xl space-y-10 px-4 py-8 md:px-6 md:py-10', isStoryLayout && 'pb-24')}>
-        {isStoryLayout ? (
-          <section className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">카드뉴스</p>
-            <h2 className="text-xl font-semibold text-neutral-900">짧게 훑어보는 핵심 이야기</h2>
-            <p className="text-sm leading-relaxed text-neutral-600">
-              바쁘실 때는 카드뉴스만 보셔도 이 현장의 문제와 해결 흐름을 파악하실 수 있습니다.
-            </p>
+        {hasBeforeAfterImages ? (
+          <section className="space-y-3" aria-labelledby="approach-ba-hero">
+            {isStoryLayout ? (
+              <div className="space-y-1">
+                <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">전후 비교</p>
+                <h2 id="approach-ba-hero" className="text-xl font-semibold text-neutral-900">이 현장의 변화</h2>
+                <p className="text-sm leading-relaxed text-neutral-600">
+                  Before·After로 공간 변화를 먼저 확인한 뒤, 아래에서 사례 이야기를 이어 보세요.
+                </p>
+              </div>
+            ) : (
+              <h2 id="approach-ba-hero" className="text-lg font-semibold text-neutral-900">전후 비교</h2>
+            )}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
+                <div className="relative aspect-[4/3] bg-neutral-100">
+                  <img src={beforeHeroUrl} alt="" className="h-full w-full object-cover" />
+                  <span className="absolute left-2 top-2 rounded-full bg-black/75 px-2 py-1 text-[11px] font-semibold text-white">
+                    Before
+                  </span>
+                </div>
+              </div>
+              <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
+                <div className="relative aspect-[4/3] bg-neutral-100">
+                  <img src={afterHeroUrl} alt="" className="h-full w-full object-cover" />
+                  <span className="absolute left-2 top-2 rounded-full bg-emerald-600/90 px-2 py-1 text-[11px] font-semibold text-white">
+                    After
+                  </span>
+                </div>
+              </div>
+            </div>
           </section>
         ) : null}
-        <section className="overflow-hidden rounded-[28px] border border-neutral-200 bg-white shadow-sm">
-          <div className="relative aspect-[16/10] bg-neutral-900">
-            <img
-              src={activeSlideImageUrl}
-              alt=""
-              className="h-full w-full object-cover"
-            />
-            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/35 to-black/10" />
-            <button
-              type="button"
-              onClick={goToPreviousSlide}
-              className="absolute left-3 top-1/2 z-10 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-black/45 text-white transition hover:bg-black/65"
-              aria-label="이전 카드"
-            >
-              <ChevronLeft className="h-5 w-5" />
-            </button>
-            <button
-              type="button"
-              onClick={goToNextSlide}
-              className="absolute right-3 top-1/2 z-10 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-black/45 text-white transition hover:bg-black/65"
-              aria-label="다음 카드"
-            >
-              <ChevronRight className="h-5 w-5" />
-            </button>
-            <div className="absolute inset-x-0 bottom-0 p-5 md:p-7">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="inline-flex rounded-full bg-black/40 px-2.5 py-1 text-[11px] font-medium text-white backdrop-blur-sm">
-                  카드뉴스 {activeSlideIndex + 1}/{totalSlides}
-                </span>
-                <span className="inline-flex rounded-full bg-black/40 px-2.5 py-1 text-[11px] font-medium text-white/90 backdrop-blur-sm">
-                  {heroPhotoLabel}
-                </span>
-              </div>
-              <div className="mt-3 max-w-2xl rounded-2xl bg-black/45 px-4 py-3 backdrop-blur-[3px]">
-                <p
-                className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/70"
-                style={{ textShadow: '0 1px 3px rgba(0,0,0,0.8), 0 0 1px rgba(0,0,0,0.6)' }}
-              >
-                  {activeSlide.title}
-                </p>
-                <p
-                  className="mt-2 whitespace-pre-wrap text-lg font-semibold leading-relaxed text-white md:text-[1.6rem]"
-                  style={{ textShadow: '0 1px 4px rgba(0,0,0,0.85), 0 0 2px rgba(0,0,0,0.5)' }}
-                >
-                  {formatShowroomCardTextForDisplay({
-                    text: activeSlide.body,
-                    role: activeSlide.role,
-                  })}
-                </p>
-              </div>
-            </div>
-          </div>
-          <div className="border-t border-neutral-200 bg-white px-4 py-4 md:px-5">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex flex-wrap gap-2">
-                {displaySlides.map((slide, index) => (
-                  <button
-                    key={`${slide.key}-${index}`}
-                    type="button"
-                    onClick={() => setActiveSlideIndex(index)}
-                    className={`inline-flex rounded-full px-3 py-1.5 text-xs font-medium transition ${
-                      index === activeSlideIndex
-                        ? 'bg-emerald-600 text-white'
-                        : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
-                    }`}
-                  >
-                    {index + 1}장 {slide.title}
-                  </button>
-                ))}
-              </div>
-              <p className="text-xs text-neutral-500">클릭해서 순서대로 넘겨보세요.</p>
-            </div>
-          </div>
-        </section>
 
         {isStoryLayout ? (
           <div className={cn(
@@ -675,22 +467,22 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div>
                 <p className="text-sm leading-relaxed text-neutral-700">
-                  <span className="font-semibold text-neutral-900">블로그 더 보기</span>{' '}
+                  <span className="font-semibold text-neutral-900">사례 이야기</span>{' '}
                   {showCanonicalBlogSection
                     ? '현장 배경·설계 이유·디테일을 이어서 볼 수 있습니다.'
-                    : '이 현장의 상세 블로그 글은 아직 준비 중입니다.'}
+                    : '이 현장의 상세 글은 아직 준비 중입니다.'}
                 </p>
                 <p className="mt-1 text-xs text-neutral-500">
                   {showCanonicalBlogSection
-                    ? '카드뉴스는 핵심 요약, 블로그는 실제 판단 근거를 길게 풀어둔 글입니다.'
-                    : '카드뉴스로 핵심 흐름을 먼저 확인하고, 자세한 상담은 채팅으로 바로 문의할 수 있습니다.'}
+                    ? '전후 사진과 함께 실제 판단 근거를 짧게 정리해 두었습니다.'
+                    : '자세한 상담은 채팅으로 바로 문의할 수 있습니다.'}
                 </p>
               </div>
               {showCanonicalBlogSection ? (
                 <Button asChild className="shrink-0 gap-1.5 bg-emerald-700 hover:bg-emerald-600">
                   <a href="#case-blog-more">
                     <FileText className="h-4 w-4" />
-                    블로그 더 보기
+                    사례 이야기 보기
                   </a>
                 </Button>
               ) : (
@@ -709,7 +501,7 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
               <div className="flex flex-wrap items-center gap-2 text-neutral-900">
                 <FileText className="h-5 w-5 text-emerald-700" aria-hidden />
                 <h2 id="canonical-blog-article" className="text-lg font-semibold">
-                  {isStoryLayout ? '더 깊게 읽는 블로그' : '사례 블로그 글'}
+                  {isStoryLayout ? '사례 이야기' : '사례 블로그 글'}
                 </h2>
                 {mode === 'internal' && displayBlog.status !== 'approved' ? (
                   <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-medium text-amber-900">
@@ -719,7 +511,7 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
               </div>
               {isStoryLayout ? (
                 <p className="text-sm leading-relaxed text-neutral-600">
-                  카드뉴스에서 훑은 내용을 바탕으로, 궁금한 점을 더 알고 싶을 때 이어서 읽어 보세요.
+                  전후 비교를 바탕으로, 궁금한 점을 더 알고 싶을 때 이어서 읽어 보세요.
                 </p>
               ) : null}
             </div>
@@ -879,40 +671,6 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
           </section>
         )}
 
-        {!isStoryLayout && hasBeforeAfterImages && (
-          <section className="space-y-4" aria-labelledby="approach-ba">
-            <h2 id="approach-ba" className="text-lg font-semibold text-neutral-900">
-              전후 비교
-            </h2>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
-                <div className="relative aspect-[4/3] bg-neutral-100">
-                  <img
-                    src={bundle.beforeImage?.thumbnail_url || bundle.beforeImage?.cloudinary_url || ''}
-                    alt=""
-                    className="h-full w-full object-cover"
-                  />
-                  <span className="absolute left-2 top-2 rounded-full bg-black/75 px-2 py-1 text-[11px] font-semibold text-white">
-                    Before
-                  </span>
-                </div>
-              </div>
-              <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
-                <div className="relative aspect-[4/3] bg-neutral-100">
-                  <img
-                    src={bundle.afterImage?.thumbnail_url || bundle.afterImage?.cloudinary_url || ''}
-                    alt=""
-                    className="h-full w-full object-cover"
-                  />
-                  <span className="absolute left-2 top-2 rounded-full bg-emerald-600/90 px-2 py-1 text-[11px] font-semibold text-white">
-                    After
-                  </span>
-                </div>
-              </div>
-            </div>
-          </section>
-        )}
-
         <section className="flex flex-col gap-3 rounded-2xl border border-emerald-200 bg-emerald-50/60 p-5 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-neutral-700">
             {isStoryLayout
@@ -926,9 +684,7 @@ export default function ShowroomCaseApproachPage({ mode = 'public', entry = 'cas
               <Link to={backHref}>
                 <Images className="h-4 w-4" />
                 {mode === 'public'
-                  ? (entry === 'cardnews'
-                    ? '카드뉴스 더 보기'
-                    : (storyConcern ? '같은 고민 사례 더 보기' : '쇼룸 더 보기'))
+                  ? (storyConcern ? '같은 고민 사례 더 보기' : '쇼룸 더 보기')
                   : '작업실로 돌아가기'}
               </Link>
             </Button>

@@ -1,5 +1,8 @@
 import { trackShowroomEvent, type ShowroomEventName } from '@/lib/showroomEngagementService'
-import { getShowroomAbmTrackingContext } from '@/lib/showroomAbmTraffic'
+import {
+  captureShowroomAbmAttribution,
+  getShowroomAbmTrackingContext,
+} from '@/lib/showroomAbmTraffic'
 
 export type ShowroomAbmEventName = Extract<
   ShowroomEventName,
@@ -82,11 +85,12 @@ export function trackShowroomAbmShortsLandingEnter(input: {
   jobId: string
   siteName?: string | null
 }): void {
+  const jobId = captureShowroomAbmAttribution({ jobId: input.jobId }) ?? input.jobId.trim()
   trackShowroomAbmEvent({
     eventName: 'abm_shorts_landing_enter',
     siteName: input.siteName,
     metadata: {
-      jobId: input.jobId,
+      jobId,
       entry: 'shorts',
     },
   })
@@ -96,11 +100,12 @@ export function trackShowroomAbmShortsMoreSitesClick(input: {
   jobId: string
   siteName?: string | null
 }): void {
+  const jobId = captureShowroomAbmAttribution({ jobId: input.jobId }) ?? input.jobId.trim()
   trackShowroomAbmEvent({
     eventName: 'abm_shorts_more_sites_click',
     siteName: input.siteName,
     metadata: {
-      jobId: input.jobId,
+      jobId,
       entry: 'shorts',
     },
   })
