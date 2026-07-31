@@ -916,16 +916,43 @@ export default function AdInboxStudioPage() {
     }
   }
 
-  const handleLaunchTarget = async (target: ShowroomShortsTargetRecord) => {
-    const confirmed = window.confirm(`${getChannelLabel(target.channel)} 채널에 실제 론칭을 시작할까요?`)
+  const handleLaunchTarget = async (_target: ShowroomShortsTargetRecord) => {
+    if (!activeJob) return
+    const launchable = (activeJob.targets ?? []).filter((t) =>
+      ['launch_ready', 'approved'].includes(t.publish_status),
+    )
+    if (launchable.length === 0) {
+      toast.error('론칭 가능한 채널이 없습니다.')
+      return
+    }
+    const labels = launchable.map((t) => getChannelLabel(t.channel)).join(', ')
+    const confirmed = window.confirm(
+      launchable.length === 1
+        ? `${labels} 채널에 실제 론칭을 시작할까요?`
+        : `${labels} 채널을 동시에 론칭할까요?`,
+    )
     if (!confirmed) return
     setActingJob(true)
     try {
-      const result = await requestShowroomShortsPublishLaunch(target.id)
+      const results = await Promise.allSettled(
+        launchable.map((t) => requestShowroomShortsPublishLaunch(t.id)),
+      )
       await refreshActiveJob()
-      toast.success(result.message ?? '론칭 승인 요청을 전달했습니다.')
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : '론칭 승인 요청 실패')
+      const ok = results.filter((r) => r.status === 'fulfilled').length
+      const fail = results.length - ok
+      if (fail === 0) {
+        toast.success(
+          ok === 1
+            ? '론칭 승인 요청을 전달했습니다.'
+            : `${ok}개 채널 론칭 승인 요청을 동시에 전달했습니다.`,
+        )
+      } else if (ok === 0) {
+        const firstFail = results.find((r): r is PromiseRejectedResult => r.status === 'rejected')
+        const reason = firstFail?.reason
+        toast.error(reason instanceof Error ? reason.message : '론칭 승인 요청 실패')
+      } else {
+        toast.warning(`${ok}개 성공 · ${fail}개 실패. 채널 상태를 확인하세요.`)
+      }
     } finally {
       setActingJob(false)
     }
