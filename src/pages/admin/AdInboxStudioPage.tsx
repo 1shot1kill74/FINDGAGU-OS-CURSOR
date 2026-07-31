@@ -33,6 +33,7 @@ import {
   adInboxChannelShortLabel,
   adInboxWorkProgressLabel,
   buildAdInboxSiteGroupId,
+  formatAdInboxWorkCompletedDate,
   cleanupPeopleFromAdInboxAsset,
   createAdInboxSite,
   createAdInboxTimelapseJob,
@@ -1173,9 +1174,11 @@ export default function AdInboxStudioPage() {
                   const workState = workProgressByKey[batch.key] ?? {
                     progress: 'waiting' as const,
                     completedAt: null,
+                    uploadedAt: null,
                     channels: deriveAdInboxBatchWorkState([]).channels,
                   }
                   const progress = workState.progress
+                  const uploadedDate = formatAdInboxWorkCompletedDate(workState.uploadedAt)
                   const canDeleteSite = sites.some((site) => site.id === batch.siteId)
                   const siteDeleting = deletingSiteId === batch.siteId
                   return (
@@ -1236,38 +1239,45 @@ export default function AdInboxStudioPage() {
                           </span>
                         ) : null}
                       </div>
-                      <div className="mt-2 flex flex-wrap items-center gap-1">
-                        {workState.channels.map((channelState) => {
-                          const label = adInboxChannelShortLabel(channelState.channel)
-                          const className =
-                            'inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-tight ' +
-                            channelPublishButtonClass(channelState.status)
-                          const title = channelPublishTitle(channelState)
-                          if (channelState.status === 'published' && channelState.externalPostUrl) {
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                        {uploadedDate ? (
+                          <span className="rounded bg-teal-50 px-1.5 py-0.5 text-[10px] font-semibold tracking-tight text-teal-800">
+                            업로드 {uploadedDate}
+                          </span>
+                        ) : null}
+                        <div className="flex flex-wrap items-center gap-1">
+                          {workState.channels.map((channelState) => {
+                            const label = adInboxChannelShortLabel(channelState.channel)
+                            const className =
+                              'inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-tight ' +
+                              channelPublishButtonClass(channelState.status)
+                            const title = channelPublishTitle(channelState)
+                            if (channelState.status === 'published' && channelState.externalPostUrl) {
+                              return (
+                                <a
+                                  key={channelState.channel}
+                                  href={channelState.externalPostUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  title={title}
+                                  className={className + ' underline-offset-2 hover:underline'}
+                                  onClick={(event) => event.stopPropagation()}
+                                >
+                                  {label}
+                                </a>
+                              )
+                            }
                             return (
-                              <a
+                              <span
                                 key={channelState.channel}
-                                href={channelState.externalPostUrl}
-                                target="_blank"
-                                rel="noreferrer"
                                 title={title}
-                                className={className + ' underline-offset-2 hover:underline'}
-                                onClick={(event) => event.stopPropagation()}
+                                className={className}
                               >
                                 {label}
-                              </a>
+                              </span>
                             )
-                          }
-                          return (
-                            <span
-                              key={channelState.channel}
-                              title={title}
-                              className={className}
-                            >
-                              {label}
-                            </span>
-                          )
-                        })}
+                          })}
+                        </div>
                       </div>
                     </div>
                   )

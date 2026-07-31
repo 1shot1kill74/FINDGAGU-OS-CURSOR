@@ -104,6 +104,8 @@ export type AdInboxBatchWorkState = {
   progress: AdInboxWorkProgress
   /** 합성(최종 MP4) 완료 시각 — job.updated_at 기준 */
   completedAt: string | null
+  /** 채널 업로드 완료일 — 세 채널 published_at 중 가장 늦은 시각 */
+  uploadedAt: string | null
   /** 채널별 업로드(게시) 상태 — 카드 버튼용 */
   channels: AdInboxChannelPublishState[]
 }
@@ -363,6 +365,25 @@ function deriveAdInboxChannelStates(
   })
 }
 
+/** 세 채널 published_at 중 가장 늦은 시각. 없으면 null */
+export function deriveAdInboxUploadedAt(
+  channels: AdInboxChannelPublishState[],
+): string | null {
+  let latestMs = Number.NEGATIVE_INFINITY
+  let latestIso: string | null = null
+  for (const channel of channels) {
+    const raw = channel.publishedAt?.trim()
+    if (!raw) continue
+    const ms = new Date(raw).getTime()
+    if (Number.isNaN(ms)) continue
+    if (ms >= latestMs) {
+      latestMs = ms
+      latestIso = raw
+    }
+  }
+  return latestIso
+}
+
 function isAdInboxJobFailed(job: ShowroomShortsJobRecord): boolean {
   return job.status === 'failed' || job.kling_status === 'request_failed'
 }
@@ -388,19 +409,27 @@ export function deriveAdInboxWorkCompletedAt(jobs: ShowroomShortsJobRecord[]): s
 export function deriveAdInboxBatchWorkState(jobs: ShowroomShortsJobRecord[]): AdInboxBatchWorkState {
   const latest = jobs.find((job) => !isAdInboxJobFailed(job))
   if (!latest) {
-    return { progress: 'waiting', completedAt: null, channels: emptyAdInboxChannelStates() }
-  }
-
-  const channels = deriveAdInboxChannelStates(latest.targets)
-  if (isAdInboxCompositionDone(latest)) {
+    const channels = emptyAdInboxChannelStates()
     return {
-      progress: 'done',
-      completedAt: latest.updated_at?.trim() || latest.created_at?.trim() || null,
+      progress: 'waiting',
+      completedAt: null,
+      uploadedAt: null,
       channels,
     }
   }
 
-  return { progress: 'working', completedAt: null, channels }
+  const channels = deriveAdInboxChannelStates(latest.targets)
+  const uploadedAt = deriveAdInboxUploadedAt(channels)
+  if (isAdInboxCompositionDone(latest)) {
+    return {
+      progress: 'done',
+      completedAt: latest.updated_at?.trim() || latest.created_at?.trim() || null,
+      uploadedAt,
+      channels,
+    }
+  }
+
+  return { progress: 'working', completedAt: null, uploadedAt, channels }
 }
 
 function trimOrNull(value: string | null | undefined): string | null {
