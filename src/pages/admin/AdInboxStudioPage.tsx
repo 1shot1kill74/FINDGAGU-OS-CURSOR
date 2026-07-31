@@ -13,6 +13,7 @@ import {
   Trash2,
   Upload,
   Video,
+  X,
   ZoomIn,
 } from 'lucide-react'
 import AdInboxImportShowroomDialog, {
@@ -65,6 +66,8 @@ import {
   resolveAssetsFromRecommendation,
   type AdInboxPairRecommendation,
 } from '@/lib/adInboxPairRecommend'
+import { INDUSTRY_PREFERRED_ORDER } from '@/pages/showroom/showroomPageConstants'
+import { getPrimaryIndustryLabel } from '@/pages/showroom/showroomPageGrouping'
 import {
   SHOWROOM_SHORTS_CHANNELS,
   buildShowroomShortsPublishPackage,
@@ -236,6 +239,19 @@ function channelPublishTitle(state: AdInboxChannelPublishState): string {
   return `${label} 대기`
 }
 
+function getAdInboxBatchIndustryLabel(batch: AdInboxBatch): string {
+  const businessTypes = batch.assets
+    .map((asset) => asset.business_type?.trim() ?? '')
+    .filter(Boolean)
+  return getPrimaryIndustryLabel(businessTypes)
+}
+
+function industryChipClass(selected: boolean): string {
+  return selected
+    ? 'border-neutral-900 bg-neutral-900 text-white'
+    : 'border-neutral-200 bg-neutral-50 text-neutral-600'
+}
+
 function generatingHint(job: AdInboxTimelapseJob) {
   if (job.status === 'failed' || job.kling_status === 'request_failed') {
     return '생성에 실패했습니다. 아래에서 다시 요청하세요.'
@@ -274,7 +290,10 @@ export default function AdInboxStudioPage() {
   const [targetSiteId, setTargetSiteId] = useState<string>('')
   const [uploadRole, setUploadRole] = useState<AdInboxRole>('unset')
   const [files, setFiles] = useState<File[]>([])
+  const [fileInputKey, setFileInputKey] = useState(0)
   const [selectedBatchKey, setSelectedBatchKey] = useState<string | null>(null)
+  /** null = 전체. 현장 카드 목록 업종 필터 */
+  const [industryFilter, setIndustryFilter] = useState<string | null>(null)
   const [beforeId, setBeforeId] = useState<string | null>(null)
   const [afterId, setAfterId] = useState<string | null>(null)
   const [recommending, setRecommending] = useState(false)
@@ -304,8 +323,37 @@ export default function AdInboxStudioPage() {
   const legacyBackfillDoneRef = useRef(false)
 
   const batches = useMemo(() => groupAdInboxBatches(assets, sites), [assets, sites])
+  const visibleBatches = useMemo(() => {
+    if (!industryFilter) return batches
+    return batches.filter((batch) => getAdInboxBatchIndustryLabel(batch) === industryFilter)
+  }, [batches, industryFilter])
   const selectedBatch: AdInboxBatch | null =
-    batches.find((b) => b.key === selectedBatchKey) ?? batches[0] ?? null
+    visibleBatches.find((b) => b.key === selectedBatchKey) ?? visibleBatches[0] ?? null
+
+  const [filePreviewUrls, setFilePreviewUrls] = useState<
+    Array<{ name: string; url: string; index: number }>
+  >([])
+  useEffect(() => {
+    const next = files.map((file, index) => ({
+      name: file.name,
+      url: URL.createObjectURL(file),
+      index,
+    }))
+    setFilePreviewUrls(next)
+    return () => {
+      for (const preview of next) {
+        URL.revokeObjectURL(preview.url)
+      }
+    }
+  }, [files])
+
+  const removeSelectedFile = useCallback((index: number) => {
+    setFiles((prev) => {
+      const next = prev.filter((_, i) => i !== index)
+      if (next.length === 0) setFileInputKey((key) => key + 1)
+      return next
+    })
+  }, [])
 
   const activeJob = useMemo(
     () => jobs.find((job) => job.id === activeJobId) ?? jobs[0] ?? null,
@@ -651,6 +699,7 @@ export default function AdInboxStudioPage() {
         toast.error(`${result.fail}장 실패 · ${result.errors[0] ?? ''}`)
       }
       setFiles([])
+      setFileInputKey((key) => key + 1)
       await refresh()
       setSelectedBatchKey(buildAdInboxSiteGroupId(result.siteId))
     } catch (error) {
@@ -1116,13 +1165,43 @@ export default function AdInboxStudioPage() {
           </div>
           <div className="mt-4">
             <Input
+              key={fileInputKey}
               type="file"
               accept="image/jpeg,image/png,image/webp"
               multiple
               onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
             />
             {files.length > 0 ? (
-              <p className="mt-1 text-xs text-neutral-500">{files.length}장 선택됨</p>
+              <div className="mt-2 space-y-2">
+                <p className="text-xs text-neutral-500">{files.length}장 선택됨 · 썸네일 × 로 제외</p>
+                <div className="flex flex-wrap gap-2">
+                  {filePreviewUrls.map((preview) => (
+                    <div
+                      key={`${preview.index}-${preview.name}`}
+                      className="relative w-16 shrink-0 overflow-hidden rounded-md border border-neutral-200 bg-neutral-50"
+                      title={preview.name}
+                    >
+                      <button
+                        type="button"
+                        aria-label={`${preview.name} 선택 해제`}
+                        title="업로드 목록에서 빼기"
+                        className="absolute right-0.5 top-0.5 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-black/65 text-white hover:bg-red-600"
+                        onClick={() => removeSelectedFile(preview.index)}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                      <img
+                        src={preview.url}
+                        alt={preview.name}
+                        className="h-16 w-16 object-cover"
+                      />
+                      <p className="truncate px-1 py-0.5 text-[10px] leading-tight text-neutral-500">
+                        {preview.name}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
             ) : null}
           </div>
           <div className="mt-4">
@@ -1194,9 +1273,35 @@ export default function AdInboxStudioPage() {
               위에서 새 카드를 만들어 주세요.
             </p>
           ) : (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIndustryFilter(null)}
+                  className={`rounded-full border px-3 py-1 text-xs font-medium ${industryChipClass(!industryFilter)}`}
+                >
+                  전체
+                </button>
+                {INDUSTRY_PREFERRED_ORDER.map((industry) => (
+                  <button
+                    key={`ad-inbox-industry-${industry}`}
+                    type="button"
+                    onClick={() => setIndustryFilter(industry)}
+                    className={`rounded-full border px-3 py-1 text-xs font-medium ${industryChipClass(industryFilter === industry)}`}
+                  >
+                    {industry}
+                  </button>
+                ))}
+                <span className="text-xs text-neutral-500">{visibleBatches.length}개</span>
+              </div>
+              {visibleBatches.length === 0 ? (
+                <p className="py-8 text-center text-sm text-neutral-500">
+                  이 업종의 현장 카드가 없습니다. 다른 분류를 선택해 보세요.
+                </p>
+              ) : (
             <div className="grid gap-6 lg:grid-cols-[260px_1fr]">
               <div className="space-y-1">
-                {batches.map((batch) => {
+                {visibleBatches.map((batch) => {
                   const selected = selectedBatch?.key === batch.key
                   const workState = workProgressByKey[batch.key] ?? {
                     progress: 'waiting' as const,
@@ -2006,6 +2111,8 @@ export default function AdInboxStudioPage() {
                   </div>
                 </div>
               ) : null}
+            </div>
+              )}
             </div>
           )}
         </section>
