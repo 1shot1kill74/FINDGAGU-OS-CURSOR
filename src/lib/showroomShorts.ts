@@ -674,6 +674,51 @@ export async function listShowroomShortsJobsByBeforeAssetIds(
   return attachTargetsToJobs((data ?? []).map((row) => mapShortsJobRow(row as Record<string, unknown>)))
 }
 
+/**
+ * before_asset_id 또는 after_asset_id가 주어진 자산 집합에 속한 job 전체 (청크·중복 제거).
+ * 쇼룸 BA 카드 상태·광고대기실 연결 조회용.
+ */
+export async function listShowroomShortsJobsByAssetIds(
+  assetIds: string[],
+): Promise<ShowroomShortsJobRecord[]> {
+  const ids = [...new Set(assetIds.map((id) => id.trim()).filter(Boolean))]
+  if (ids.length === 0) return []
+
+  const byId = new Map<string, ShowroomShortsJobRecord>()
+  const chunkSize = 80
+  for (let i = 0; i < ids.length; i += chunkSize) {
+    const chunk = ids.slice(i, i + chunkSize)
+    const [{ data: byBefore, error: beforeError }, { data: byAfter, error: afterError }] =
+      await Promise.all([
+        supabase
+          .from('showroom_shorts_jobs')
+          .select('*')
+          .in('before_asset_id', chunk)
+          .order('created_at', { ascending: false })
+          .limit(400),
+        supabase
+          .from('showroom_shorts_jobs')
+          .select('*')
+          .in('after_asset_id', chunk)
+          .order('created_at', { ascending: false })
+          .limit(400),
+      ])
+    if (beforeError) throw new Error(beforeError.message)
+    if (afterError) throw new Error(afterError.message)
+    for (const row of [...(byBefore ?? []), ...(byAfter ?? [])]) {
+      const mapped = mapShortsJobRow(row as Record<string, unknown>)
+      if (mapped.id && !byId.has(mapped.id)) byId.set(mapped.id, mapped)
+    }
+  }
+
+  const jobs = [...byId.values()].sort((a, b) => {
+    const at = a.updated_at || a.created_at || ''
+    const bt = b.updated_at || b.created_at || ''
+    return bt.localeCompare(at)
+  })
+  return attachTargetsToJobs(jobs)
+}
+
 export async function listShowroomShortsJobs() {
   const [
     { data: jobs, error: jobsError },

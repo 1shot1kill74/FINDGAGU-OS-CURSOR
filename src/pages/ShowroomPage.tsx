@@ -49,9 +49,16 @@ import { appendShowroomConcernQuery, openShowroomConsultationChat } from '@/page
 import { trackShowroomAbmEvent } from '@/lib/showroomAbmTracking'
 import { validateBeforeAfterSelection } from '@/lib/showroomShorts'
 import {
-  listExistingShowroomShortsAfterAssetIds,
-  listExistingShowroomShortsPairKeys,
-  showroomBaReelPairKey,
+  adInboxChannelPublishButtonClass,
+  adInboxChannelPublishTitle,
+  adInboxChannelShortLabel,
+  adInboxWorkProgressBadgeClass,
+  adInboxWorkProgressLabel,
+  formatAdInboxWorkCompletedDate,
+  loadShowroomBaCardPublishIndex,
+  resolveShowroomBaCardPublishStatus,
+  type ShowroomBaCardPublishIndex,
+  type ShowroomBaCardPublishStatus,
 } from '@/lib/adInboxStudio'
 import ShowroomSendToAdInboxDialog from '@/components/showroom/ShowroomSendToAdInboxDialog'
 
@@ -136,16 +143,18 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
   const [selectedImageIds, setSelectedImageIds] = useState<Set<string>>(new Set())
   const [industryPageBySection, setIndustryPageBySection] = useState<Record<string, number>>({})
   const [beforeAfterPage, setBeforeAfterPage] = useState(1)
+  /** null = 전체. 전후 비교 · 문제와 솔루션 섹션 업종 필터 */
+  const [beforeAfterIndustryFilter, setBeforeAfterIndustryFilter] = useState<string | null>(null)
   const [concernBeforeAfterPage, setConcernBeforeAfterPage] = useState(1)
   const [priorityInputByKey, setPriorityInputByKey] = useState<Record<string, string>>({})
   const [savingPriorityByKey, setSavingPriorityByKey] = useState<Record<string, boolean>>({})
   const [priorityEditorOpenByKey, setPriorityEditorOpenByKey] = useState<Record<string, boolean>>({})
   const [caseProfileDraftBySite, setCaseProfileDraftBySite] = useState<Record<string, ShowroomCaseProfileDraftState>>({})
   const [shortsDialogOpen, setShortsDialogOpen] = useState(false)
-  /** 오픈쇼룸 BA → 릴스 job 존재 여부 (before:after 쌍) */
-  const [baReelPairKeys, setBaReelPairKeys] = useState<Set<string>>(() => new Set())
-  /** After-only(또는 After가 job에 연결된) 릴스 반영 */
-  const [baReelAfterIds, setBaReelAfterIds] = useState<Set<string>>(() => new Set())
+  /** 전후 비교 카드: 대기실 입고·릴스 출처·채널 상태 */
+  const [baCardPublishIndex, setBaCardPublishIndex] = useState<ShowroomBaCardPublishIndex | null>(
+    null,
+  )
   const [sendToAdInboxGroup, setSendToAdInboxGroup] = useState<SiteGroup | null>(null)
   const [basicShortsDialogOpen, setBasicShortsDialogOpen] = useState(false)
   const [basicShortsImageOrder, setBasicShortsImageOrder] = useState<string[]>([])
@@ -373,34 +382,47 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
     )
   }, [beforeAfterAssets, siteOverrideMap, showInternalControls])
 
-  useEffect(() => {
+  const reloadBaCardPublishIndex = useCallback(async () => {
     if (!showInternalControls || beforeAfterGroups.length === 0) {
-      setBaReelPairKeys(new Set())
-      setBaReelAfterIds(new Set())
+      setBaCardPublishIndex(null)
       return
     }
+    const assetIds = beforeAfterGroups.flatMap((group) =>
+      group.images
+        .filter(
+          (image) =>
+            image.before_after_role === 'before' || image.before_after_role === 'after',
+        )
+        .map((image) => image.id),
+    )
+    try {
+      const index = await loadShowroomBaCardPublishIndex(assetIds)
+      setBaCardPublishIndex(index)
+    } catch {
+      setBaCardPublishIndex(null)
+    }
+  }, [showInternalControls, beforeAfterGroups])
+
+  useEffect(() => {
     let cancelled = false
-    const beforeIds = beforeAfterGroups.flatMap((group) =>
-      group.images.filter((image) => image.before_after_role === 'before').map((image) => image.id),
-    )
-    const afterIds = beforeAfterGroups.flatMap((group) =>
-      group.images.filter((image) => image.before_after_role === 'after').map((image) => image.id),
-    )
     void (async () => {
+      if (!showInternalControls || beforeAfterGroups.length === 0) {
+        if (!cancelled) setBaCardPublishIndex(null)
+        return
+      }
+      const assetIds = beforeAfterGroups.flatMap((group) =>
+        group.images
+          .filter(
+            (image) =>
+              image.before_after_role === 'before' || image.before_after_role === 'after',
+          )
+          .map((image) => image.id),
+      )
       try {
-        const [keys, afterJobIds] = await Promise.all([
-          listExistingShowroomShortsPairKeys(beforeIds),
-          listExistingShowroomShortsAfterAssetIds(afterIds),
-        ])
-        if (!cancelled) {
-          setBaReelPairKeys(keys)
-          setBaReelAfterIds(afterJobIds)
-        }
+        const index = await loadShowroomBaCardPublishIndex(assetIds)
+        if (!cancelled) setBaCardPublishIndex(index)
       } catch {
-        if (!cancelled) {
-          setBaReelPairKeys(new Set())
-          setBaReelAfterIds(new Set())
-        }
+        if (!cancelled) setBaCardPublishIndex(null)
       }
     })()
     return () => {
@@ -622,7 +644,13 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
     })
   }, [industrySections, industryPageBySection])
 
-  const visibleBeforeAfterGroups = useMemo(() => beforeAfterGroups, [beforeAfterGroups])
+  const visibleBeforeAfterGroups = useMemo(() => {
+    if (!beforeAfterIndustryFilter) return beforeAfterGroups
+    // 칩 라벨 = getPrimaryIndustryLabel 결과와 동일하게 맞춤 (기타·빈 업종 포함)
+    return beforeAfterGroups.filter(
+      (group) => getPrimaryIndustryLabel(group.businessTypes) === beforeAfterIndustryFilter,
+    )
+  }, [beforeAfterGroups, beforeAfterIndustryFilter])
   const concernBeforeAfterGroups = useMemo(
     () => resolveConcernBeforeAfterGroups(beforeAfterGroups, selectedConcernTag, concernIndustryFilter),
     [beforeAfterGroups, concernIndustryFilter, selectedConcernTag]
@@ -1331,24 +1359,10 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
     }))
   }, [])
 
-  const groupHasBaReelJob = useCallback(
-    (group: SiteGroup) => {
-      const beforeIds = group.images
-        .filter((image) => image.before_after_role === 'before')
-        .map((image) => image.id)
-      const afterIds = group.images
-        .filter((image) => image.before_after_role === 'after')
-        .map((image) => image.id)
-      if (
-        beforeIds.some((beforeId) =>
-          afterIds.some((afterId) => baReelPairKeys.has(showroomBaReelPairKey(beforeId, afterId))),
-        )
-      ) {
-        return true
-      }
-      return afterIds.some((afterId) => baReelAfterIds.has(afterId))
-    },
-    [baReelAfterIds, baReelPairKeys],
+  const getBaCardPublishStatus = useCallback(
+    (group: SiteGroup): ShowroomBaCardPublishStatus =>
+      resolveShowroomBaCardPublishStatus(group, baCardPublishIndex),
+    [baCardPublishIndex],
   )
 
   const getBeforeAfterProfileDraft = useCallback((group: SiteGroup): ShowroomCaseProfileDraftState => {
@@ -1767,26 +1781,91 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
               이 쇼룸은 직원과 고객이 같은 화면으로 사례를 설명하는 용도입니다. 콘텐츠 작성·수정은 케이스 작업실에서 진행하세요.
             </p>
             {(() => {
-              const hasReel = groupHasBaReelJob(group)
+              const status = getBaCardPublishStatus(group)
+              const { work, reelSource, inAdInbox } = status
+              const uploadedDate = formatAdInboxWorkCompletedDate(work.uploadedAt)
+              const reelLabel =
+                reelSource === 'ad_inbox'
+                  ? '대기실에서 제작'
+                  : reelSource === 'showroom'
+                    ? '쇼룸·이전 제작'
+                    : '미반영'
+              const reelBadgeClass =
+                reelSource === 'ad_inbox'
+                  ? 'bg-amber-50 text-amber-800 ring-1 ring-amber-200'
+                  : reelSource === 'showroom'
+                    ? 'bg-violet-50 text-violet-800 ring-1 ring-violet-200'
+                    : 'bg-neutral-100 text-neutral-600'
               return (
                 <div className="space-y-2 rounded-xl border border-neutral-200 bg-white px-3 py-2.5">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-xs font-medium text-neutral-800">릴스</span>
-                    {hasReel ? (
-                      <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800 ring-1 ring-amber-200">
-                        반영됨
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-xs font-medium text-neutral-800">대기실</span>
+                    {inAdInbox ? (
+                      <span className="rounded-full bg-teal-50 px-2 py-0.5 text-[11px] font-semibold text-teal-800 ring-1 ring-teal-200">
+                        입고
                       </span>
                     ) : (
                       <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] font-medium text-neutral-600">
-                        미반영
+                        미입고
                       </span>
                     )}
+                    <span className="text-xs font-medium text-neutral-800">릴스</span>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${reelBadgeClass}`}
+                    >
+                      {reelLabel}
+                    </span>
                     {isAfterOnly ? (
                       <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-800">
                         After만
                       </span>
                     ) : null}
                   </div>
+                  {reelSource !== 'none' ? (
+                    <div className="space-y-1.5">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span
+                          className={`rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-tight ${adInboxWorkProgressBadgeClass(work.progress)}`}
+                        >
+                          {adInboxWorkProgressLabel(work.progress, work.completedAt)}
+                        </span>
+                        {uploadedDate ? (
+                          <span className="rounded bg-teal-50 px-1.5 py-0.5 text-[10px] font-semibold tracking-tight text-teal-800">
+                            업로드 {uploadedDate}
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1">
+                        {work.channels.map((channelState) => {
+                          const label = adInboxChannelShortLabel(channelState.channel)
+                          const className =
+                            'inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-tight ' +
+                            adInboxChannelPublishButtonClass(channelState.status)
+                          const title = adInboxChannelPublishTitle(channelState)
+                          if (channelState.status === 'published' && channelState.externalPostUrl) {
+                            return (
+                              <a
+                                key={channelState.channel}
+                                href={channelState.externalPostUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                title={title}
+                                className={className}
+                                onClick={(event) => event.stopPropagation()}
+                              >
+                                {label}
+                              </a>
+                            )
+                          }
+                          return (
+                            <span key={channelState.channel} title={title} className={className}>
+                              {label}
+                            </span>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ) : null}
                   <Button
                     type="button"
                     variant="outline"
@@ -2072,7 +2151,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
               </Button>
             ))}
           </div>
-          {showInternalControls && visibleBeforeAfterGroups.length > 0 && (
+          {showInternalControls && beforeAfterGroups.length > 0 && (
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <Button
                 type="button"
@@ -2634,7 +2713,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
           </section>
         )}
 
-        {showInternalControls && viewMode === 'industry' && visibleBeforeAfterGroups.length > 0 && (
+        {showInternalControls && viewMode === 'industry' && beforeAfterGroups.length > 0 && (
           <section
             id="showroom-before-after-section"
             className="mb-8 rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4 md:p-5 scroll-mt-28"
@@ -2650,10 +2729,48 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
               </div>
               <p className="text-xs text-neutral-500">{visibleBeforeAfterGroups.length}개 현장</p>
             </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className={cn('shrink-0 rounded-full', !beforeAfterIndustryFilter && selectedBrowseButtonClass)}
+                onClick={() => {
+                  setBeforeAfterIndustryFilter(null)
+                  setBeforeAfterPage(1)
+                }}
+              >
+                전체
+              </Button>
+              {INDUSTRY_PREFERRED_ORDER.map((industry) => {
+                const selected = beforeAfterIndustryFilter === industry
+                return (
+                  <Button
+                    key={`before-after-industry-${industry}`}
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className={cn('shrink-0 rounded-full', selected && selectedBrowseButtonClass)}
+                    onClick={() => {
+                      setBeforeAfterIndustryFilter(industry)
+                      setBeforeAfterPage(1)
+                    }}
+                  >
+                    {industry}
+                  </Button>
+                )
+              })}
+            </div>
+            {visibleBeforeAfterGroups.length === 0 ? (
+              <p className="mt-4 text-sm text-neutral-500">
+                이 업종의 전후 비교 사례가 아직 없습니다. 다른 분류를 선택해 보세요.
+              </p>
+            ) : (
             <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
               {pagedBeforeAfterGroups.map((group) => renderBeforeAfterCard(group))}
             </div>
-            {beforeAfterTotalPages > 1 && (
+            )}
+            {visibleBeforeAfterGroups.length > 0 && beforeAfterTotalPages > 1 && (
               <div className="mt-4 flex flex-wrap items-center justify-center gap-2 pt-1">
                 <Button
                   type="button"
@@ -3251,14 +3368,19 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                   </div>
                 </div>
                 <div className="flex gap-2">
-                  <Button type="button" variant="outline" className="flex-1 gap-2 border-neutral-600 text-white hover:bg-neutral-800" onClick={copyShareLink}>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="flex-1 gap-2 border-neutral-500 bg-neutral-800 text-white hover:bg-neutral-700 hover:text-white"
+                    onClick={copyShareLink}
+                  >
                     <Copy className="h-4 w-4" />
                     링크 복사
                   </Button>
                   <Button
                     type="button"
                     variant="outline"
-                    className="flex-1 gap-2 border-neutral-600 text-white hover:bg-neutral-800"
+                    className="flex-1 gap-2 border-neutral-500 bg-neutral-800 text-white hover:bg-neutral-700 hover:text-white"
                     onClick={() => {
                       setBasicShortsDialogOpen(true)
                     }}
@@ -3269,7 +3391,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                   <Button
                     type="button"
                     variant="outline"
-                    className="flex-1 gap-2 border-neutral-600 text-white hover:bg-neutral-800"
+                    className="flex-1 gap-2 border-neutral-500 bg-neutral-800 text-white hover:bg-neutral-700 hover:text-white disabled:border-neutral-700 disabled:bg-neutral-900 disabled:text-neutral-500"
                     disabled={!shortsSelection.ok}
                     onClick={() => {
                       if (!shortsSelection.ok) {
@@ -3311,7 +3433,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
             if (!next) setSendToAdInboxGroup(null)
           }}
           onSent={() => {
-            navigate('/admin/ad-inbox')
+            void reloadBaCardPublishIndex()
           }}
         />
       ) : null}

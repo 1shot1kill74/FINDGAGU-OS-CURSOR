@@ -23,6 +23,7 @@ import {
   SHOWROOM_SHORTS_CHANNELS,
   createShowroomShortsJob,
   getShowroomShortsJob,
+  listShowroomShortsJobsByAssetIds,
   listShowroomShortsJobsByBeforeAssetIds,
   listShowroomShortsJobsForGroupKey,
   validateBeforeAfterSelection,
@@ -137,6 +138,50 @@ export function adInboxChannelShortLabel(channel: ShowroomShortsChannel): string
   if (channel === 'youtube') return 'YT'
   if (channel === 'facebook') return 'FB'
   return 'IG'
+}
+
+export function adInboxWorkProgressBadgeClass(progress: AdInboxWorkProgress): string {
+  if (progress === 'working') return 'bg-sky-50 text-sky-800'
+  if (progress === 'done') return 'bg-emerald-50 text-emerald-800'
+  return 'bg-neutral-100 text-neutral-600'
+}
+
+function adInboxChannelPublishTone(
+  status: AdInboxChannelPublishState['status'],
+): 'idle' | 'active' | 'done' | 'failed' {
+  if (status === 'published') return 'done'
+  if (status === 'failed') return 'failed'
+  if (['preparing', 'launch_ready', 'approved', 'publishing', 'ready'].includes(status)) {
+    return 'active'
+  }
+  return 'idle'
+}
+
+export function adInboxChannelPublishButtonClass(
+  status: AdInboxChannelPublishState['status'],
+): string {
+  const tone = adInboxChannelPublishTone(status)
+  if (tone === 'done') return 'bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200'
+  if (tone === 'failed') return 'bg-red-50 text-red-700 ring-1 ring-red-200'
+  if (tone === 'active') return 'bg-amber-50 text-amber-800 ring-1 ring-amber-200'
+  return 'bg-neutral-100 text-neutral-500 ring-1 ring-neutral-200'
+}
+
+export function adInboxChannelPublishTitle(state: AdInboxChannelPublishState): string {
+  const label =
+    state.channel === 'youtube'
+      ? 'YouTube'
+      : state.channel === 'facebook'
+        ? 'Facebook'
+        : 'Instagram'
+  if (state.status === 'published') {
+    return state.externalPostUrl
+      ? `${label} 게시물 열기`
+      : `${label} 게시 완료 (공개 링크 없음)`
+  }
+  if (state.status === 'failed') return `${label} 실패`
+  if (adInboxChannelPublishTone(state.status) === 'active') return `${label} 업로드 진행 중`
+  return `${label} 대기`
 }
 
 /** Instagram Graph media id(숫자)를 /p|/reel 경로에 넣은 URL은 공개 웹에서 열리지 않음 */
@@ -1304,6 +1349,170 @@ export async function listExistingShowroomShortsAfterAssetIds(
     }
   }
   return found
+}
+
+export type ShowroomBaReelSource = 'none' | 'ad_inbox' | 'showroom'
+
+export type ShowroomBaCardPublishStatus = {
+  inAdInbox: boolean
+  adInboxSiteId: string | null
+  reelSource: ShowroomBaReelSource
+  work: AdInboxBatchWorkState
+}
+
+export type ShowroomBaCardPublishIndex = {
+  /** 쇼룸 원본 asset id → 대기실 복사본 */
+  inboxByShowroomAssetId: Map<string, { adInboxAssetId: string; siteId: string | null }>
+  jobs: ShowroomShortsJobRecord[]
+}
+
+/** 대기실 숏츠 group key: before-after:ad_site:… 또는 레거시 before-after:ad:… */
+export function isAdInboxShortsGroupKey(groupKey: string | null | undefined): boolean {
+  const key = groupKey?.trim() ?? ''
+  if (!key) return false
+  return key.includes('ad_site:') || key.includes('before-after:ad:')
+}
+
+function emptyShowroomBaCardPublishStatus(): ShowroomBaCardPublishStatus {
+  return {
+    inAdInbox: false,
+    adInboxSiteId: null,
+    reelSource: 'none',
+    work: deriveAdInboxBatchWorkState([]),
+  }
+}
+
+async function listAdInboxImportsForShowroomAssetIds(
+  showroomAssetIds: string[],
+): Promise<Map<string, { adInboxAssetId: string; siteId: string | null }>> {
+  const ids = [...new Set(showroomAssetIds.map((id) => id.trim()).filter(Boolean))]
+  const out = new Map<string, { adInboxAssetId: string; siteId: string | null }>()
+  if (ids.length === 0) return out
+
+  const idSet = new Set(ids)
+  const chunkSize = 40
+  for (let i = 0; i < ids.length; i += chunkSize) {
+    const chunk = ids.slice(i, i + chunkSize)
+    const orFilter = chunk
+      .map((id) => `metadata->>imported_from_showroom_asset_id.eq.${id}`)
+      .join(',')
+    const { data, error } = await supabase
+      .from('image_assets')
+      .select('id, metadata')
+      .eq('category', AD_INBOX_CATEGORY)
+      .or(orFilter)
+      .limit(400)
+    if (error) throw new Error(error.message)
+    for (const row of data ?? []) {
+      const meta = row.metadata
+      if (!meta || typeof meta !== 'object' || Array.isArray(meta)) continue
+      const raw = meta as Record<string, unknown>
+      const imported =
+        typeof raw.imported_from_showroom_asset_id === 'string'
+          ? raw.imported_from_showroom_asset_id.trim()
+          : ''
+      if (!imported || !idSet.has(imported) || out.has(imported)) continue
+      const siteId =
+        typeof raw.ad_inbox_site_id === 'string' && raw.ad_inbox_site_id.trim()
+          ? raw.ad_inbox_site_id.trim()
+          : null
+      out.set(imported, { adInboxAssetId: String(row.id), siteId })
+    }
+  }
+  return out
+}
+
+/**
+ * 쇼룸 BA 카드용: 대기실 입고·릴스 출처·채널 상태를 한 번에 로드.
+ */
+export async function loadShowroomBaCardPublishIndex(
+  showroomAssetIds: string[],
+): Promise<ShowroomBaCardPublishIndex> {
+  const inboxByShowroomAssetId = await listAdInboxImportsForShowroomAssetIds(showroomAssetIds)
+  const candidateIds = [
+    ...new Set([
+      ...showroomAssetIds.map((id) => id.trim()).filter(Boolean),
+      ...[...inboxByShowroomAssetId.values()].map((row) => row.adInboxAssetId),
+    ]),
+  ]
+  const jobs = await listShowroomShortsJobsByAssetIds(candidateIds)
+  return { inboxByShowroomAssetId, jobs }
+}
+
+function jobRecencyKey(job: ShowroomShortsJobRecord): string {
+  return job.updated_at?.trim() || job.created_at?.trim() || ''
+}
+
+/**
+ * 현장 그룹(SiteGroup)의 before/after 자산으로 대기실·릴스·채널 상태를 해석.
+ */
+export function resolveShowroomBaCardPublishStatus(
+  group: {
+    images: Array<{ id: string; before_after_role?: string | null }>
+  },
+  index: ShowroomBaCardPublishIndex | null | undefined,
+): ShowroomBaCardPublishStatus {
+  if (!index) return emptyShowroomBaCardPublishStatus()
+
+  const beforeIds = group.images
+    .filter((image) => image.before_after_role === 'before')
+    .map((image) => image.id.trim())
+    .filter(Boolean)
+  const afterIds = group.images
+    .filter((image) => image.before_after_role === 'after')
+    .map((image) => image.id.trim())
+    .filter(Boolean)
+  const showroomIds = [...new Set([...beforeIds, ...afterIds])]
+
+  let adInboxSiteId: string | null = null
+  let linkedImport = false
+  for (const id of showroomIds) {
+    const link = index.inboxByShowroomAssetId.get(id)
+    if (!link) continue
+    linkedImport = true
+    if (!adInboxSiteId && link.siteId) adInboxSiteId = link.siteId
+  }
+
+  const expand = (ids: string[]) => {
+    const set = new Set(ids)
+    for (const id of ids) {
+      const link = index.inboxByShowroomAssetId.get(id)
+      if (link?.adInboxAssetId) set.add(link.adInboxAssetId)
+    }
+    return set
+  }
+  const expandedBefore = expand(beforeIds)
+  const expandedAfter = expand(afterIds)
+
+  const matching = index.jobs.filter((job) => {
+    const beforeId = job.before_asset_id?.trim() ?? ''
+    const afterId = job.after_asset_id?.trim() ?? ''
+    if (beforeIds.length > 0 && afterIds.length > 0) {
+      return expandedBefore.has(beforeId) && expandedAfter.has(afterId)
+    }
+    if (afterIds.length > 0) {
+      return expandedAfter.has(afterId)
+    }
+    return false
+  })
+
+  matching.sort((a, b) => jobRecencyKey(b).localeCompare(jobRecencyKey(a)))
+  const latest = matching.find((job) => !isAdInboxJobFailed(job)) ?? null
+
+  let reelSource: ShowroomBaReelSource = 'none'
+  if (latest) {
+    reelSource = isAdInboxShortsGroupKey(latest.before_after_group_key) ? 'ad_inbox' : 'showroom'
+    if (reelSource === 'ad_inbox' && !adInboxSiteId) {
+      const key = latest.before_after_group_key?.trim() ?? ''
+      const match = key.match(/ad_site:([0-9a-f-]{36})/i)
+      if (match?.[1]) adInboxSiteId = match[1]
+    }
+  }
+
+  const inAdInbox = linkedImport || reelSource === 'ad_inbox'
+  const work = deriveAdInboxBatchWorkState(latest ? [latest] : [])
+
+  return { inAdInbox, adInboxSiteId, reelSource, work }
 }
 
 /**
