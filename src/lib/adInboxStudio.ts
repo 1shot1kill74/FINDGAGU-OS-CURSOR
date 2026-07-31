@@ -2275,7 +2275,7 @@ export async function normalizeSynthesizedBeforeToShowroom(beforeAssetId: string
   if (afterId) {
     const { data: afterRow } = await supabase
       .from('image_assets')
-      .select('id, category, site_name, metadata, is_consultation')
+      .select('id, category, site_name, product_name, photo_date, metadata, is_consultation')
       .eq('id', afterId)
       .maybeSingle()
     if (afterRow) {
@@ -2303,6 +2303,38 @@ export async function normalizeSynthesizedBeforeToShowroom(beforeAssetId: string
           ...(afterRow.is_consultation === true ? {} : { is_consultation: true }),
         })
         .eq('id', afterId)
+
+      // 쇼룸 그룹 키는 space_id가 before_after_group_id보다 우선이므로 After 상담 메타를 복사
+      if (typeof afterMeta.space_id === 'string' && afterMeta.space_id.trim()) {
+        beforeMeta.space_id = afterMeta.space_id.trim()
+      }
+      if (typeof afterMeta.consultation_id === 'string' && afterMeta.consultation_id.trim()) {
+        beforeMeta.consultation_id = afterMeta.consultation_id.trim()
+      }
+      if (typeof afterMeta.space_display_name === 'string' && afterMeta.space_display_name.trim()) {
+        beforeMeta.space_display_name = afterMeta.space_display_name.trim()
+      }
+      if (typeof afterMeta.external_display_name === 'string' && afterMeta.external_display_name.trim()) {
+        beforeMeta.external_display_name = afterMeta.external_display_name.trim()
+      }
+      if (
+        typeof afterMeta.broad_external_display_name === 'string' &&
+        afterMeta.broad_external_display_name.trim()
+      ) {
+        beforeMeta.broad_external_display_name = afterMeta.broad_external_display_name.trim()
+      }
+      if (typeof afterMeta.canonical_site_name === 'string' && afterMeta.canonical_site_name.trim()) {
+        beforeMeta.canonical_site_name = afterMeta.canonical_site_name.trim()
+      } else if (afterSiteName) {
+        beforeMeta.canonical_site_name = afterSiteName
+      }
+      if (
+        (!beforeRow.product_name || !String(beforeRow.product_name).trim()) &&
+        typeof afterRow.product_name === 'string' &&
+        afterRow.product_name.trim()
+      ) {
+        beforeMeta.product_name = afterRow.product_name.trim()
+      }
     }
   }
 
@@ -2320,6 +2352,11 @@ export async function normalizeSynthesizedBeforeToShowroom(beforeAssetId: string
   delete showroomMeta.restored_at
   delete showroomMeta.restored_reason
 
+  const afterProductName =
+    typeof beforeMeta.product_name === 'string' && beforeMeta.product_name.trim()
+      ? beforeMeta.product_name.trim()
+      : null
+
   const { error: updateError } = await supabase
     .from('image_assets')
     .update({
@@ -2327,6 +2364,9 @@ export async function normalizeSynthesizedBeforeToShowroom(beforeAssetId: string
       site_name: afterSiteName,
       is_consultation: true,
       memo: '쇼룸 · After 기반 Before 합성',
+      ...(afterProductName && !String(beforeRow.product_name ?? '').trim()
+        ? { product_name: afterProductName }
+        : {}),
       metadata: showroomMeta,
     })
     .eq('id', id)
@@ -2568,7 +2608,7 @@ export async function promoteAdInboxAssetsToShowroom(input: {
       .select('id, metadata, is_consultation')
       .eq('id', sourceAfterId)
       .maybeSingle()
-    if (afterError || !afterRow) return
+    if (afterError || !afterRow) return null
 
     const afterMeta =
       afterRow.metadata && typeof afterRow.metadata === 'object' && !Array.isArray(afterRow.metadata)
@@ -2584,6 +2624,8 @@ export async function promoteAdInboxAssetsToShowroom(input: {
         ...(afterRow.is_consultation === true ? {} : { is_consultation: true }),
       })
       .eq('id', sourceAfterId)
+
+    return afterMeta
   }
 
   for (const assetId of assetIds) {
@@ -2662,6 +2704,31 @@ export async function promoteAdInboxAssetsToShowroom(input: {
       ...(groupId ? { before_after_group_id: groupId } : {}),
     }
 
+    if (role === 'before' && sourceAfterId) {
+      const afterMeta = await linkShowroomAfterGroup(sourceAfterId, groupId || `synth-ba:${sourceAfterId}`)
+      if (afterMeta) {
+        // After가 space_id로 묶여 있으면 Before도 같은 키로 맞춰야 전후 카드에 같이 보임
+        if (typeof afterMeta.space_id === 'string' && afterMeta.space_id.trim()) {
+          nextMeta.space_id = afterMeta.space_id.trim()
+        }
+        if (typeof afterMeta.consultation_id === 'string' && afterMeta.consultation_id.trim()) {
+          nextMeta.consultation_id = afterMeta.consultation_id.trim()
+        }
+        if (typeof afterMeta.external_display_name === 'string' && afterMeta.external_display_name.trim()) {
+          nextMeta.external_display_name = afterMeta.external_display_name.trim()
+        }
+        if (
+          typeof afterMeta.broad_external_display_name === 'string' &&
+          afterMeta.broad_external_display_name.trim()
+        ) {
+          nextMeta.broad_external_display_name = afterMeta.broad_external_display_name.trim()
+        }
+        if (typeof afterMeta.canonical_site_name === 'string' && afterMeta.canonical_site_name.trim()) {
+          nextMeta.canonical_site_name = afterMeta.canonical_site_name.trim()
+        }
+      }
+    }
+
     const { error: updateError } = await supabase
       .from('image_assets')
       .update({
@@ -2681,10 +2748,6 @@ export async function promoteAdInboxAssetsToShowroom(input: {
 
     if (updateError) {
       throw new Error(updateError.message || '쇼룸 승격 저장에 실패했습니다.')
-    }
-
-    if (role === 'before' && sourceAfterId && groupId) {
-      await linkShowroomAfterGroup(sourceAfterId, groupId)
     }
 
     promoted += 1
