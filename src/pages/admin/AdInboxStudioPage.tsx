@@ -35,6 +35,7 @@ import { getShowroomImagePreviewUrl } from '@/lib/imageAssetShowroom'
 import {
   adInboxChannelShortLabel,
   adInboxWorkProgressLabel,
+  attachSynthesizedBeforeToAdInboxSite,
   buildAdInboxShortsGroupKey,
   buildAdInboxSiteGroupId,
   formatAdInboxScheduledDateTime,
@@ -54,6 +55,7 @@ import {
   listAdInboxTimelapseJobsForBatch,
   listAdInboxWorkProgressByBatches,
   resolveAdInboxChannelPostUrl,
+  synthesizeBeforeFromAfterImage,
   updateAdInboxAssetRole,
   uploadAdInboxPhotos,
   type AdInboxAsset,
@@ -331,6 +333,14 @@ export default function AdInboxStudioPage() {
   const [schedulingBatchKey, setSchedulingBatchKey] = useState<string | null>(null)
   const [importShowroomOpen, setImportShowroomOpen] = useState(false)
   const [importAfterOnlyOpen, setImportAfterOnlyOpen] = useState(false)
+  const [synthesizingBefore, setSynthesizingBefore] = useState(false)
+  const [attachingSynthBefore, setAttachingSynthBefore] = useState(false)
+  const [synthBeforeDraft, setSynthBeforeDraft] = useState<{
+    cloudinary_url: string
+    thumbnail_url: string | null
+    public_id: string | null
+    fromAfterId: string
+  } | null>(null)
   const [promoteShowroomOpen, setPromoteShowroomOpen] = useState(false)
   const [promotePrefill, setPromotePrefill] = useState<AdInboxPromotePrefill | null>(null)
   const [previewOpen, setPreviewOpen] = useState(false)
@@ -498,6 +508,7 @@ export default function AdInboxStudioPage() {
       setJobs([])
       setActiveJobId(null)
       setJobLinkedAssets([])
+      setSynthBeforeDraft(null)
       return
     }
     const before = selectedBatch.assets.find((a) => a.before_after_role === 'before')
@@ -506,6 +517,7 @@ export default function AdInboxStudioPage() {
     setAfterId(after?.id ?? null)
     setRecommendation(null)
     setJobLinkedAssets([])
+    setSynthBeforeDraft(null)
     // 선택한 현장 카드에 추가 입고가 기본
     if (sites.some((site) => site.id === selectedBatch.siteId)) {
       setTargetSiteId(selectedBatch.siteId)
@@ -758,7 +770,10 @@ export default function AdInboxStudioPage() {
 
   const handlePickForTimelapse = (asset: AdInboxAsset, slot: 'before' | 'after') => {
     if (slot === 'before') setBeforeId(asset.id)
-    else setAfterId(asset.id)
+    else {
+      setAfterId(asset.id)
+      setSynthBeforeDraft((prev) => (prev && prev.fromAfterId !== asset.id ? null : prev))
+    }
     // 쇼룸 job 연결 원본은 대기실 BA 메타를 쓰지 않음 (쇼룸 메타 오염 방지)
     if (asset.linked_from_showroom_job) return
     if (asset.before_after_role !== slot) {
@@ -834,6 +849,69 @@ export default function AdInboxStudioPage() {
       toast.error(error instanceof Error ? error.message : '타임랩스 생성 실패')
     } finally {
       setCreating(false)
+    }
+  }
+
+  const handleSynthesizeBeforeFromAfter = async () => {
+    if (!afterAsset) {
+      toast.error('After 사진을 먼저 선택하세요.')
+      return
+    }
+    if (beforeAsset) {
+      toast.error('이미 Before가 선택되어 있습니다. 비운 뒤 다시 시도하세요.')
+      return
+    }
+    const imageUrl = afterAsset.cloudinary_url?.trim() || afterAsset.thumbnail_url?.trim()
+    if (!imageUrl) {
+      toast.error('After 이미지 URL이 없습니다.')
+      return
+    }
+    setSynthesizingBefore(true)
+    try {
+      const result = await synthesizeBeforeFromAfterImage(imageUrl)
+      setSynthBeforeDraft({
+        ...result,
+        fromAfterId: afterAsset.id,
+      })
+      toast.success('Before 합성이 끝났습니다. 미리보기 확인 후 「이 Before 쓰기」를 누르세요.')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Before 합성에 실패했습니다.')
+    } finally {
+      setSynthesizingBefore(false)
+    }
+  }
+
+  const handleAcceptSynthesizedBefore = async () => {
+    if (!selectedBatch?.siteId || !afterAsset || !synthBeforeDraft) {
+      toast.error('After 선택과 합성 결과가 필요합니다.')
+      return
+    }
+    if (synthBeforeDraft.fromAfterId !== afterAsset.id) {
+      toast.error('After가 바뀌었습니다. Before를 다시 합성하세요.')
+      setSynthBeforeDraft(null)
+      return
+    }
+    setAttachingSynthBefore(true)
+    try {
+      const result = await attachSynthesizedBeforeToAdInboxSite({
+        siteId: selectedBatch.siteId,
+        after: afterAsset,
+        synthesizedBefore: synthBeforeDraft,
+      })
+      setSynthBeforeDraft(null)
+      await refresh()
+      setBeforeId(result.beforeAssetId)
+      setAfterId(afterAsset.id)
+      toast.success('합성 Before를 이 카드에 넣었습니다. 타임랩스 또는 쇼룸으로 보내세요.', {
+        action: {
+          label: '쇼룸으로',
+          onClick: () => openPromoteWithBa(result.beforeAssetId, afterAsset.id),
+        },
+      })
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '합성 Before 저장에 실패했습니다.')
+    } finally {
+      setAttachingSynthBefore(false)
     }
   }
 
@@ -1725,9 +1803,15 @@ export default function AdInboxStudioPage() {
                                 alt=""
                                 className="h-full w-full object-contain"
                               />
+                            ) : synthBeforeDraft && afterAsset && synthBeforeDraft.fromAfterId === afterAsset.id ? (
+                              <img
+                                src={synthBeforeDraft.thumbnail_url || synthBeforeDraft.cloudinary_url}
+                                alt=""
+                                className="h-full w-full object-contain"
+                              />
                             ) : (
-                              <div className="flex h-full items-center justify-center text-[11px] text-neutral-400">
-                                미선택
+                              <div className="flex h-full items-center justify-center px-2 text-center text-[11px] text-neutral-400">
+                                {afterAsset ? '미선택 · Before 합성 가능' : '미선택'}
                               </div>
                             )}
                           </div>
@@ -1754,6 +1838,59 @@ export default function AdInboxStudioPage() {
                           </div>
                         </button>
                       </div>
+                      {afterAsset && !beforeAsset ? (
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            disabled={
+                              synthesizingBefore ||
+                              attachingSynthBefore ||
+                              creating ||
+                              cleaningId != null
+                            }
+                            onClick={() => void handleSynthesizeBeforeFromAfter()}
+                          >
+                            {synthesizingBefore ? (
+                              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Sparkles className="mr-1.5 h-3.5 w-3.5" />
+                            )}
+                            {synthBeforeDraft && synthBeforeDraft.fromAfterId === afterAsset.id
+                              ? 'Before 다시 합성'
+                              : 'Before 합성'}
+                          </Button>
+                          {synthBeforeDraft && synthBeforeDraft.fromAfterId === afterAsset.id ? (
+                            <>
+                              <Button
+                                type="button"
+                                size="sm"
+                                disabled={attachingSynthBefore || synthesizingBefore}
+                                onClick={() => void handleAcceptSynthesizedBefore()}
+                              >
+                                {attachingSynthBefore ? (
+                                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                                ) : null}
+                                이 Before 쓰기
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                disabled={attachingSynthBefore || synthesizingBefore}
+                                onClick={() => setSynthBeforeDraft(null)}
+                              >
+                                취소
+                              </Button>
+                            </>
+                          ) : null}
+                          <p className="w-full text-[11px] text-neutral-500">
+                            After만 있을 때 Before를 합성해 이 카드에 넣고, 확인 후 타임랩스·쇼룸으로
+                            보내면 됩니다.
+                          </p>
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
 
@@ -1934,6 +2071,7 @@ export default function AdInboxStudioPage() {
                     </Button>
                   </div>
                   <p className="mt-2 text-xs text-neutral-500">
+                    After만 있으면 「Before 합성」→「이 Before 쓰기」후 타임랩스·쇼룸으로 보내세요.
                     사람이 찍힌 Before는 타임랩스 전에 「사람 제거 보정」→ 새 컷 확인 → 그다음 타임랩스.
                     Before가 이미 빈 방이면 「빈 방 타임랩스」(구도 맞춤 후 설치만)를 쓰세요. 합성
                     Before가 준비되면 「선택 BA 쇼룸으로」로 블로그·전후비교에 연결하세요.

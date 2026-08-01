@@ -2219,6 +2219,124 @@ export async function createAdInboxTimelapseFromAfterOnly(input: {
 }
 
 /**
+ * 이미 대기실에 있는 After(쇼룸에서 보낸 After-only 포함)로
+ * 합성 Before를 같은 카드에 첨부합니다. 타임랩스는 시작하지 않습니다.
+ */
+export async function attachSynthesizedBeforeToAdInboxSite(input: {
+  siteId: string
+  after: AdInboxAsset | ShowroomImageAsset
+  synthesizedBefore: {
+    cloudinary_url: string
+    thumbnail_url: string | null
+    public_id?: string | null
+  }
+}): Promise<{
+  beforeAssetId: string
+  siteId: string
+  siteBatchKey: string
+  shortName: string
+  /** 승격·정규화용 After 원본(가능하면 쇼룸 id) */
+  sourceAfterAssetId: string
+}> {
+  const siteId = trimOrNull(input.siteId)
+  if (!siteId) {
+    throw new Error('대기실 카드를 선택하세요.')
+  }
+
+  const after = input.after
+  if (!after?.id) {
+    throw new Error('After 사진을 선택하세요.')
+  }
+  if (!input.synthesizedBefore.cloudinary_url?.trim()) {
+    throw new Error('합성 Before 이미지가 없습니다.')
+  }
+
+  const { data: siteRow, error: siteError } = await supabase
+    .from('ad_inbox_sites')
+    .select('id, short_name, photo_date, status, created_at, updated_at')
+    .eq('id', siteId)
+    .maybeSingle()
+
+  if (siteError || !siteRow) {
+    throw new Error(siteError?.message || '대기실 카드를 찾을 수 없습니다.')
+  }
+
+  const site = mapSiteRow(siteRow as Record<string, unknown>)
+  const siteBatchKey = buildAdInboxSiteGroupId(site.id)
+  const photoDate =
+    site.photo_date ||
+    ('photo_date' in after && typeof after.photo_date === 'string' ? after.photo_date.slice(0, 10) : null) ||
+    (after.created_at ? after.created_at.slice(0, 10) : null)
+
+  // 쇼룸에서 복사 입고된 After면 원본 id를 승격 링크로 쓴다.
+  let sourceAfterAssetId = after.id
+  const { data: afterRow } = await supabase
+    .from('image_assets')
+    .select('id, metadata')
+    .eq('id', after.id)
+    .maybeSingle()
+  if (afterRow?.metadata && typeof afterRow.metadata === 'object' && !Array.isArray(afterRow.metadata)) {
+    const meta = afterRow.metadata as Record<string, unknown>
+    if (
+      typeof meta.imported_from_showroom_asset_id === 'string' &&
+      meta.imported_from_showroom_asset_id.trim()
+    ) {
+      sourceAfterAssetId = meta.imported_from_showroom_asset_id.trim()
+    }
+  }
+
+  const beforeInsert = await insertImageAsset({
+    cloudinary_url: input.synthesizedBefore.cloudinary_url,
+    thumbnail_url: input.synthesizedBefore.thumbnail_url,
+    public_watermark_status: 'skipped',
+    site_name: site.short_name,
+    photo_date: photoDate,
+    location: after.location,
+    business_type: after.business_type,
+    color_name: after.color_name,
+    product_name: after.product_name,
+    category: AD_INBOX_CATEGORY,
+    is_main: false,
+    is_consultation: false,
+    storage_type: 'cloudinary',
+    memo: '광고 대기실 · After 기반 Before 합성',
+    metadata: {
+      source: AD_INBOX_SOURCE,
+      ad_inbox: true,
+      ad_inbox_site_id: site.id,
+      before_after_role: 'before',
+      before_after_group_id: siteBatchKey,
+      ad_inbox_label: site.short_name,
+      synthesized_from_after_id: sourceAfterAssetId,
+      synthesized_before: true,
+      public_id: input.synthesizedBefore.public_id ?? undefined,
+      original_name: `synth-before-${after.id}.jpg`,
+    },
+  })
+
+  if ('error' in beforeInsert) {
+    throw beforeInsert.error
+  }
+
+  // After 역할이 비어 있으면 after로 고정해 둔다.
+  if (after.before_after_role !== 'after') {
+    try {
+      await updateAdInboxAssetRole(after.id, 'after')
+    } catch {
+      // 역할 저장 실패해도 Before 첨부는 유지
+    }
+  }
+
+  return {
+    beforeAssetId: beforeInsert.id,
+    siteId: site.id,
+    siteBatchKey,
+    shortName: site.short_name,
+    sourceAfterAssetId,
+  }
+}
+
+/**
  * 고아 합성 Before(ad_inbox 전용·카테고리 누락 등)를 쇼룸 정본으로 정규화하고
  * 대기실 카드에 Before 복사본이 없으면 추가합니다.
  */
