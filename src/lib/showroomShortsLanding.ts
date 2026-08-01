@@ -21,9 +21,16 @@ export type PublicShowroomShortsLanding = {
 export function parseAdInboxShortNameFromGroupKey(groupKey: string | null | undefined): string | null {
   const key = (groupKey ?? '').trim()
   if (!key) return null
+  // before-after:ad_site:{uuid} 는 RPC에서 ad_inbox_sites.short_name으로 해석. 키 자체는 노출하지 않음.
+  if (/ad_site:[0-9a-f-]{36}/i.test(key)) return null
   const match = key.match(/^before-after:ad:\d{4}-\d{2}-\d{2}:(.+)$/)
   const name = match?.[1]?.trim()
   return name || null
+}
+
+function looksLikeTechnicalGroupKey(value: string | null | undefined): boolean {
+  const text = (value ?? '').trim()
+  return /^before-after:/i.test(text) || /ad_site:[0-9a-f-]{36}/i.test(text)
 }
 
 function parseGallery(value: unknown): PublicShowroomShortsGalleryItem[] {
@@ -109,7 +116,7 @@ export async function fetchPublicShowroomShortsLanding(
 
   if (jobError || !job) return null
 
-  const shortName = parseAdInboxShortNameFromGroupKey(job.before_after_group_key) ?? '시공 사례'
+  let shortName = parseAdInboxShortNameFromGroupKey(job.before_after_group_key) ?? '시공 사례'
   const beforeUrl = String(job.before_asset_url ?? '')
   const afterUrl = String(job.after_asset_url ?? '')
   let gallery = fallbackGallery(beforeUrl, afterUrl)
@@ -126,7 +133,10 @@ export async function fetchPublicShowroomShortsLanding(
       ? (seed.metadata as Record<string, unknown>)
       : null
     const siteId = typeof meta?.ad_inbox_site_id === 'string' ? meta.ad_inbox_site_id : null
-    const siteName = seed?.site_name != null ? String(seed.site_name) : null
+    const siteName = seed?.site_name != null ? String(seed.site_name).trim() : null
+    if (siteName && (shortName === '시공 사례' || looksLikeTechnicalGroupKey(shortName))) {
+      shortName = siteName
+    }
 
     if (siteId || siteName) {
       let query = supabase
@@ -179,9 +189,12 @@ function mapLandingRow(row: Record<string, unknown>): PublicShowroomShortsLandin
   const afterAssetUrl = String(row.after_asset_url ?? '').trim()
   if (!jobId || !beforeAssetUrl || !afterAssetUrl) return null
 
-  const shortName = String(row.short_name ?? '').trim() || '시공 사례'
+  const rawShort = String(row.short_name ?? '').trim()
+  const rawDisplay = String(row.display_name ?? '').trim()
+  const shortName =
+    (!looksLikeTechnicalGroupKey(rawShort) && rawShort) || '시공 사례'
   const displayName =
-    String(row.display_name ?? '').trim()
+    (!looksLikeTechnicalGroupKey(rawDisplay) && rawDisplay)
     || stripLeadingSiteNumericCode(shortName)
     || shortName
 

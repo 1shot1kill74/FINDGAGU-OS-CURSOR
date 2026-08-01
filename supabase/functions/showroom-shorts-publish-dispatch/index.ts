@@ -92,11 +92,19 @@ function buildPublishPackage(target: JsonRecord) {
     : channel === "facebook" || channel === "fb"
     ? "fb"
     : "yt"
-  const landingUrl = `https://www.findgagu.co.kr/r/${landingCode}`
+  // 중간랜딩(/public/showroom/shorts/:jobId)으로 가려면 jobId가 필수.
+  // jobId 없으면 /r/yt → 쇼룸 목록으로만 떨어져 현장 연속 랜딩이 깨진다.
+  const jobId =
+    getString(target.shorts_job_id)
+    || getString(target.basic_shorts_draft_id)
+  const landingUrl = jobId
+    ? `https://www.findgagu.co.kr/r/${landingCode}/${encodeURIComponent(jobId)}`
+    : `https://www.findgagu.co.kr/r/${landingCode}`
   const firstCommentBody = rawFirstComment
     .replace(/\n?https?:\/\/(?:www\.)?findgagu\.co\.kr\S*/gi, "")
-    .replace(/\.?\/r\/(?:yt|ig|fb)\b/gi, "")
+    .replace(/\.?\/r\/(?:yt|ig|fb)(?:\/[^\s]*)?/gi, "")
     .replace(/[ \t]+$/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
     .trim()
   const firstComment = firstCommentBody ? `${firstCommentBody}\n${landingUrl}` : landingUrl
 
@@ -105,6 +113,7 @@ function buildPublishPackage(target: JsonRecord) {
     description,
     hashtagsText,
     firstComment,
+    landingUrl,
     descriptionWithHashtags,
     caption: descriptionWithHashtags,
   }
@@ -363,7 +372,9 @@ Deno.serve(async (req) => {
         title: getString(targetRow.title),
         description: getString(targetRow.description),
         hashtags: Array.isArray(targetRow.hashtags) ? targetRow.hashtags : [],
-        firstComment: getString(targetRow.first_comment),
+        // Make/n8n은 publishPackage.firstComment를 쓰므로 여기도 jobId 포함본으로 맞춤
+        firstComment: publishPackage.firstComment,
+        landingUrl: publishPackage.landingUrl,
         finalVideoUrl,
       },
       publishPackage,
