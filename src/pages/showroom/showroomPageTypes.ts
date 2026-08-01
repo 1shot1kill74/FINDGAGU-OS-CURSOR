@@ -147,18 +147,9 @@ export function resolveShowroomBaContentGap(input: {
   return 'blog'
 }
 
-/** 미완료 현장 카드 테두리 — 완료(에메랄드)와 대비되게 점선·두껍게 */
-export function showroomBaContentGapCardClass(gap: ShowroomBaContentGap): string {
-  if (gap === 'both') {
-    return 'border-[3px] border-dashed border-amber-500 shadow-[0_0_0_1px_rgba(245,158,11,0.35)] hover:border-amber-600 hover:shadow-md'
-  }
-  if (gap === 'reels') {
-    return 'border-[3px] border-dashed border-violet-500 shadow-[0_0_0_1px_rgba(139,92,246,0.3)] hover:border-violet-600 hover:shadow-md'
-  }
-  if (gap === 'blog') {
-    return 'border-[3px] border-dashed border-sky-500 shadow-[0_0_0_1px_rgba(14,165,233,0.3)] hover:border-sky-600 hover:shadow-md'
-  }
-  return 'border border-emerald-200 hover:shadow-md'
+/** 전후비교 카드 테두리 — 상태 색 점선은 쓰지 않고 통일된 중립 테두리만 사용 */
+export function showroomBaContentGapCardClass(_gap: ShowroomBaContentGap): string {
+  return 'border border-neutral-200 hover:border-neutral-300 hover:shadow-md'
 }
 
 export function showroomBaContentGapBadgeClass(gap: ShowroomBaContentGap): string {

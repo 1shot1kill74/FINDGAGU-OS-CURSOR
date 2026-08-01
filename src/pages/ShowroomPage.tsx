@@ -2812,24 +2812,6 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                 <p className="text-sm text-neutral-600">
                   리뉴얼 전후를 비교하고, 등록된 현장은 과제(문제)와 적용 방향(솔루션) 요약을 함께 확인할 수 있습니다. 카드를 열면 상세 사진과 설명을 이어갈 수 있습니다.
                 </p>
-                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] text-neutral-600">
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="inline-block h-3 w-5 rounded-sm border-[2.5px] border-dashed border-amber-500" aria-hidden />
-                    릴스·블로그 미완
-                  </span>
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="inline-block h-3 w-5 rounded-sm border-[2.5px] border-dashed border-violet-500" aria-hidden />
-                    릴스만 미게시
-                  </span>
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="inline-block h-3 w-5 rounded-sm border-[2.5px] border-dashed border-sky-500" aria-hidden />
-                    블로그만 미발행
-                  </span>
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="inline-block h-3 w-5 rounded-sm border border-emerald-300 bg-emerald-50" aria-hidden />
-                    둘 다 완료
-                  </span>
-                </div>
               </div>
               <p className="text-xs text-neutral-500">{visibleBeforeAfterGroups.length}개 현장</p>
             </div>
