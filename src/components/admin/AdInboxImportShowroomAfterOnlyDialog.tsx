@@ -10,6 +10,7 @@ import {
   listShowroomAfterOnlyGroupsForImport,
   synthesizeBeforeFromAfterImage,
   type ShowroomBaImportGroup,
+  type SynthesizeBeforeMode,
 } from '@/lib/adInboxStudio'
 import type { AdInboxImportShowroomResult } from '@/components/admin/AdInboxImportShowroomDialog'
 import AdInboxImportPagination, { paginateItems } from '@/components/admin/AdInboxImportPagination'
@@ -24,6 +25,7 @@ type SynthResult = {
   cloudinary_url: string
   thumbnail_url: string | null
   public_id: string | null
+  mode: SynthesizeBeforeMode
 }
 
 export default function AdInboxImportShowroomAfterOnlyDialog({
@@ -35,6 +37,7 @@ export default function AdInboxImportShowroomAfterOnlyDialog({
   const [debouncedQuery, setDebouncedQuery] = useState('')
   const [loading, setLoading] = useState(false)
   const [synthesizing, setSynthesizing] = useState(false)
+  const [synthesizingMode, setSynthesizingMode] = useState<SynthesizeBeforeMode | null>(null)
   const [creating, setCreating] = useState(false)
   const [groups, setGroups] = useState<ShowroomBaImportGroup[]>([])
   const [page, setPage] = useState(1)
@@ -59,6 +62,7 @@ export default function AdInboxImportShowroomAfterOnlyDialog({
       setSynth(null)
       setLoading(false)
       setSynthesizing(false)
+      setSynthesizingMode(null)
       setCreating(false)
       return
     }
@@ -128,7 +132,7 @@ export default function AdInboxImportShowroomAfterOnlyDialog({
 
   const busy = synthesizing || creating
 
-  const handleSynthesize = async () => {
+  const handleSynthesize = async (mode: SynthesizeBeforeMode) => {
     if (!afterAsset) {
       toast.error('After 사진을 선택하세요.')
       return
@@ -139,14 +143,20 @@ export default function AdInboxImportShowroomAfterOnlyDialog({
       return
     }
     setSynthesizing(true)
+    setSynthesizingMode(mode)
     try {
-      const result = await synthesizeBeforeFromAfterImage(imageUrl)
-      setSynth(result)
-      toast.success('Before 합성이 끝났습니다. 확인 후 타임랩스를 시작하세요.')
+      const result = await synthesizeBeforeFromAfterImage(imageUrl, mode)
+      setSynth({ ...result, mode })
+      toast.success(
+        mode === 'empty_room'
+          ? '빈 방 Before 합성이 끝났습니다. 확인 후 타임랩스를 시작하세요.'
+          : '공사 전 Before 합성이 끝났습니다. 확인 후 타임랩스를 시작하세요.',
+      )
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Before 합성에 실패했습니다.')
     } finally {
       setSynthesizing(false)
+      setSynthesizingMode(null)
     }
   }
 
@@ -161,9 +171,12 @@ export default function AdInboxImportShowroomAfterOnlyDialog({
         after: afterAsset,
         synthesizedBefore: synth,
         siteName: selectedGroup.siteName,
+        synthesizeMode: synth.mode,
       })
       toast.success(
-        `「${result.shortName}」에 Before 합성·대기실 입고·타임랩스를 시작했습니다. 이어서 쇼룸으로 보내 주세요.`,
+        synth.mode === 'empty_room'
+          ? `「${result.shortName}」에 빈 방 Before·대기실 입고·빈 방 타임랩스를 시작했습니다. 이어서 쇼룸으로 보내 주세요.`
+          : `「${result.shortName}」에 Before 합성·대기실 입고·타임랩스를 시작했습니다. 이어서 쇼룸으로 보내 주세요.`,
       )
       onCreated({
         jobId: result.jobId,
@@ -192,7 +205,8 @@ export default function AdInboxImportShowroomAfterOnlyDialog({
           </DialogTitle>
           <DialogDescription>
             After만 있는 쇼룸 컷을 고르면 Before를 합성해 대기실 카드에 넣고 타임랩스를 시작합니다.
-            작업이 끝나면 「쇼룸으로 보내기」로 합성 Before를 내부/공개 쇼룸·블로그에 연결하세요.
+            「공사 전」은 철거 분위기, 「빈 방」은 가구만 제거(빈 방 타임랩스용)입니다. 작업이 끝나면
+            「쇼룸으로 보내기」로 합성 Before를 내부/공개 쇼룸·블로그에 연결하세요.
           </DialogDescription>
         </DialogHeader>
 
@@ -308,7 +322,14 @@ export default function AdInboxImportShowroomAfterOnlyDialog({
                       </div>
                     </div>
                     <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-3">
-                      <p className="mb-2 text-xs font-medium text-amber-900">합성 Before</p>
+                      <p className="mb-2 text-xs font-medium text-amber-900">
+                        합성 Before
+                        {synth
+                          ? synth.mode === 'empty_room'
+                            ? ' · 빈 방'
+                            : ' · 공사 전'
+                          : ''}
+                      </p>
                       <div className="aspect-[4/3] overflow-hidden rounded-lg bg-neutral-200">
                         {synth ? (
                           <img
@@ -318,26 +339,41 @@ export default function AdInboxImportShowroomAfterOnlyDialog({
                           />
                         ) : (
                           <div className="flex h-full items-center justify-center px-3 text-center text-xs text-neutral-500">
-                            After를 고른 뒤 「Before 합성」을 누르세요
+                            After를 고른 뒤 Before 모드를 누르세요
                           </div>
                         )}
                       </div>
                     </div>
                   </div>
 
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={!afterAsset || busy}
-                    onClick={() => void handleSynthesize()}
-                  >
-                    {synthesizing ? (
-                      <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-                    ) : (
-                      <Sparkles className="mr-1.5 h-4 w-4" />
-                    )}
-                    {synth ? 'Before 다시 합성' : 'Before 합성'}
-                  </Button>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={!afterAsset || busy}
+                      onClick={() => void handleSynthesize('construction')}
+                    >
+                      {synthesizing && synthesizingMode === 'construction' ? (
+                        <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Sparkles className="mr-1.5 h-4 w-4" />
+                      )}
+                      {synth?.mode === 'construction' ? '공사 전 다시 합성' : '공사 전 Before'}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={!afterAsset || busy}
+                      onClick={() => void handleSynthesize('empty_room')}
+                    >
+                      {synthesizing && synthesizingMode === 'empty_room' ? (
+                        <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Sparkles className="mr-1.5 h-4 w-4" />
+                      )}
+                      {synth?.mode === 'empty_room' ? '빈 방 다시 합성' : '빈 방 Before'}
+                    </Button>
+                  </div>
                 </div>
               ) : null}
             </div>
@@ -357,7 +393,8 @@ export default function AdInboxImportShowroomAfterOnlyDialog({
           </Button>
           <Button type="button" onClick={() => void handleCreate()} disabled={!synth || !afterAsset || busy}>
             {creating ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Video className="mr-1.5 h-4 w-4" />}
-            새 카드 만들고 타임랩스 시작
+            새 카드 만들고{' '}
+            {synth?.mode === 'empty_room' ? '빈 방 타임랩스' : '타임랩스'} 시작
           </Button>
         </DialogFooter>
       </DialogContent>

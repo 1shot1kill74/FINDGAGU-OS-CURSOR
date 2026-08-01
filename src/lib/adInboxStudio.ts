@@ -2070,8 +2070,17 @@ Keep the exact same camera, room geometry, and the same windows/doors (same coun
 No people. Photorealistic.
 Output the edited image only.`
 
-/** After 사진으로 Before 합성 (가구 제거 → 공사 전 분위기, 2패스). 쇼룸 원본은 수정하지 않음 */
-export async function synthesizeBeforeFromAfterImage(imageUrl: string): Promise<{
+/**
+ * construction: 가구 제거 → 공사 전 분위기 (기존 2패스)
+ * empty_room: 가구만 제거한 빈 방 (빈 방 타임랩스용)
+ */
+export type SynthesizeBeforeMode = 'construction' | 'empty_room'
+
+/** After 사진으로 Before 합성. 쇼룸 원본은 수정하지 않음 */
+export async function synthesizeBeforeFromAfterImage(
+  imageUrl: string,
+  mode: SynthesizeBeforeMode = 'construction',
+): Promise<{
   cloudinary_url: string
   thumbnail_url: string | null
   public_id: string | null
@@ -2081,6 +2090,10 @@ export async function synthesizeBeforeFromAfterImage(imageUrl: string): Promise<
     promptFirst: true,
     temperature: 0.1,
   })
+
+  if (mode === 'empty_room') {
+    return stripped
+  }
 
   try {
     return await runAdInboxImageEdit(stripped.cloudinary_url, {
@@ -2106,6 +2119,8 @@ export async function createAdInboxTimelapseFromAfterOnly(input: {
     public_id?: string | null
   }
   siteName?: string | null
+  /** empty_room 합성 Before면 빈 방 타임랩스(구도+설치)로 시작 */
+  synthesizeMode?: SynthesizeBeforeMode
 }): Promise<{
   jobId: string
   siteId: string
@@ -2120,6 +2135,8 @@ export async function createAdInboxTimelapseFromAfterOnly(input: {
   inboxAssetCount: number
 }> {
   const after = input.after
+  const synthesizeMode: SynthesizeBeforeMode = input.synthesizeMode ?? 'construction'
+  const emptyRoom = synthesizeMode === 'empty_room'
   const siteName =
     trimOrNull(input.siteName) ||
     trimOrNull(after.canonical_site_name) ||
@@ -2146,7 +2163,9 @@ export async function createAdInboxTimelapseFromAfterOnly(input: {
     is_main: false,
     is_consultation: false,
     storage_type: 'cloudinary',
-    memo: '광고 대기실 · After 기반 Before 합성',
+    memo: emptyRoom
+      ? '광고 대기실 · After 기반 빈 방 Before 합성'
+      : '광고 대기실 · After 기반 Before 합성',
     metadata: {
       source: AD_INBOX_SOURCE,
       ad_inbox: true,
@@ -2156,6 +2175,7 @@ export async function createAdInboxTimelapseFromAfterOnly(input: {
       ad_inbox_label: site.short_name,
       synthesized_from_after_id: after.id,
       synthesized_before: true,
+      synthesize_before_mode: synthesizeMode,
       public_id: input.synthesizedBefore.public_id ?? undefined,
       original_name: `synth-before-${after.id}.jpg`,
     },
@@ -2200,10 +2220,11 @@ export async function createAdInboxTimelapseFromAfterOnly(input: {
   }
 
   const created = await createShowroomShortsJob({
-    promptText: AD_INBOX_DEFAULT_PROMPT.trim(),
+    promptText: (emptyRoom ? SHOWROOM_SHORTS_EMPTY_ROOM_TIMELAPSE_PROMPT : AD_INBOX_DEFAULT_PROMPT).trim(),
     channels: [...SHOWROOM_SHORTS_CHANNELS],
     images: [beforeForJob, afterForJob],
     beforeAfterGroupKey: buildAdInboxShortsGroupKey(siteBatchKey),
+    timelapseMode: emptyRoom ? 'empty_room' : 'standard',
   })
 
   return {
@@ -2230,6 +2251,7 @@ export async function attachSynthesizedBeforeToAdInboxSite(input: {
     thumbnail_url: string | null
     public_id?: string | null
   }
+  synthesizeMode?: SynthesizeBeforeMode
 }): Promise<{
   beforeAssetId: string
   siteId: string
@@ -2237,6 +2259,7 @@ export async function attachSynthesizedBeforeToAdInboxSite(input: {
   shortName: string
   /** 승격·정규화용 After 원본(가능하면 쇼룸 id) */
   sourceAfterAssetId: string
+  synthesizeMode: SynthesizeBeforeMode
 }> {
   const siteId = trimOrNull(input.siteId)
   if (!siteId) {
@@ -2263,6 +2286,8 @@ export async function attachSynthesizedBeforeToAdInboxSite(input: {
 
   const site = mapSiteRow(siteRow as Record<string, unknown>)
   const siteBatchKey = buildAdInboxSiteGroupId(site.id)
+  const synthesizeMode: SynthesizeBeforeMode = input.synthesizeMode ?? 'construction'
+  const emptyRoom = synthesizeMode === 'empty_room'
   const photoDate =
     site.photo_date ||
     ('photo_date' in after && typeof after.photo_date === 'string' ? after.photo_date.slice(0, 10) : null) ||
@@ -2299,7 +2324,9 @@ export async function attachSynthesizedBeforeToAdInboxSite(input: {
     is_main: false,
     is_consultation: false,
     storage_type: 'cloudinary',
-    memo: '광고 대기실 · After 기반 Before 합성',
+    memo: emptyRoom
+      ? '광고 대기실 · After 기반 빈 방 Before 합성'
+      : '광고 대기실 · After 기반 Before 합성',
     metadata: {
       source: AD_INBOX_SOURCE,
       ad_inbox: true,
@@ -2309,6 +2336,7 @@ export async function attachSynthesizedBeforeToAdInboxSite(input: {
       ad_inbox_label: site.short_name,
       synthesized_from_after_id: sourceAfterAssetId,
       synthesized_before: true,
+      synthesize_before_mode: synthesizeMode,
       public_id: input.synthesizedBefore.public_id ?? undefined,
       original_name: `synth-before-${after.id}.jpg`,
     },
@@ -2333,6 +2361,7 @@ export async function attachSynthesizedBeforeToAdInboxSite(input: {
     siteBatchKey,
     shortName: site.short_name,
     sourceAfterAssetId,
+    synthesizeMode,
   }
 }
 
