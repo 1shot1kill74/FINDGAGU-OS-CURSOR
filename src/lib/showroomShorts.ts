@@ -2,6 +2,7 @@ import { supabase } from '@/lib/supabase'
 import { fetchShowroomImageAssets, type ShowroomImageAsset } from '@/lib/imageAssetService'
 import { setImageAssetMain } from '@/lib/imageAssetUploadService'
 import { getShowroomShortsWorkerUrl } from '@/lib/config'
+import { MANAGED_STUDY_CAFE_REELS_HOOKS } from '@/lib/aeo/managedStudyCafeFurnitureGuide'
 
 function cloudinaryFileFingerprint(url: string | null | undefined): string | null {
   const raw = (url ?? '').trim()
@@ -299,13 +300,19 @@ function buildHashtags(images: ShowroomImageAsset[]): string[] {
   const meta = images[0]
   const industry = trimOrNull(meta?.business_type)
   // 교육용 가구: 관리형 스터디카페·학원·학교·아파트 독서실 등
-  const tags = ['#스터디카페', '#학원인테리어', '#독서실', '#교육용가구', '#파인드가구']
+  const tags = ['#스터디카페', '#학원인테리어', '#독서실', '#교육용가구', '#파인드가구', '#관리형스터디카페']
 
   if (industry && industry !== '기타') {
     tags.push(`#${industry.replace(/\s+/g, '')}`)
   }
 
   return Array.from(new Set(tags))
+}
+
+function isManagedStudyCafeIndustry(industry: string | null): boolean {
+  if (!industry) return false
+  const n = industry.replace(/\s+/g, '')
+  return n.includes('관리형') || n.includes('스터디카페') || n.includes('독서실')
 }
 
 /** 짧은 랜딩 링크. /r/yt/{jobId} → 해당 job 연속 페이지 + utm */
@@ -356,17 +363,28 @@ export function buildShowroomShortsDraft(images: ShowroomImageAsset[]) {
     trimOrNull(selection.beforeImage.external_display_name) ||
     '시공 사례'
   const openShowroomTitle = stripLeadingSiteNumericCode(entranceName) || '시공 사례'
+  const industry =
+    trimOrNull(selection.afterImage.business_type) || trimOrNull(selection.beforeImage.business_type)
+  const managedHook = isManagedStudyCafeIndustry(industry)
+    ? MANAGED_STUDY_CAFE_REELS_HOOKS[0]
+    : null
 
-  const firstCommentBody = `${openShowroomTitle}처럼 공간 구성이 필요하신가요? 파인드가구 쇼룸에서 더 많은 사례를 확인하세요.`
+  const firstCommentBody = managedHook
+    ? `${managedHook} ${openShowroomTitle} 사례는 파인드가구 쇼룸에서 확인하세요.`
+    : `${openShowroomTitle}처럼 공간 구성이 필요하신가요? 파인드가구 쇼룸에서 더 많은 사례를 확인하세요.`
 
   // 본문·첫댓글: YouTube 기준 단일 카피 (FB/IG도 동일) — 링크만 채널별 짧은 URL
   return {
     title: buildShowroomShortsUnifiedTitle(entranceName),
     description: [
+      managedHook,
       `${openShowroomTitle}의 Before & After 공간 변화입니다.`,
       '',
       '실제 현장 사진을 바탕으로 제작한 공간 변화 전후 사례 비교입니다.',
-    ].join('\n'),
+      managedHook ? '관리형 스터디카페·독서실 가구는 규격·1인석 비율·관리 동선까지 함께 보세요.' : null,
+    ]
+      .filter(Boolean)
+      .join('\n'),
     hashtags: buildHashtags(images),
     firstComment: withShowroomShortsLandingUrl(firstCommentBody, 'youtube'),
     firstCommentBody,
