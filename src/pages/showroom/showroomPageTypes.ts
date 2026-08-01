@@ -114,6 +114,67 @@ export function showroomBlogPublicationBadgeClass(
   return 'bg-neutral-100 text-neutral-600'
 }
 
+/** 내부 쇼룸 BA 카드: 릴스·블로그 게시 미완료 구분 */
+export type ShowroomBaContentGap = 'none' | 'both' | 'reels' | 'blog'
+
+export function isShowroomBlogPublishComplete(
+  publication: ShowroomCaseProfileDraftState['blogPublication'],
+): boolean {
+  return publication.status === 'approved'
+}
+
+/** 채널에 실제로 올라간 적이 있으면 릴스 게시 완료 */
+export function isShowroomReelsPublishComplete(work: {
+  uploadedAt?: string | null
+  channels: Array<{ status: string }>
+}): boolean {
+  if ((work.uploadedAt ?? '').trim()) return true
+  return work.channels.some((channel) => channel.status === 'published')
+}
+
+export function resolveShowroomBaContentGap(input: {
+  blogPublication: ShowroomCaseProfileDraftState['blogPublication']
+  work: {
+    uploadedAt?: string | null
+    channels: Array<{ status: string }>
+  }
+}): ShowroomBaContentGap {
+  const blogDone = isShowroomBlogPublishComplete(input.blogPublication)
+  const reelsDone = isShowroomReelsPublishComplete(input.work)
+  if (blogDone && reelsDone) return 'none'
+  if (!blogDone && !reelsDone) return 'both'
+  if (!reelsDone) return 'reels'
+  return 'blog'
+}
+
+/** 미완료 현장 카드 테두리 — 완료(에메랄드)와 대비되게 점선·두껍게 */
+export function showroomBaContentGapCardClass(gap: ShowroomBaContentGap): string {
+  if (gap === 'both') {
+    return 'border-[3px] border-dashed border-amber-500 shadow-[0_0_0_1px_rgba(245,158,11,0.35)] hover:border-amber-600 hover:shadow-md'
+  }
+  if (gap === 'reels') {
+    return 'border-[3px] border-dashed border-violet-500 shadow-[0_0_0_1px_rgba(139,92,246,0.3)] hover:border-violet-600 hover:shadow-md'
+  }
+  if (gap === 'blog') {
+    return 'border-[3px] border-dashed border-sky-500 shadow-[0_0_0_1px_rgba(14,165,233,0.3)] hover:border-sky-600 hover:shadow-md'
+  }
+  return 'border border-emerald-200 hover:shadow-md'
+}
+
+export function showroomBaContentGapBadgeClass(gap: ShowroomBaContentGap): string {
+  if (gap === 'both') return 'bg-amber-500 text-white'
+  if (gap === 'reels') return 'bg-violet-600 text-white'
+  if (gap === 'blog') return 'bg-sky-600 text-white'
+  return ''
+}
+
+export function showroomBaContentGapLabel(gap: ShowroomBaContentGap): string | null {
+  if (gap === 'both') return '릴스·블로그 미완'
+  if (gap === 'reels') return '릴스 미게시'
+  if (gap === 'blog') return '블로그 미발행'
+  return null
+}
+
 export function preferCanonicalBlogPost(
   a: ShowroomCaseCanonicalBlogPost | null | undefined,
   b: ShowroomCaseCanonicalBlogPost | null | undefined,
@@ -159,6 +220,8 @@ export function resolveShowroomBlogPublicationForSiteGroup(
     push(image.site_name)
     push(image.canonical_site_name)
     push(image.raw_site_name)
+    push(image.external_display_name)
+    push(image.broad_external_display_name)
   })
   for (const key of candidates) {
     const draft = draftBySite[key]

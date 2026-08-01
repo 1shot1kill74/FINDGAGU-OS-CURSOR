@@ -13,20 +13,10 @@ import {
   fetchShowroomCaseProfileDrafts,
   type ShowroomCaseProfileDraft,
 } from '@/lib/showroomCaseProfileService'
+import { getInternalShowroomSiteName } from '@/pages/showroom/showroomPageGrouping'
 
 function getPreferredShowroomSiteName(images: ShowroomImageAsset[]): string {
-  const sorted = [...images].sort((a, b) => {
-    const aTime = a.created_at ? new Date(a.created_at).getTime() : 0
-    const bTime = b.created_at ? new Date(b.created_at).getTime() : 0
-    return bTime - aTime
-  })
-  for (const image of sorted) {
-    const canonical = image.canonical_site_name?.trim()
-    if (canonical) return canonical
-    const sn = image.raw_site_name?.trim() || image.space_display_name?.trim() || image.site_name?.trim()
-    if (sn) return sn
-  }
-  return '미지정'
+  return getInternalShowroomSiteName(images)
 }
 
 function getPreferredExternalLabel(images: ShowroomImageAsset[]): string | null {
@@ -47,7 +37,7 @@ function getDraftLookupNames(images: ShowroomImageAsset[], query: string): strin
 
 function getProfileLookupAliases(profile: Pick<
   ShowroomCaseProfileDraft,
-  'siteName' | 'canonicalSiteName' | 'cardNewsPublication' | 'canonicalBlogPost'
+  'siteName' | 'canonicalSiteName' | 'cardNewsPublication' | 'canonicalBlogPost' | 'legacyPublicDisplayNames'
 >): string[] {
   return Array.from(new Set([
     profile.siteName.trim(),
@@ -57,6 +47,7 @@ function getProfileLookupAliases(profile: Pick<
     profile.canonicalBlogPost?.siteName?.trim() ?? '',
     profile.canonicalBlogPost?.title?.trim() ?? '',
     profile.canonicalBlogPost?.seo.title?.trim() ?? '',
+    ...(profile.legacyPublicDisplayNames ?? []),
   ].filter(Boolean)))
 }
 
@@ -146,6 +137,7 @@ function findBeforeAfterGroupForQuery(query: string, assets: ShowroomImageAsset[
     const hit = images.some(
       (image) =>
         image.site_name?.trim() === trimmed
+        || image.raw_site_name?.trim() === trimmed
         || image.canonical_site_name?.trim() === trimmed
         || image.external_display_name?.trim() === trimmed
         || image.broad_external_display_name?.trim() === trimmed
@@ -153,6 +145,15 @@ function findBeforeAfterGroupForQuery(query: string, assets: ShowroomImageAsset[
         || broadenPublicDisplayName(image.site_name?.trim() ?? null) === trimmed
     )
     if (hit) return images
+  }
+
+  // 레거시/오타 공개명(예: 업종 토큰 오류)도 권역+끝4자리로 동일 현장에 연결
+  const queryIdentity = new Set(collectShowroomIdentityKeys([trimmed]))
+  if (queryIdentity.size > 0) {
+    for (const [, images] of groups) {
+      const groupIdentity = getImageIdentityKeys(images, [])
+      if (groupIdentity.some((key) => queryIdentity.has(key))) return images
+    }
   }
 
   return null
@@ -258,12 +259,24 @@ async function loadShowroomCaseApproachBundleFromProfileQuery(
   const drafts = await fetchShowroomCaseProfileDrafts([query])
   const profile = drafts.find(
     (draft) => draft.siteName === query || draft.canonicalSiteName === query,
-  ) ?? drafts[0] ?? null
-  if (!hasApprovedCanonicalBlog(profile)) return null
+  ) ?? drafts.find((draft) => profileMatchesLookupNames(draft, [query]))
+    ?? drafts[0] ?? null
+  if (!hasApprovedCanonicalBlog(profile)) {
+    const approved = await findApprovedBlogProfileByLookupNames([query])
+    if (!approved) return null
+    return {
+      siteName: approved.siteName,
+      externalLabel: approved.canonicalSiteName,
+      businessTypes: approved.industry?.trim() ? [approved.industry.trim()] : [],
+      beforeImage: null,
+      afterImage: null,
+      profile: approved,
+    }
+  }
 
   return {
     siteName: profile!.siteName,
-    externalLabel: null,
+    externalLabel: profile!.canonicalSiteName,
     businessTypes: profile!.industry?.trim() ? [profile!.industry.trim()] : [],
     beforeImage: null,
     afterImage: null,
@@ -311,9 +324,12 @@ export async function loadShowroomCaseApproachBundle(
     const matchNames = Array.from(new Set([siteName, query, ...draftLookupNames].filter(Boolean)))
 
     const drafts = await fetchShowroomCaseProfileDrafts(draftLookupNames)
+    const approvedDrafts = drafts.filter((draft) => hasApprovedCanonicalBlog(draft))
     const profile =
       drafts.find((draft) => draft.siteName === siteName || draft.canonicalSiteName === siteName)
       ?? drafts.find((draft) => profileMatchesLookupNames(draft, matchNames))
+      // 공개 표시명으로 조회했을 때 승인 블로그가 1건이면 그 프로필을 쓴다
+      ?? (approvedDrafts.length === 1 ? approvedDrafts[0] : null)
       ?? await findApprovedBlogProfileByLookupNames(matchNames)
 
     const hasApprovedBlog = hasApprovedCanonicalBlog(profile)
@@ -331,7 +347,7 @@ export async function loadShowroomCaseApproachBundle(
       ok: true,
       data: {
         siteName,
-        externalLabel: null,
+        externalLabel: getPreferredExternalLabel(matched),
         businessTypes,
         beforeImage: before,
         afterImage: after,

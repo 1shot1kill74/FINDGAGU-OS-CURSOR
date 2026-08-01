@@ -111,14 +111,22 @@ export function mapPublicShowroomRpcRowToShowroomAsset(r: Record<string, unknown
     : typeof r.before_after_site_order === 'string' && /^\d+$/.test(r.before_after_site_order)
       ? Number(r.before_after_site_order)
       : null
+  const publicSiteName = r.site_name != null ? String(r.site_name).trim() : ''
+  const sourceSiteName = r.source_site_name != null ? String(r.source_site_name).trim() : ''
+  const internalSiteName = sourceSiteName || publicSiteName || null
+  const externalFromMeta = meta.externalDisplayName?.trim() || null
+  const externalDisplayName =
+    externalFromMeta
+    || (publicSiteName && internalSiteName && publicSiteName !== internalSiteName ? publicSiteName : null)
+
   return {
     before_after_role: beforeAfterRole,
     before_after_group_id: beforeAfter.groupId,
     before_after_site_order: beforeAfterSiteOrder,
-    raw_site_name: r.site_name != null ? String(r.site_name) : null,
+    raw_site_name: internalSiteName,
     canonical_site_name: meta.canonicalSiteName,
     space_display_name: meta.spaceDisplayName,
-    external_display_name: meta.externalDisplayName,
+    external_display_name: externalDisplayName,
     broad_external_display_name: meta.broadExternalDisplayName,
     space_id: meta.spaceId,
     id: String(r.id),
@@ -129,7 +137,8 @@ export function mapPublicShowroomRpcRowToShowroomAsset(r: Record<string, unknown
         ? r.public_watermark_status.trim()
         : null,
     thumbnail_url: r.thumbnail_url != null ? String(r.thumbnail_url) : null,
-    site_name: r.site_name != null ? String(r.site_name) : null,
+    // 공개 표시명은 external에 두고, site_name은 내부 현장명 유지 (블로그 프로필 매칭용)
+    site_name: internalSiteName,
     public_group_key: r.public_group_key != null ? String(r.public_group_key) : null,
     location: r.location != null ? String(r.location) : null,
     business_type: r.business_type != null ? String(r.business_type) : null,

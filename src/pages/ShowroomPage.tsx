@@ -90,6 +90,7 @@ import {
   getGroupPublicLabel,
   getPreferredExternalDisplayName,
   resolveConcernBeforeAfterGroups,
+  getInternalShowroomSiteName,
   getPreferredShowroomSiteName,
   getPrimaryIndustryLabel,
   getPublicLabelsFromImages,
@@ -117,8 +118,13 @@ import type {
 import {
   EMPTY_SHOWROOM_CASE_PROFILE_DRAFT,
   blogPublicationFromPost,
+  isShowroomBlogPublishComplete,
   preferCanonicalBlogPost,
+  resolveShowroomBaContentGap,
   resolveShowroomBlogPublicationForSiteGroup,
+  showroomBaContentGapBadgeClass,
+  showroomBaContentGapCardClass,
+  showroomBaContentGapLabel,
   showroomBlogPublicationBadgeClass,
   showroomBlogPublicationLabel,
   showroomCaseProfileExactSiteKeys,
@@ -1424,9 +1430,8 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
 
   const getBeforeAfterStoryHref = useCallback((group: SiteGroup) => {
     const candidates = [
-      getPreferredShowroomSiteName(group.images).trim(),
+      getInternalShowroomSiteName(group.images).trim(),
       group.siteName.trim(),
-      getGroupPublicLabel(group),
     ].filter((value): value is string => Boolean(value) && value !== '미지정')
     const siteName = candidates[0]
     if (!siteName) return null
@@ -1691,6 +1696,19 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
     const isSavingPriority = savingPriorityByKey[priorityKey] === true
     const isPriorityEditorOpen = priorityEditorOpenByKey[priorityKey] === true
     const caseProfileDraft = getBeforeAfterProfileDraft(group)
+    const baPublishStatus = showInternalControls ? getBaCardPublishStatus(group) : null
+    // 릴스 인덱스 로딩 전에는 블로그 상태만 반영 (전부 amber로 깜빡이지 않게)
+    const contentGap = (() => {
+      if (!showInternalControls || !baPublishStatus) return 'none' as const
+      if (baCardPublishIndex == null) {
+        return isShowroomBlogPublishComplete(caseProfileDraft.blogPublication) ? 'none' as const : 'blog' as const
+      }
+      return resolveShowroomBaContentGap({
+        blogPublication: caseProfileDraft.blogPublication,
+        work: baPublishStatus.work,
+      })
+    })()
+    const contentGapLabel = showInternalControls ? showroomBaContentGapLabel(contentGap) : null
     const publicLabel = getGroupPublicLabel(group)
     const blogStudioHref = `/admin/showroom-case-studio?site=${encodeURIComponent(group.siteName)}&focus=blog`
     const storyHref = !showInternalControls && options?.linkToStory ? getBeforeAfterStoryHref(group) : null
@@ -1712,33 +1730,55 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
             <span className="absolute left-2 top-2 rounded-full bg-emerald-600/90 px-2 py-1 text-[11px] font-semibold text-white">
               After만
             </span>
+            {contentGapLabel ? (
+              <span
+                className={cn(
+                  'absolute right-2 top-2 rounded-full px-2 py-1 text-[11px] font-semibold shadow-sm',
+                  showroomBaContentGapBadgeClass(contentGap),
+                )}
+              >
+                {contentGapLabel}
+              </span>
+            ) : null}
           </div>
         ) : (
-          <div className="grid grid-cols-2">
-            <div className="relative aspect-[4/3] bg-neutral-100">
-              <img
-                src={beforeImage!.thumbnail_url || beforeImage!.cloudinary_url}
-                alt={`${showInternalControls ? group.siteName : publicLabel} before`}
-                className="h-full w-full object-cover"
-                loading="lazy"
-                decoding="async"
-              />
-              <span className="absolute left-2 top-2 rounded-full bg-black/75 px-2 py-1 text-[11px] font-semibold text-white">
-                Before
-              </span>
+          <div className="relative">
+            <div className="grid grid-cols-2">
+              <div className="relative aspect-[4/3] bg-neutral-100">
+                <img
+                  src={beforeImage!.thumbnail_url || beforeImage!.cloudinary_url}
+                  alt={`${showInternalControls ? group.siteName : publicLabel} before`}
+                  className="h-full w-full object-cover"
+                  loading="lazy"
+                  decoding="async"
+                />
+                <span className="absolute left-2 top-2 rounded-full bg-black/75 px-2 py-1 text-[11px] font-semibold text-white">
+                  Before
+                </span>
+              </div>
+              <div className="relative aspect-[4/3] bg-neutral-100">
+                <img
+                  src={afterImage.thumbnail_url || afterImage.cloudinary_url}
+                  alt={`${showInternalControls ? group.siteName : publicLabel} after`}
+                  className="h-full w-full object-cover"
+                  loading="lazy"
+                  decoding="async"
+                />
+                <span className="absolute left-2 top-2 rounded-full bg-emerald-600/90 px-2 py-1 text-[11px] font-semibold text-white">
+                  After
+                </span>
+              </div>
             </div>
-            <div className="relative aspect-[4/3] bg-neutral-100">
-              <img
-                src={afterImage.thumbnail_url || afterImage.cloudinary_url}
-                alt={`${showInternalControls ? group.siteName : publicLabel} after`}
-                className="h-full w-full object-cover"
-                loading="lazy"
-                decoding="async"
-              />
-              <span className="absolute left-2 top-2 rounded-full bg-emerald-600/90 px-2 py-1 text-[11px] font-semibold text-white">
-                After
+            {contentGapLabel ? (
+              <span
+                className={cn(
+                  'absolute right-2 top-2 z-10 rounded-full px-2 py-1 text-[11px] font-semibold shadow-sm',
+                  showroomBaContentGapBadgeClass(contentGap),
+                )}
+              >
+                {contentGapLabel}
               </span>
-            </div>
+            ) : null}
           </div>
         )}
         <div className={showInternalControls ? 'p-4' : 'flex min-h-[5.5rem] items-start p-4'}>
@@ -1767,7 +1807,12 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
     return (
       <div
         key={`before-after-${group.siteName}`}
-        className="flex h-full flex-col overflow-hidden rounded-2xl border border-emerald-200 bg-white text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
+        className={cn(
+          'flex h-full flex-col overflow-hidden rounded-2xl bg-white text-left shadow-sm transition-all hover:-translate-y-0.5',
+          showInternalControls
+            ? showroomBaContentGapCardClass(contentGap)
+            : 'border border-emerald-200 hover:shadow-md',
+        )}
       >
         {storyHref ? (
           <Link
@@ -1803,7 +1848,7 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
               이 쇼룸은 직원과 고객이 같은 화면으로 사례를 설명하는 용도입니다. 콘텐츠 작성·수정은 케이스 작업실에서 진행하세요.
             </p>
             {(() => {
-              const status = getBaCardPublishStatus(group)
+              const status = baPublishStatus ?? getBaCardPublishStatus(group)
               const { work, reelSource, inAdInbox } = status
               const uploadedDate = formatAdInboxWorkCompletedDate(work.uploadedAt)
               const reelLabel =
@@ -1855,6 +1900,20 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                         After만
                       </span>
                     ) : null}
+                    {contentGapLabel ? (
+                      <span
+                        className={cn(
+                          'rounded-full px-2 py-0.5 text-[11px] font-semibold',
+                          showroomBaContentGapBadgeClass(contentGap),
+                        )}
+                      >
+                        {contentGapLabel}
+                      </span>
+                    ) : (
+                      <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-800 ring-1 ring-emerald-200">
+                        릴스·블로그 완료
+                      </span>
+                    )}
                   </div>
                   {reelSource !== 'none' ? (
                     <div className="space-y-1.5">
@@ -2753,6 +2812,24 @@ export default function ShowroomPage({ mode = 'internal' }: ShowroomPageProps) {
                 <p className="text-sm text-neutral-600">
                   리뉴얼 전후를 비교하고, 등록된 현장은 과제(문제)와 적용 방향(솔루션) 요약을 함께 확인할 수 있습니다. 카드를 열면 상세 사진과 설명을 이어갈 수 있습니다.
                 </p>
+                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] text-neutral-600">
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="inline-block h-3 w-5 rounded-sm border-[2.5px] border-dashed border-amber-500" aria-hidden />
+                    릴스·블로그 미완
+                  </span>
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="inline-block h-3 w-5 rounded-sm border-[2.5px] border-dashed border-violet-500" aria-hidden />
+                    릴스만 미게시
+                  </span>
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="inline-block h-3 w-5 rounded-sm border-[2.5px] border-dashed border-sky-500" aria-hidden />
+                    블로그만 미발행
+                  </span>
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="inline-block h-3 w-5 rounded-sm border border-emerald-300 bg-emerald-50" aria-hidden />
+                    둘 다 완료
+                  </span>
+                </div>
               </div>
               <p className="text-xs text-neutral-500">{visibleBeforeAfterGroups.length}개 현장</p>
             </div>

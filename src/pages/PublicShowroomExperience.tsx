@@ -59,6 +59,7 @@ import {
   getGroupPublicLabel,
   getPreferredExternalDisplayName,
   resolveConcernBeforeAfterGroups,
+  getInternalShowroomSiteName,
   getPreferredShowroomSiteName,
   getPrimaryIndustryLabel,
   getPublicLabelsFromImages,
@@ -981,9 +982,8 @@ export default function PublicShowroomExperience() {
 
   const getBeforeAfterStoryHref = useCallback((group: SiteGroup) => {
     const candidates = [
-      getPreferredShowroomSiteName(group.images).trim(),
+      getInternalShowroomSiteName(group.images).trim(),
       group.siteName.trim(),
-      getGroupPublicLabel(group),
     ].filter((value): value is string => Boolean(value) && value !== '미지정')
     const siteName = candidates[0]
     if (!siteName) return null

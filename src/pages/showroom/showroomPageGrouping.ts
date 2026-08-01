@@ -35,19 +35,30 @@ export function buildShowroomSiteKey(
 }
 
 
-export function getPreferredShowroomSiteName(images: ShowroomImageAsset[]): string {
+/**
+ * 상담카드 내부 현장명. case URL·블로그 조회의 기준 키.
+ * canonical/external(공개 표시명)보다 raw/site_name을 우선한다.
+ */
+export function getInternalShowroomSiteName(images: ShowroomImageAsset[]): string {
   const sorted = [...images].sort((a, b) => {
     const aTime = a.created_at ? new Date(a.created_at).getTime() : 0
     const bTime = b.created_at ? new Date(b.created_at).getTime() : 0
     return bTime - aTime
   })
   for (const image of sorted) {
-    const canonical = image.canonical_site_name?.trim()
-    if (canonical) return canonical
-    const siteName = image.raw_site_name?.trim() || image.space_display_name?.trim() || image.site_name?.trim()
+    const siteName = image.raw_site_name?.trim() || image.site_name?.trim()
     if (siteName) return siteName
   }
+  for (const image of sorted) {
+    const fallback = image.canonical_site_name?.trim() || image.space_display_name?.trim()
+    if (fallback) return fallback
+  }
   return '미지정'
+}
+
+/** @deprecated 그룹 대표명용. URL 키에는 getInternalShowroomSiteName을 쓴다. */
+export function getPreferredShowroomSiteName(images: ShowroomImageAsset[]): string {
+  return getInternalShowroomSiteName(images)
 }
 
 export function getPreferredExternalDisplayName(images: ShowroomImageAsset[]): string | null {

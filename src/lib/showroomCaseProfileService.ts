@@ -38,6 +38,8 @@ export type ShowroomCaseProfileDraft = {
   cardNewsPublication: ShowroomCaseCardNewsPublication
   /** Google/네이버/내부 쇼룸 공통 블로그 정본. 미저장 시 `null`. */
   canonicalBlogPost: ShowroomCaseCanonicalBlogPost | null
+  /** 이전/잘못된 공개 표시명 — URL·조회 호환용 */
+  legacyPublicDisplayNames: string[]
 }
 
 export type ShowroomCaseCardNewsPublication = {
@@ -286,6 +288,15 @@ function mapShowroomCaseProfileRows(
     )
     if (options.requireApprovedBlog && (!canonicalBlogPost || canonicalBlogPost.status !== 'approved')) return []
 
+    const meta = row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
+      ? row.metadata as Record<string, unknown>
+      : {}
+    const legacyPublicDisplayNames = Array.isArray(meta.legacy_public_display_names)
+      ? meta.legacy_public_display_names
+        .filter((value): value is string => typeof value === 'string' && Boolean(value.trim()))
+        .map((value) => value.trim())
+      : []
+
     return [{
       siteName,
       canonicalSiteName: typeof row.canonical_site_name === 'string' && row.canonical_site_name.trim()
@@ -309,6 +320,7 @@ function mapShowroomCaseProfileRows(
       blogGeneration: generation.blogGeneration,
       cardNewsPublication: publication,
       canonicalBlogPost,
+      legacyPublicDisplayNames,
     }]
   })
 }
@@ -369,50 +381,13 @@ export async function fetchPublishedShowroomCaseProfileDrafts(): Promise<Showroo
   if (error) throw new Error(error.message)
 
   const rows = (data ?? []) as Array<Record<string, unknown>>
-  return rows.flatMap((row) => {
-    const siteName = typeof row.site_name === 'string' ? row.site_name.trim() : ''
-    if (!siteName) return []
-
-    const publication = parsePublicationMeta(row.metadata)
-    if (!publication.isPublished) return []
-
-    const outline = parseOutlineMeta(row.metadata)
-    const generation = parseGenerationMeta(row.metadata)
-    const consultationCardDraft = parseConsultationCardDraft(row.metadata)
-    const canonicalBlogPost = hydrateCanonicalBlogPostFromGenerationResponse(
-      parseCanonicalBlogPostFromMetadata(row.metadata),
-      generation.blogGeneration.response,
-    )
-
-    return [{
-      siteName,
-      canonicalSiteName: typeof row.canonical_site_name === 'string' && row.canonical_site_name.trim()
-        ? row.canonical_site_name.trim()
-        : null,
-      industry: typeof row.industry === 'string' && row.industry.trim()
-        ? row.industry.trim()
-        : null,
-      problemCode: outline.problemCode,
-      solutionCode: outline.solutionCode,
-      problemFrameLabel: outline.problemFrameLabel,
-      solutionFrameLabel: outline.solutionFrameLabel,
-      painPoint: typeof row.pain_point === 'string' ? row.pain_point : null,
-      solutionPoint: typeof row.solution_point === 'string' ? row.solution_point : null,
-      headlineHook: outline.headlineHook,
-      problemDetail: outline.problemDetail,
-      solutionDetail: outline.solutionDetail,
-      evidencePoints: outline.evidencePoints,
-      consultationCardDraft,
-      cardNewsGeneration: generation.cardNewsGeneration,
-      blogGeneration: generation.blogGeneration,
-      cardNewsPublication: publication,
-      canonicalBlogPost,
-    }]
-  }).sort((a, b) => {
-    const at = a.cardNewsPublication.publishedAt ? new Date(a.cardNewsPublication.publishedAt).getTime() : 0
-    const bt = b.cardNewsPublication.publishedAt ? new Date(b.cardNewsPublication.publishedAt).getTime() : 0
-    return bt - at
-  })
+  return mapShowroomCaseProfileRows(rows)
+    .filter((draft) => draft.cardNewsPublication.isPublished)
+    .sort((a, b) => {
+      const at = a.cardNewsPublication.publishedAt ? new Date(a.cardNewsPublication.publishedAt).getTime() : 0
+      const bt = b.cardNewsPublication.publishedAt ? new Date(b.cardNewsPublication.publishedAt).getTime() : 0
+      return bt - at
+    })
 }
 
 export async function saveShowroomCaseProfileDraft(input: {
@@ -521,6 +496,48 @@ export async function saveShowroomCaseGenerationState(input: {
   return { error: error ?? null }
 }
 
+/**
+ * 오픈쇼룸 공개 표시명(external/open_showroom_display_name)을 조회한다.
+ * 승인 블로그가 공개 URL 키와 연결되도록 canonical_site_name에 쓴다.
+ */
+async function resolvePublicDisplayNameForSite(siteName: string): Promise<string | null> {
+  const { data, error } = await (supabase as any)
+    .from('image_assets')
+    .select('site_name, location, business_type, created_at, metadata')
+    .eq('site_name', siteName)
+    .eq('is_consultation', true)
+    .order('created_at', { ascending: false })
+    .limit(12)
+
+  if (error || !Array.isArray(data) || data.length === 0) return null
+
+  for (const row of data as Array<Record<string, unknown>>) {
+    const meta = row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
+      ? row.metadata as Record<string, unknown>
+      : {}
+    const businessType = typeof row.business_type === 'string' ? row.business_type.trim() : ''
+    const external = typeof meta.external_display_name === 'string' && meta.external_display_name.trim()
+      ? meta.external_display_name.trim()
+      : null
+    const broad = typeof meta.broad_external_display_name === 'string' && meta.broad_external_display_name.trim()
+      ? meta.broad_external_display_name.trim()
+      : null
+    const publicDisplay = typeof meta.public_display_name === 'string' && meta.public_display_name.trim()
+      ? meta.public_display_name.trim()
+      : null
+    // business_type과 충돌하는 업종 토큰이 들어간 공개명은 건너뛴다 (예: 아파트 현장인데 '학교')
+    const industryTokens = ['관리형', '학원', '스터디카페', '학교', '아파트', '기타']
+    const conflictsBusinessType = (label: string | null): boolean => {
+      if (!label || !businessType) return false
+      if (label.includes(businessType)) return false
+      return industryTokens.some((token) => token !== businessType && label.includes(token))
+    }
+    const resolved = [publicDisplay, external, broad].find((value) => value && !conflictsBusinessType(value)) ?? null
+    if (resolved && resolved !== siteName) return resolved
+  }
+  return null
+}
+
 /** Google/네이버/내부 쇼룸이 공유하는 블로그 정본을 `metadata.canonical_blog_post`에 저장합니다. */
 export async function saveShowroomCaseCanonicalBlogPost(input: {
   siteName: string
@@ -545,13 +562,23 @@ export async function saveShowroomCaseCanonicalBlogPost(input: {
     [CANONICAL_BLOG_METADATA_KEY]: serializeCanonicalBlogPost(nextPost),
   }
 
+  const upsertPayload: Record<string, unknown> = {
+    site_name: siteName,
+    metadata: nextMeta,
+    updated_at: now,
+  }
+
+  // 공개 시: 오픈쇼룸 URL 키(공개 표시명)를 canonical_site_name에 연결
+  if (nextPost.status === 'approved') {
+    const publicDisplayName = await resolvePublicDisplayNameForSite(siteName)
+    if (publicDisplayName) {
+      upsertPayload.canonical_site_name = publicDisplayName
+    }
+  }
+
   const { error } = await (supabase as any)
     .from('showroom_case_profiles')
-    .upsert({
-      site_name: siteName,
-      metadata: nextMeta,
-      updated_at: now,
-    }, { onConflict: 'site_name', ignoreDuplicates: false })
+    .upsert(upsertPayload, { onConflict: 'site_name', ignoreDuplicates: false })
 
   return { error: error ?? null }
 }
