@@ -516,6 +516,7 @@ export default function AdInboxStudioPage() {
       setSynthBeforeDraft(null)
       return
     }
+    // 카드 전환 직후 임시값. 작업(job)이 있으면 아래에서 job BA로 덮어씀.
     const before = selectedBatch.assets.find((a) => a.before_after_role === 'before')
     const after = selectedBatch.assets.find((a) => a.before_after_role === 'after')
     setBeforeId(before?.id ?? null)
@@ -531,6 +532,16 @@ export default function AdInboxStudioPage() {
     void refreshJobs(selectedBatch)
   }, [selectedBatch?.key, selectedBatch?.siteId, sites, refreshJobs])
 
+  /** 타임랩스 job에 묶인 BA가 있으면 그걸 선택 상태로 복원 (역할 태그 첫 장보다 우선) */
+  useEffect(() => {
+    if (!selectedBatch || !activeJob) return
+    const beforeJobId = activeJob.before_asset_id?.trim() || null
+    const afterJobId = activeJob.after_asset_id?.trim() || null
+    if (!beforeJobId && !afterJobId) return
+    if (beforeJobId) setBeforeId(beforeJobId)
+    if (afterJobId) setAfterId(afterJobId)
+  }, [selectedBatch?.key, activeJob?.id, activeJob?.before_asset_id, activeJob?.after_asset_id])
+
   useEffect(() => {
     if (!selectedBatch || selectedBatch.assets.length > 0) {
       setJobLinkedAssets([])
@@ -545,10 +556,20 @@ export default function AdInboxStudioPage() {
       .then((rows) => {
         if (cancelled) return
         setJobLinkedAssets(rows)
-        const before = rows.find((a) => a.before_after_role === 'before')
-        const after = rows.find((a) => a.before_after_role === 'after')
-        if (before) setBeforeId(before.id)
-        if (after) setAfterId(after.id)
+        const beforeJobId = activeJob.before_asset_id?.trim()
+        const afterJobId = activeJob.after_asset_id?.trim()
+        if (beforeJobId && rows.some((a) => a.id === beforeJobId)) {
+          setBeforeId(beforeJobId)
+        } else {
+          const before = rows.find((a) => a.before_after_role === 'before')
+          if (before) setBeforeId(before.id)
+        }
+        if (afterJobId && rows.some((a) => a.id === afterJobId)) {
+          setAfterId(afterJobId)
+        } else {
+          const after = rows.find((a) => a.before_after_role === 'after')
+          if (after) setAfterId(after.id)
+        }
       })
       .catch(() => {
         if (!cancelled) setJobLinkedAssets([])
@@ -764,6 +785,16 @@ export default function AdInboxStudioPage() {
 
   const handleSetRole = async (asset: AdInboxAsset, role: AdInboxRole) => {
     try {
+      // 같은 카드에서 Before/After는 1장만 — 다른 사진의 같은 역할 태그 제거
+      if ((role === 'before' || role === 'after') && selectedBatch) {
+        const siblings = selectedBatch.assets.filter(
+          (row) =>
+            row.id !== asset.id &&
+            !row.linked_from_showroom_job &&
+            row.before_after_role === role,
+        )
+        await Promise.all(siblings.map((row) => updateAdInboxAssetRole(row.id, 'unset')))
+      }
       await updateAdInboxAssetRole(asset.id, role)
       if (role === 'before') setBeforeId(asset.id)
       if (role === 'after') setAfterId(asset.id)
