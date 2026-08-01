@@ -1,6 +1,64 @@
 import { supabase } from '@/lib/supabase'
 import { fetchShowroomImageAssets, type ShowroomImageAsset } from '@/lib/imageAssetService'
+import { setImageAssetMain } from '@/lib/imageAssetUploadService'
 import { getShowroomShortsWorkerUrl } from '@/lib/config'
+
+function cloudinaryFileFingerprint(url: string | null | undefined): string | null {
+  const raw = (url ?? '').trim()
+  if (!raw) return null
+  try {
+    const pathname = new URL(raw).pathname
+    const last = pathname.split('/').filter(Boolean).pop() ?? ''
+    const stem = last.replace(/\.[a-zA-Z0-9]+$/i, '').trim().toLowerCase()
+    return stem || null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 타임랩스/릴스에 쓴 After를 오픈쇼룸 대표컷과 맞춘다.
+ * 대기실 카피(is_consultation=false)면 동일 Cloudinary 파일의 상담컷을 대표로 잡는다.
+ */
+async function syncShowroomMainAfterFromSelection(afterImage: ShowroomImageAsset): Promise<void> {
+  const siteName =
+    afterImage.raw_site_name?.trim()
+    || afterImage.site_name?.trim()
+    || afterImage.canonical_site_name?.trim()
+  if (!siteName || siteName === '미지정') return
+
+  let mainAssetId = afterImage.id
+  const fingerprint = cloudinaryFileFingerprint(afterImage.cloudinary_url)
+    || cloudinaryFileFingerprint(afterImage.thumbnail_url)
+
+  if (fingerprint) {
+    const { data, error } = await supabase
+      .from('image_assets')
+      .select('id, is_consultation, cloudinary_url, thumbnail_url')
+      .eq('site_name', siteName)
+      .eq('is_consultation', true)
+      .limit(40)
+
+    if (!error && Array.isArray(data)) {
+      const twin = data.find((row) => {
+        const id = typeof row.id === 'string' ? row.id : ''
+        if (!id || id === afterImage.id) return false
+        const rowFp =
+          cloudinaryFileFingerprint(typeof row.cloudinary_url === 'string' ? row.cloudinary_url : null)
+          || cloudinaryFileFingerprint(typeof row.thumbnail_url === 'string' ? row.thumbnail_url : null)
+        return rowFp === fingerprint
+      })
+      if (twin && typeof twin.id === 'string') {
+        mainAssetId = twin.id
+      }
+    }
+  }
+
+  const { error } = await setImageAssetMain(mainAssetId, siteName)
+  if (error) {
+    console.warn('[showroomShorts] failed to sync is_main after for showroom', error.message)
+  }
+}
 
 export const SHOWROOM_SHORTS_CHANNELS = ['youtube', 'facebook', 'instagram'] as const
 
@@ -369,6 +427,8 @@ export async function createShowroomShortsJob(payload: {
   if (jobError || !job) {
     throw new Error(jobError?.message ?? '숏츠 작업 저장에 실패했습니다.')
   }
+
+  await syncShowroomMainAfterFromSelection(selection.afterImage)
 
   const jobId = String(job.id)
   const targetRows = payload.channels.map((channel) => ({
@@ -1460,6 +1520,10 @@ export async function replaceShowroomShortsJobImage(
 
   if (updateError) {
     throw new Error(updateError.message)
+  }
+
+  if (role === 'after') {
+    await syncShowroomMainAfterFromSelection(selection.afterImage)
   }
 
   await supabase.from('showroom_shorts_logs').insert({

@@ -2905,6 +2905,9 @@ export async function promoteAdInboxAssetsToShowroom(input: {
   }
 
   const mainAssetId = input.mainAssetId?.trim()
+    || Object.entries(input.perAssetRoles ?? {})
+      .find(([assetId, role]) => role === 'after' && assetIds.includes(assetId))?.[0]
+    || null
   if (mainAssetId && assetIds.includes(mainAssetId)) {
     const { error: mainError } = await setImageAssetMain(mainAssetId, siteTrim)
     if (mainError) {

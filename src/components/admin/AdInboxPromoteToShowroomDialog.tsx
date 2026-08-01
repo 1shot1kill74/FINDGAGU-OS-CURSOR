@@ -85,6 +85,12 @@ export default function AdInboxPromoteToShowroomDialog({
       }
     }
     setRoleOverrides(nextRoles)
+
+    const preferredAfter =
+      preferred.find((id) => nextRoles[id] === 'after')
+      ?? waiting.find((asset) => nextRoles[asset.id] === 'after')?.id
+      ?? null
+    setMainAssetId(preferredAfter)
   }, [open, batch?.key, batch?.photoDate, prefill])
 
   const toggleSelect = (asset: AdInboxAsset) => {
