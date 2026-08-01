@@ -51,6 +51,14 @@ export const SHOWROOM_SHORTS_INSTALL_NEGATIVE_PROMPT = [
   'demolition',
   'dismantling old furniture',
   'magical remodel',
+  'temporary furniture',
+  'furniture that vanishes',
+  'hallucinated cabinet',
+  'locker not in after image',
+  'wrong furniture on the side',
+  'objects appearing then disappearing',
+  'ghost furniture',
+  'flickering cabinet',
 ].join(', ')
 
 export const SHOWROOM_SHORTS_ALIGN_NEGATIVE_PROMPT = [
@@ -63,6 +71,9 @@ export const SHOWROOM_SHORTS_ALIGN_NEGATIVE_PROMPT = [
   'installing new furniture',
   'finished after interior',
   'after image look',
+  'hallucinated furniture',
+  'temporary cabinet',
+  'objects appearing then disappearing',
 ].join(', ')
 
 export const SHOWROOM_SHORTS_EMPTY_INSTALL_NEGATIVE_PROMPT = [
@@ -70,6 +81,9 @@ export const SHOWROOM_SHORTS_EMPTY_INSTALL_NEGATIVE_PROMPT = [
   'fake demolition',
   'clearing already empty room',
   'removing furniture that is not there',
+  'extra locker on the right',
+  'storage cabinet not in after photo',
+  'mid-clip prop that disappears before the end',
 ].join(', ')
 
 /** 철거 5초 — Before만 사용 (image_tail 없음) */
@@ -99,13 +113,16 @@ Managed study cafe. Fixed wide camera matching the photos. Photoreal indoor ligh
 
 Show ONLY installation with workers visible the whole time:
 1) cleared empty room (same camera as start image)
-2) workers carry in new desks, partitions, shelves
+2) workers carry in ONLY furniture that exists in the AFTER image
 3) workers set down, screw, and assemble every piece by hand
 4) workers adjust layout and clean
-5) final frame matches the AFTER image
+5) final frame matches the AFTER image — same pieces, same places
 
 Rules:
 - keep the start-frame room geometry; only add furniture via workers
+- install ONLY items visible in the AFTER reference (desks/partitions/shelves as shown there)
+- once a piece is placed, it must stay until the end — never vanish, fade, or get replaced mid-clip
+- no temporary / wrong / extra cabinets, lockers, or props that are not in AFTER
 - workers on screen for all major changes
 - every piece carried/assembled by people — never self-assemble
 - no morph, no furniture rising from floor, no popping into existence
@@ -125,7 +142,8 @@ Show ONLY a subtle camera/framing alignment:
 Rules:
 - room stays empty the entire time
 - NO demolition, NO workers removing furniture, NO debris, NO fake clear-out
-- NO installing desks/shelves; NO jump to a finished after look
+- NO installing desks/shelves/cabinets; NO jump to a finished after look
+- NO hallucinated temporary furniture that appears then disappears
 - keep motion minimal and calm (about 2–3 seconds of settle)
 - do NOT add exit signs, watermarks, logos, or UI icons`
 
@@ -137,19 +155,21 @@ Managed study cafe. Fixed wide camera matching the photos. Photoreal indoor ligh
 
 Show ONLY installation with workers visible the whole time:
 1) empty cleared room (same camera as start image)
-2) workers carry in new desks, partitions, shelves
+2) workers carry in ONLY furniture that exists in the AFTER image
 3) workers set down, screw, and assemble every piece by hand
 4) workers adjust layout and clean
-5) final frame matches the AFTER image
+5) final frame matches the AFTER image — same pieces, same places
 
 Rules:
 - keep the start-frame room geometry; only add furniture via workers
+- install ONLY items visible in the AFTER reference; do not invent side cabinets/lockers not in AFTER
+- once a piece is placed, it must stay until the end — never vanish, fade out, or swap mid-clip
+- no temporary / wrong / extra props that appear then disappear
 - workers on screen for all major changes
 - every piece carried/assembled by people — never self-assemble
 - no morph, no furniture rising from floor, no popping into existence
 - do NOT show demolition or clearing of old furniture (room starts empty)
 - do NOT add exit signs, watermarks, logos, or UI icons`
-
 /** UI/레거시용 요약 (실제 클링 호출은 위 두 프롬프트 사용) */
 export const SHOWROOM_SHORTS_TIMELAPSE_PROMPT = `Sequential 5s demolish + 5s install worker timelapse (stitched to 10s).
 Demolish from BEFORE, then install starts from demolish last frame and ends at AFTER.
