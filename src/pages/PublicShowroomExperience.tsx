@@ -32,7 +32,7 @@ import {
 import { collectShowroomAliasNamesFromImages, collectShowroomIdentityKeys } from '@/lib/showroomCaseAlias'
 import { appendShowroomConcernQuery, openShowroomConsultationChat } from '@/pages/showroom/showroomStoryCta'
 import { trackShowroomAbmEvent, trackShowroomAbmHeaderNavClick } from '@/lib/showroomAbmTracking'
-import ShowroomAeoCitogenicPanel from '@/components/showroom/ShowroomAeoCitogenicPanel'
+import ShowroomAeoGuideTeaser from '@/components/showroom/ShowroomAeoGuideTeaser'
 
 import {
   CONCERN_CARDS,
@@ -2233,8 +2233,8 @@ export default function PublicShowroomExperience() {
           </section>
         )}
 
-        {/* AEO 인용형 정본: 선택과 무관하게 DOM에 상시 노출 (크롤·답변엔진용) */}
-        <ShowroomAeoCitogenicPanel variant="always" />
+        {/* AEO 정본은 별도 가이드 페이지 — 쇼룸에는 짧은 진입만 */}
+        <ShowroomAeoGuideTeaser />
 
         { selectedConcernTag && (
           <section

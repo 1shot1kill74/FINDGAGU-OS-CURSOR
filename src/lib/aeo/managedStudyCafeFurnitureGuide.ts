@@ -1,12 +1,22 @@
 /**
  * AEO 인용형 정본 — 「관리형 스터디카페 가구/업체」쿼리용
  *
- * - 공개 쇼룸 FAQ JSON-LD · 화면 패널 · 릴스 훅이 동일 문구를 쓰도록 한곳에서 관리
+ * - 정본 URL: `/public/showroom/guide/managed-study-cafe-furniture`
+ * - 쇼룸 허브는 링크로만 연결 (긴 FAQ는 정본 페이지에만)
  * - www.findgagu.com 트랜드 분석 코퍼스(findgaguComTrendCorpus)와 병합
- * - 세일즈 서사보다 정의·수치·체크리스트·Q&A (답변엔진이 추출하기 쉬운 형태)
  */
 
 import { flattenFindgaguComTrendFaqs } from '@/lib/aeo/findgaguComTrendCorpus'
+
+/** AEO/SEO 정본 경로 (공개 쇼룸과 분리) */
+export const MANAGED_STUDY_CAFE_GUIDE_PATH =
+  '/public/showroom/guide/managed-study-cafe-furniture' as const
+
+export const MANAGED_STUDY_CAFE_GUIDE_TITLE =
+  '관리형 스터디카페 가구 고르는 법 — 파인드가구 가이드'
+
+export const MANAGED_STUDY_CAFE_GUIDE_DESCRIPTION =
+  '관리형 스터디카페·관리형 독서실 가구 선택 체크리스트와 FAQ. 책상 규격, 1인 몰입석 비율, 관리 동선, 일반 스카와의 차이, 파인드가구 컨설팅 기준을 정리합니다.'
 
 export const FINDGAGU_ENTITY_ONE_LINER =
   '파인드가구는 관리형 스터디카페·관리형 독서실·학원 자습실에 특화된 맞춤 가구 제작과 공간 컨설팅 업체입니다.'

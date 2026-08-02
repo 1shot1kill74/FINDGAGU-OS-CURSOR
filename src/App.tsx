@@ -2,6 +2,7 @@ import { Suspense, lazy, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, useLocation, useParams, Navigate } from 'react-router-dom'
 import { Toaster } from 'sonner'
 import ProtectedRoute from '@/auth/ProtectedRoute'
+import InternalAdminRoute from '@/auth/InternalAdminRoute'
 import { describeInternalRoute } from '@/lib/internalRouteLabel'
 import { captureShowroomAbmAttribution, isPublicShowroomLandingHost } from '@/lib/showroomAbmTraffic'
 import './App.css'
@@ -16,6 +17,9 @@ const ShareGalleryPage = lazy(() => import('@/pages/ShareGalleryPage'))
 const PublicGalleryView = lazy(() => import('@/pages/PublicGalleryView'))
 const ShareRedirect = lazy(() => import('@/pages/ShareRedirect'))
 const PublicShowroomPage = lazy(() => import('@/pages/PublicShowroomPage'))
+const PublicManagedStudyCafeFurnitureGuidePage = lazy(
+  () => import('@/pages/PublicManagedStudyCafeFurnitureGuidePage'),
+)
 const PublicShowroomShortsLandingPage = lazy(() => import('@/pages/PublicShowroomShortsLandingPage'))
 const ShowroomCaseApproachPage = lazy(() => import('@/pages/ShowroomCaseApproachPage'))
 const InternalShowroomPage = lazy(() => import('@/pages/InternalShowroomPage'))
@@ -184,6 +188,10 @@ function App() {
           <Route path="/public/showroom/cardnews" element={<LegacyPublicShowroomCardNewsListRedirect />} />
           <Route path="/public/showroom/case/:siteKey" element={<ShowroomCaseApproachPage mode="public" />} />
           <Route path="/public/showroom/shorts/:jobId" element={<PublicShowroomShortsLandingPage />} />
+          <Route
+            path="/public/showroom/guide/managed-study-cafe-furniture"
+            element={<PublicManagedStudyCafeFurnitureGuidePage />}
+          />
           <Route path="/public/showroom" element={<PublicShowroomPage />} />
           <Route path="/public/showroom/original" element={<OriginalShowroomPage mode="public" />} />
           <Route path="/open-showroom/cardnews/:siteKey" element={<LegacyOpenShowroomCardNewsDetailRedirect />} />
@@ -218,8 +226,10 @@ function App() {
             <Route path="/admin/showroom-ads" element={<ShowroomAdsDashboardPage />} />
             <Route path="/admin/showroom-abm" element={<ShowroomAbmDashboardPage />} />
             <Route path="/admin/competitor-monitor" element={<CompetitorMonitorPage />} />
-            <Route path="/admin/edu-outreach" element={<EduOutreachQueuePage />} />
             <Route path="/admin/test-console" element={<TestConsole />} />
+            <Route element={<InternalAdminRoute />}>
+              <Route path="/admin/edu-outreach" element={<EduOutreachQueuePage />} />
+            </Route>
           </Route>
         </Routes>
       </Suspense>

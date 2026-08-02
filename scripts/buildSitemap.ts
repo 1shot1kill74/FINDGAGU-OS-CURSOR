@@ -151,6 +151,11 @@ async function main(): Promise<void> {
   // 공개 진입점 (내부 /showroom 은 로그인 영역이므로 제외)
   entries.push({ loc: `${BASE_URL}/`, changefreq: 'weekly', priority: 0.7 })
   entries.push({ loc: `${BASE_URL}/public/showroom`, changefreq: 'daily', priority: 1.0 })
+  entries.push({
+    loc: `${BASE_URL}/public/showroom/guide/managed-study-cafe-furniture`,
+    changefreq: 'weekly',
+    priority: 0.9,
+  })
   entries.push({ loc: `${BASE_URL}/contact`, changefreq: 'monthly', priority: 0.5 })
 
   let approvedBlogCount = 0

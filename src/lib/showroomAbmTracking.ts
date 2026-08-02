@@ -26,6 +26,7 @@ export type ShowroomAbmConsultationSurface =
   | 'gallery_modal'
   | 'gallery_browse_header'
   | 'shorts_landing'
+  | 'guide_page'
 
 export type ShowroomAbmHeaderNavTarget = 'before_after' | 'expert_recommend'
 
