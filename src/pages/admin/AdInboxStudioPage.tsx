@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   ArrowLeft,
+  CalendarClock,
   Columns2,
   Eraser,
   ExternalLink,
@@ -88,6 +89,7 @@ import {
   requestShowroomShortsPublishPrepare,
   scheduleShowroomShortsTargetsLaunch,
   cancelShowroomShortsTargetsSchedule,
+  fillAdInboxPublishQueue,
   getShowroomShortsCompositionStatus,
   stitchShowroomShortsSplit,
   updateShowroomShortsJobPrompt,
@@ -332,6 +334,7 @@ export default function AdInboxStudioPage() {
   /** 현장 카드별 발행예정 datetime-local 초안 */
   const [scheduleDraftByKey, setScheduleDraftByKey] = useState<Record<string, string>>({})
   const [schedulingBatchKey, setSchedulingBatchKey] = useState<string | null>(null)
+  const [queueFillBusy, setQueueFillBusy] = useState(false)
   const [importShowroomOpen, setImportShowroomOpen] = useState(false)
   const [importAfterOnlyOpen, setImportAfterOnlyOpen] = useState(false)
   const [synthesizingBefore, setSynthesizingBefore] = useState(false)
@@ -1230,6 +1233,31 @@ export default function AdInboxStudioPage() {
     }
   }
 
+  const handleFillPublishQueue = async () => {
+    setQueueFillBusy(true)
+    try {
+      const result = await fillAdInboxPublishQueue()
+      const n = result.scheduledJobs ?? 0
+      if (n === 0) {
+        toast.message('줄 세울 미예약 카드가 없습니다. (업로드 준비 끝난 카드만 대상)')
+      } else {
+        const first = result.results?.[0]?.slotYmd
+        const last = result.results?.[result.results.length - 1]?.slotYmd
+        toast.success(
+          first && last
+            ? `${n}장 예약: ${first} ~ ${last} 매일 11:00`
+            : `${n}장 11시 슬롯에 줄 세워 예약했습니다.`,
+        )
+      }
+      await refreshWorkProgress()
+      if (selectedBatch) await refreshJobs(selectedBatch)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '줄서기 예약 실패')
+    } finally {
+      setQueueFillBusy(false)
+    }
+  }
+
   const handleLaunchTarget = async (_target: ShowroomShortsTargetRecord) => {
     if (!activeJob) return
     const launchable = (activeJob.targets ?? []).filter((t) =>
@@ -1491,10 +1519,25 @@ export default function AdInboxStudioPage() {
               <h2 className="text-base font-semibold text-neutral-900">대기실 · 현장 카드</h2>
               <p className="text-xs text-neutral-500">
                 대기중(사진만) → 작업중(릴스 제작) → 작업완료(합성 끝). 채널 버튼은 업로드 완료 시
-                초록색·게시물 링크
+                초록색·게시물 링크. 「11시 줄서기 예약」은 준비 끝난 미예약 카드를 매일 11:00에 하루
+                1장씩 앞으로 줄 세웁니다.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void handleFillPublishQueue()}
+                disabled={queueFillBusy || loading}
+                title="업로드 준비 끝난 미예약 카드를 앞으로 매일 11:00에 하루 1장씩 예약"
+              >
+                {queueFillBusy ? (
+                  <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                ) : (
+                  <CalendarClock className="mr-1.5 h-4 w-4" />
+                )}
+                11시 줄서기 예약
+              </Button>
               <Button
                 type="button"
                 variant="outline"

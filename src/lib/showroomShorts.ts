@@ -1087,6 +1087,37 @@ export async function cancelShowroomShortsTargetsSchedule(targetIds: string[]): 
   return (data ?? []).length
 }
 
+export type FillAdInboxPublishQueueResult = {
+  ok: boolean
+  message?: string
+  scheduledJobs?: number
+  results?: Array<{
+    jobId: string
+    groupKey: string | null
+    scheduledAt: string
+    slotYmd: string
+    targetCount: number
+  }>
+  occupiedSlots?: string[]
+}
+
+/**
+ * 대기실 미예약(launch_ready/approved) 카드를 Asia/Seoul 11:00 슬롯에 하루 1장씩 줄 세움.
+ */
+export async function fillAdInboxPublishQueue(): Promise<FillAdInboxPublishQueueResult> {
+  const { data, error } = await supabase.functions.invoke<FillAdInboxPublishQueueResult>(
+    'showroom-shorts-publish-queue-fill',
+    { body: { source: 'admin_ui' } },
+  )
+  if (error) {
+    throw new Error(typeof error.message === 'string' ? error.message : '줄서기 예약 요청 실패')
+  }
+  if (!data?.ok) {
+    throw new Error(data?.message ?? '줄서기 예약에 실패했습니다.')
+  }
+  return data
+}
+
 export async function deleteShowroomShortsJob(
   job: Pick<ShowroomShortsJobRecord, 'id' | 'status' | 'targets'>
 ) {
