@@ -2054,20 +2054,34 @@ export async function runAdInboxPeopleCleanup(imageUrl: string): Promise<{
 }
 
 /** 1단계: 가구 전량 제거 (사람 제거 프롬프트처럼 짧게·강하게) */
-const SYNTHESIZE_BEFORE_STRIP_FURNITURE_PROMPT = `Edit this interior photo.
-Remove ALL furniture completely: desks, chairs, shelves, bookcases, partition counters, cabinets, tables, plants, monitors, lamps, decor — including large foreground units.
-Do NOT only change the floor. The furniture must be gone.
-Fill removed areas with continuous empty floor and walls.
-Keep the same camera angle, room shape, and the same windows/doors (same count and positions).
-No people. Photorealistic empty room.
+const SYNTHESIZE_BEFORE_STRIP_FURNITURE_PROMPT = `Edit this interior photo into a completely EMPTY room.
+
+STRICT removals — delete ALL of these with zero leftovers:
+desks, chairs, stools, shelves, bookcases, partition walls/counters, cabinets, wardrobes, tables, sofas, benches, plants, monitors, TVs, lamps, lights on stands, rugs, curtains if freestanding décor, posters, signage, decor, boxes, clutter — including large foreground units.
+
+Fill every removed area with continuous empty floor and plain walls only. Do NOT invent replacement furniture, built-ins, or storage.
+
+Architecture lock (critical):
+- Keep the EXACT same camera angle, room shape, ceiling, and wall layout.
+- Keep ONLY the windows and doors that already exist in the source photo — same count, same positions, same sizes, same frames.
+- Do NOT add, invent, move, or duplicate any door, doorway, window, window frame, glass panel, or opening that is not clearly visible in the original.
+- Do NOT turn wall areas into new doors/windows. If a wall was blank, keep it blank.
+
+No people. Photorealistic empty room — nothing to sit on, nothing to store things in.
 Output the edited image only.`
 
 /** 2단계: 빈 방을 공사 전(Before) 분위기로 */
-const SYNTHESIZE_BEFORE_CONSTRUCTION_PROMPT = `Edit this already-empty room photo into a realistic BEFORE renovation / construction state.
-Bare or unfinished floor and walls is OK.
-Do NOT add any furniture.
-Keep the exact same camera, room geometry, and the same windows/doors (same count and positions).
-No people. Photorealistic.
+const SYNTHESIZE_BEFORE_CONSTRUCTION_PROMPT = `Edit this already-empty room photo into a realistic BEFORE renovation / construction state (raw unfinished space).
+
+Allowed: bare/unfinished floor, unfinished or plastered walls, construction dust feel, temporary protective film, exposed concrete look — still EMPTY.
+
+STRICT bans:
+- Do NOT add any furniture, fixtures for seating/storage, desks, chairs, shelves, cabinets, partitions, plants, décor, or appliances.
+- Do NOT add, invent, move, or duplicate any door, doorway, window, window frame, or opening. Keep ONLY openings already in this photo (same count/positions/sizes).
+- Do NOT invent new wall openings. Blank walls stay blank.
+
+Keep the exact same camera and room geometry.
+No people. Photorealistic empty construction-before room.
 Output the edited image only.`
 
 /**
