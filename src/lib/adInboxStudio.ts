@@ -2725,21 +2725,17 @@ export async function promoteAdInboxAssetsToShowroom(input: {
   if (assetIds.length === 0) throw new Error('승격할 사진을 선택해 주세요.')
 
   const space = input.meta.selectedSpaceOption ?? null
-  const consultationId = space?.consultation_id?.trim() || ''
-  if (!consultationId) {
-    throw new Error(
-      '상담카드 현장명을 목록에서 선택해 주세요. 대기실 임시 이름만으로는 쇼룸에 보낼 수 없습니다.',
-    )
-  }
-  const siteTrim = (space?.display_name || input.meta.site_name).trim()
+  const siteTrim = (input.meta.site_name || space?.display_name || '').trim()
   if (!siteTrim) {
-    throw new Error('상담카드 현장명을 선택해 주세요. 같은 현장명으로 올리면 하나의 시공 사례로 묶입니다.')
+    throw new Error('현장명이 없습니다. 대기실 임시 이름을 확인해 주세요.')
   }
   const productName = input.meta.product_name.trim()
   if (!productName) throw new Error('제품명을 입력해 주세요.')
   const productCategory = input.meta.product_category.trim() || '책상'
 
-  const spaceId = space?.space_id ?? null
+  // 상담카드 선택은 선택 사항. 있으면 사용하고, 없으면 원본 쇼룸 자산 메타에서 복구.
+  const preferredConsultationId = space?.consultation_id?.trim() || ''
+  const preferredSpaceId = space?.space_id?.trim() || null
   const location = trimOrNull(input.meta.location)
   const businessType = trimOrNull(input.meta.business_type)
   const photoDate = trimOrNull(input.meta.photo_date)
@@ -2773,6 +2769,43 @@ export async function promoteAdInboxAssetsToShowroom(input: {
   const byId = new Map((rows ?? []).map((row) => [String(row.id), row as Record<string, unknown>]))
   let promoted = 0
   let linkedExisting = 0
+
+  const readMetaString = (meta: Record<string, unknown>, key: string): string => {
+    const value = meta[key]
+    return typeof value === 'string' && value.trim() ? value.trim() : ''
+  }
+
+  const resolveSourceShowroomMeta = async (
+    prevMeta: Record<string, unknown>,
+  ): Promise<{
+    consultation_id?: string
+    space_id?: string
+    external_display_name?: string
+    broad_external_display_name?: string
+    canonical_site_name?: string
+  }> => {
+    const sourceId =
+      readMetaString(prevMeta, 'imported_from_showroom_asset_id') ||
+      readMetaString(prevMeta, 'synthesized_from_after_id')
+    if (!sourceId) return {}
+
+    const { data: sourceRow } = await supabase
+      .from('image_assets')
+      .select('id, metadata')
+      .eq('id', sourceId)
+      .maybeSingle()
+    if (!sourceRow?.metadata || typeof sourceRow.metadata !== 'object' || Array.isArray(sourceRow.metadata)) {
+      return {}
+    }
+    const sourceMeta = sourceRow.metadata as Record<string, unknown>
+    return {
+      consultation_id: readMetaString(sourceMeta, 'consultation_id') || undefined,
+      space_id: readMetaString(sourceMeta, 'space_id') || undefined,
+      external_display_name: readMetaString(sourceMeta, 'external_display_name') || undefined,
+      broad_external_display_name: readMetaString(sourceMeta, 'broad_external_display_name') || undefined,
+      canonical_site_name: readMetaString(sourceMeta, 'canonical_site_name') || undefined,
+    }
+  }
 
   const linkShowroomAfterGroup = async (sourceAfterId: string, groupId: string) => {
     const { data: afterRow, error: afterError } = await supabase
@@ -2858,6 +2891,18 @@ export async function promoteAdInboxAssetsToShowroom(input: {
       (typeof prevMeta.before_after_group_id === 'string' && prevMeta.before_after_group_id.trim()) ||
       (sourceAfterId ? `synth-ba:${sourceAfterId}` : undefined)
 
+    const sourceLink = await resolveSourceShowroomMeta(prevMeta)
+    const consultationId =
+      preferredConsultationId ||
+      readMetaString(prevMeta, 'consultation_id') ||
+      sourceLink.consultation_id ||
+      ''
+    const spaceId =
+      preferredSpaceId ||
+      readMetaString(prevMeta, 'space_id') ||
+      sourceLink.space_id ||
+      null
+
     const nextMeta: Record<string, unknown> = {
       ...prevMeta,
       source: AD_INBOX_SOURCE,
@@ -2866,13 +2911,24 @@ export async function promoteAdInboxAssetsToShowroom(input: {
       promoted_at: promotedAt,
       promoted_from: 'ad_inbox',
       pre_promote_snapshot: snapshot,
-      consultation_id: consultationId || prevMeta.consultation_id || undefined,
-      space_id: spaceId || prevMeta.space_id || undefined,
+      consultation_id: consultationId || undefined,
+      space_id: spaceId || undefined,
       space_display_name: siteTrim,
       category: productCategory,
       before_after_role: role,
-      external_display_name: externalDisplayName || undefined,
-      broad_external_display_name: broadExternalDisplayName || undefined,
+      external_display_name:
+        externalDisplayName ||
+        sourceLink.external_display_name ||
+        readMetaString(prevMeta, 'external_display_name') ||
+        undefined,
+      broad_external_display_name:
+        broadExternalDisplayName ||
+        sourceLink.broad_external_display_name ||
+        readMetaString(prevMeta, 'broad_external_display_name') ||
+        undefined,
+      ...(sourceLink.canonical_site_name
+        ? { canonical_site_name: sourceLink.canonical_site_name }
+        : {}),
       ...(groupId ? { before_after_group_id: groupId } : {}),
     }
 

@@ -64,10 +64,10 @@ export default function AdInboxPromoteToShowroomDialog({
     if (!open || !batch) return
     setJustPromotedIds(new Set())
     setMainAssetId(null)
-    // 대기실 임시 이름은 현장명에 넣지 않음 — 상담카드 목록에서 골라야 함
+    // 쇼룸→대기실로 온 카드는 대기실 임시 이름을 현장명으로 그대로 사용
     setMeta({
       ...EMPTY_IMAGE_ASSET_COMMON_META,
-      site_name: '',
+      site_name: batch.shortName.trim(),
       selectedSpaceOption: null,
       photo_date: batch.photoDate && batch.photoDate !== '날짜미상' ? batch.photoDate : '',
     })
@@ -91,7 +91,7 @@ export default function AdInboxPromoteToShowroomDialog({
       ?? waiting.find((asset) => nextRoles[asset.id] === 'after')?.id
       ?? null
     setMainAssetId(preferredAfter)
-  }, [open, batch?.key, batch?.photoDate, prefill])
+  }, [open, batch?.key, batch?.photoDate, batch?.shortName, prefill])
 
   const toggleSelect = (asset: AdInboxAsset) => {
     if (isPromotedAsset(asset)) return
@@ -138,12 +138,9 @@ export default function AdInboxPromoteToShowroomDialog({
       toast.error('승격할 사진을 선택해 주세요.')
       return
     }
-    if (!meta.selectedSpaceOption?.consultation_id) {
-      toast.error('상담카드 현장명을 검색한 뒤 목록에서 선택해 주세요. 대기실 임시 이름과는 별개입니다.')
-      return
-    }
-    if (!meta.site_name.trim()) {
-      toast.error('상담카드 현장명을 선택해 주세요.')
+    const siteName = meta.site_name.trim() || batch.shortName.trim()
+    if (!siteName) {
+      toast.error('대기실 현장명이 없습니다.')
       return
     }
     if (!meta.product_name.trim()) {
@@ -160,8 +157,8 @@ export default function AdInboxPromoteToShowroomDialog({
         mainAssetId,
         perAssetRoles,
         meta: {
-          site_name: meta.site_name,
-          selectedSpaceOption: meta.selectedSpaceOption,
+          site_name: siteName,
+          selectedSpaceOption: null,
           photo_date: meta.photo_date,
           location: meta.location,
           business_type: meta.business_type,
@@ -232,9 +229,9 @@ export default function AdInboxPromoteToShowroomDialog({
         <DialogHeader>
           <DialogTitle>쇼룸으로 보내기</DialogTitle>
           <DialogDescription>
-            대기실 임시 이름이 아니라 상담카드 스페이스와 매칭해야 쇼룸에 올바르게 묶입니다. 파일
-            재업로드는 없고, 같은 상담 현장으로 제품별 패스를 여러 번 보낼 수 있습니다. 합성
-            Before를 보내면 기존 쇼룸 After와 전후 그룹이 맞춰집니다.
+            대기실 임시 이름을 현장명으로 그대로 사용합니다. 파일 재업로드는 없고, 같은 현장으로
+            제품별 패스를 여러 번 보낼 수 있습니다. 합성 Before를 보내면 기존 쇼룸 After와 전후
+            그룹이 맞춰집니다.
           </DialogDescription>
         </DialogHeader>
 
@@ -344,14 +341,22 @@ export default function AdInboxPromoteToShowroomDialog({
                 이 카드의 사진은 모두 쇼룸에 등록되었습니다.
               </p>
             ) : (
-              <ImageAssetCommonMetaFields
-                value={meta}
-                onChange={(patch) => setMeta((prev) => ({ ...prev, ...patch }))}
-                showRecommendedHints
-                requireSpaceSelection
-                siteNameHint={batch.shortName || undefined}
-                beforeAfterRoleHint="선택한 사진에 Before/After 배지가 있으면 그 역할을 우선합니다. 배지가 없는 사진만 아래 기본값을 씁니다."
-              />
+              <div className="space-y-4">
+                <div className="rounded-lg border border-border bg-muted/20 p-4">
+                  <label className="mb-1 block text-sm font-medium">현장명 *</label>
+                  <p className="text-sm font-medium text-foreground">{batch.shortName}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    대기실 임시 이름을 그대로 사용합니다. 상담카드 목록에서 다시 고를 필요 없습니다.
+                  </p>
+                </div>
+                <ImageAssetCommonMetaFields
+                  value={meta}
+                  onChange={(patch) => setMeta((prev) => ({ ...prev, ...patch }))}
+                  showRecommendedHints
+                  parts={['attributes']}
+                  beforeAfterRoleHint="선택한 사진에 Before/After 배지가 있으면 그 역할을 우선합니다. 배지가 없는 사진만 아래 기본값을 씁니다."
+                />
+              </div>
             )}
           </div>
         )}
