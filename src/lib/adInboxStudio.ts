@@ -2060,9 +2060,14 @@ export async function runAdInboxPeopleCleanup(imageUrl: string): Promise<{
 const SYNTHESIZE_BEFORE_STRIP_FURNITURE_PROMPT = `Edit this interior photo into a completely EMPTY room.
 
 STRICT removals — delete ALL of these with zero leftovers:
-desks, chairs, stools, shelves, bookcases, partition walls/counters, cabinets, wardrobes, tables, sofas, benches, plants, monitors, TVs, lamps, lights on stands, rugs, curtains if freestanding décor, posters, signage, decor, boxes, clutter — including large foreground units.
+desks, chairs, stools, shelves, bookcases, partition walls/counters, cabinets, wardrobes, tables, sofas, benches, plants, monitors, TVs, lamps, lights on stands, rugs, curtains if freestanding décor, posters, banners, hanging banners (현수막), wall signs, stickers, logos, lettering, printed text of any language (especially Korean/Hangul), signage, decor, boxes, clutter — including large foreground units.
 
-Fill every removed area with continuous empty floor and plain walls only. Do NOT invent replacement furniture, built-ins, or storage.
+Fill every removed area with continuous empty floor and plain blank walls only. Do NOT invent replacement furniture, built-ins, or storage.
+
+Text / Hangul ban (critical — garbled Korean looks fake):
+- Completely REMOVE all readable text, Hangul, banners, and signs. Replace with plain wall/floor matching nearby texture.
+- Do NOT redraw, regenerate, translate, or invent any Korean/Hangul characters, English letters, numbers on walls, or banner text.
+- Never leave broken, melted, or nonsense glyphs. If unsure, erase the whole sign into blank wall.
 
 Architecture lock (critical):
 - Keep the EXACT same camera angle, room shape, ceiling, and wall layout.
@@ -2070,7 +2075,7 @@ Architecture lock (critical):
 - Do NOT add, invent, move, or duplicate any door, doorway, window, window frame, glass panel, or opening that is not clearly visible in the original.
 - Do NOT turn wall areas into new doors/windows. If a wall was blank, keep it blank.
 
-No people. Photorealistic empty room — nothing to sit on, nothing to store things in.
+No people. Photorealistic empty room — nothing to sit on, nothing to store things in, no text anywhere.
 Output the edited image only.`
 
 /** 2단계: 빈 방을 공사 전(Before) 분위기로 */
@@ -2082,9 +2087,10 @@ STRICT bans:
 - Do NOT add any furniture, fixtures for seating/storage, desks, chairs, shelves, cabinets, partitions, plants, décor, or appliances.
 - Do NOT add, invent, move, or duplicate any door, doorway, window, window frame, or opening. Keep ONLY openings already in this photo (same count/positions/sizes).
 - Do NOT invent new wall openings. Blank walls stay blank.
+- Do NOT add or redraw any banners, signs, Hangul/Korean text, logos, or lettering. No garbled glyphs. Walls stay text-free.
 
 Keep the exact same camera and room geometry.
-No people. Photorealistic empty construction-before room.
+No people. Photorealistic empty construction-before room with no text.
 Output the edited image only.`
 
 /**
