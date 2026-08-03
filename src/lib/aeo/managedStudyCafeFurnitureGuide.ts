@@ -6,7 +6,7 @@
  * - www.findgagu.com 트랜드 분석 코퍼스(findgaguComTrendCorpus)와 병합
  */
 
-import { flattenFindgaguComTrendFaqs } from '@/lib/aeo/findgaguComTrendCorpus'
+import { flattenFindgaguComTrendFaqs } from './findgaguComTrendCorpus'
 
 /** AEO/SEO 정본 경로 (공개 쇼룸과 분리) */
 export const MANAGED_STUDY_CAFE_GUIDE_PATH =

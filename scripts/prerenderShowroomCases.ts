@@ -1,25 +1,21 @@
 /* eslint-disable no-console */
 /**
- * 빌드 후 승인된(canonical_blog_post.status === 'approved') 쇼룸 사례 페이지를
- * 정적 HTML 셸로 prerender 한다.
+ * 빌드 후 공개 쇼룸 SEO/AEO HTML을 prerender 한다.
  *
  * 산출물:
- *   dist/public/showroom/case/<siteName>/index.html
+ *   dist/public/showroom/index.html
+ *   dist/public/showroom/guide/managed-study-cafe-furniture/index.html
+ *   dist/public/showroom/case/<siteName>/index.html  (approved만)
  *
  * 셸에는 SEO/AEO 정보를 인라인으로 넣는다:
- *   - <title>, <meta name="description">, og:* 메타
+ *   - <title>, <meta name="description">, og:* 메타 (셸 기본값을 교체)
  *   - <link rel="canonical">
- *   - JSON-LD (Article, FAQPage)
+ *   - JSON-LD
  *   - <noscript> 안에 본문 요약 / featuredAnswer (검색엔진 가시 텍스트)
  *   - 그리고 그대로 SPA가 부팅 (<div id="root"> + bundled script)
  *
- * 사람 사용자: SPA가 hydrate 처럼 그 위에서 부팅 → 평소 UX 그대로
- * 검색 봇: 정적 HTML로 충분히 인덱싱 가능
- *
- * Puppeteer/Chromium 의존 없음. Vercel 빌드 친화적.
- *
  * 환경 변수:
- *   - VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY (필수)
+ *   - VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY (사례 prerender에 필수)
  *   - SITE_PUBLIC_BASE_URL (필수, 예: https://www.findgagu.co.kr)
  *
  * 환경 변수가 없으면 (로컬 빌드 등) 조용히 스킵한다.
@@ -30,6 +26,11 @@ import { createClient } from '@supabase/supabase-js'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
+import {
+  buildGuidePrerenderPage,
+  buildHubPrerenderPage,
+  type PublicShowroomPrerenderPage,
+} from '../src/lib/publicShowroomSeo.ts'
 
 type CaseRow = {
   site_name: string | null
@@ -170,7 +171,6 @@ function buildCasePrerender(row: CaseRow): CasePrerender | null {
   const approvedAt = typeof blog['approvedAt'] === 'string' ? (blog['approvedAt'] as string) : null
   const updatedAt = typeof blog['updatedAt'] === 'string' ? (blog['updatedAt'] as string) : null
 
-  // keywords는 노출 시 description fallback에 활용 가능 (현재는 사용 안 함)
   void readStringArray(seo, 'keywords', 'seo_keywords')
 
   return {
@@ -190,7 +190,7 @@ function buildCasePrerender(row: CaseRow): CasePrerender | null {
   }
 }
 
-function buildJsonLd(c: CasePrerender): string {
+function buildCaseJsonLd(c: CasePrerender): string {
   const article: Record<string, unknown> = {
     '@context': 'https://schema.org',
     '@type': 'Article',
@@ -224,7 +224,7 @@ function buildJsonLd(c: CasePrerender): string {
   return blocks.join('\n    ')
 }
 
-function buildHeadInjection(c: CasePrerender): string {
+function buildCaseHeadInjection(c: CasePrerender): string {
   const lines: string[] = []
   lines.push(`<title>${escapeHtml(c.title)}</title>`)
   if (c.description) lines.push(`<meta name="description" content="${escapeAttr(c.description)}" />`)
@@ -233,17 +233,20 @@ function buildHeadInjection(c: CasePrerender): string {
   lines.push(`<meta property="og:title" content="${escapeAttr(c.ogTitle)}" />`)
   if (c.ogDescription) lines.push(`<meta property="og:description" content="${escapeAttr(c.ogDescription)}" />`)
   lines.push(`<meta property="og:url" content="${escapeAttr(c.canonicalUrl)}" />`)
-  if (c.ogImage) lines.push(`<meta property="og:image" content="${escapeAttr(c.ogImage)}" />`)
+  lines.push(`<meta property="og:site_name" content="파인드가구" />`)
+  lines.push(`<meta property="og:locale" content="ko_KR" />`)
+  if (c.ogImage) {
+    lines.push(`<meta property="og:image" content="${escapeAttr(c.ogImage)}" />`)
+  }
   lines.push(`<meta name="twitter:card" content="summary_large_image" />`)
   lines.push(`<meta name="twitter:title" content="${escapeAttr(c.ogTitle)}" />`)
   if (c.ogDescription) lines.push(`<meta name="twitter:description" content="${escapeAttr(c.ogDescription)}" />`)
   if (c.ogImage) lines.push(`<meta name="twitter:image" content="${escapeAttr(c.ogImage)}" />`)
-  lines.push(buildJsonLd(c))
+  lines.push(buildCaseJsonLd(c))
   return lines.map((l) => `    ${l}`).join('\n')
 }
 
-function buildNoscriptBody(c: CasePrerender): string {
-  // 봇/노스크립트 환경 가시 텍스트. 본문 마크다운은 길 수 있으니 상한을 둔다.
+function buildCaseNoscriptBody(c: CasePrerender): string {
   const MAX_BODY = 8000
   const trimmedBody = c.bodyMarkdown.length > MAX_BODY
     ? `${c.bodyMarkdown.slice(0, MAX_BODY)}\n…`
@@ -267,26 +270,73 @@ function buildNoscriptBody(c: CasePrerender): string {
     parts.push(`<section><h2>자주 묻는 질문</h2><dl>${faqHtml}</dl></section>`)
   }
   parts.push(`<p><a href="${escapeAttr(c.canonicalUrl)}">${escapeHtml(c.canonicalUrl)}</a></p>`)
-  return `<noscript>${parts.join('\n')}</noscript>`
+  return parts.join('\n')
 }
 
-function injectIntoTemplate(template: string, c: CasePrerender): string {
-  let html = template
-  // <head> 마지막 직전에 메타 주입
+function buildStaticPageHeadInjection(page: PublicShowroomPrerenderPage): string {
+  const lines: string[] = []
+  lines.push(`<title>${escapeHtml(page.title)}</title>`)
+  lines.push(`<meta name="description" content="${escapeAttr(page.description)}" />`)
+  lines.push(`<link rel="canonical" href="${escapeAttr(page.canonicalUrl)}" />`)
+  lines.push(`<meta property="og:type" content="${escapeAttr(page.ogType)}" />`)
+  lines.push(`<meta property="og:title" content="${escapeAttr(page.title)}" />`)
+  lines.push(`<meta property="og:description" content="${escapeAttr(page.description)}" />`)
+  lines.push(`<meta property="og:url" content="${escapeAttr(page.canonicalUrl)}" />`)
+  lines.push(`<meta property="og:site_name" content="파인드가구" />`)
+  lines.push(`<meta property="og:locale" content="ko_KR" />`)
+  lines.push(`<meta property="og:image" content="${escapeAttr(page.ogImage)}" />`)
+  lines.push(`<meta property="og:image:width" content="1200" />`)
+  lines.push(`<meta property="og:image:height" content="630" />`)
+  lines.push(`<meta name="twitter:card" content="summary_large_image" />`)
+  lines.push(`<meta name="twitter:title" content="${escapeAttr(page.title)}" />`)
+  lines.push(`<meta name="twitter:description" content="${escapeAttr(page.description)}" />`)
+  lines.push(`<meta name="twitter:image" content="${escapeAttr(page.ogImage)}" />`)
+  for (const block of page.jsonLd) {
+    lines.push(
+      `<script type="application/ld+json">${JSON.stringify(block).replace(/</g, '\\u003c')}</script>`,
+    )
+  }
+  return lines.map((l) => `    ${l}`).join('\n')
+}
+
+/**
+ * SPA 셸의 기본 SEO 태그를 제거한 뒤 페이지 전용 메타를 주입한다.
+ * (이중 <title>/og 충돌 방지)
+ */
+function stripShellSeoHead(html: string): string {
+  return html
+    .replace(/<title\b[^>]*>[\s\S]*?<\/title>\s*/gi, '')
+    .replace(/<meta\b(?:(?!\/?>)[\s\S])*?\bname\s*=\s*["']description["'](?:(?!\/?>)[\s\S])*?\/?>\s*/gi, '')
+    .replace(/<meta\b(?:(?!\/?>)[\s\S])*?\bproperty\s*=\s*["']og:[^"']*["'](?:(?!\/?>)[\s\S])*?\/?>\s*/gi, '')
+    .replace(/<meta\b(?:(?!\/?>)[\s\S])*?\bname\s*=\s*["']twitter:[^"']*["'](?:(?!\/?>)[\s\S])*?\/?>\s*/gi, '')
+    .replace(/<link\b(?:(?!\/?>)[\s\S])*?\brel\s*=\s*["']canonical["'](?:(?!\/?>)[\s\S])*?\/?>\s*/gi, '')
+    .replace(/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>[\s\S]*?<\/script>\s*/gi, '')
+}
+
+function injectHeadAndNoscript(template: string, headInjection: string, noscriptInner: string): string {
+  let html = stripShellSeoHead(template)
   const headClose = '</head>'
-  const headInjection = buildHeadInjection(c)
+  if (!html.includes(headClose)) {
+    throw new Error('template missing </head>')
+  }
   html = html.replace(headClose, `${headInjection}\n  ${headClose}`)
-  // <div id="root"></div> 안에 noscript fallback 주입 → SPA mount시 덮어씌워짐
+
+  const noscript = `<noscript>${noscriptInner}</noscript>`
   const rootEmpty = '<div id="root"></div>'
-  const rootMatch = html.indexOf(rootEmpty)
-  const noscript = buildNoscriptBody(c)
-  if (rootMatch >= 0) {
+  if (html.includes(rootEmpty)) {
     html = html.replace(rootEmpty, `<div id="root">${noscript}</div>`)
   } else {
-    // 일부 빌드 결과는 id="root"가 한칸 띄어쓰기 등 변형일 수 있어 보수적으로 한 번 더 시도
     html = html.replace(/<div id="root"[^>]*><\/div>/, (m) => m.replace('></div>', `>${noscript}</div>`))
   }
   return html
+}
+
+function injectCaseIntoTemplate(template: string, c: CasePrerender): string {
+  return injectHeadAndNoscript(template, buildCaseHeadInjection(c), buildCaseNoscriptBody(c))
+}
+
+function injectStaticPageIntoTemplate(template: string, page: PublicShowroomPrerenderPage): string {
+  return injectHeadAndNoscript(template, buildStaticPageHeadInjection(page), page.noscriptHtml)
 }
 
 async function fetchAllRows(): Promise<CaseRow[]> {
@@ -311,6 +361,13 @@ async function fetchAllRows(): Promise<CaseRow[]> {
   return out
 }
 
+async function writePrerenderedHtml(relativeSegments: string[], html: string): Promise<void> {
+  const outDir = path.join(DIST_DIR, ...relativeSegments)
+  const outFile = path.join(outDir, 'index.html')
+  await mkdir(outDir, { recursive: true })
+  await writeFile(outFile, html, 'utf8')
+}
+
 async function main(): Promise<void> {
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !BASE_URL) {
     const reason = !SUPABASE_URL || !SUPABASE_ANON_KEY ? 'Supabase 환경변수 누락' : 'SITE_PUBLIC_BASE_URL 누락'
@@ -329,19 +386,26 @@ async function main(): Promise<void> {
   }
 
   const template = await readFile(TEMPLATE_PATH, 'utf8')
+  console.log(`[prerender] base=${BASE_URL}`)
+
+  const hub = buildHubPrerenderPage(BASE_URL)
+  const guide = buildGuidePrerenderPage(BASE_URL)
+  await writePrerenderedHtml(hub.relativeDir.split('/'), injectStaticPageIntoTemplate(template, hub))
+  await writePrerenderedHtml(guide.relativeDir.split('/'), injectStaticPageIntoTemplate(template, guide))
+  console.log(`[prerender] hub + guide pages written`)
+
   const rows = await fetchAllRows()
-  console.log(`[prerender] base=${BASE_URL}, rows=${rows.length}`)
+  console.log(`[prerender] case rows=${rows.length}`)
 
   let written = 0
   for (const row of rows) {
     const c = buildCasePrerender(row)
     if (!c) continue
 
-    const outDir = path.join(DIST_DIR, 'public', 'showroom', 'case', c.siteName)
-    const outFile = path.join(outDir, 'index.html')
-    await mkdir(outDir, { recursive: true })
-    const html = injectIntoTemplate(template, c)
-    await writeFile(outFile, html, 'utf8')
+    await writePrerenderedHtml(
+      ['public', 'showroom', 'case', c.siteName],
+      injectCaseIntoTemplate(template, c),
+    )
     written += 1
   }
 

@@ -6,6 +6,9 @@ import './App.css'
 
 const PublicShowroomPage = lazy(() => import('@/pages/PublicShowroomPage'))
 const PublicShowroomShortsLandingPage = lazy(() => import('@/pages/PublicShowroomShortsLandingPage'))
+const PublicManagedStudyCafeFurnitureGuidePage = lazy(
+  () => import('@/pages/PublicManagedStudyCafeFurnitureGuidePage'),
+)
 const ShowroomCaseApproachPage = lazy(() => import('@/pages/ShowroomCaseApproachPage'))
 const ContactPage = lazy(() => import('@/pages/ContactPage'))
 
@@ -140,6 +143,10 @@ export default function PublicShowroomApp() {
           <Route path="/public/showroom/cardnews" element={<LegacyPublicShowroomCardNewsListRedirect />} />
           <Route path="/public/showroom/case/:siteKey" element={<ShowroomCaseApproachPage mode="public" />} />
           <Route path="/public/showroom/shorts/:jobId" element={<PublicShowroomShortsLandingPage />} />
+          <Route
+            path="/public/showroom/guide/managed-study-cafe-furniture"
+            element={<PublicManagedStudyCafeFurnitureGuidePage />}
+          />
           <Route path="/public/showroom" element={<PublicShowroomPage />} />
           <Route path="/open-showroom/cardnews/:siteKey" element={<LegacyOpenShowroomCardNewsDetailRedirect />} />
           <Route path="/open-showroom/cardnews" element={<LegacyOpenShowroomRedirect targetPath="/public/showroom" />} />

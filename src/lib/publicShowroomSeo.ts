@@ -1,8 +1,24 @@
-import type { PageHeadJsonLd, PageHeadMetaTag } from '@/lib/usePageHead'
+import type { PageHeadJsonLd, PageHeadMetaTag } from './usePageHead'
 import {
   FINDGAGU_ENTITY_ONE_LINER,
+  MANAGED_STUDY_CAFE_CHECKLIST,
+  MANAGED_STUDY_CAFE_FEATURED_ANSWER,
+  MANAGED_STUDY_CAFE_FAQS,
+  MANAGED_STUDY_CAFE_GUIDE_DESCRIPTION,
   MANAGED_STUDY_CAFE_GUIDE_PATH,
-} from '@/lib/aeo/managedStudyCafeFurnitureGuide'
+  MANAGED_STUDY_CAFE_GUIDE_TITLE,
+} from './aeo/managedStudyCafeFurnitureGuide'
+
+/**
+ * Organization.sameAs — 공식 채널 (findgagu.com 푸터 · 내부 세일즈킷 기준)
+ * YouTube @findgagu1552 / Instagram @findgagu2 / Facebook findgagu
+ */
+export const PUBLIC_SHOWROOM_SAME_AS = [
+  'https://www.youtube.com/@findgagu1552',
+  'https://www.instagram.com/findgagu2/',
+  'https://www.facebook.com/findgagu',
+  'https://blog.naver.com/findgagu',
+] as const
 
 /** 공개 랜딩 정본 호스트 (sitemap · canonical · JSON-LD) */
 export const PUBLIC_SHOWROOM_ORIGIN = 'https://www.findgagu.co.kr'
@@ -99,6 +115,7 @@ export function buildOrganizationJsonLd(origin = PUBLIC_SHOWROOM_ORIGIN): PageHe
     logo,
     image: logo,
     description: FINDGAGU_ENTITY_ONE_LINER,
+    sameAs: [...PUBLIC_SHOWROOM_SAME_AS],
     areaServed: {
       '@type': 'Country',
       name: '대한민국',
@@ -151,3 +168,103 @@ export function getPublicShowroomCanonicalUrl(path: string): string {
   const origin = typeof window !== 'undefined' ? window.location.origin : PUBLIC_SHOWROOM_ORIGIN
   return absoluteUrl(path, origin)
 }
+
+/** 빌드 타임 prerender용 — 허브·가이드 정적 head/noscript 스펙 */
+export type PublicShowroomPrerenderPage = {
+  /** dist 기준 상대 디렉터리 (끝에 index.html 기록) */
+  relativeDir: string
+  title: string
+  description: string
+  canonicalUrl: string
+  ogType: 'website' | 'article'
+  ogImage: string
+  jsonLd: PageHeadJsonLd[]
+  noscriptHtml: string
+}
+
+function escapePrerenderHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+export function buildHubPrerenderPage(origin = PUBLIC_SHOWROOM_ORIGIN): PublicShowroomPrerenderPage {
+  const base = origin.replace(/\/+$/, '')
+  const canonicalUrl = absoluteUrl(PUBLIC_SHOWROOM_HUB_PATH, base)
+  const faqHtml = PUBLIC_SHOWROOM_HUB_FAQS.map(
+    (item) =>
+      `<dt>${escapePrerenderHtml(item.question)}</dt><dd>${escapePrerenderHtml(item.answer)}</dd>`,
+  ).join('')
+  return {
+    relativeDir: 'public/showroom',
+    title: PUBLIC_SHOWROOM_HUB_TITLE,
+    description: PUBLIC_SHOWROOM_HUB_DESCRIPTION,
+    canonicalUrl,
+    ogType: 'website',
+    ogImage: getPublicShowroomDefaultOgImageUrl(base),
+    jsonLd: [buildOrganizationJsonLd(base), buildWebSiteJsonLd(base), buildHubFaqJsonLd()],
+    noscriptHtml: [
+      `<h1>${escapePrerenderHtml(PUBLIC_SHOWROOM_HUB_TITLE)}</h1>`,
+      `<p>${escapePrerenderHtml(PUBLIC_SHOWROOM_HUB_DESCRIPTION)}</p>`,
+      `<p>${escapePrerenderHtml(FINDGAGU_ENTITY_ONE_LINER)}</p>`,
+      `<section><h2>자주 묻는 질문</h2><dl>${faqHtml}</dl></section>`,
+      `<p><a href="${escapePrerenderHtml(canonicalUrl)}">${escapePrerenderHtml(canonicalUrl)}</a></p>`,
+    ].join('\n'),
+  }
+}
+
+export function buildGuidePrerenderPage(origin = PUBLIC_SHOWROOM_ORIGIN): PublicShowroomPrerenderPage {
+  const base = origin.replace(/\/+$/, '')
+  const canonicalUrl = absoluteUrl(MANAGED_STUDY_CAFE_GUIDE_PATH, base)
+  const checklistHtml = MANAGED_STUDY_CAFE_CHECKLIST.map(
+    (item) =>
+      `<li><strong>${escapePrerenderHtml(item.label)}</strong> — ${escapePrerenderHtml(item.detail)}</li>`,
+  ).join('')
+  const faqHtml = MANAGED_STUDY_CAFE_FAQS.map(
+    (item) =>
+      `<dt>${escapePrerenderHtml(item.question)}</dt><dd>${escapePrerenderHtml(item.answer)}</dd>`,
+  ).join('')
+  return {
+    relativeDir: 'public/showroom/guide/managed-study-cafe-furniture',
+    title: MANAGED_STUDY_CAFE_GUIDE_TITLE,
+    description: MANAGED_STUDY_CAFE_GUIDE_DESCRIPTION,
+    canonicalUrl,
+    ogType: 'article',
+    ogImage: getPublicShowroomDefaultOgImageUrl(base),
+    jsonLd: [
+      buildOrganizationJsonLd(base),
+      {
+        '@context': 'https://schema.org',
+        '@type': 'Article',
+        headline: MANAGED_STUDY_CAFE_GUIDE_TITLE,
+        description: MANAGED_STUDY_CAFE_GUIDE_DESCRIPTION,
+        inLanguage: 'ko-KR',
+        mainEntityOfPage: canonicalUrl,
+        author: { '@type': 'Organization', name: PUBLIC_SHOWROOM_BRAND },
+        publisher: { '@type': 'Organization', name: PUBLIC_SHOWROOM_BRAND },
+        about: ['관리형 스터디카페 가구', '관리형 독서실 가구', '스터디카페 가구업체'],
+      },
+      {
+        '@context': 'https://schema.org',
+        '@type': 'FAQPage',
+        mainEntity: MANAGED_STUDY_CAFE_FAQS.map((item) => ({
+          '@type': 'Question',
+          name: item.question,
+          acceptedAnswer: { '@type': 'Answer', text: item.answer },
+        })),
+      },
+    ],
+    noscriptHtml: [
+      `<h1>${escapePrerenderHtml(MANAGED_STUDY_CAFE_GUIDE_TITLE)}</h1>`,
+      `<p>${escapePrerenderHtml(FINDGAGU_ENTITY_ONE_LINER)}</p>`,
+      `<p>${escapePrerenderHtml(MANAGED_STUDY_CAFE_FEATURED_ANSWER)}</p>`,
+      `<section><h2>선택 체크리스트</h2><ul>${checklistHtml}</ul></section>`,
+      `<section><h2>자주 묻는 질문</h2><dl>${faqHtml}</dl></section>`,
+      `<p><a href="${escapePrerenderHtml(canonicalUrl)}">${escapePrerenderHtml(canonicalUrl)}</a></p>`,
+    ].join('\n'),
+  }
+}
+
