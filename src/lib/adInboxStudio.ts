@@ -1991,6 +1991,9 @@ type AdInboxImageEditOptions = {
   temperature?: number
 }
 
+/** Before 합성 전용 — 구조(문/창) 유지에 유리한 최신 Flash Image */
+const SYNTHESIZE_BEFORE_IMAGE_MODEL = 'gemini-3.1-flash-image'
+
 /** Gemini 이미지 편집 API (사람 제거 / Before 합성 등). DB insert 없음. */
 export async function runAdInboxImageEdit(
   imageUrl: string,
@@ -2103,6 +2106,7 @@ export async function synthesizeBeforeFromAfterImage(
     prompt: SYNTHESIZE_BEFORE_STRIP_FURNITURE_PROMPT,
     promptFirst: true,
     temperature: 0.1,
+    model: SYNTHESIZE_BEFORE_IMAGE_MODEL,
   })
 
   if (mode === 'empty_room') {
@@ -2114,6 +2118,7 @@ export async function synthesizeBeforeFromAfterImage(
       prompt: SYNTHESIZE_BEFORE_CONSTRUCTION_PROMPT,
       promptFirst: true,
       temperature: 0.1,
+      model: SYNTHESIZE_BEFORE_IMAGE_MODEL,
     })
   } catch {
     // 2패스 실패 시 1패스(빈 방) 결과라도 반환

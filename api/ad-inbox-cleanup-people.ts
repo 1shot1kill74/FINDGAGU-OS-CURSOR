@@ -140,11 +140,11 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
     }
 
     const source = await fetchImageAsBase64(imageUrl)
+    // Before 합성·사람 제거용. 2.5 flash-image는 구조(문/창) 환각이 잦아 3.1로 기본 전환.
     const model =
       (typeof body.model === 'string' && body.model.trim()) ||
       process.env.GOOGLE_GEMINI_IMAGE_MODEL?.trim() ||
-      process.env.GOOGLE_GEMINI_MODEL?.trim() ||
-      'gemini-2.5-flash-image'
+      'gemini-3.1-flash-image'
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
     const promptText =
       typeof body.prompt === 'string' && body.prompt.trim() ? body.prompt.trim() : CLEANUP_PROMPT
