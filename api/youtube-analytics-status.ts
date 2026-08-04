@@ -1,5 +1,4 @@
-import { createClient } from '@supabase/supabase-js'
-import { assertInternalAdmin } from '../server/internalAdminAuth'
+import { createClient, type User } from '@supabase/supabase-js'
 
 type RequestLike = {
   method?: string
@@ -15,6 +14,46 @@ function getEnv(name: string, required = true) {
   const value = process.env[name]?.trim() || ''
   if (!value && required) throw new Error(`${name} 환경 변수가 설정되지 않았습니다.`)
   return value
+}
+
+function getBearerToken(req: RequestLike) {
+  const value = req.headers.authorization ?? req.headers.Authorization
+  const raw = Array.isArray(value) ? value[0] ?? '' : value ?? ''
+  const match = raw.match(/^Bearer\s+(.+)$/i)
+  return match?.[1]?.trim() ?? ''
+}
+
+function isInternalAdminEmail(email: string | undefined | null): boolean {
+  if (!email) return false
+  const normalized = email.trim().toLowerCase()
+  const domain = normalized.split('@')[1] || ''
+  if (domain === 'findgagu.com') return true
+  const allow = [
+    process.env.INTERNAL_ADMIN_ALLOWED_EMAILS,
+    process.env.EDU_OUTREACH_ALLOWED_EMAILS,
+    process.env.SHOWROOM_CASE_CONTENT_ALLOWED_EMAILS,
+  ]
+    .flatMap((item) => String(item || '').split(','))
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean)
+  return allow.includes(normalized)
+}
+
+async function assertInternalAdmin(req: RequestLike): Promise<
+  | { ok: true; user: User; token: string }
+  | { ok: false; status: 401 | 403; message: string }
+> {
+  const token = getBearerToken(req)
+  if (!token) return { ok: false, status: 401, message: '로그인이 필요합니다.' }
+  const supabase = createClient(getEnv('VITE_SUPABASE_URL'), getEnv('VITE_SUPABASE_ANON_KEY'), {
+    auth: { persistSession: false },
+  })
+  const { data, error } = await supabase.auth.getUser(token)
+  if (error || !data.user) return { ok: false, status: 401, message: '유효하지 않은 세션입니다.' }
+  if (!isInternalAdminEmail(data.user.email)) {
+    return { ok: false, status: 403, message: '내부 관리자 권한이 필요합니다.' }
+  }
+  return { ok: true, user: data.user, token }
 }
 
 export default async function handler(req: RequestLike, res: ResponseLike) {
