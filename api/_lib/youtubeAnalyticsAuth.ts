@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
+import { createCipheriv, createDecipheriv, createHmac, randomBytes, timingSafeEqual } from 'crypto'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 
 export const YT_ANALYTICS_SCOPES = [
