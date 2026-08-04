@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js'
+import { assertInternalAdmin } from './_internalAdminAuth'
 
 type RequestLike = {
   method?: string
@@ -11,7 +11,7 @@ type ResponseLike = {
   status(code: number): { json(body: unknown): void; send(body: string): void }
 }
 
-type CollectProvider = 'naver_news' | 'naver_local' | 'google_news'
+type CollectProvider = 'naver_news' | 'naver_local' | 'google_news' | 'naver_blog'
 
 type CollectItem = {
   title: string
@@ -25,6 +25,11 @@ type CollectItem = {
   industryHint?: string
   regionHint?: string
   intentHint?: string
+  bloggerLink?: string
+  bloggerName?: string
+  activationLevel?: string
+  samplePostCount?: number
+  lastPostDate?: string
 }
 
 const NAVER_NEWS_QUERIES = [
@@ -46,6 +51,27 @@ const GOOGLE_NEWS_QUERIES = [
   '관리형 독서실 오픈 OR 독서실 리모델링',
   '아파트 커뮤니티 독서실 OR 아파트 스터디룸',
   '학교 특별실 가구 OR 학교 기자재 책상',
+]
+
+const NAVER_BLOG_TARGETS: Array<{
+  query: string
+  industryHint: string
+  regionHint?: string
+}> = [
+  { query: '강남 학원', industryHint: 'academy', regionHint: '강남' },
+  { query: '서초 학원', industryHint: 'academy', regionHint: '서초' },
+  { query: '송파 학원', industryHint: 'academy', regionHint: '송파' },
+  { query: '분당 학원', industryHint: 'academy', regionHint: '분당' },
+  { query: '수원 학원', industryHint: 'academy', regionHint: '수원' },
+  { query: '목동 학원', industryHint: 'academy', regionHint: '목동' },
+  { query: '스터디카페', industryHint: 'study_cafe' },
+  { query: '관리형 스터디카페', industryHint: 'study_cafe' },
+  { query: '관리형 독서실', industryHint: 'managed_reading_room' },
+  { query: '학원 리모델링', industryHint: 'academy' },
+  { query: '스터디카페 인테리어', industryHint: 'study_cafe' },
+  { query: '독서실 좌석', industryHint: 'managed_reading_room' },
+  { query: '학원 개원', industryHint: 'academy' },
+  { query: '스터디카페 오픈', industryHint: 'study_cafe' },
 ]
 
 /** BefoAftr local-search 패턴: 지역 + 교육공간 키워드 */
@@ -74,28 +100,6 @@ function getEnv(name: string, required = true) {
   return value
 }
 
-function readHeader(req: RequestLike, name: string) {
-  const value = req.headers[name] ?? req.headers[name.toLowerCase()]
-  return Array.isArray(value) ? value[0] ?? '' : value ?? ''
-}
-
-function getBearerToken(req: RequestLike) {
-  const authorization = readHeader(req, 'authorization')
-  const match = authorization.match(/^Bearer\s+(.+)$/i)
-  return match?.[1]?.trim() ?? ''
-}
-
-async function assertUser(req: RequestLike) {
-  const token = getBearerToken(req)
-  if (!token) return { ok: false as const, status: 401, message: '로그인이 필요합니다.' }
-  const supabase = createClient(getEnv('VITE_SUPABASE_URL'), getEnv('VITE_SUPABASE_ANON_KEY'), {
-    auth: { persistSession: false },
-  })
-  const { data, error } = await supabase.auth.getUser(token)
-  if (error || !data.user) return { ok: false as const, status: 401, message: '유효하지 않은 세션입니다.' }
-  return { ok: true as const, user: data.user }
-}
-
 function stripHtml(text: string) {
   return text
     .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
@@ -115,34 +119,92 @@ function stripHtml(text: string) {
     .trim()
 }
 
-/** Google News description: <a>제목</a> <font>매체</font> */
-function normalizeGoogleNewsDescription(html: string): string {
+/**
+ * Google News description은 `<a>제목</a> <font>매체</font>`만 주고 요약이 없다.
+ * 가짜 요약(제목 — 매체)을 만들지 않는다.
+ */
+function parseGoogleNewsDescription(html: string): { headline: string; publisher: string } {
   const linkMatch = html.match(/<a\b[^>]*>([\s\S]*?)<\/a>/i)
   const fontMatch = html.match(/<font\b[^>]*>([\s\S]*?)<\/font>/i)
-  const headline = stripHtml(linkMatch?.[1] || '')
-  const publisher = stripHtml(fontMatch?.[1] || '')
-  if (headline && publisher) return `${headline} — ${publisher}`
-  if (headline) return headline
-  return stripHtml(html)
+  return {
+    headline: stripHtml(linkMatch?.[1] || ''),
+    publisher: stripHtml(fontMatch?.[1] || ''),
+  }
 }
 
-function getNaverCredentials() {
-  const clientId = getEnv('NAVER_CLIENT_ID', false) || getEnv('VITE_NAVER_CLIENT_ID', false)
-  const clientSecret =
-    getEnv('NAVER_CLIENT_SECRET', false) || getEnv('VITE_NAVER_CLIENT_SECRET', false)
+function stripPublisherSuffix(title: string): string {
+  return stripHtml(title)
+    .replace(/\s+[—–-]\s+[^\n—–-]{1,40}$/u, '')
+    .trim()
+}
+
+function buildNaverEnrichQueries(title: string): string[] {
+  const core = stripPublisherSuffix(title)
+  const queries: string[] = []
+  if (core) queries.push(core.slice(0, 80))
+
+  const orgs = core.match(/[가-힣A-Za-z0-9]{2,}(?:학원|스터디카페|독서실|학교|기숙학원)/g) || []
+  const places = core.match(/(?:강남|서초|송파|분당|수원|목동|오목교|노원|일산|부산|대구|대전|광주|인천)[가-힣0-9]*/g) || []
+  const keywords = core.match(/(리모델링|개원|이전|오픈|인테리어|재개원|확장|이전\s*오픈)/g) || []
+
+  const compact = [...new Set([...orgs.slice(0, 2), ...places.slice(0, 2), ...keywords.slice(0, 1)])]
+    .join(' ')
+    .trim()
+  if (compact && compact !== core) queries.push(compact.slice(0, 80))
+
+  if (orgs[0] && keywords[0]) {
+    const pair = `${orgs[0]} ${keywords[0]}`
+    if (!queries.includes(pair)) queries.push(pair)
+  }
+  if (orgs[0] && places[0]) {
+    const pair = `${orgs[0]} ${places[0]}`
+    if (!queries.includes(pair)) queries.push(pair)
+  }
+
+  return [...new Set(queries.filter(Boolean))].slice(0, 4)
+}
+
+function normalizeTitleKey(text: string): string {
+  return stripPublisherSuffix(text)
+    .toLowerCase()
+    .replace(/["'`']/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function titlesLikelyMatch(a: string, b: string): boolean {
+  const na = normalizeTitleKey(a)
+  const nb = normalizeTitleKey(b)
+  if (!na || !nb) return false
+  if (na === nb) return true
+  const head = Math.min(28, na.length, nb.length)
+  if (head >= 12 && (na.includes(nb.slice(0, head)) || nb.includes(na.slice(0, head)))) return true
+  return false
+}
+
+function getNaverCredentials(required = true) {
+  const clientId = getEnv('NAVER_CLIENT_ID', false)
+  const clientSecret = getEnv('NAVER_CLIENT_SECRET', false)
   if (!clientId || !clientSecret) {
+    if (!required) return null
     throw new Error(
-      'NAVER_CLIENT_ID / NAVER_CLIENT_SECRET 이 없습니다. BefoAftr .env 값을 Findgagu OS .env(및 Vercel)에 복사하세요.',
+      'NAVER_CLIENT_ID / NAVER_CLIENT_SECRET 이 없습니다. Vercel/서버 환경변수에만 설정하세요 (VITE_ 금지).',
     )
   }
   return { clientId, clientSecret }
 }
 
-async function naverSearch(path: 'news' | 'local', query: string, opts?: { display?: number; start?: number; sort?: string }) {
-  const { clientId, clientSecret } = getNaverCredentials()
-  const display = opts?.display ?? (path === 'local' ? 5 : 20)
+async function naverSearch(
+  path: 'news' | 'local' | 'blog',
+  query: string,
+  opts?: { display?: number; start?: number; sort?: string },
+) {
+  const creds = getNaverCredentials(true)
+  if (!creds) throw new Error('네이버 API 키가 없습니다.')
+  const { clientId, clientSecret } = creds
+  const display = opts?.display ?? (path === 'local' ? 5 : path === 'blog' ? 30 : 20)
   const start = opts?.start ?? 1
-  const sort = opts?.sort ?? (path === 'news' ? 'date' : 'comment')
+  const sort = opts?.sort ?? (path === 'local' ? 'comment' : 'date')
   const url = new URL(`https://openapi.naver.com/v1/search/${path}.json`)
   url.searchParams.set('query', query)
   url.searchParams.set('display', String(display))
@@ -163,6 +225,64 @@ async function naverSearch(path: 'news' | 'local', query: string, opts?: { displ
     items?: Array<Record<string, string>>
     total?: number
   }
+}
+
+/**
+ * Google News RSS는 요약이 없으므로 네이버 뉴스 검색으로 description·원문을 보강한다.
+ * (본문 불러오기용 originallink도 함께 확보)
+ */
+async function enrichGoogleNewsWithNaverSnippets(items: CollectItem[]): Promise<CollectItem[]> {
+  if (!items.length) return items
+  if (!getNaverCredentials(false)) return items
+
+  const enriched: CollectItem[] = []
+  for (const item of items) {
+    const queries = buildNaverEnrichQueries(item.title)
+    if (!queries.length) {
+      enriched.push({ ...item, description: item.description || '' })
+      continue
+    }
+
+    let matched:
+      | {
+          title: string
+          link: string
+          description: string
+          pubDate?: string
+        }
+      | undefined
+
+    try {
+      for (const query of queries) {
+        const payload = await naverSearch('news', query, { display: 5, start: 1, sort: 'sim' })
+        matched = (payload.items ?? [])
+          .map((row) => ({
+            title: stripHtml(row.title || ''),
+            link: stripHtml(row.originallink || row.link || ''),
+            description: stripHtml(row.description || ''),
+            pubDate: row.pubDate || undefined,
+          }))
+          .find((row) => row.description && titlesLikelyMatch(item.title, row.title))
+        if (matched) break
+      }
+    } catch {
+      matched = undefined
+    }
+
+    if (matched) {
+      enriched.push({
+        ...item,
+        title: matched.title || item.title,
+        link: matched.link || item.link,
+        pubDate: matched.pubDate || item.pubDate,
+        description: matched.description,
+      })
+      continue
+    }
+
+    enriched.push({ ...item, description: '' })
+  }
+  return enriched
 }
 
 async function fetchNaverNews(queries: string[]): Promise<CollectItem[]> {
@@ -225,6 +345,153 @@ async function fetchNaverLocal(
   return collected
 }
 
+function parseNaverPostdateToIso(postdate: string): string | undefined {
+  const raw = String(postdate || '').replace(/\D/g, '')
+  if (raw.length !== 8) return undefined
+  const y = Number(raw.slice(0, 4))
+  const m = Number(raw.slice(4, 6))
+  const d = Number(raw.slice(6, 8))
+  if (!y || m < 1 || m > 12 || d < 1 || d > 31) return undefined
+  return new Date(y, m - 1, d, 12, 0, 0).toISOString()
+}
+
+function normalizeBloggerKey(link: string): string {
+  return stripHtml(link)
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/\/$/, '')
+    .trim()
+}
+
+function activationLevelFromDays(days: number | null): string {
+  if (days == null) return 'dormant'
+  if (days <= 30) return 'hot'
+  if (days <= 90) return 'warm'
+  if (days <= 180) return 'cool'
+  return 'dormant'
+}
+
+/** 네이버 블로그 검색 → blogger 단위 액티베이팅 타겟 */
+async function fetchNaverBlogs(
+  targets: Array<{ query: string; industryHint: string; regionHint?: string }>,
+): Promise<CollectItem[]> {
+  type Post = {
+    title: string
+    link: string
+    description: string
+    postIso?: string
+    query: string
+  }
+  type Bucket = {
+    bloggerName: string
+    bloggerLink: string
+    posts: Post[]
+    industryHint: string
+    regionHint?: string
+  }
+
+  const byBlogger = new Map<string, Bucket>()
+
+  for (const target of targets.slice(0, 14)) {
+    const payload = await naverSearch('blog', target.query, { display: 30, start: 1, sort: 'date' })
+    for (const item of payload.items ?? []) {
+      const title = stripHtml(item.title || '')
+      const link = stripHtml(item.link || '')
+      const description = stripHtml(item.description || '')
+      const bloggerName = stripHtml(item.bloggername || '')
+      const bloggerLink = stripHtml(item.bloggerlink || link)
+      const key = normalizeBloggerKey(bloggerLink)
+      if (!key || !title) continue
+
+      const hay = `${bloggerName} ${title} ${description}`
+      if (!/학원|스터디|독서실|교습|입시|보습|관리형|좌석|인테리어|리모델링|개원|오픈/.test(hay)) {
+        continue
+      }
+      const operatorBlog = /학원|스터디|독서실|클리닉|교습|입시|보습|관리형/.test(bloggerName)
+      const reviewOnly = /후기|방문기|체험단|가봤|다녀왔/.test(title) && !operatorBlog
+      if (reviewOnly) continue
+      // 운영 블로그가 아니면 공간·개원 키워드가 제목에 있을 때만 채택
+      if (!operatorBlog && !/학원|스터디카페|독서실|리모델링|인테리어|개원|오픈|좌석|확장/.test(title)) {
+        continue
+      }
+
+      const postIso = parseNaverPostdateToIso(item.postdate || '')
+      const post: Post = { title, link, description, postIso, query: target.query }
+      const existing = byBlogger.get(key)
+      if (existing) {
+        existing.posts.push(post)
+        if (!existing.regionHint && target.regionHint) existing.regionHint = target.regionHint
+      } else {
+        byBlogger.set(key, {
+          bloggerName: bloggerName || title.slice(0, 40),
+          bloggerLink,
+          posts: [post],
+          industryHint: target.industryHint,
+          regionHint: target.regionHint,
+        })
+      }
+    }
+  }
+
+  const now = Date.now()
+  const collected: CollectItem[] = []
+  for (const bucket of byBlogger.values()) {
+    const sorted = [...bucket.posts].sort((a, b) => {
+      const ta = a.postIso ? new Date(a.postIso).getTime() : 0
+      const tb = b.postIso ? new Date(b.postIso).getTime() : 0
+      return tb - ta
+    })
+    const latest = sorted[0]
+    if (!latest) continue
+    const lastIso = latest.postIso
+    const days =
+      lastIso && !Number.isNaN(new Date(lastIso).getTime())
+        ? Math.max(0, Math.floor((now - new Date(lastIso).getTime()) / 86400000))
+        : null
+    const level = activationLevelFromDays(days)
+    const recentTitles = sorted
+      .slice(0, 5)
+      .map((p) => `· ${p.title}`)
+      .join('\n')
+    const description = [
+      `블로그 활성: ${level}` + (days != null ? ` (최근글 ${days}일 전)` : ''),
+      `샘플 글 ${sorted.length}건`,
+      recentTitles,
+      latest.description ? `요약: ${latest.description}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n')
+
+    const blogUrl = bucket.bloggerLink.startsWith('http')
+      ? bucket.bloggerLink
+      : `https://${bucket.bloggerLink}`
+
+    collected.push({
+      title: bucket.bloggerName,
+      link: blogUrl,
+      pubDate: lastIso,
+      description,
+      query: latest.query,
+      industryHint: bucket.industryHint,
+      regionHint: bucket.regionHint,
+      intentHint: 'blog_activation',
+      bloggerLink: blogUrl,
+      bloggerName: bucket.bloggerName,
+      activationLevel: level,
+      samplePostCount: sorted.length,
+      lastPostDate: lastIso,
+      category: 'naver_blog',
+    })
+  }
+
+  collected.sort((a, b) => {
+    const ta = a.pubDate ? new Date(a.pubDate).getTime() : 0
+    const tb = b.pubDate ? new Date(b.pubDate).getTime() : 0
+    return tb - ta
+  })
+  return collected
+}
+
 function decodeXml(text: string) {
   return stripHtml(text)
 }
@@ -236,10 +503,21 @@ function parseRssItems(xml: string, query: string): CollectItem[] {
     const title = decodeXml((block.match(/<title>([\s\S]*?)<\/title>/i)?.[1] ?? '').trim())
     const link = decodeXml((block.match(/<link>([\s\S]*?)<\/link>/i)?.[1] ?? '').trim())
     const pubDate = decodeXml((block.match(/<pubDate>([\s\S]*?)<\/pubDate>/i)?.[1] ?? '').trim())
+    const sourceName = decodeXml((block.match(/<source[^>]*>([\s\S]*?)<\/source>/i)?.[1] ?? '').trim())
     const rawDescription = (block.match(/<description>([\s\S]*?)<\/description>/i)?.[1] ?? '').trim()
-    const description = normalizeGoogleNewsDescription(rawDescription)
+    const blurb = parseGoogleNewsDescription(rawDescription)
+    // Google RSS description에는 본문 요약이 없음 → 비워 두고 네이버로 보강
     if (!title && !link) continue
-    items.push({ title, link, pubDate: pubDate || undefined, description, query })
+    items.push({
+      title: title || blurb.headline,
+      link,
+      pubDate: pubDate || undefined,
+      description: '',
+      query,
+      // publisher hint는 regionHint 슬롯을 쓰지 않고 title에 이미 포함됨
+      // sourceName은 enrich 매칭용으로 query 메타에만 남김
+      ...(sourceName || blurb.publisher ? { category: sourceName || blurb.publisher } : {}),
+    })
   }
   return items
 }
@@ -268,17 +546,23 @@ async function fetchGoogleNewsRss(queries: string[]): Promise<CollectItem[]> {
       collected.push(item)
     }
   }
-  return collected
+  return enrichGoogleNewsWithNaverSnippets(collected)
 }
 
 function resolveProvider(sourceSlug?: string, provider?: string): CollectProvider {
-  if (provider === 'naver_news' || provider === 'naver_local' || provider === 'google_news') {
+  if (
+    provider === 'naver_news' ||
+    provider === 'naver_local' ||
+    provider === 'google_news' ||
+    provider === 'naver_blog'
+  ) {
     return provider
   }
+  if (sourceSlug?.includes('naver_blog') || sourceSlug?.includes('blog')) return 'naver_blog'
   if (sourceSlug?.includes('naver_news')) return 'naver_news'
   if (sourceSlug?.includes('naver_local')) return 'naver_local'
   if (sourceSlug?.includes('google')) return 'google_news'
-  return 'naver_news'
+  return 'naver_blog'
 }
 
 export default async function handler(req: RequestLike, res: ResponseLike) {
@@ -293,7 +577,7 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
   }
 
   try {
-    const auth = await assertUser(req)
+    const auth = await assertInternalAdmin(req)
     if (!auth.ok) {
       res.status(auth.status).json({ ok: false, message: auth.message })
       return
@@ -323,6 +607,8 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
         ? NAVER_LOCAL_TARGETS.filter((t) => regionFilter.includes(t.region))
         : NAVER_LOCAL_TARGETS
       items = await fetchNaverLocal(targets.length ? targets : NAVER_LOCAL_TARGETS)
+    } else if (provider === 'naver_blog') {
+      items = await fetchNaverBlogs(NAVER_BLOG_TARGETS)
     } else {
       const queries =
         Array.isArray(body.queries) && body.queries.length

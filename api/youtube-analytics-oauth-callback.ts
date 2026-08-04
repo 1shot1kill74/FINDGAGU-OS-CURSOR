@@ -6,7 +6,7 @@ import {
   loadOauthRow,
   upsertOauthConnection,
   verifyOAuthState,
-} from './_lib/youtubeAnalyticsAuth'
+} from './_youtubeAnalyticsAuth'
 
 type RequestLike = {
   method?: string

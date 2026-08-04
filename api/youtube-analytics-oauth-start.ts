@@ -1,5 +1,5 @@
-import { assertInternalAdmin } from './_lib/internalAdminAuth'
-import { buildGoogleAuthorizeUrl, createOAuthState } from './_lib/youtubeAnalyticsAuth'
+import { assertInternalAdmin } from './_internalAdminAuth'
+import { buildGoogleAuthorizeUrl, createOAuthState } from './_youtubeAnalyticsAuth'
 
 type RequestLike = {
   method?: string

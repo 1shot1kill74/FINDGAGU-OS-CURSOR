@@ -3,6 +3,12 @@ import path from 'node:path'
 import { createClient } from '@supabase/supabase-js'
 import { Readability } from '@mozilla/readability'
 import { parseHTML } from 'linkedom'
+import { assertInternalAdmin, getBearerToken } from './_internalAdminAuth'
+import {
+  assertSafePublicHttpUrl,
+  fetchHtmlFollowingRedirectsSafely,
+  isGoogleNewsHost,
+} from './_safePublicUrl'
 
 type RequestLike = {
   method?: string
@@ -31,26 +37,102 @@ function getEnv(name: string, required = true) {
   return value
 }
 
-function readHeader(req: RequestLike, name: string) {
-  const value = req.headers[name] ?? req.headers[name.toLowerCase()]
-  return Array.isArray(value) ? value[0] ?? '' : value ?? ''
+function stripHtml(text: string) {
+  return text
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
-function getBearerToken(req: RequestLike) {
-  const authorization = readHeader(req, 'authorization')
-  const match = authorization.match(/^Bearer\s+(.+)$/i)
-  return match?.[1]?.trim() ?? ''
+function stripPublisherSuffix(title: string) {
+  return stripHtml(title)
+    .replace(/\s+[—–-]\s+[^\n—–-]{1,40}$/u, '')
+    .trim()
 }
 
-async function assertUser(req: RequestLike) {
-  const token = getBearerToken(req)
-  if (!token) return { ok: false as const, status: 401, message: '로그인이 필요합니다.' }
-  const supabase = createClient(getEnv('VITE_SUPABASE_URL'), getEnv('VITE_SUPABASE_ANON_KEY'), {
-    auth: { persistSession: false },
-  })
-  const { data, error } = await supabase.auth.getUser(token)
-  if (error || !data.user) return { ok: false as const, status: 401, message: '유효하지 않은 세션입니다.' }
-  return { ok: true as const, user: data.user }
+function buildNaverEnrichQueries(title: string): string[] {
+  const core = stripPublisherSuffix(title)
+  const queries: string[] = []
+  if (core) queries.push(core.slice(0, 80))
+
+  const orgs = core.match(/[가-힣A-Za-z0-9]{2,}(?:학원|스터디카페|독서실|학교|기숙학원)/g) || []
+  const places = core.match(/(?:강남|서초|송파|분당|수원|목동|오목교|노원|일산|부산|대구|대전|광주|인천)[가-힣0-9]*/g) || []
+  const keywords = core.match(/(리모델링|개원|이전|오픈|인테리어|재개원|확장)/g) || []
+
+  const compact = [...new Set([...orgs.slice(0, 2), ...places.slice(0, 2), ...keywords.slice(0, 1)])]
+    .join(' ')
+    .trim()
+  if (compact && compact !== core) queries.push(compact.slice(0, 80))
+
+  if (orgs[0] && keywords[0]) {
+    const pair = `${orgs[0]} ${keywords[0]}`
+    if (!queries.includes(pair)) queries.push(pair)
+  }
+  if (orgs[0] && places[0]) {
+    const pair = `${orgs[0]} ${places[0]}`
+    if (!queries.includes(pair)) queries.push(pair)
+  }
+
+  return [...new Set(queries.filter(Boolean))].slice(0, 4)
+}
+
+function titlesLikelyMatch(a: string, b: string) {
+  const clean = (t: string) =>
+    stripPublisherSuffix(t)
+      .toLowerCase()
+      .replace(/["'`']/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+  const na = clean(a)
+  const nb = clean(b)
+  if (!na || !nb) return false
+  if (na === nb) return true
+  const head = Math.min(28, na.length, nb.length)
+  return head >= 12 && (na.includes(nb.slice(0, head)) || nb.includes(na.slice(0, head)))
+}
+
+async function resolveViaNaverNews(title: string): Promise<{ url: string; description: string; title: string } | null> {
+  const clientId = getEnv('NAVER_CLIENT_ID', false)
+  const clientSecret = getEnv('NAVER_CLIENT_SECRET', false)
+  if (!clientId || !clientSecret) return null
+
+  const queries = buildNaverEnrichQueries(title)
+  if (!queries.length) return null
+
+  for (const query of queries) {
+    const url = new URL('https://openapi.naver.com/v1/search/news.json')
+    url.searchParams.set('query', query)
+    url.searchParams.set('display', '5')
+    url.searchParams.set('start', '1')
+    url.searchParams.set('sort', 'sim')
+
+    const res = await fetch(url.toString(), {
+      headers: {
+        'X-Naver-Client-Id': clientId,
+        'X-Naver-Client-Secret': clientSecret,
+      },
+    })
+    if (!res.ok) continue
+    const payload = (await res.json()) as { items?: Array<Record<string, string>> }
+    const match = (payload.items ?? [])
+      .map((row) => ({
+        title: stripHtml(row.title || ''),
+        url: stripHtml(row.originallink || row.link || ''),
+        description: stripHtml(row.description || ''),
+      }))
+      .find((row) => row.url && titlesLikelyMatch(title, row.title))
+    if (match) return match
+  }
+
+  return null
 }
 
 function clip(text: string, max = 3500) {
@@ -59,28 +141,8 @@ function clip(text: string, max = 3500) {
   return `${normalized.slice(0, max - 1)}…`
 }
 
-function isBlockedHost(hostname: string) {
-  const host = hostname.toLowerCase()
-  return (
-    host.includes('news.google.') ||
-    host === 'google.com' ||
-    host.endsWith('.google.com') ||
-    host.includes('accounts.google.')
-  )
-}
-
 async function fetchHtml(url: string) {
-  const res = await fetch(url, {
-    redirect: 'follow',
-    headers: {
-      'User-Agent':
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-      Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8',
-      'Accept-Language': 'ko-KR,ko;q=0.9,en;q=0.8',
-    },
-  })
-  if (!res.ok) throw new Error(`원문 페이지 요청 실패 (${res.status})`)
-  return { html: await res.text(), finalUrl: res.url || url }
+  return fetchHtmlFollowingRedirectsSafely(url)
 }
 
 function extractWithReadability(html: string, url: string): ExtractedArticle | null {
@@ -118,6 +180,7 @@ function markdownFromCrawl4aiPayload(value: unknown): string {
 }
 
 async function extractWithCrawl4ai(url: string): Promise<ExtractedArticle | null> {
+  await assertSafePublicHttpUrl(url)
   const base = getEnv('CRAWL4AI_BASE_URL', false) || 'http://127.0.0.1:11235'
   const token = getEnv('CRAWL4AI_API_TOKEN', false)
   if (!base) return null
@@ -186,7 +249,8 @@ async function extractWithCrawl4ai(url: string): Promise<ExtractedArticle | null
   }
 }
 
-function extractWithScrapling(url: string): Promise<ExtractedArticle | null> {
+async function extractWithScrapling(url: string): Promise<ExtractedArticle | null> {
+  await assertSafePublicHttpUrl(url)
   const python =
     getEnv('SCRAPLING_PYTHON', false) ||
     '/Users/findgagu/Desktop/업무참고용/.venvs/scrapling/bin/python'
@@ -248,6 +312,7 @@ function extractWithScrapling(url: string): Promise<ExtractedArticle | null> {
 }
 
 async function extractArticleCascade(url: string): Promise<ExtractedArticle> {
+  await assertSafePublicHttpUrl(url)
   const errors: string[] = []
 
   // 1) Crawl4AI (로컬 docker MCP/REST) — 가능하면 최우선
@@ -288,7 +353,7 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
   }
 
   try {
-    const auth = await assertUser(req)
+    const auth = await assertInternalAdmin(req)
     if (!auth.ok) {
       res.status(auth.status).json({ ok: false, message: auth.message })
       return
@@ -296,10 +361,12 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
 
     const body = (typeof req.body === 'string' ? JSON.parse(req.body) : req.body) as {
       url?: string
+      title?: string
       signalId?: string
       persist?: boolean
     }
-    const url = (body.url || '').trim()
+    let url = (body.url || '').trim()
+    const titleHint = (body.title || '').trim()
     if (!url) {
       res.status(400).json({ ok: false, message: 'url이 필요합니다.' })
       return
@@ -316,25 +383,87 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
       res.status(400).json({ ok: false, message: 'http/https URL만 지원합니다.' })
       return
     }
-    if (isBlockedHost(parsed.hostname)) {
-      res.status(400).json({
-        ok: false,
-        message:
-          'Google News 경유 링크는 본문 추출이 어렵습니다. 네이버 뉴스로 다시 수집하면 원문(originallink)을 씁니다.',
-      })
-      return
+
+    const fromGoogleNews = isGoogleNewsHost(parsed.hostname)
+
+    // Google News 경유 링크 → 네이버 originallink로 치환 후 본문 추출
+    if (fromGoogleNews) {
+      if (!titleHint) {
+        res.status(400).json({
+          ok: false,
+          message:
+            'Google News 경유 링크는 본문 추출이 어렵습니다. 네이버 뉴스로 다시 수집하거나 제목과 함께 요청하세요.',
+        })
+        return
+      }
+      const resolved = await resolveViaNaverNews(titleHint)
+      if (!resolved?.url) {
+        res.status(400).json({
+          ok: false,
+          message: 'Google News 링크의 원문을 네이버에서 찾지 못했습니다. 네이버 뉴스로 다시 수집해 주세요.',
+        })
+        return
+      }
+      try {
+        parsed = await assertSafePublicHttpUrl(resolved.url)
+        url = parsed.toString()
+      } catch (error) {
+        res.status(400).json({
+          ok: false,
+          message: error instanceof Error ? error.message : '치환된 원문 URL이 유효하지 않습니다.',
+        })
+        return
+      }
+    } else {
+      try {
+        parsed = await assertSafePublicHttpUrl(url)
+      } catch (error) {
+        res.status(400).json({
+          ok: false,
+          message: error instanceof Error ? error.message : '허용되지 않는 URL입니다.',
+        })
+        return
+      }
+      url = parsed.toString()
     }
 
     const article = await extractArticleCascade(url)
+    try {
+      await assertSafePublicHttpUrl(article.finalUrl)
+    } catch {
+      res.status(400).json({ ok: false, message: '추출된 최종 URL이 안전하지 않습니다.' })
+      return
+    }
 
     if (body.persist && body.signalId) {
+      const signalId = String(body.signalId).trim()
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(signalId)) {
+        res.status(400).json({ ok: false, message: '유효하지 않은 signalId입니다.' })
+        return
+      }
+
       const token = getBearerToken(req)
       const supabase = createClient(getEnv('VITE_SUPABASE_URL'), getEnv('VITE_SUPABASE_ANON_KEY'), {
         auth: { persistSession: false },
         global: { headers: { Authorization: `Bearer ${token}` } },
       })
       const summary = article.excerpt || article.text.slice(0, 500)
-      await supabase
+
+      const { data: existingSignal, error: signalLookupError } = await supabase
+        .from('edu_outreach_signals')
+        .select('id')
+        .eq('id', signalId)
+        .maybeSingle()
+      if (signalLookupError) {
+        res.status(500).json({ ok: false, message: signalLookupError.message })
+        return
+      }
+      if (!existingSignal?.id) {
+        res.status(404).json({ ok: false, message: '시그널을 찾을 수 없거나 권한이 없습니다.' })
+        return
+      }
+
+      const { error: signalUpdateError } = await supabase
         .from('edu_outreach_signals')
         .update({
           title: article.title || undefined,
@@ -347,12 +476,17 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
             site_name: article.siteName || null,
             excerpt: article.excerpt || null,
             final_url: article.finalUrl,
+            resolved_from_google_news: fromGoogleNews,
           },
           last_seen_at: new Date().toISOString(),
         })
-        .eq('id', body.signalId)
+        .eq('id', signalId)
+      if (signalUpdateError) {
+        res.status(500).json({ ok: false, message: signalUpdateError.message })
+        return
+      }
 
-      await supabase
+      const { error: leadUpdateError } = await supabase
         .from('edu_outreach_leads')
         .update({
           evidence_quote: summary,
@@ -360,7 +494,11 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
           why: `원문 본문 추출 완료 (${article.engine})`,
           updated_at: new Date().toISOString(),
         })
-        .eq('signal_id', body.signalId)
+        .eq('signal_id', signalId)
+      if (leadUpdateError) {
+        res.status(500).json({ ok: false, message: leadUpdateError.message })
+        return
+      }
     }
 
     res.status(200).json({
@@ -375,9 +513,9 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
       note: '우선순위: Crawl4AI → Scrapling → Readability',
     })
   } catch (error) {
-    res.status(500).json({
-      ok: false,
-      message: error instanceof Error ? error.message : '본문 추출 실패',
-    })
+    const message = error instanceof Error ? error.message : '본문 추출 실패'
+    const status =
+      /차단|사설|내부망|허용되지|유효하지 않은 URL|http\/https/.test(message) ? 400 : 500
+    res.status(status).json({ ok: false, message })
   }
 }
