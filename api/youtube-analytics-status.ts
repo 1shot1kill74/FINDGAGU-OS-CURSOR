@@ -1,5 +1,5 @@
+import { createClient } from '@supabase/supabase-js'
 import { assertInternalAdmin } from './_lib/internalAdminAuth'
-import { loadOauthRow } from './_lib/youtubeAnalyticsAuth'
 
 type RequestLike = {
   method?: string
@@ -9,6 +9,12 @@ type RequestLike = {
 type ResponseLike = {
   setHeader(name: string, value: string): void
   status(code: number): { json(body: unknown): void; send(body: string): void }
+}
+
+function getEnv(name: string, required = true) {
+  const value = process.env[name]?.trim() || ''
+  if (!value && required) throw new Error(`${name} 환경 변수가 설정되지 않았습니다.`)
+  return value
 }
 
 export default async function handler(req: RequestLike, res: ResponseLike) {
@@ -29,8 +35,18 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
       return
     }
 
-    const row = await loadOauthRow()
-    if (!row) {
+    const supabase = createClient(getEnv('VITE_SUPABASE_URL'), getEnv('SUPABASE_SERVICE_ROLE_KEY'), {
+      auth: { persistSession: false },
+    })
+    const { data, error } = await supabase
+      .from('youtube_analytics_oauth')
+      .select('channel_id, channel_title, connected_at, status, last_sync_at, last_sync_error')
+      .eq('id', 'findgagu')
+      .maybeSingle()
+
+    if (error) throw new Error(error.message)
+
+    if (!data) {
       res.status(200).json({
         ok: true,
         connected: false,
@@ -46,13 +62,13 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
 
     res.status(200).json({
       ok: true,
-      connected: row.status === 'connected',
-      status: row.status,
-      channelId: row.channel_id,
-      channelTitle: row.channel_title,
-      connectedAt: row.connected_at,
-      lastSyncAt: row.last_sync_at,
-      lastSyncError: row.last_sync_error,
+      connected: data.status === 'connected',
+      status: data.status,
+      channelId: data.channel_id,
+      channelTitle: data.channel_title,
+      connectedAt: data.connected_at,
+      lastSyncAt: data.last_sync_at,
+      lastSyncError: data.last_sync_error,
     })
   } catch (error) {
     res.status(500).json({
