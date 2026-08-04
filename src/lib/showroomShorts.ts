@@ -1649,3 +1649,43 @@ export async function replaceShowroomShortsJobImage(
     },
   })
 }
+export type ShowroomShortsRecompositionSafety = {
+  scheduledTargetIds: string[]
+  reprepareTargetIds: string[]
+  publishedTargetCount: number
+  blockingTargetCount: number
+}
+
+/**
+ * Kling 원본은 건드리지 않고 Railway 재합성 전에 미발행 타깃을 안전한 상태로 맞춘다.
+ * 예약 건은 해제해 새 최종 MP4 기준으로 업로드 준비가 다시 만들어지게 한다.
+ */
+export async function prepareShowroomShortsJobForRecomposition(
+  job: Pick<ShowroomShortsJobRecord, 'id' | 'targets'>,
+): Promise<ShowroomShortsRecompositionSafety> {
+  const targets = job.targets ?? []
+  const blockingTargetCount = targets.filter((target) =>
+    ['preparing', 'publishing'].includes(target.publish_status),
+  ).length
+  if (blockingTargetCount > 0) {
+    throw new Error('업로드 준비 또는 발행 중인 채널이 있습니다. 완료된 뒤 다시 합성하세요.')
+  }
+
+  const scheduledTargetIds = targets
+    .filter((target) => target.publish_status === 'scheduled')
+    .map((target) => target.id)
+  if (scheduledTargetIds.length > 0) {
+    await cancelShowroomShortsTargetsSchedule(scheduledTargetIds)
+  }
+
+  const reprepareTargetIds = targets
+    .filter((target) => target.publish_status !== 'published')
+    .map((target) => target.id)
+
+  return {
+    scheduledTargetIds,
+    reprepareTargetIds,
+    publishedTargetCount: targets.filter((target) => target.publish_status === 'published').length,
+    blockingTargetCount,
+  }
+}

@@ -1156,7 +1156,7 @@ async function getImageAssetsByIds(ids: string[]) {
 async function getJob(jobId: string) {
   const { data, error } = await supabase
     .from('showroom_shorts_jobs')
-    .select('id, status, source_video_url, final_video_url, duration_seconds, updated_at')
+    .select('id, status, source_video_url, final_video_url, duration_seconds, composition_config, updated_at')
     .eq('id', jobId)
     .maybeSingle<ShowroomShortsJobRow>()
 
@@ -1211,6 +1211,12 @@ async function markTargetsReady(jobId: string) {
     .from('showroom_shorts_targets')
     .update({
       publish_status: 'ready',
+      final_video_url: null,
+      preparation_payload: null,
+      preparation_error: null,
+      prepared_at: null,
+      launch_ready_at: null,
+      approved_at: null,
       updated_at: nowIso,
     })
     .eq('shorts_job_id', jobId)

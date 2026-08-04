@@ -98,6 +98,7 @@ import {
   cancelShowroomShortsTargetsSchedule,
   fillAdInboxPublishQueue,
   getShowroomShortsCompositionStatus,
+  prepareShowroomShortsJobForRecomposition,
   stitchShowroomShortsSplit,
   updateShowroomShortsCompositionConfig,
   updateShowroomShortsJobPrompt,
@@ -1114,14 +1115,30 @@ export default function AdInboxStudioPage() {
       toast.error('원본 영상이 있어야 합성할 수 있습니다.')
       return
     }
+    const scheduledCount = (activeJob.targets ?? []).filter(
+      (target) => target.publish_status === 'scheduled',
+    ).length
+    if (
+      scheduledCount > 0 &&
+      !window.confirm(
+        `예약된 채널 ${scheduledCount}개를 해제하고 새 최종 영상 기준으로 업로드 준비를 다시 만들까요?`,
+      )
+    ) {
+      return
+    }
     setActingJob(true)
     try {
+      const safety = await prepareShowroomShortsJobForRecomposition(activeJob)
       await requestShowroomShortsComposition(activeJob.id)
       const fresh = await getAdInboxTimelapseJob(activeJob.id)
       if (fresh) {
         setJobs((prev) => [fresh, ...prev.filter((job) => job.id !== fresh.id)])
       }
-      toast.success('합성을 요청했습니다. 끝나면 업로드 준비까지 자동으로 진행됩니다.')
+      toast.success(
+        safety.scheduledTargetIds.length > 0
+          ? `예약 ${safety.scheduledTargetIds.length}건을 해제하고 재합성을 요청했습니다.`
+          : '원본은 유지한 채 재합성을 요청했습니다. 끝나면 업로드 준비까지 자동으로 진행됩니다.',
+      )
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '합성 요청 실패')
     } finally {
@@ -2530,6 +2547,15 @@ export default function AdInboxStudioPage() {
                                   </Button>
                                 </div>
                               </div>
+                            ) : null}
+
+                            {(activeJob.targets ?? []).some(
+                              (target) => target.publish_status === 'scheduled',
+                            ) ? (
+                              <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                                재합성하면 예약된 채널의 예약을 먼저 해제하고, 새 최종 영상 기준으로 업로드 준비를 다시
+                                만듭니다.
+                              </p>
                             ) : null}
 
                             <div className="flex flex-wrap gap-2">

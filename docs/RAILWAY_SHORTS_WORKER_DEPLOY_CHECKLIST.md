@@ -75,3 +75,10 @@ Railway 환경 변수:
 - 원본 `source_video_url`이 만료되었거나 외부에서 차단되지 않았는지
 - `/health`의 `elevenLabsConfigured=true`인지 (키와 Voice ID 값 자체는 노출되지 않음)
 - TTS 실패 시 합성 로그의 `tts_status`를 확인. 영상은 BGM-only로 완료되므로 재합성이 필요할 때만 키·Voice ID·크레딧을 확인
+
+## 7. 미발행 쇼츠 재합성
+
+- `source_video_url`이 있으면 Kling 원본을 다시 만들지 않고 Railway 합성만 다시 실행한다.
+- 예약(`scheduled`)된 채널은 재합성 직전에 예약을 해제한다. 새 최종 MP4가 생성되면 업로드 준비를 다시 만든다.
+- `preparing` 또는 `publishing` 상태의 채널은 동시 재합성을 막고, 완료된 뒤 재시도한다.
+- 이미 `published`인 채널은 재합성 대상에서 제외한다.
