@@ -3,12 +3,12 @@ import path from 'node:path'
 import { createClient } from '@supabase/supabase-js'
 import { Readability } from '@mozilla/readability'
 import { parseHTML } from 'linkedom'
-import { assertInternalAdmin, getBearerToken } from './_internalAdminAuth'
+import { assertInternalAdmin, getBearerToken } from '../server/internalAdminAuth'
 import {
   assertSafePublicHttpUrl,
   fetchHtmlFollowingRedirectsSafely,
   isGoogleNewsHost,
-} from './_safePublicUrl'
+} from '../server/safePublicUrl'
 
 type RequestLike = {
   method?: string

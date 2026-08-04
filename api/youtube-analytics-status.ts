@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
-import { assertInternalAdmin } from './_internalAdminAuth'
+import { assertInternalAdmin } from '../server/internalAdminAuth'
 
 type RequestLike = {
   method?: string

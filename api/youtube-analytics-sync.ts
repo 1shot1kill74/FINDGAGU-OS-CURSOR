@@ -1,10 +1,10 @@
-import { assertInternalAdmin } from './_internalAdminAuth'
+import { assertInternalAdmin } from '../server/internalAdminAuth'
 import {
   createServiceSupabase,
   extractYoutubeVideoId,
   getValidAccessToken,
   OAUTH_ROW_ID,
-} from './_youtubeAnalyticsAuth'
+} from '../server/youtubeAnalyticsAuth'
 
 type RequestLike = {
   method?: string

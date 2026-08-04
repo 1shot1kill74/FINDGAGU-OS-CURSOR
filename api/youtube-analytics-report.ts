@@ -1,5 +1,5 @@
-import { assertInternalAdmin } from './_internalAdminAuth'
-import { createServiceSupabase, loadOauthRow } from './_youtubeAnalyticsAuth'
+import { assertInternalAdmin } from '../server/internalAdminAuth'
+import { createServiceSupabase, loadOauthRow } from '../server/youtubeAnalyticsAuth'
 
 type RequestLike = {
   method?: string
