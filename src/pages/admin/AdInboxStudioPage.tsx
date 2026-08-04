@@ -29,6 +29,13 @@ import AdInboxImagePreviewDialog, {
   prefetchAdInboxEnlarge,
   type AdInboxPreviewMode,
 } from '@/components/admin/AdInboxImagePreviewDialog'
+import YoutubeAnalyticsPanel from '@/components/admin/YoutubeAnalyticsPanel'
+import {
+  extractYoutubeVideoId,
+  fetchYoutubeShortsAnalyticsByVideoIds,
+  formatYoutubeMetricsChip,
+  type YoutubeShortsAnalyticsRow,
+} from '@/lib/youtubeAnalyticsService'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -360,6 +367,9 @@ export default function AdInboxStudioPage() {
   const [editBody, setEditBody] = useState('')
   const [editComment, setEditComment] = useState('')
   const [editSaving, setEditSaving] = useState(false)
+  const [ytMetricsByVideoId, setYtMetricsByVideoId] = useState<
+    Map<string, YoutubeShortsAnalyticsRow>
+  >(() => new Map())
   const autoPrepareKeysRef = useRef<Set<string>>(new Set())
   const youtubeCopySyncKeysRef = useRef<Set<string>>(new Set())
   const legacyBackfillDoneRef = useRef(false)
@@ -371,6 +381,44 @@ export default function AdInboxStudioPage() {
   }, [batches, industryFilter])
   const selectedBatch: AdInboxBatch | null =
     visibleBatches.find((b) => b.key === selectedBatchKey) ?? visibleBatches[0] ?? null
+
+  const publishedYoutubeVideoIds = useMemo(() => {
+    const ids: string[] = []
+    for (const state of Object.values(workProgressByKey)) {
+      for (const channel of state.channels) {
+        if (channel.channel !== 'youtube' || channel.status !== 'published') continue
+        const id = extractYoutubeVideoId(channel.externalPostUrl)
+        if (id) ids.push(id)
+      }
+    }
+    for (const job of jobs) {
+      for (const target of job.targets ?? []) {
+        if (target.channel !== 'youtube' || target.publish_status !== 'published') continue
+        const id =
+          extractYoutubeVideoId(target.external_post_id) ||
+          extractYoutubeVideoId(target.external_post_url)
+        if (id) ids.push(id)
+      }
+    }
+    return [...new Set(ids)]
+  }, [workProgressByKey, jobs])
+
+  const loadYtMetrics = useCallback(async () => {
+    if (publishedYoutubeVideoIds.length === 0) {
+      setYtMetricsByVideoId(new Map())
+      return
+    }
+    try {
+      const map = await fetchYoutubeShortsAnalyticsByVideoIds(publishedYoutubeVideoIds)
+      setYtMetricsByVideoId(map)
+    } catch (error) {
+      console.warn('[ad-inbox youtube-analytics]', error)
+    }
+  }, [publishedYoutubeVideoIds])
+
+  useEffect(() => {
+    void loadYtMetrics()
+  }, [loadYtMetrics])
 
   const [filePreviewUrls, setFilePreviewUrls] = useState<
     Array<{ name: string; url: string; index: number }>
@@ -1367,6 +1415,12 @@ export default function AdInboxStudioPage() {
           </div>
         </div>
 
+        <YoutubeAnalyticsPanel
+          returnTo="/admin/ad-inbox"
+          className="mb-8 space-y-3 rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm"
+          onSynced={() => void loadYtMetrics()}
+        />
+
         <section className="mb-8 rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
           <div className="mb-4 flex items-center gap-2">
             <Upload className="h-4 w-4 text-neutral-700" />
@@ -1733,6 +1787,16 @@ export default function AdInboxStudioPage() {
                                 ? 'bg-violet-50 text-violet-800 ring-1 ring-violet-200'
                                 : channelPublishButtonClass(channelState.status))
                             const title = channelPublishTitle(channelState)
+                            const ytVideoId =
+                              channelState.channel === 'youtube'
+                                ? extractYoutubeVideoId(channelState.externalPostUrl)
+                                : null
+                            const ytMetrics = ytVideoId
+                              ? ytMetricsByVideoId.get(ytVideoId)
+                              : undefined
+                            const ytChip = ytMetrics ? formatYoutubeMetricsChip(ytMetrics) : null
+                            const displayLabel = ytChip ? `${label} · ${ytChip.label}` : label
+                            const displayTitle = ytChip ? `${title} · ${ytChip.title}` : title
                             if (channelState.status === 'published' && channelState.externalPostUrl) {
                               return (
                                 <a
@@ -1740,21 +1804,21 @@ export default function AdInboxStudioPage() {
                                   href={channelState.externalPostUrl}
                                   target="_blank"
                                   rel="noreferrer"
-                                  title={title}
+                                  title={displayTitle}
                                   className={className + ' underline-offset-2 hover:underline'}
                                   onClick={(event) => event.stopPropagation()}
                                 >
-                                  {label}
+                                  {displayLabel}
                                 </a>
                               )
                             }
                             return (
                               <span
                                 key={channelState.channel}
-                                title={title}
+                                title={displayTitle}
                                 className={className}
                               >
-                                {label}
+                                {displayLabel}
                               </span>
                             )
                           })}
@@ -2572,16 +2636,41 @@ export default function AdInboxStudioPage() {
                                             {(() => {
                                               const postUrl = resolveAdInboxChannelPostUrl(target)
                                               if (!postUrl) return null
+                                              const videoId =
+                                                target.channel === 'youtube'
+                                                  ? extractYoutubeVideoId(target.external_post_id) ||
+                                                    extractYoutubeVideoId(target.external_post_url) ||
+                                                    extractYoutubeVideoId(postUrl)
+                                                  : null
+                                              const metrics = videoId
+                                                ? ytMetricsByVideoId.get(videoId)
+                                                : undefined
+                                              const chip = metrics
+                                                ? formatYoutubeMetricsChip(metrics)
+                                                : null
                                               return (
-                                                <a
-                                                  href={postUrl}
-                                                  target="_blank"
-                                                  rel="noreferrer"
-                                                  className="inline-flex items-center gap-1 text-[11px] text-neutral-600 underline-offset-2 hover:underline"
-                                                >
-                                                  게시물 열기
-                                                  <ExternalLink className="h-3 w-3" />
-                                                </a>
+                                                <div className="space-y-1">
+                                                  <a
+                                                    href={postUrl}
+                                                    target="_blank"
+                                                    rel="noreferrer"
+                                                    className="inline-flex items-center gap-1 text-[11px] text-neutral-600 underline-offset-2 hover:underline"
+                                                  >
+                                                    게시물 열기
+                                                    <ExternalLink className="h-3 w-3" />
+                                                  </a>
+                                                  {chip ? (
+                                                    <p
+                                                      className="text-[11px] tabular-nums text-neutral-700"
+                                                      title={chip.title}
+                                                    >
+                                                      YT 지표 · {chip.label}
+                                                      {metrics?.avg_view_percentage != null
+                                                        ? ` · 평균시청 ${Math.round(Number(metrics.avg_view_percentage) * 10) / 10}%`
+                                                        : ''}
+                                                    </p>
+                                                  ) : null}
+                                                </div>
                                               )
                                             })()}
                                             {target.preparation_error ? (

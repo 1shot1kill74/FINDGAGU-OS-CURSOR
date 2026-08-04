@@ -67,17 +67,33 @@ function stateSecret() {
   return getEnv('YOUTUBE_ANALYTICS_TOKEN_ENC_KEY')
 }
 
-/** state = base64url(payload).sig  payload={uid,exp} */
-export function createOAuthState(userId: string): string {
+export const YT_ANALYTICS_RETURN_PATHS = ['/admin/ad-inbox', '/admin/showroom-shorts'] as const
+export type YoutubeAnalyticsReturnTo = (typeof YT_ANALYTICS_RETURN_PATHS)[number]
+export const DEFAULT_YT_ANALYTICS_RETURN_TO: YoutubeAnalyticsReturnTo = '/admin/ad-inbox'
+
+export function normalizeYoutubeAnalyticsReturnTo(value: unknown): YoutubeAnalyticsReturnTo {
+  if (typeof value === 'string' && (YT_ANALYTICS_RETURN_PATHS as readonly string[]).includes(value)) {
+    return value as YoutubeAnalyticsReturnTo
+  }
+  return DEFAULT_YT_ANALYTICS_RETURN_TO
+}
+
+/** state = base64url(payload).sig  payload={uid,exp,ret?} */
+export function createOAuthState(userId: string, returnTo?: string): string {
+  const ret = normalizeYoutubeAnalyticsReturnTo(returnTo)
   const payload = Buffer.from(
-    JSON.stringify({ uid: userId, exp: Date.now() + 15 * 60_000 }),
+    JSON.stringify({ uid: userId, exp: Date.now() + 15 * 60_000, ret }),
     'utf8',
   ).toString('base64url')
   const sig = createHmac('sha256', stateSecret()).update(payload).digest('base64url')
   return `${payload}.${sig}`
 }
 
-export function verifyOAuthState(state: string): { ok: true; userId: string } | { ok: false; message: string } {
+export function verifyOAuthState(
+  state: string,
+):
+  | { ok: true; userId: string; returnTo: YoutubeAnalyticsReturnTo }
+  | { ok: false; message: string } {
   const [payload, sig] = state.split('.')
   if (!payload || !sig) return { ok: false, message: 'state가 없습니다.' }
   const expected = createHmac('sha256', stateSecret()).update(payload).digest('base64url')
@@ -90,12 +106,17 @@ export function verifyOAuthState(state: string): { ok: true; userId: string } | 
     const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as {
       uid?: string
       exp?: number
+      ret?: string
     }
     if (!parsed.uid || typeof parsed.exp !== 'number') {
       return { ok: false, message: 'state 페이로드가 올바르지 않습니다.' }
     }
     if (Date.now() > parsed.exp) return { ok: false, message: 'state가 만료되었습니다.' }
-    return { ok: true, userId: parsed.uid }
+    return {
+      ok: true,
+      userId: parsed.uid,
+      returnTo: normalizeYoutubeAnalyticsReturnTo(parsed.ret),
+    }
   } catch {
     return { ok: false, message: 'state 파싱 실패' }
   }
@@ -308,10 +329,18 @@ export async function getValidAccessToken(): Promise<{
   }
 }
 
-export function adminShortsRedirect(query: Record<string, string>) {
-  const base = '/admin/showroom-shorts'
+export function adminAnalyticsRedirect(
+  query: Record<string, string>,
+  returnTo: string = DEFAULT_YT_ANALYTICS_RETURN_TO,
+) {
+  const base = normalizeYoutubeAnalyticsReturnTo(returnTo)
   const qs = new URLSearchParams(query).toString()
   return qs ? `${base}?${qs}` : base
+}
+
+/** @deprecated use adminAnalyticsRedirect */
+export function adminShortsRedirect(query: Record<string, string>) {
+  return adminAnalyticsRedirect(query, '/admin/showroom-shorts')
 }
 
 export function extractYoutubeVideoId(value: string | null | undefined): string | null {

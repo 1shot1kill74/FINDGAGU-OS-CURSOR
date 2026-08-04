@@ -134,17 +134,33 @@ function stateSecret() {
   return getEnv('YOUTUBE_ANALYTICS_TOKEN_ENC_KEY')
 }
 
-/** state = base64url(payload).sig  payload={uid,exp} */
-function createOAuthState(userId: string): string {
+const YT_ANALYTICS_RETURN_PATHS = ['/admin/ad-inbox', '/admin/showroom-shorts'] as const
+type YoutubeAnalyticsReturnTo = (typeof YT_ANALYTICS_RETURN_PATHS)[number]
+const DEFAULT_YT_ANALYTICS_RETURN_TO: YoutubeAnalyticsReturnTo = '/admin/ad-inbox'
+
+function normalizeYoutubeAnalyticsReturnTo(value: unknown): YoutubeAnalyticsReturnTo {
+  if (typeof value === 'string' && (YT_ANALYTICS_RETURN_PATHS as readonly string[]).includes(value)) {
+    return value as YoutubeAnalyticsReturnTo
+  }
+  return DEFAULT_YT_ANALYTICS_RETURN_TO
+}
+
+/** state = base64url(payload).sig  payload={uid,exp,ret?} */
+function createOAuthState(userId: string, returnTo?: string): string {
+  const ret = normalizeYoutubeAnalyticsReturnTo(returnTo)
   const payload = Buffer.from(
-    JSON.stringify({ uid: userId, exp: Date.now() + 15 * 60_000 }),
+    JSON.stringify({ uid: userId, exp: Date.now() + 15 * 60_000, ret }),
     'utf8',
   ).toString('base64url')
   const sig = createHmac('sha256', stateSecret()).update(payload).digest('base64url')
   return `${payload}.${sig}`
 }
 
-function verifyOAuthState(state: string): { ok: true; userId: string } | { ok: false; message: string } {
+function verifyOAuthState(
+  state: string,
+):
+  | { ok: true; userId: string; returnTo: YoutubeAnalyticsReturnTo }
+  | { ok: false; message: string } {
   const [payload, sig] = state.split('.')
   if (!payload || !sig) return { ok: false, message: 'state가 없습니다.' }
   const expected = createHmac('sha256', stateSecret()).update(payload).digest('base64url')
@@ -157,12 +173,17 @@ function verifyOAuthState(state: string): { ok: true; userId: string } | { ok: f
     const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as {
       uid?: string
       exp?: number
+      ret?: string
     }
     if (!parsed.uid || typeof parsed.exp !== 'number') {
       return { ok: false, message: 'state 페이로드가 올바르지 않습니다.' }
     }
     if (Date.now() > parsed.exp) return { ok: false, message: 'state가 만료되었습니다.' }
-    return { ok: true, userId: parsed.uid }
+    return {
+      ok: true,
+      userId: parsed.uid,
+      returnTo: normalizeYoutubeAnalyticsReturnTo(parsed.ret),
+    }
   } catch {
     return { ok: false, message: 'state 파싱 실패' }
   }
@@ -425,7 +446,11 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
       return
     }
 
-    const state = createOAuthState(auth.user.id)
+    const body =
+      req.body && typeof req.body === 'object' && !Array.isArray(req.body)
+        ? (req.body as Record<string, unknown>)
+        : {}
+    const state = createOAuthState(auth.user.id, body.returnTo)
     const authorizeUrl = buildGoogleAuthorizeUrl(state)
     res.status(200).json({ ok: true, authorizeUrl })
   } catch (error) {

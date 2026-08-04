@@ -5,7 +5,7 @@ FINDGAGU 채널 쇼츠 지표(`views`, `engagedViews`, `averageViewPercentage` �
 
 | 항목 | 값 |
 |------|-----|
-| Admin UI | `/admin/showroom-shorts` (연결·동기화) |
+| Admin UI | `/admin/ad-inbox` (연결·동기화·카드별 지표, 주 사용처) · `/admin/showroom-shorts` (동일 패널) |
 | API | `/api/youtube-analytics-*` |
 | 테이블 | `youtube_analytics_oauth`, `youtube_shorts_analytics` |
 
@@ -63,9 +63,9 @@ npx supabase@latest db push --linked
 ## 4. 연결·동기화
 
 1. `@findgagu.com` 계정으로 OS 로그인
-2. `/admin/showroom-shorts` → **유튜브 애널리틱스 연결**
-3. Google 동의(채널 계정) 완료
-4. **지표 동기화** 클릭
+2. `/admin/ad-inbox` → **유튜브 애널리틱스 연결**
+3. Google 동의(채널 계정) 완료 → 광고대기실로 복귀
+4. **지표 동기화** 클릭 → 상단 표 + 게시 완료 YT 칩에 조회·Engaged% 표시
 
 ## 5. 에이전트·SQL 조회
 
