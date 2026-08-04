@@ -59,18 +59,60 @@ export default defineConfig(({ mode }) => {
       {
         name: 'local-ad-inbox-apis',
         configureServer(server) {
-          const routes: Record<string, () => Promise<{ default: (req: any, res: any) => Promise<void> }>> = {
-            '/api/ad-inbox-pair-recommend': () => import('./api/ad-inbox-pair-recommend.ts'),
-            '/api/ad-inbox-cleanup-people': () => import('./api/ad-inbox-cleanup-people.ts'),
-            '/api/showroom-case-brief-draft': () => import('./api/showroom-case-brief-draft.ts'),
-            '/api/edu-outreach-collect': () => import('./api/edu-outreach-collect.ts'),
-            '/api/edu-outreach-fetch-article': () => import('./api/edu-outreach-fetch-article.ts'),
+          const routes: Record<
+            string,
+            {
+              methods: string[]
+              load: () => Promise<{ default: (req: any, res: any) => Promise<void> }>
+            }
+          > = {
+            '/api/ad-inbox-pair-recommend': {
+              methods: ['POST'],
+              load: () => import('./api/ad-inbox-pair-recommend.ts'),
+            },
+            '/api/ad-inbox-cleanup-people': {
+              methods: ['POST'],
+              load: () => import('./api/ad-inbox-cleanup-people.ts'),
+            },
+            '/api/showroom-case-brief-draft': {
+              methods: ['POST'],
+              load: () => import('./api/showroom-case-brief-draft.ts'),
+            },
+            '/api/edu-outreach-collect': {
+              methods: ['POST'],
+              load: () => import('./api/edu-outreach-collect.ts'),
+            },
+            '/api/edu-outreach-fetch-article': {
+              methods: ['POST'],
+              load: () => import('./api/edu-outreach-fetch-article.ts'),
+            },
+            '/api/youtube-analytics-oauth-start': {
+              methods: ['POST'],
+              load: () => import('./api/youtube-analytics-oauth-start.ts'),
+            },
+            '/api/youtube-analytics-oauth-callback': {
+              methods: ['GET'],
+              load: () => import('./api/youtube-analytics-oauth-callback.ts'),
+            },
+            '/api/youtube-analytics-status': {
+              methods: ['GET'],
+              load: () => import('./api/youtube-analytics-status.ts'),
+            },
+            '/api/youtube-analytics-sync': {
+              methods: ['POST'],
+              load: () => import('./api/youtube-analytics-sync.ts'),
+            },
+            '/api/youtube-analytics-report': {
+              methods: ['GET'],
+              load: () => import('./api/youtube-analytics-report.ts'),
+            },
           }
 
           server.middlewares.use(async (req, res, next) => {
-            const pathOnly = req.url?.split('?')[0] || ''
-            const loader = routes[pathOnly]
-            if (!loader) {
+            const rawUrl = req.url || ''
+            const pathOnly = rawUrl.split('?')[0] || ''
+            const route = routes[pathOnly]
+            if (!route) {
               next()
               return
             }
@@ -79,10 +121,10 @@ export default defineConfig(({ mode }) => {
               res.end('')
               return
             }
-            if (req.method !== 'POST') {
+            if (!req.method || !route.methods.includes(req.method)) {
               res.statusCode = 405
               res.setHeader('Content-Type', 'application/json')
-              res.end(JSON.stringify({ ok: false, message: 'POST only' }))
+              res.end(JSON.stringify({ ok: false, message: `${route.methods.join('/')} only` }))
               return
             }
 
@@ -94,10 +136,27 @@ export default defineConfig(({ mode }) => {
                 req.on('error', reject)
               })
               const rawBody = Buffer.concat(chunks).toString('utf8')
-              const handler = (await loader()).default
+              const handler = (await route.load()).default
               const headers: Record<string, string | string[] | undefined> = { ...req.headers }
+              const query: Record<string, string | string[] | undefined> = {}
+              try {
+                const u = new URL(rawUrl, 'http://localhost')
+                u.searchParams.forEach((value, key) => {
+                  const prev = query[key]
+                  if (prev === undefined) query[key] = value
+                  else if (Array.isArray(prev)) prev.push(value)
+                  else query[key] = [prev, value]
+                })
+              } catch {
+                /* ignore */
+              }
               await handler(
-                { method: req.method, headers, body: rawBody ? JSON.parse(rawBody) : {} },
+                {
+                  method: req.method,
+                  headers,
+                  query,
+                  body: rawBody ? JSON.parse(rawBody) : {},
+                },
                 {
                   setHeader(name: string, value: string) {
                     res.setHeader(name, value)
