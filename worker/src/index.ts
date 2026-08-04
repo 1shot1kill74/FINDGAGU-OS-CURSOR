@@ -15,6 +15,13 @@ type ShowroomShortsJobRow = {
   source_video_url: string | null
   final_video_url: string | null
   duration_seconds: number | null
+  composition_config?: {
+    audioVariant?: 'tts_hook_bgm' | 'bgm_only'
+    ttsScript?: string
+    bgmVolume?: number
+    hookLine1?: string
+    hookLine2?: string
+  } | null
   updated_at?: string | null
 }
 
@@ -72,6 +79,9 @@ const DEFAULT_BUNDLED_BGM_PATH =
 const DEFAULT_BGM_URL =
   'https://findgagu-os-cursor.vercel.app/assets/bgm/bright-lines-new-light-sample-b-24-34.mp3'
 const BGM_SOURCE = process.env.SHOWROOM_SHORTS_BGM_URL?.trim() || DEFAULT_BUNDLED_BGM_PATH
+const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY?.trim() || ''
+const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID?.trim() || ''
+const ELEVENLABS_MODEL_ID = process.env.ELEVENLABS_MODEL_ID?.trim() || 'eleven_multilingual_v2'
 const BODY_FONT_FILE =
   process.env.SHOWROOM_SHORTS_FONT_FILE?.trim() ||
   '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc'
@@ -139,6 +149,7 @@ app.get('/health', (_req, res) => {
     service: 'showroom-shorts-worker',
     bgmSource: BGM_SOURCE,
     bgmSourceType: /^https?:\/\//i.test(BGM_SOURCE) ? 'remote' : 'bundled',
+    elevenLabsConfigured: Boolean(ELEVENLABS_API_KEY && ELEVENLABS_VOICE_ID),
     queueDepth: queuedJobs.length,
     basicQueueDepth: queuedBasicDrafts.length,
     generationPollIntervalMs: SHOWROOM_SHORTS_POLL_INTERVAL_MS,
@@ -823,6 +834,7 @@ async function processComposeJob(jobId: string) {
     const inputVideoPath = path.join(tempDir, 'source-video.mp4')
     const titleOverlayPath = path.join(tempDir, 'title-overlay.png')
     const bgmAudioPath = path.join(tempDir, 'bgm-audio')
+    const ttsAudioPath = path.join(tempDir, 'tts-hook.mp3')
 
     console.log(`[showroom-shorts-worker] downloading source job=${jobId}`)
     await downloadToFile(job.source_video_url, inputVideoPath)
@@ -831,18 +843,29 @@ async function processComposeJob(jobId: string) {
     console.log(`[showroom-shorts-worker] bgm ready job=${jobId} path=${bgmPath ?? 'none'}`)
     const durationSeconds = await getVideoDurationSeconds(inputVideoPath, job.duration_seconds ?? DEFAULT_DURATION_SECONDS)
     console.log(`[showroom-shorts-worker] duration job=${jobId} seconds=${durationSeconds}`)
+    const compositionConfig = job.composition_config ?? null
+    const requestedTts = compositionConfig?.audioVariant === 'tts_hook_bgm'
+    const ttsResult = requestedTts
+      ? await generateElevenLabsTts(
+          compositionConfig?.ttsScript ?? '',
+          ttsAudioPath,
+        )
+      : { path: null, status: 'not_requested' as const }
+    console.log(`[showroom-shorts-worker] tts ${ttsResult.status} job=${jobId}`)
     await fs.writeFile(titleOverlayPath, Buffer.from(TITLE_OVERLAY_PNG_BASE64, 'base64'))
     const titleOverlayStat = await fs.stat(titleOverlayPath)
     console.log(`[showroom-shorts-worker] title overlay ready job=${jobId} bytes=${titleOverlayStat.size}`)
 
     const outputVideoPath = path.join(tempDir, 'final-video.mp4')
-    const textPaths = await writeTextAssets(tempDir)
+    const textPaths = await writeTextAssets(compositionConfig, tempDir)
 
     console.log(`[showroom-shorts-worker] ffmpeg start job=${jobId}`)
     await runFfmpegCompose({
       inputVideoPath,
       titleOverlayPath,
       bgmPath,
+      ttsPath: ttsResult.path,
+      bgmVolume: compositionConfig?.bgmVolume,
       outputVideoPath,
       durationSeconds,
       textPaths,
@@ -871,6 +894,9 @@ async function processComposeJob(jobId: string) {
     await insertLog(jobId, 'composition_completed', 'Railway 워커가 최종 MP4를 생성하고 검수 준비 상태로 전환했습니다.', {
       final_video_url: finalVideoUrl,
       bgm_enabled: Boolean(bgmPath),
+      tts_status: ttsResult.status,
+      tts_enabled: Boolean(ttsResult.path),
+      audio_variant: compositionConfig?.audioVariant ?? 'bgm_only',
     })
     await requestPublishPrepareForJob(jobId)
     console.log(`[showroom-shorts-worker] completed job=${jobId} finalVideoUrl=${finalVideoUrl}`)
@@ -1390,6 +1416,55 @@ async function ensureBasicShortsTargetsAndPrepare(draftId: string, draft: Showro
   }
 }
 
+async function generateElevenLabsTts(
+  script: string,
+  destinationPath: string,
+): Promise<{ path: string | null; status: 'generated' | 'not_configured' | 'empty_script' | 'failed' }> {
+  const text = script.trim().slice(0, 500)
+  if (!text) return { path: null, status: 'empty_script' }
+  if (!ELEVENLABS_API_KEY || !ELEVENLABS_VOICE_ID) {
+    return { path: null, status: 'not_configured' }
+  }
+
+  try {
+    const response = await fetch(
+      `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(ELEVENLABS_VOICE_ID)}?output_format=mp3_44100_128`,
+      {
+        method: 'POST',
+        headers: {
+          Accept: 'audio/mpeg',
+          'Content-Type': 'application/json',
+          'xi-api-key': ELEVENLABS_API_KEY,
+        },
+        body: JSON.stringify({
+          text,
+          model_id: ELEVENLABS_MODEL_ID,
+          voice_settings: {
+            stability: 0.45,
+            similarity_boost: 0.8,
+            style: 0.08,
+            use_speaker_boost: true,
+          },
+        }),
+        signal: AbortSignal.timeout(25_000),
+      },
+    )
+    if (!response.ok) {
+      const responseBody = (await response.text()).slice(0, 300)
+      throw new Error(`ElevenLabs 응답 ${response.status}: ${responseBody}`)
+    }
+
+    const audio = Buffer.from(await response.arrayBuffer())
+    assertDownloadedAudioBufferLooksValid(audio, 'mp3', 'ElevenLabs TTS')
+    await fs.writeFile(destinationPath, audio)
+    return { path: destinationPath, status: 'generated' }
+  } catch (error) {
+    // 음성 공급자 장애로 영상 합성 전체를 실패시키지 않는다. BGM-only 결과는 계속 제공한다.
+    console.warn('[showroom-shorts-worker] ElevenLabs TTS fallback to BGM only', error)
+    return { path: null, status: 'failed' }
+  }
+}
+
 async function downloadToFile(url: string, destinationPath: string) {
   const response = await fetch(url)
   if (!response.ok) {
@@ -1511,13 +1586,17 @@ async function getVideoDurationSeconds(filePath: string, fallbackSeconds: number
   return parsed
 }
 
-async function writeTextAssets(tempDir: string) {
+async function writeTextAssets(
+  config: ShowroomShortsJobRow['composition_config'],
+  tempDir?: string,
+) {
+  const outputDir = tempDir ?? os.tmpdir()
   const assets = {
     topLine1: '잠시 후, 이 공간은',
     topLine2: '완전히 달라집니다',
     badge: '실제사진 기반 Before & After',
-    questionLine1: '뭐가 가장 달라보이시나요?',
-    questionLine2: '댓글로 알려주세요',
+    questionLine1: config?.hookLine1?.trim() || '뭐가 가장 달라보이시나요?',
+    questionLine2: config?.hookLine2?.trim() || '댓글로 알려주세요',
     ctaLine1: '더 많은 사례는',
     ctaLine2: '파인드가구 온라인 쇼룸에서',
     before: 'Before',
@@ -1526,7 +1605,7 @@ async function writeTextAssets(tempDir: string) {
 
   const entries = await Promise.all(
     Object.entries(assets).map(async ([key, value]) => {
-      const filePath = path.join(tempDir, `${key}.txt`)
+      const filePath = path.join(outputDir, `${key}.txt`)
       await fs.writeFile(filePath, value, 'utf8')
       return [key, filePath] as const
     })
@@ -1591,6 +1670,8 @@ async function runFfmpegCompose(input: {
   inputVideoPath: string
   titleOverlayPath: string
   bgmPath: string | null
+  ttsPath: string | null
+  bgmVolume?: number
   outputVideoPath: string
   durationSeconds: number
   textPaths: Record<
@@ -1607,7 +1688,13 @@ async function runFfmpegCompose(input: {
   >
 }) {
   const outputDuration = input.durationSeconds + AFTER_HOLD_SECONDS
-  const filterComplex = buildFilterComplex(input.durationSeconds, outputDuration, input.textPaths)
+  const filterComplex = buildFilterComplex(
+    input.durationSeconds,
+    outputDuration,
+    input.textPaths,
+    input.ttsPath !== null,
+    input.bgmVolume,
+  )
   const args = [
     '-y',
     '-i',
@@ -1624,6 +1711,9 @@ async function runFfmpegCompose(input: {
     args.push('-stream_loop', '-1', '-i', input.bgmPath)
   } else {
     args.push('-f', 'lavfi', '-i', `anullsrc=channel_layout=stereo:sample_rate=48000`)
+  }
+  if (input.ttsPath) {
+    args.push('-i', input.ttsPath)
   }
 
   args.push(
@@ -1832,7 +1922,9 @@ function buildFilterComplex(
     | 'before'
     | 'after',
     string
-  >
+  >,
+  hasTts: boolean,
+  bgmVolume?: number,
 ) {
   const sourceDuration = Math.max(sourceDurationSeconds, DEFAULT_DURATION_SECONDS)
   const safeDuration = Math.max(outputDurationSeconds, sourceDuration)
@@ -1878,12 +1970,23 @@ function buildFilterComplex(
     `[stage9]drawtext=fontfile='${escape(BOLD_FONT_FILE)}':textfile='${escape(textPaths.before)}':fontcolor=white:fontsize=22:x=44:y=${VIDEO_Y + 31}:enable='${beforeEnable}'[stage10]`,
     `[stage10]drawbox=x=582:y=${VIDEO_Y + 22}:w=116:h=42:color=black@0.68:t=fill:enable='${afterEnable}'[stage11]`,
     `[stage11]drawtext=fontfile='${escape(BOLD_FONT_FILE)}':textfile='${escape(textPaths.after)}':fontcolor=white:fontsize=22:x=613:y=${VIDEO_Y + 31}:enable='${afterEnable}'[vout]`,
-    inputAudioFilter(safeDuration),
+    inputAudioFilter(safeDuration, hasTts, bgmVolume),
   ].join(';')
 }
 
-function inputAudioFilter(durationSeconds: number) {
-  return `[2:a]atrim=0:${formatSeconds(durationSeconds)},asetpts=N/SR/TB,volume=0.24,afade=t=in:st=0:d=0.8[aout]`
+function inputAudioFilter(durationSeconds: number, hasTts: boolean, bgmVolume?: number) {
+  const normalizedBgmVolume =
+    typeof bgmVolume === 'number' && Number.isFinite(bgmVolume)
+      ? Math.max(0.05, Math.min(bgmVolume, 0.4))
+      : 0.24
+  const bgm = `[2:a]atrim=0:${formatSeconds(durationSeconds)},asetpts=N/SR/TB,volume=${normalizedBgmVolume.toFixed(2)},afade=t=in:st=0:d=0.8,afade=t=out:st=${formatSeconds(Math.max(durationSeconds - 0.5, 0))}:d=0.5`
+  if (!hasTts) return `${bgm}[aout]`
+
+  return [
+    `${bgm}[bgm]`,
+    `[3:a]atrim=0:${formatSeconds(durationSeconds)},asetpts=N/SR/TB,volume=1.05,afade=t=in:st=0:d=0.08[voice]`,
+    `[bgm][voice]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aout]`,
+  ].join(';')
 }
 
 function formatSeconds(value: number) {

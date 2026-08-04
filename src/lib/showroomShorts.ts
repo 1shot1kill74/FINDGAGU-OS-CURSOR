@@ -2,6 +2,13 @@ import { supabase } from '@/lib/supabase'
 import { fetchShowroomImageAssets, type ShowroomImageAsset } from '@/lib/imageAssetService'
 import { setImageAssetMain } from '@/lib/imageAssetUploadService'
 import { getShowroomShortsWorkerUrl } from '@/lib/config'
+import {
+  buildShowroomShortsVariantTitle,
+  getShowroomShortsVariantConfig,
+  isShowroomShortsVariantId,
+  type ShowroomShortsCompositionConfig,
+  type ShowroomShortsVariantId,
+} from '@/lib/showroomShortsVariants'
 
 function cloudinaryFileFingerprint(url: string | null | undefined): string | null {
   const raw = (url ?? '').trim()
@@ -100,6 +107,9 @@ export interface ShowroomShortsTargetRecord {
   description: string
   hashtags: string[]
   first_comment: string
+  title_variant: ShowroomShortsVariantId | null
+  video_variant: ShowroomShortsVariantId | null
+  audio_variant: 'tts_hook_bgm' | 'bgm_only' | null
   publish_status: ShowroomShortsPublishStatus
   final_video_url: string | null
   external_post_id: string | null
@@ -144,6 +154,7 @@ export interface ShowroomShortsJobRecord {
   final_aspect_ratio: string
   duration_seconds: number
   is_muted: boolean
+  composition_config: ShowroomShortsCompositionConfig | null
   created_by: string | null
   created_at: string
   updated_at: string
@@ -399,6 +410,13 @@ export async function createShowroomShortsJob(payload: {
   const now = new Date().toISOString()
   const groupKeyOverride = payload.beforeAfterGroupKey?.trim() || null
   const emptyRoom = payload.timelapseMode === 'empty_room'
+  const variantSiteName = draft.title
+    .replace(/^10초 만에 보는\s*/u, '')
+    .replace(/\s*대변신$/u, '')
+    .trim() || '이 공간'
+  const variantSeed = `${groupKeyOverride || selection.groupKey}:${selection.beforeImage.id}:${selection.afterImage.id}`
+  const compositionConfig = getShowroomShortsVariantConfig(variantSeed, variantSiteName)
+  const variantTitle = buildShowroomShortsVariantTitle(compositionConfig, variantSiteName)
 
   const { data: authData } = await supabase.auth.getUser()
   const createdBy = authData.user?.id ?? null
@@ -417,7 +435,9 @@ export async function createShowroomShortsJob(payload: {
       source_aspect_ratio: '16:9',
       final_aspect_ratio: '9:16',
       duration_seconds: emptyRoom ? 11 : 10,
-      is_muted: true,
+      // Kling 원본은 무음이지만 Railway가 BGM/TTS를 합성하므로 최종은 유음으로 기록한다.
+      is_muted: false,
+      composition_config: compositionConfig,
       created_by: createdBy,
       updated_at: now,
     })
@@ -434,10 +454,13 @@ export async function createShowroomShortsJob(payload: {
   const targetRows = payload.channels.map((channel) => ({
     shorts_job_id: jobId,
     channel,
-    title: draft.title,
+    title: variantTitle,
     description: draft.description,
     hashtags: draft.hashtags,
     first_comment: withShowroomShortsLandingUrl(draft.firstCommentBody, channel, jobId),
+    title_variant: compositionConfig.titleVariant,
+    video_variant: compositionConfig.videoVariant,
+    audio_variant: compositionConfig.audioVariant,
     publish_status: 'draft',
     updated_at: now,
   }))
@@ -595,6 +618,12 @@ function mapShortsTargetRow(row: Record<string, unknown>): ShowroomShortsTargetR
     description: String(row.description ?? ''),
     hashtags: Array.isArray(row.hashtags) ? row.hashtags.map((item) => String(item)) : [],
     first_comment: String(row.first_comment ?? ''),
+    title_variant: isShowroomShortsVariantId(row.title_variant) ? row.title_variant : null,
+    video_variant: isShowroomShortsVariantId(row.video_variant) ? row.video_variant : null,
+    audio_variant:
+      row.audio_variant === 'tts_hook_bgm' || row.audio_variant === 'bgm_only'
+        ? row.audio_variant
+        : null,
     publish_status: normalizePublishStatus(row.publish_status),
     final_video_url: trimOrNull(typeof row.final_video_url === 'string' ? row.final_video_url : null),
     external_post_id: trimOrNull(typeof row.external_post_id === 'string' ? row.external_post_id : null),
@@ -644,6 +673,7 @@ function mapShortsJobRow(row: Record<string, unknown>): ShowroomShortsJobRecord 
     final_aspect_ratio: String(row.final_aspect_ratio ?? '9:16'),
     duration_seconds: Number(row.duration_seconds ?? 10),
     is_muted: Boolean(row.is_muted ?? true),
+    composition_config: asJsonRecord(row.composition_config) as ShowroomShortsCompositionConfig | null,
     created_by: trimOrNull(typeof row.created_by === 'string' ? row.created_by : null),
     created_at: String(row.created_at ?? ''),
     updated_at: String(row.updated_at ?? ''),
@@ -847,6 +877,58 @@ export async function updateShowroomShortsJobPrompt(jobId: string, promptText: s
     .eq('id', jobId)
 
   if (error) throw new Error(error.message)
+}
+
+/** 원본을 다시 만들지 않고 Railway 합성용 포맷·오디오 설정만 바꾼다. */
+export async function updateShowroomShortsCompositionConfig(
+  jobId: string,
+  config: ShowroomShortsCompositionConfig,
+) {
+  const { data: job, error: currentJobError } = await supabase
+    .from('showroom_shorts_jobs')
+    .select('after_asset_id')
+    .eq('id', jobId)
+    .maybeSingle()
+  if (currentJobError) throw new Error(currentJobError.message)
+  if (!job) throw new Error('숏츠 작업을 찾지 못했습니다.')
+
+  const { data: afterAsset } = await supabase
+    .from('image_assets')
+    .select('site_name')
+    .eq('id', String(job.after_asset_id))
+    .maybeSingle()
+  const siteName = typeof afterAsset?.site_name === 'string' ? afterAsset.site_name : '이 공간'
+  const titleConfig = getShowroomShortsVariantConfig(jobId, siteName, {
+    ...config,
+    variantId: config.titleVariant,
+  })
+  const normalizedConfig: ShowroomShortsCompositionConfig = {
+    ...config,
+    titleTemplate: titleConfig.titleTemplate,
+  }
+
+  const { error: jobError } = await supabase
+    .from('showroom_shorts_jobs')
+    .update({
+      composition_config: normalizedConfig,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', jobId)
+
+  if (jobError) throw new Error(jobError.message)
+
+  const { error: targetsError } = await supabase
+    .from('showroom_shorts_targets')
+    .update({
+      title: buildShowroomShortsVariantTitle(normalizedConfig, siteName),
+      title_variant: normalizedConfig.titleVariant,
+      video_variant: normalizedConfig.videoVariant,
+      audio_variant: normalizedConfig.audioVariant,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('shorts_job_id', jobId)
+
+  if (targetsError) throw new Error(targetsError.message)
 }
 
 export async function requestShowroomShortsGeneration(jobId: string) {

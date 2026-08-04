@@ -25,6 +25,9 @@ Railway에 올리는 서버 합성 워커입니다.
 - `SHOWROOM_SHORTS_WORKER_TOKEN`
 - `SHOWROOM_SHORTS_FONT_FILE`
 - `PORT`
+- `ELEVENLABS_API_KEY` — TTS 훅을 만들 API 키
+- `ELEVENLABS_VOICE_ID` — 사용할 한국어 음성 ID
+- `ELEVENLABS_MODEL_ID=eleven_multilingual_v2` — 생략 시 이 값 사용
 
 Vercel 서버 환경 변수:
 
@@ -54,5 +57,7 @@ npm run dev
 - 기본값은 워커 이미지 안에 포함된 `/app/assets/bgm/bright-lines-new-light-sample-b-24-34.mp3` 입니다.
 - `SHOWROOM_SHORTS_BGM_URL`을 주면 Railway 컨테이너가 직접 읽을 수 있는 공개 URL 또는 컨테이너 내부 파일 경로를 사용할 수 있습니다.
 - 원격 BGM URL이 깨졌을 때는 번들된 기본 BGM으로 fallback 하도록 구성했습니다.
+- 작업의 `audioVariant=tts_hook_bgm`이면 ElevenLabs TTS를 만들고 BGM과 함께 믹싱합니다. 키·Voice ID가 없거나 ElevenLabs가 실패하면 작업을 중단하지 않고 BGM만 넣어 완료합니다.
+- TTS 대본은 작업의 `composition_config.ttsScript`에서만 읽고, API 키는 로그·DB·브라우저로 보내지 않습니다.
 - 더 안정적인 운영을 원하면 나중에 Supabase Storage 또는 Cloudinary 공개 URL로 분리해도 됩니다.
 - 브라우저에 워커 토큰을 노출하지 않도록 프론트는 `/api/showroom-shorts-worker` 프록시를 통해 Railway를 호출합니다.

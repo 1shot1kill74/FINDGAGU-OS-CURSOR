@@ -99,11 +99,17 @@ import {
   fillAdInboxPublishQueue,
   getShowroomShortsCompositionStatus,
   stitchShowroomShortsSplit,
+  updateShowroomShortsCompositionConfig,
   updateShowroomShortsJobPrompt,
   updateShowroomShortsTargetPreparation,
   type ShowroomShortsTargetRecord,
 } from '@/lib/showroomShorts'
 import { SHOWROOM_SHORTS_TIMELAPSE_PROMPT } from '@/lib/showroomShortsTimelapsePrompt'
+import {
+  SHOWROOM_SHORTS_VARIANT_IDS,
+  formatShowroomShortsVariantLabel,
+  type ShowroomShortsCompositionConfig,
+} from '@/lib/showroomShortsVariants'
 
 function getChannelLabel(channel: string) {
   if (channel === 'youtube') return 'YouTube'
@@ -367,6 +373,8 @@ export default function AdInboxStudioPage() {
   const [editBody, setEditBody] = useState('')
   const [editComment, setEditComment] = useState('')
   const [editSaving, setEditSaving] = useState(false)
+  const [compositionDraft, setCompositionDraft] =
+    useState<ShowroomShortsCompositionConfig | null>(null)
   const [ytMetricsByVideoId, setYtMetricsByVideoId] = useState<
     Map<string, YoutubeShortsAnalyticsRow>
   >(() => new Map())
@@ -402,6 +410,32 @@ export default function AdInboxStudioPage() {
     }
     return [...new Set(ids)]
   }, [workProgressByKey, jobs])
+
+  const variantPerformance = useMemo(() => {
+    const byVariant = new Map<string, { videos: number; views: number; engagedViews: number }>()
+    for (const job of jobs) {
+      for (const target of job.targets ?? []) {
+        if (target.channel !== 'youtube' || target.publish_status !== 'published') continue
+        const videoId =
+          extractYoutubeVideoId(target.external_post_id) ||
+          extractYoutubeVideoId(target.external_post_url)
+        const metric = videoId ? ytMetricsByVideoId.get(videoId) : undefined
+        const key = target.video_variant ?? 'legacy'
+        const current = byVariant.get(key) ?? { videos: 0, views: 0, engagedViews: 0 }
+        current.videos += 1
+        current.views += metric?.views ?? 0
+        current.engagedViews += metric?.engaged_views ?? 0
+        byVariant.set(key, current)
+      }
+    }
+    return [...byVariant.entries()]
+      .map(([variant, value]) => ({
+        variant,
+        ...value,
+        avgViews: value.videos ? Math.round(value.views / value.videos) : 0,
+      }))
+      .sort((a, b) => b.avgViews - a.avgViews)
+  }, [jobs, ytMetricsByVideoId])
 
   const loadYtMetrics = useCallback(async () => {
     if (publishedYoutubeVideoIds.length === 0) {
@@ -449,6 +483,10 @@ export default function AdInboxStudioPage() {
     () => jobs.find((job) => job.id === activeJobId) ?? jobs[0] ?? null,
     [jobs, activeJobId],
   )
+
+  useEffect(() => {
+    setCompositionDraft(activeJob?.composition_config ?? null)
+  }, [activeJob?.id, activeJob?.composition_config])
 
   /** 임시 입고 사진이 없으면 job에 묶인 쇼룸 BA를 그리드·확대에 사용 */
   const displayAssets = useMemo(() => {
@@ -1091,6 +1129,23 @@ export default function AdInboxStudioPage() {
     }
   }
 
+  const handleSaveCompositionConfig = async () => {
+    if (!activeJob || !compositionDraft) return
+    setActingJob(true)
+    try {
+      await updateShowroomShortsCompositionConfig(activeJob.id, compositionDraft)
+      const fresh = await getAdInboxTimelapseJob(activeJob.id)
+      if (fresh) {
+        setJobs((prev) => [fresh, ...prev.filter((job) => job.id !== fresh.id)])
+      }
+      toast.success('포맷·오디오 설정을 저장했습니다. 「합성·업로드준비」를 누르면 이 설정으로 다시 만듭니다.')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '포맷 설정 저장 실패')
+    } finally {
+      setActingJob(false)
+    }
+  }
+
   useEffect(() => {
     if (!activeJob?.final_video_url) return
     const hasDraft = (activeJob.targets ?? []).some((target) => target.publish_status === 'draft')
@@ -1420,6 +1475,28 @@ export default function AdInboxStudioPage() {
           className="mb-8 space-y-3 rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm"
           onSynced={() => void loadYtMetrics()}
         />
+
+        {variantPerformance.length > 0 ? (
+          <section className="mb-8 rounded-2xl border border-violet-200 bg-violet-50/40 p-5">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h2 className="text-base font-semibold text-neutral-900">포맷별 YouTube 성과</h2>
+              <p className="text-xs text-neutral-500">게시된 영상 기준 · 지표 동기화 후 갱신</p>
+            </div>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              {variantPerformance.map((row) => (
+                <div key={row.variant} className="rounded-lg border border-violet-100 bg-white p-3">
+                  <p className="text-xs font-medium text-violet-800">
+                    {formatShowroomShortsVariantLabel(row.variant)}
+                  </p>
+                  <p className="mt-1 text-lg font-semibold text-neutral-900">{row.avgViews.toLocaleString()} 조회/편</p>
+                  <p className="text-xs text-neutral-500">
+                    {row.videos}편 · 총 {row.views.toLocaleString()} 조회 · 참여 {row.engagedViews.toLocaleString()}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </section>
+        ) : null}
 
         <section className="mb-8 rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
           <div className="mb-4 flex items-center gap-2">
@@ -2347,6 +2424,111 @@ export default function AdInboxStudioPage() {
                                   playsInline
                                   className="max-h-[420px] w-full rounded-xl bg-black"
                                 />
+                              </div>
+                            ) : null}
+
+                            {compositionDraft ? (
+                              <div className="space-y-3 rounded-xl border border-violet-200 bg-violet-50/50 p-3">
+                                <div>
+                                  <p className="text-sm font-semibold text-neutral-900">쇼츠 포맷·오디오 자동화</p>
+                                  <p className="mt-0.5 text-xs text-neutral-600">
+                                    저장 후 합성하면 원본은 유지하고 훅 자막·제목 실험 태그·TTS/BGM만 다시 적용합니다.
+                                  </p>
+                                </div>
+                                <div className="grid gap-2 sm:grid-cols-3">
+                                  <label className="text-xs text-neutral-600">
+                                    영상 포맷
+                                    <select
+                                      value={compositionDraft.videoVariant}
+                                      onChange={(event) =>
+                                        setCompositionDraft((current) =>
+                                          current
+                                            ? {
+                                                ...current,
+                                                variantId: event.target.value as typeof current.variantId,
+                                                videoVariant: event.target.value as typeof current.videoVariant,
+                                              }
+                                            : current,
+                                        )
+                                      }
+                                      className="mt-1 h-8 w-full rounded-md border border-neutral-200 bg-white px-2 text-xs text-neutral-800"
+                                    >
+                                      {SHOWROOM_SHORTS_VARIANT_IDS.map((variant) => (
+                                        <option key={variant} value={variant}>
+                                          {formatShowroomShortsVariantLabel(variant)}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                  <label className="text-xs text-neutral-600">
+                                    제목 포맷
+                                    <select
+                                      value={compositionDraft.titleVariant}
+                                      onChange={(event) =>
+                                        setCompositionDraft((current) =>
+                                          current
+                                            ? {
+                                                ...current,
+                                                titleVariant: event.target.value as typeof current.titleVariant,
+                                              }
+                                            : current,
+                                        )
+                                      }
+                                      className="mt-1 h-8 w-full rounded-md border border-neutral-200 bg-white px-2 text-xs text-neutral-800"
+                                    >
+                                      {SHOWROOM_SHORTS_VARIANT_IDS.map((variant) => (
+                                        <option key={variant} value={variant}>
+                                          {formatShowroomShortsVariantLabel(variant)}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                  <label className="text-xs text-neutral-600">
+                                    오디오
+                                    <select
+                                      value={compositionDraft.audioVariant}
+                                      onChange={(event) =>
+                                        setCompositionDraft((current) =>
+                                          current
+                                            ? {
+                                                ...current,
+                                                audioVariant: event.target.value as typeof current.audioVariant,
+                                              }
+                                            : current,
+                                        )
+                                      }
+                                      className="mt-1 h-8 w-full rounded-md border border-neutral-200 bg-white px-2 text-xs text-neutral-800"
+                                    >
+                                      <option value="tts_hook_bgm">TTS 훅 + BGM</option>
+                                      <option value="bgm_only">BGM만</option>
+                                    </select>
+                                  </label>
+                                </div>
+                                {compositionDraft.audioVariant === 'tts_hook_bgm' ? (
+                                  <label className="block text-xs text-neutral-600">
+                                    TTS 훅 대본
+                                    <Input
+                                      value={compositionDraft.ttsScript}
+                                      onChange={(event) =>
+                                        setCompositionDraft((current) =>
+                                          current ? { ...current, ttsScript: event.target.value.slice(0, 100) } : current,
+                                        )
+                                      }
+                                      className="mt-1 h-8 bg-white text-xs"
+                                    />
+                                  </label>
+                                ) : null}
+                                <div className="flex justify-end">
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={actingJob}
+                                    onClick={() => void handleSaveCompositionConfig()}
+                                  >
+                                    포맷 설정 저장
+                                  </Button>
+                                </div>
                               </div>
                             ) : null}
 

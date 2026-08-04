@@ -24,6 +24,9 @@ Railway 환경 변수:
 - `SHOWROOM_SHORTS_WORKER_TOKEN`
 - 선택: `SHOWROOM_SHORTS_BGM_URL`
 - 선택: `SHOWROOM_SHORTS_FONT_FILE=/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc`
+- TTS 사용: `ELEVENLABS_API_KEY`
+- TTS 사용: `ELEVENLABS_VOICE_ID` (ElevenLabs 음성 라이브러리에서 복사)
+- 선택: `ELEVENLABS_MODEL_ID=eleven_multilingual_v2`
 
 권장 BGM URL 조건:
 
@@ -50,9 +53,10 @@ Railway 환경 변수:
 1. 관리자 페이지에서 `워커 합성 요청`
 2. 프론트가 `/api/showroom-shorts-worker` 호출
 3. Vercel API가 Railway worker로 프록시
-4. Railway worker가 ffmpeg 합성
-5. 결과 MP4를 Supabase Storage 업로드
-6. `showroom_shorts_jobs.final_video_url`, `status=ready_for_review` 갱신
+4. `audio_variant=tts_hook_bgm`이면 ElevenLabs TTS 훅 생성 후 BGM과 믹싱
+5. Railway worker가 ffmpeg 합성
+6. 결과 MP4를 Supabase Storage 업로드
+7. `showroom_shorts_jobs.final_video_url`, `status=ready_for_review` 갱신
 
 ## 5. 첫 검증 시나리오
 
@@ -69,3 +73,5 @@ Railway 환경 변수:
 - `SUPABASE_SERVICE_ROLE_KEY` 권한 문제
 - `showroom-shorts-videos` 버킷 업로드 가능 여부
 - 원본 `source_video_url`이 만료되었거나 외부에서 차단되지 않았는지
+- `/health`의 `elevenLabsConfigured=true`인지 (키와 Voice ID 값 자체는 노출되지 않음)
+- TTS 실패 시 합성 로그의 `tts_status`를 확인. 영상은 BGM-only로 완료되므로 재합성이 필요할 때만 키·Voice ID·크레딧을 확인
