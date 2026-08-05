@@ -33,6 +33,7 @@ import { collectShowroomAliasNamesFromImages, collectShowroomIdentityKeys } from
 import { appendShowroomConcernQuery, openShowroomConsultationChat } from '@/pages/showroom/showroomStoryCta'
 import { trackShowroomAbmEvent, trackShowroomAbmHeaderNavClick } from '@/lib/showroomAbmTracking'
 import ShowroomAeoGuideTeaser from '@/components/showroom/ShowroomAeoGuideTeaser'
+import { ShowroomBeforeAfterTapPreview } from '@/components/showroom/ShowroomBeforeAfterTapPreview'
 
 import {
   CONCERN_CARDS,
@@ -1195,68 +1196,27 @@ export default function PublicShowroomExperience() {
     const compactPreview = options?.compactPreview ?? false
     if (!beforeImage || !afterImage) return null
 
-    const beforeAfterPreview = compactPreview ? (
-      <>
-        <div className="flex w-full flex-col">
-          <div className="relative aspect-[16/10] w-full bg-neutral-100">
-            <img
-              src={beforeImage.thumbnail_url || beforeImage.cloudinary_url}
-              alt={`${publicLabel} before`}
-              className="h-full w-full object-cover"
-              loading="lazy"
-              decoding="async"
-            />
-            <span className="absolute left-2 top-2 rounded-full bg-black/75 px-2 py-0.5 text-[10px] font-semibold text-white">
-              Before
-            </span>
-          </div>
-          <div className="relative aspect-[16/10] w-full bg-neutral-100">
-            <img
-              src={afterImage.thumbnail_url || afterImage.cloudinary_url}
-              alt={`${publicLabel} after`}
-              className="h-full w-full object-cover"
-              loading="lazy"
-              decoding="async"
-            />
-            <span className="absolute left-2 top-2 rounded-full bg-emerald-600/90 px-2 py-0.5 text-[10px] font-semibold text-white">
-              After
-            </span>
-          </div>
-        </div>
-      </>
-    ) : (
-      <>
-        <div className="grid grid-cols-2">
-          <div className="relative aspect-[4/3] bg-neutral-100">
-            <img
-              src={beforeImage.thumbnail_url || beforeImage.cloudinary_url}
-              alt={`${publicLabel} before`}
-              className="w-full h-full object-cover"
-              loading="lazy"
-              decoding="async"
-            />
-            <span className="absolute left-2 top-2 rounded-full bg-black/75 px-2 py-1 text-[11px] font-semibold text-white">
-              Before
-            </span>
-          </div>
-          <div className="relative aspect-[4/3] bg-neutral-100">
-            <img
-              src={afterImage.thumbnail_url || afterImage.cloudinary_url}
-              alt={`${publicLabel} after`}
-              className="w-full h-full object-cover"
-              loading="lazy"
-              decoding="async"
-            />
-            <span className="absolute left-2 top-2 rounded-full bg-emerald-600/90 px-2 py-1 text-[11px] font-semibold text-white">
-              After
-            </span>
-          </div>
-        </div>
-        <div className={'flex min-h-[5.5rem] items-start p-4'}>
-          <h4 className="font-semibold leading-snug text-neutral-900">{publicLabel}</h4>
-          
-        </div>
-      </>
+    const beforeSrc = beforeImage.thumbnail_url || beforeImage.cloudinary_url || ''
+    const afterSrc = afterImage.thumbnail_url || afterImage.cloudinary_url || ''
+    const beforeAfterPreview = (
+      <ShowroomBeforeAfterTapPreview
+        beforeSrc={beforeSrc}
+        afterSrc={afterSrc}
+        altLabel={publicLabel}
+        aspectClassName={compactPreview ? 'aspect-[16/10]' : 'aspect-[4/3]'}
+      />
+    )
+    const titleBlock = (
+      <div className={cn('flex items-start', compactPreview ? 'p-3' : 'min-h-[5.5rem] p-4')}>
+        <h4
+          className={cn(
+            'font-semibold leading-snug text-neutral-900',
+            compactPreview ? 'text-sm' : undefined,
+          )}
+        >
+          {publicLabel}
+        </h4>
+      </div>
     )
 
     const publicBlogTeaser = (
@@ -1271,30 +1231,12 @@ export default function PublicShowroomExperience() {
           >
             {(caseProfileDraft.blogTeaserLine ?? '').trim()}
           </p>
-          {storyHref && (
-            compactPreview ? (
-              <Link
-                to={storyHref}
-                className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-emerald-700"
-                onClick={() => {
-                  trackShowroomAbmEvent({
-                    eventName: 'abm_ba_story_click',
-                    concern: selectedConcernTag,
-                    siteName: group.siteName,
-                    industry: group.businessTypes[0] ?? null,
-                  })
-                }}
-              >
-                사례 블로그에서 자세히 보기
-                <ArrowRight className="h-3.5 w-3.5" aria-hidden />
-              </Link>
-            ) : (
-              <p className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-emerald-700">
-                사례 블로그에서 자세히 보기
-                <ArrowRight className="h-3.5 w-3.5" aria-hidden />
-              </p>
-            )
-          )}
+          {storyHref ? (
+            <p className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-emerald-700">
+              사례 블로그에서 자세히 보기
+              <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+            </p>
+          ) : null}
         </div>
       </div>
     )
@@ -1307,21 +1249,9 @@ export default function PublicShowroomExperience() {
           compactPreview && 'rounded-xl shadow-none hover:translate-y-0 hover:shadow-sm',
         )}
       >
-        {compactPreview ? (
-          <>
-            <button
-              type="button"
-              onClick={() => openDetail('beforeAfter', group.siteName)}
-              className="flex w-full flex-col text-left"
-            >
-              {beforeAfterPreview}
-            </button>
-            <div className="flex items-start p-3">
-              <h4 className="text-sm font-semibold leading-snug text-neutral-900">{publicLabel}</h4>
-            </div>
-            {publicBlogTeaser}
-          </>
-        ) : storyHref ? (
+        {/* 이미지는 모바일 탭 토글 전용. 상세/블로그는 제목·티저로만 연결해 토글과 충돌 방지 */}
+        {beforeAfterPreview}
+        {storyHref ? (
           <Link
             to={storyHref}
             className="flex w-full flex-1 flex-col text-left"
@@ -1334,7 +1264,7 @@ export default function PublicShowroomExperience() {
               })
             }}
           >
-            {beforeAfterPreview}
+            {titleBlock}
             {publicBlogTeaser}
           </Link>
         ) : (
@@ -1344,12 +1274,11 @@ export default function PublicShowroomExperience() {
               onClick={() => openDetail('beforeAfter', group.siteName)}
               className="flex w-full flex-1 flex-col text-left"
             >
-              {beforeAfterPreview}
+              {titleBlock}
             </button>
             {publicBlogTeaser}
           </>
         )}
-        
       </div>
     )
   }
