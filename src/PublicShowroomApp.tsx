@@ -2,6 +2,7 @@ import { Suspense, lazy, useEffect } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom'
 import { Toaster } from 'sonner'
 import { captureShowroomAbmAttribution } from '@/lib/showroomAbmTraffic'
+import PublicShowroomLayout from '@/components/showroom/PublicShowroomLayout'
 import './App.css'
 
 const PublicShowroomPage = lazy(() => import('@/pages/PublicShowroomPage'))
@@ -27,6 +28,9 @@ const SNS_CHANNEL_ALIASES: Record<string, string> = {
   shorts: 'shorts',
   reel: 'shorts',
   reels: 'shorts',
+  clip: 'naver_clip',
+  naverclip: 'naver_clip',
+  naver_clip: 'naver_clip',
 }
 
 function RouteFallback() {
@@ -139,15 +143,18 @@ export default function PublicShowroomApp() {
       <Suspense fallback={<RouteFallback />}>
         <Routes>
           <Route path="/" element={<RootRedirect />} />
-          <Route path="/public/showroom/cardnews/:siteKey" element={<LegacyPublicShowroomCardNewsDetailRedirect />} />
-          <Route path="/public/showroom/cardnews" element={<LegacyPublicShowroomCardNewsListRedirect />} />
-          <Route path="/public/showroom/case/:siteKey" element={<ShowroomCaseApproachPage mode="public" />} />
-          <Route path="/public/showroom/shorts/:jobId" element={<PublicShowroomShortsLandingPage />} />
-          <Route
-            path="/public/showroom/guide/managed-study-cafe-furniture"
-            element={<PublicManagedStudyCafeFurnitureGuidePage />}
-          />
-          <Route path="/public/showroom" element={<PublicShowroomPage />} />
+          <Route element={<PublicShowroomLayout />}>
+            <Route path="/public/showroom/cardnews/:siteKey" element={<LegacyPublicShowroomCardNewsDetailRedirect />} />
+            <Route path="/public/showroom/cardnews" element={<LegacyPublicShowroomCardNewsListRedirect />} />
+            <Route path="/public/showroom/case/:siteKey" element={<ShowroomCaseApproachPage mode="public" />} />
+            <Route path="/public/showroom/shorts/:jobId" element={<PublicShowroomShortsLandingPage />} />
+            <Route
+              path="/public/showroom/guide/managed-study-cafe-furniture"
+              element={<PublicManagedStudyCafeFurnitureGuidePage />}
+            />
+            <Route path="/public/showroom" element={<PublicShowroomPage />} />
+            <Route path="/contact" element={<ContactPage />} />
+          </Route>
           <Route path="/open-showroom/cardnews/:siteKey" element={<LegacyOpenShowroomCardNewsDetailRedirect />} />
           <Route path="/open-showroom/cardnews" element={<LegacyOpenShowroomRedirect targetPath="/public/showroom" />} />
           <Route path="/open-showroom/case/:siteKey" element={<LegacyOpenShowroomCaseDetailRedirect />} />
@@ -157,7 +164,6 @@ export default function PublicShowroomApp() {
           <Route path="/s/:channel" element={<SnsShowroomRedirect entry="sns" />} />
           <Route path="/r/:channel/:jobId" element={<SnsShowroomRedirect entry="shorts" />} />
           <Route path="/r/:channel" element={<SnsShowroomRedirect entry="shorts" />} />
-          <Route path="/contact" element={<ContactPage />} />
           <Route path="*" element={<RootRedirect />} />
         </Routes>
       </Suspense>

@@ -5,6 +5,7 @@ import ProtectedRoute from '@/auth/ProtectedRoute'
 import InternalAdminRoute from '@/auth/InternalAdminRoute'
 import { describeInternalRoute } from '@/lib/internalRouteLabel'
 import { captureShowroomAbmAttribution, isPublicShowroomLandingHost } from '@/lib/showroomAbmTraffic'
+import PublicShowroomLayout from '@/components/showroom/PublicShowroomLayout'
 import './App.css'
 
 const ConsultationManagement = lazy(() => import('@/pages/ConsultationManagement'))
@@ -102,6 +103,9 @@ const SNS_CHANNEL_ALIASES: Record<string, string> = {
   shorts: 'shorts',
   reel: 'shorts',
   reels: 'shorts',
+  clip: 'naver_clip',
+  naverclip: 'naver_clip',
+  naver_clip: 'naver_clip',
 }
 
 function normalizeSnsChannel(value: string | undefined): string {
@@ -184,16 +188,19 @@ function App() {
           <Route path="/share" element={<ShareRedirect />} />
           <Route path="/share/gallery" element={<ShareGalleryPage />} />
           <Route path="/public/share" element={<PublicGalleryView />} />
-          <Route path="/public/showroom/cardnews/:siteKey" element={<LegacyPublicShowroomCardNewsDetailRedirect />} />
-          <Route path="/public/showroom/cardnews" element={<LegacyPublicShowroomCardNewsListRedirect />} />
-          <Route path="/public/showroom/case/:siteKey" element={<ShowroomCaseApproachPage mode="public" />} />
-          <Route path="/public/showroom/shorts/:jobId" element={<PublicShowroomShortsLandingPage />} />
-          <Route
-            path="/public/showroom/guide/managed-study-cafe-furniture"
-            element={<PublicManagedStudyCafeFurnitureGuidePage />}
-          />
-          <Route path="/public/showroom" element={<PublicShowroomPage />} />
-          <Route path="/public/showroom/original" element={<OriginalShowroomPage mode="public" />} />
+          <Route element={<PublicShowroomLayout />}>
+            <Route path="/public/showroom/cardnews/:siteKey" element={<LegacyPublicShowroomCardNewsDetailRedirect />} />
+            <Route path="/public/showroom/cardnews" element={<LegacyPublicShowroomCardNewsListRedirect />} />
+            <Route path="/public/showroom/case/:siteKey" element={<ShowroomCaseApproachPage mode="public" />} />
+            <Route path="/public/showroom/shorts/:jobId" element={<PublicShowroomShortsLandingPage />} />
+            <Route
+              path="/public/showroom/guide/managed-study-cafe-furniture"
+              element={<PublicManagedStudyCafeFurnitureGuidePage />}
+            />
+            <Route path="/public/showroom" element={<PublicShowroomPage />} />
+            <Route path="/public/showroom/original" element={<OriginalShowroomPage mode="public" />} />
+            <Route path="/contact" element={<ContactPage />} />
+          </Route>
           <Route path="/open-showroom/cardnews/:siteKey" element={<LegacyOpenShowroomCardNewsDetailRedirect />} />
           <Route path="/open-showroom/cardnews" element={<LegacyOpenShowroomRedirect targetPath="/public/showroom" />} />
           <Route path="/open-showroom/case/:siteKey" element={<LegacyOpenShowroomCaseDetailRedirect />} />
@@ -204,7 +211,6 @@ function App() {
           <Route path="/s/:channel" element={<SnsShowroomRedirect entry="sns" />} />
           <Route path="/r/:channel/:jobId" element={<SnsShowroomRedirect entry="shorts" />} />
           <Route path="/r/:channel" element={<SnsShowroomRedirect entry="shorts" />} />
-          <Route path="/contact" element={<ContactPage />} />
           <Route path="/review/sample" element={<PublicCustomerReviewSamplePage />} />
           <Route element={<ProtectedRoute />}>
             <Route path="/dashboard" element={<DashboardPage />} />

@@ -23,7 +23,22 @@ export const PUBLIC_SHOWROOM_SAME_AS = [
 /** 공개 랜딩 정본 호스트 (sitemap · canonical · JSON-LD) */
 export const PUBLIC_SHOWROOM_ORIGIN = 'https://www.findgagu.co.kr'
 
+/** 제품·회사 이력 에비던스 호스트 (findgagu.com) */
+export const PUBLIC_SHOWROOM_PRODUCT_ORIGIN = 'https://www.findgagu.com'
+
 export const PUBLIC_SHOWROOM_BRAND = '파인드가구'
+
+/** 공개 푸터·Organization JSON-LD용 사업자 정보 (.com과 동일) */
+export const PUBLIC_SHOWROOM_COMPANY = {
+  legalName: '파인드가구',
+  phone: '031-592-7981',
+  fax: '031-592-7982',
+  email: 'findgagu@naver.com',
+  address: '경기도 남양주시 화도읍 가곡로88번길 29-2',
+  businessNumber: '374-81-02631',
+  mailOrderNumber: '제 2022-화도수동-125호',
+} as const
+
 export const PUBLIC_SHOWROOM_HUB_PATH = '/public/showroom'
 export const PUBLIC_SHOWROOM_HUB_TITLE =
   '파인드가구 온라인 쇼룸 — 관리형 스터디카페·학원·아파트 공간 사례'
@@ -111,11 +126,22 @@ export function buildOrganizationJsonLd(origin = PUBLIC_SHOWROOM_ORIGIN): PageHe
     '@context': 'https://schema.org',
     '@type': 'Organization',
     name: PUBLIC_SHOWROOM_BRAND,
+    legalName: PUBLIC_SHOWROOM_COMPANY.legalName,
     url: base,
     logo,
     image: logo,
     description: FINDGAGU_ENTITY_ONE_LINER,
-    sameAs: [...PUBLIC_SHOWROOM_SAME_AS],
+    telephone: PUBLIC_SHOWROOM_COMPANY.phone,
+    email: PUBLIC_SHOWROOM_COMPANY.email,
+    taxID: PUBLIC_SHOWROOM_COMPANY.businessNumber,
+    address: {
+      '@type': 'PostalAddress',
+      streetAddress: PUBLIC_SHOWROOM_COMPANY.address,
+      addressLocality: '남양주시',
+      addressRegion: '경기도',
+      addressCountry: 'KR',
+    },
+    sameAs: [...PUBLIC_SHOWROOM_SAME_AS, PUBLIC_SHOWROOM_PRODUCT_ORIGIN],
     areaServed: {
       '@type': 'Country',
       name: '대한민국',
