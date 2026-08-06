@@ -1,0 +1,126 @@
+{
+  "agentCount": 1000,
+  "seed": 20260806,
+  "overall": {
+    "before": {
+      "hero": 42.8,
+      "pain": 10,
+      "case": 4.8,
+      "consult": 0.4
+    },
+    "after": {
+      "hero": 74.4,
+      "pain": 31.9,
+      "case": 22.8,
+      "consult": 2.3
+    },
+    "lift": {
+      "hero": 73.8,
+      "pain": 219,
+      "case": 375,
+      "consult": 475
+    }
+  },
+  "funnelAfter": {
+    "agents": 1000,
+    "entered": 1000,
+    "heroUnderstood": 744,
+    "painMatched": 319,
+    "caseBrowsed": 228,
+    "consultClicked": 23
+  },
+  "segments": [
+    {
+      "id": "managed_study_cafe",
+      "label": "관리형 스터디카페 창업주",
+      "n": 276,
+      "after": {
+        "hero": 79.3,
+        "pain": 40.2,
+        "case": 30.8,
+        "consult": 4.7,
+        "consultGivenCase": 15.3
+      },
+      "beforeConsult": 1.1,
+      "consultLift": 333.3,
+      "topFriction": "상담 클릭에서 84.7% 이탈 — ROI·회수기간이 안 보이면 사례만 보고 이탈",
+      "funnel": {
+        "agents": 276,
+        "entered": 276,
+        "heroUnderstood": 219,
+        "painMatched": 111,
+        "caseBrowsed": 85,
+        "consultClicked": 13
+      }
+    },
+    {
+      "id": "academy_director",
+      "label": "학원 원장",
+      "n": 274,
+      "after": {
+        "hero": 76.3,
+        "pain": 35.4,
+        "case": 25.5,
+        "consult": 2.9,
+        "consultGivenCase": 11.4
+      },
+      "beforeConsult": 0.4,
+      "consultLift": 700,
+      "topFriction": "상담 클릭에서 88.6% 이탈 — 자습실 유출 공포는 크지만 예산·학부모 설득 근거가 약하면 보류",
+      "funnel": {
+        "agents": 274,
+        "entered": 274,
+        "heroUnderstood": 209,
+        "painMatched": 97,
+        "caseBrowsed": 70,
+        "consultClicked": 8
+      }
+    },
+    {
+      "id": "school_officer",
+      "label": "학교 담당자",
+      "n": 244,
+      "after": {
+        "hero": 71.3,
+        "pain": 27.5,
+        "case": 17.2,
+        "consult": 0.4,
+        "consultGivenCase": 2.4
+      },
+      "beforeConsult": 0,
+      "consultLift": 100,
+      "topFriction": "상담 클릭에서 97.6% 이탈 — 행정·입찰·내부 보고용 근거가 부족하면 상담 클릭을 미룸",
+      "funnel": {
+        "agents": 244,
+        "entered": 244,
+        "heroUnderstood": 174,
+        "painMatched": 67,
+        "caseBrowsed": 42,
+        "consultClicked": 1
+      }
+    },
+    {
+      "id": "apartment_officer",
+      "label": "아파트 담당자",
+      "n": 206,
+      "after": {
+        "hero": 68.9,
+        "pain": 21.4,
+        "case": 15,
+        "consult": 0.5,
+        "consultGivenCase": 3.2
+      },
+      "beforeConsult": 0,
+      "consultLift": 100,
+      "topFriction": "상담 클릭에서 96.8% 이탈 — 입대의·주민 민원 리스크로 혼자 상담하기 부담",
+      "funnel": {
+        "agents": 206,
+        "entered": 206,
+        "heroUnderstood": 142,
+        "painMatched": 44,
+        "caseBrowsed": 31,
+        "consultClicked": 1
+      }
+    }
+  ]
+}

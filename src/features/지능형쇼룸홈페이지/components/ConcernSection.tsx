@@ -18,7 +18,7 @@ export default function ConcernSection({ selectedConcernId, onSelectConcern }: C
         </p>
       </div>
 
-      <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+      <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {CONCERN_CARDS.map((card) => {
           const selected = card.id === selectedConcernId
           return (

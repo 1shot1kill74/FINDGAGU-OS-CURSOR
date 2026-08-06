@@ -6,6 +6,7 @@ export type ShowroomEventName =
   | 'showroom_view_before_after'
   | 'showroom_reply_intent'
   | 'abm_showroom_enter'
+  | 'abm_pain_click'
   | 'abm_concern_select'
   | 'abm_ba_story_click'
   | 'abm_case_open'

@@ -7,6 +7,7 @@ import {
 export type ShowroomAbmEventName = Extract<
   ShowroomEventName,
   | 'abm_showroom_enter'
+  | 'abm_pain_click'
   | 'abm_concern_select'
   | 'abm_ba_story_click'
   | 'abm_case_open'
@@ -29,6 +30,9 @@ export type ShowroomAbmConsultationSurface =
   | 'gallery_close'
   | 'shorts_landing'
   | 'guide_page'
+  | 'homepage_pain'
+
+export type ShowroomAbmPainCtaType = 'case' | 'consult' | 'consult_soft'
 
 export type ShowroomAbmHeaderNavTarget = 'before_after' | 'expert_recommend' | 'gallery_more'
 
@@ -71,6 +75,30 @@ export function trackShowroomAbmConsultationClick(input: {
     siteName: input.siteName,
     metadata: { surface: input.surface },
   })
+}
+
+/** 랜딩 페인 카드 클릭 — 세그먼트별 pain_click → case_view → consult_click 검증용 */
+export function trackShowroomAbmPainClick(input: {
+  segment: string
+  concern: string
+  ctaType: ShowroomAbmPainCtaType
+}): void {
+  trackShowroomAbmEvent({
+    eventName: 'abm_pain_click',
+    concern: input.concern,
+    industry: input.segment,
+    metadata: {
+      segment: input.segment,
+      ctaType: input.ctaType,
+      surface: 'homepage_pain',
+    },
+  })
+  if (input.ctaType === 'consult' || input.ctaType === 'consult_soft') {
+    trackShowroomAbmConsultationClick({
+      surface: 'homepage_pain',
+      concern: input.concern,
+    })
+  }
 }
 
 export function trackShowroomAbmHeaderNavClick(input: {

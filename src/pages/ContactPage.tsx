@@ -74,13 +74,17 @@ export default function ContactPage() {
       return
     }
     if (cat === '고교학점제 행정 상담') {
-      setMessage('학교 예산 및 공간 규격에 맞는 맞춤형 제안서 및 견적을 요청합니다.')
+      setMessage(
+        '고교학점제·학교 자습공간 관련해, 내부 보고·행정 검토용으로 유사 학교 사례와 체크포인트를 정리해 주세요. (지금 바로 업체 선정·견적 단계가 아닙니다.)',
+      )
       setCompanyName(siteName)
       setContact(searchParams.get('contact') ?? '')
       return
     }
     if (cat === '아파트 리뉴얼 제안서') {
-      setMessage('아파트 독서실·커뮤니티 공간 리뉴얼 맞춤형 제안서를 요청합니다.')
+      setMessage(
+        '아파트 독서실·커뮤니티 리뉴얼 관련해, 입대의·주민 설명용으로 전후 사례 요약을 정리해 주세요. (지금 바로 시공 결정 단계가 아닙니다.)',
+      )
       return
     }
     const initial = siteName ? DEFAULT_MESSAGE(siteName) : ''
@@ -156,7 +160,13 @@ export default function ContactPage() {
           <Link to={showroomBackTo || (showroomSource === 'homepage' ? '/' : '/')} className="text-sm text-neutral-500 hover:text-neutral-900">
             ← {showroomSource === 'homepage' ? '홈페이지로' : '이전 페이지로'}
           </Link>
-          <h1 className="text-lg font-semibold text-neutral-900">무료 레이아웃 컨설팅</h1>
+          <h1 className="text-lg font-semibold text-neutral-900">
+            {(category || '').trim() === '고교학점제 행정 상담'
+              ? '행정 검토 자료 요청'
+              : (category || '').trim() === '아파트 리뉴얼 제안서'
+                ? '입대의 보고용 요약 요청'
+                : '무료 레이아웃 컨설팅'}
+          </h1>
           <span className="w-14" aria-hidden />
         </div>
       </header>
@@ -238,9 +248,11 @@ export default function ContactPage() {
           <Button type="submit" className="w-full h-12 font-semibold" disabled={submitting}>
             {submitting
               ? '접수 중…'
-              : (category || '').trim() === '고교학점제 행정 상담' || (category || '').trim() === '아파트 리뉴얼 제안서'
-                ? '제안서 요청하기'
-                : '문의 접수하기'}
+              : (category || '').trim() === '고교학점제 행정 상담'
+                ? '행정 검토 자료 요청하기'
+                : (category || '').trim() === '아파트 리뉴얼 제안서'
+                  ? '보고용 요약 요청하기'
+                  : '문의 접수하기'}
           </Button>
         </form>
       </main>

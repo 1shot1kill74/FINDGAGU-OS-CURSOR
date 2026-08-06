@@ -23,7 +23,11 @@ import { Search, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Package, 
 import { toast } from 'sonner'
 import { parseShowroomCtaAttribution, trackShowroomCtaVisit } from '@/lib/showroomCtaTracking'
 import { captureShowroomAbmAttribution } from '@/lib/showroomAbmTraffic'
-import { appendShowroomConcernQuery, openShowroomConsultationChat } from '@/pages/showroom/showroomStoryCta'
+import {
+  appendShowroomConcernQuery,
+  openShowroomConsultationChat,
+  resolveShowroomCaseConsultationCopy,
+} from '@/pages/showroom/showroomStoryCta'
 import { trackShowroomAbmEvent, trackShowroomAbmHeaderNavClick } from '@/lib/showroomAbmTracking'
 import ShowroomAeoGuideTeaser from '@/components/showroom/ShowroomAeoGuideTeaser'
 import { ShowroomBeforeAfterTapPreview } from '@/components/showroom/ShowroomBeforeAfterTapPreview'
@@ -1297,6 +1301,8 @@ export default function PublicShowroomExperience({
     )
   }
 
+  const consultCopy = resolveShowroomCaseConsultationCopy({ concern: selectedConcernTag })
+
   return (
     <div className="min-h-screen bg-neutral-50">
       {/* 헤더: 타이틀 + 토글 + 검색 */}
@@ -1844,12 +1850,10 @@ export default function PublicShowroomExperience({
           <h2 id="showroom-gallery-consult-heading" className="text-lg font-semibold text-neutral-900">
             비슷한 공간이 보이셨나요?
           </h2>
-          <p className="mt-1 text-sm text-neutral-600">
-            업종·규모가 가까운 사례를 골랐다면, 우리 현장에 맞게 어떻게 가져올지 이어서 확인해 보세요.
-          </p>
+          <p className="mt-1 text-sm text-neutral-600">{consultCopy.helperLine}</p>
           <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center">
             <ShowroomExpertConsultationButton concern={selectedConcernTag} surface="gallery_close">
-              우리 공간 맞춤 상담하기
+              {consultCopy.buttonLabel}
             </ShowroomExpertConsultationButton>
             <Link
               to="/public/showroom"
@@ -2095,7 +2099,7 @@ export default function PublicShowroomExperience({
               className="flex items-center justify-center gap-2 w-full rounded-xl py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-sm transition-colors shadow-md"
             >
               <MessageCircle className="h-4 w-4" />
-              비슷한 공간 상담 문의
+              {consultCopy.stickyShortLabel}
             </button>
           </div>
         </DialogContent>

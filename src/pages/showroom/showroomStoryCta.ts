@@ -23,7 +23,20 @@ export function openShowroomConsultationChat(track?: ShowroomConsultationTrackCo
   return false
 }
 
-const CONCERN_STORY_CTA: Record<string, { buttonLabel: string; inlineHint: string }> = {
+/** 학교·아파트: 상담(판매) 대신 내부 보고·행정 검토용 마이크로 커밋 CTA */
+const SOFT_COMMIT_CONCERNS = new Set(['고교학점제 자습공간 구축', '아파트 독서실 리뉴얼'])
+
+type ConcernStoryCtaConfig = {
+  buttonLabel: string
+  stickyShortLabel?: string
+  inlineHint: string
+  helperLine?: string
+  trustLine?: string
+  inlineTitle?: string
+  inlineBody?: string
+}
+
+const CONCERN_STORY_CTA: Record<string, ConcernStoryCtaConfig> = {
   '관리형 창업 또는 전환': {
     buttonLabel: '관리형 맞춤 레이아웃 상담하기',
     inlineHint: '관리형·러셀형 레이아웃',
@@ -41,12 +54,22 @@ const CONCERN_STORY_CTA: Record<string, { buttonLabel: string; inlineHint: strin
     inlineHint: '학원 자습실',
   },
   '고교학점제 자습공간 구축': {
-    buttonLabel: '우리 학교 맞춤형 제안서 및 견적 상담하기',
+    buttonLabel: '내부 보고용 학교 사례 정리 받기',
+    stickyShortLabel: '행정 검토 자료 요청',
     inlineHint: '고교학점제 자습공간',
+    helperLine: '교장·행정 보고에 쓰기 좋게, 유사 학교 사례와 체크포인트를 먼저 정리해 드립니다.',
+    trustLine: '견적 상담 전 · 내부 검토용 자료',
+    inlineTitle: '고교학점제 공간, 내부 보고용으로 먼저 정리할까요?',
+    inlineBody: '입찰·회의 전에 쓸 유사 사례와 규격 체크포인트만 정리해 드립니다. 바로 업체를 정하는 단계가 아닙니다.',
   },
   '아파트 독서실 리뉴얼': {
-    buttonLabel: '우리 아파트 맞춤형 리뉴얼 제안서 요청하기',
+    buttonLabel: '입대의 보고용 사례 요약 받기',
+    stickyShortLabel: '보고용 요약 요청',
     inlineHint: '아파트 독서실 리뉴얼',
+    helperLine: '입대의·주민 설명에 쓰기 좋게, 커뮤니티 리뉴얼 전후와 포인트를 요약해 드립니다.',
+    trustLine: '상담 전 · 입대의 보고용 요약',
+    inlineTitle: '입주민 설득용으로 사례를 먼저 정리할까요?',
+    inlineBody: '단지 회의·입대의에 가져갈 전후 사례 요약을 드립니다. 지금 바로 시공을 결정하는 단계가 아닙니다.',
   },
 }
 
@@ -73,23 +96,35 @@ export function resolveShowroomCaseConsultationCopy(input: {
   const config = validConcern ? CONCERN_STORY_CTA[validConcern] : null
   const siteLabel = trimSiteLabel(input.siteDisplayName)
   const buttonLabel = config?.buttonLabel ?? `${siteLabel} 같은 공간 1차 상담`
-  const stickyShortLabel = buttonLabel.length > 22 ? '현장 맞춤 레이아웃 상담' : buttonLabel
+  const stickyShortLabel =
+    config?.stickyShortLabel ??
+    (buttonLabel.length > 22 ? '현장 맞춤 레이아웃 상담' : buttonLabel)
 
   return {
     concern: validConcern,
     buttonLabel,
     stickyShortLabel,
-    helperLine: '고객님의 업종·평수·운영 방식에 맞는 최적 레이아웃을 제안합니다.',
-    trustLine: '현장 맞춤 1차 레이아웃 · 채팅 상담',
-    inlineTitle: validConcern
-      ? `우리 ${config?.inlineHint ?? '공간'}에 맞는 최적 레이아웃, 가능할까요?`
-      : `${siteLabel} 같은 공간, 우리 현장도 가능할까요?`,
-    inlineBody: '평수·좌석 수·운영 방식만 알려주세요. 우리 현장 상황에 맞는 최적 배치를 제안합니다.',
+    helperLine:
+      config?.helperLine ?? '고객님의 업종·평수·운영 방식에 맞는 최적 레이아웃을 제안합니다.',
+    trustLine: config?.trustLine ?? '현장 맞춤 1차 레이아웃 · 채팅 상담',
+    inlineTitle:
+      config?.inlineTitle ??
+      (validConcern
+        ? `우리 ${config?.inlineHint ?? '공간'}에 맞는 최적 레이아웃, 가능할까요?`
+        : `${siteLabel} 같은 공간, 우리 현장도 가능할까요?`),
+    inlineBody:
+      config?.inlineBody ??
+      '평수·좌석 수·운영 방식만 알려주세요. 우리 현장 상황에 맞는 최적 배치를 제안합니다.',
   }
 }
 
 export function resolveShowroomConcernTag(concern: string | null | undefined): string | null {
   return normalizeConcernTag(concern)
+}
+
+export function isSoftCommitShowroomConcern(concern: string | null | undefined): boolean {
+  const tag = resolveShowroomConcernTag(concern)
+  return Boolean(tag && SOFT_COMMIT_CONCERNS.has(tag))
 }
 
 export function resolveShowroomStoryCta(concern: string | null | undefined): {

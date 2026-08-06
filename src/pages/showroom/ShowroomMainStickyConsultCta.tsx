@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react'
 import { MessageCircle, ShieldCheck } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { openShowroomConsultationChat } from '@/pages/showroom/showroomStoryCta'
+import {
+  openShowroomConsultationChat,
+  resolveShowroomCaseConsultationCopy,
+} from '@/pages/showroom/showroomStoryCta'
 
 const STICKY_REVEAL_SCROLL_Y = 320
 
@@ -15,6 +18,7 @@ export function ShowroomMainStickyConsultCta({
   concern = null,
 }: ShowroomMainStickyConsultCtaProps) {
   const [revealed, setRevealed] = useState(false)
+  const copy = resolveShowroomCaseConsultationCopy({ concern })
 
   useEffect(() => {
     if (!enabled) return
@@ -37,17 +41,15 @@ export function ShowroomMainStickyConsultCta({
         revealed ? 'translate-y-0' : 'translate-y-full pointer-events-none',
       )}
       role="region"
-      aria-label="상담 문의"
+      aria-label={copy.stickyShortLabel}
       aria-hidden={!revealed}
     >
       <div className="mx-auto flex max-w-3xl flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
         <div className="min-w-0 flex-1">
-          <p className="text-sm leading-snug text-neutral-700">
-            고객님의 업종·평수·운영 방식에 맞는 최적 레이아웃을 제안합니다.
-          </p>
+          <p className="text-sm leading-snug text-neutral-700">{copy.helperLine}</p>
           <p className="mt-0.5 inline-flex items-center gap-1 text-xs text-neutral-500">
             <ShieldCheck className="h-3 w-3 shrink-0 text-[#5f7058]" aria-hidden />
-            현장 맞춤 1차 레이아웃 · 채팅 상담
+            {copy.trustLine}
           </p>
         </div>
         <button
@@ -58,7 +60,7 @@ export function ShowroomMainStickyConsultCta({
           className="inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-emerald-500 sm:w-auto sm:min-w-[180px]"
         >
           <MessageCircle className="h-4 w-4 shrink-0" />
-          비슷한 공간 상담 문의
+          {copy.stickyShortLabel}
         </button>
       </div>
     </div>

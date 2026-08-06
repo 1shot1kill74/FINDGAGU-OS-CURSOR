@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowRight, CheckCircle2, Images, Sparkles } from 'lucide-react'
+import { trackHomepagePainClick, type HomepagePainCtaType } from '@/lib/homepageAbmTracking'
 import { fetchShowroomImageAssets, type ShowroomImageAsset } from '@/lib/publicData'
 
 type PainPointCard = {
@@ -9,7 +10,12 @@ type PainPointCard = {
   title: string
   summary: string
   concern: string
+  /** ABM 세그먼트 키 */
+  segment: string
   ctaCategory: string
+  caseCtaLabel: string
+  consultCtaLabel: string
+  consultCtaType: HomepagePainCtaType
 }
 
 type Testimonial = {
@@ -41,7 +47,11 @@ const PAIN_POINT_CARDS: PainPointCard[] = [
     title: '관리형처럼 보이게 바꾸고 싶다',
     summary: '관리 동선과 좌석 운영이 보이는 현장 중심으로 먼저 보여줍니다.',
     concern: 'management',
+    segment: 'managed_study_cafe',
     ctaCategory: '관리형 창업',
+    caseCtaLabel: '해결 사례 보기',
+    consultCtaLabel: '바로 상담',
+    consultCtaType: 'consult',
   },
   {
     id: 'renewal',
@@ -49,7 +59,11 @@ const PAIN_POINT_CARDS: PainPointCard[] = [
     title: '리뉴얼이 필요한데 설득 포인트가 필요하다',
     summary: '전후 비교와 변화 논리가 보이는 사례를 우선으로 보여줍니다.',
     concern: 'renewal',
+    segment: 'managed_study_cafe',
     ctaCategory: '리뉴얼 상담',
+    caseCtaLabel: '해결 사례 보기',
+    consultCtaLabel: '바로 상담',
+    consultCtaType: 'consult',
   },
   {
     id: 'academy',
@@ -57,7 +71,11 @@ const PAIN_POINT_CARDS: PainPointCard[] = [
     title: '학원 자습실을 더 몰입감 있게 만들고 싶다',
     summary: '학습 몰입과 운영 기준을 설명하기 좋은 현장을 우선 정리합니다.',
     concern: 'academy',
+    segment: 'academy_director',
     ctaCategory: '학원 자습실 문의',
+    caseCtaLabel: '해결 사례 보기',
+    consultCtaLabel: '바로 상담',
+    consultCtaType: 'consult',
   },
   {
     id: 'school',
@@ -65,7 +83,23 @@ const PAIN_POINT_CARDS: PainPointCard[] = [
     title: '학교 공간을 실제 사례로 검토하고 싶다',
     summary: '학교와 공공성 있는 공간 사례를 먼저 보며 방향을 잡습니다.',
     concern: 'school',
+    segment: 'school_officer',
     ctaCategory: '고교학점제 행정 상담',
+    caseCtaLabel: '학교 사례로 검토하기',
+    consultCtaLabel: '행정 검토 자료 요청',
+    consultCtaType: 'consult_soft',
+  },
+  {
+    id: 'apartment',
+    icon: '🏘',
+    title: '아파트 독서실을 입주민이 찾게 만들고 싶다',
+    summary: '입대의·주민 설명에 쓰기 좋은 커뮤니티 리뉴얼 전후를 먼저 보여줍니다.',
+    concern: 'apartment',
+    segment: 'apartment_officer',
+    ctaCategory: '아파트 리뉴얼 제안서',
+    caseCtaLabel: '입주민 설득용 사례 보기',
+    consultCtaLabel: '입대의 보고용 요약 받기',
+    consultCtaType: 'consult_soft',
   },
 ]
 
@@ -319,7 +353,7 @@ export default function HomePage() {
             </p>
           </div>
 
-          <div className="mt-10 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <div className="mt-10 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {recommendedPainPoints.map((card) => (
               <div key={card.id} className="rounded-[28px] bg-white p-5 card-shadow transition-all hover:-translate-y-0.5 hover:card-shadow-hover">
                 <span className="text-2xl">{card.icon}</span>
@@ -328,15 +362,29 @@ export default function HomePage() {
                 <div className="mt-5 flex gap-2">
                   <Link
                     to={card.href}
+                    onClick={() =>
+                      trackHomepagePainClick({
+                        segment: card.segment,
+                        concern: card.concern,
+                        ctaType: 'case',
+                      })
+                    }
                     className="inline-flex flex-1 items-center justify-center rounded-xl border border-border px-3 py-2.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
                   >
-                    해결 사례 보기
+                    {card.caseCtaLabel}
                   </Link>
                   <Link
                     to={card.contactHref}
+                    onClick={() =>
+                      trackHomepagePainClick({
+                        segment: card.segment,
+                        concern: card.concern,
+                        ctaType: card.consultCtaType,
+                      })
+                    }
                     className="inline-flex flex-1 items-center justify-center rounded-xl bg-primary px-3 py-2.5 text-xs font-semibold text-primary-foreground transition-opacity hover:opacity-90"
                   >
-                    바로 상담
+                    {card.consultCtaLabel}
                   </Link>
                 </div>
               </div>

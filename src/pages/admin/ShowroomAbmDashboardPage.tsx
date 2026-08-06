@@ -97,6 +97,28 @@ type DateChannelVideoRow = {
   consultationSessions: number
 }
 
+type PainFunnelSegmentRow = {
+  segment: string
+  label: string
+  painSessions: number
+  caseSessions: number
+  consultSessions: number
+  caseRate: number
+  consultGivenCase: number
+}
+
+const PAIN_SEGMENT_LABELS: Record<string, string> = {
+  managed_study_cafe: '관리형 창업주',
+  academy_director: '학원 원장',
+  school_officer: '학교 담당자',
+  apartment_officer: '아파트 담당자',
+  management: '관리형',
+  renewal: '리뉴얼',
+  academy: '학원',
+  school: '학교',
+  apartment: '아파트',
+}
+
 export default function ShowroomAbmDashboardPage() {
   const [periodDays, setPeriodDays] = useState<number>(15)
   const [trafficFilter, setTrafficFilter] = useState<ShowroomAbmTrafficFilter>('production')
@@ -265,6 +287,7 @@ export default function ShowroomAbmDashboardPage() {
   const overview = useMemo(() => buildOverview(filteredRows, periodDays), [filteredRows, periodDays])
   const dailyStack = useMemo(() => buildDailyStackedEnter(filteredRows, periodDays), [filteredRows, periodDays])
   const channelTotals = useMemo(() => buildChannelTotals(filteredRows), [filteredRows])
+  const painFunnelRows = useMemo(() => buildPainFunnelBySegment(filteredRows), [filteredRows])
   const videoRanks = useMemo(() => buildVideoRanks(filteredRows, jobLabels), [filteredRows, jobLabels])
   const detailRows = useMemo(
     () => buildDateChannelVideoRows(filteredRows, jobLabels),
@@ -361,6 +384,53 @@ export default function ShowroomAbmDashboardPage() {
                 }
                 icon={<Video className="h-4 w-4" />}
               />
+            </section>
+
+            <section className="rounded-3xl border border-slate-200/80 bg-white/90 p-5 shadow-sm backdrop-blur">
+              <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-900">페인 퍼널 (세그먼트)</h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    pain_click → case_view(case_open) → consult_click · 학교·아파트 soft CTA 검증용
+                  </p>
+                </div>
+              </div>
+              {painFunnelRows.length === 0 ? (
+                <p className="mt-6 text-sm text-slate-500">
+                  아직 `abm_pain_click` 데이터가 없습니다. 홈 페인 카드 클릭이 쌓이면 세그먼트별로 표시됩니다.
+                </p>
+              ) : (
+                <div className="mt-5 overflow-x-auto">
+                  <table className="w-full min-w-[560px] text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-100 text-xs uppercase tracking-wide text-slate-400">
+                        <th className="px-2 py-2 font-medium">세그먼트</th>
+                        <th className="px-2 py-2 text-right font-medium">pain</th>
+                        <th className="px-2 py-2 text-right font-medium">case</th>
+                        <th className="px-2 py-2 text-right font-medium">consult</th>
+                        <th className="px-2 py-2 text-right font-medium">pain→case</th>
+                        <th className="px-2 py-2 text-right font-medium">case→consult</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {painFunnelRows.map((row) => (
+                        <tr key={row.segment} className="border-b border-slate-50 text-slate-700">
+                          <td className="px-2 py-2.5 font-medium text-slate-900">{row.label}</td>
+                          <td className="px-2 py-2.5 text-right tabular-nums">{formatNumber(row.painSessions)}</td>
+                          <td className="px-2 py-2.5 text-right tabular-nums">{formatNumber(row.caseSessions)}</td>
+                          <td className="px-2 py-2.5 text-right tabular-nums">{formatNumber(row.consultSessions)}</td>
+                          <td className="px-2 py-2.5 text-right tabular-nums text-slate-500">
+                            {formatPercent(row.caseRate)}
+                          </td>
+                          <td className="px-2 py-2.5 text-right tabular-nums text-slate-500">
+                            {formatPercent(row.consultGivenCase)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </section>
 
             <section className="rounded-3xl border border-slate-200/80 bg-white/90 p-5 shadow-sm backdrop-blur">
@@ -620,6 +690,65 @@ function buildOverview(rows: AbmEventRow[], periodDays: number) {
     knownVideoEnter,
     knownVideoShare: enterSessions > 0 ? knownVideoEnter / enterSessions : 0,
   }
+}
+
+function readPainSegment(row: AbmEventRow): string {
+  const meta = row.metadata ?? {}
+  const fromMeta =
+    (typeof meta.segment === 'string' && meta.segment.trim()) ||
+    (typeof meta.concern === 'string' && meta.concern.trim()) ||
+    ''
+  if (fromMeta) return fromMeta
+  return (row.industry ?? '').trim() || 'unknown'
+}
+
+function buildPainFunnelBySegment(rows: AbmEventRow[]): PainFunnelSegmentRow[] {
+  const painBySegment = new Map<string, Set<string>>()
+  const caseBySession = new Map<string, Set<string>>()
+  const consultBySession = new Map<string, Set<string>>()
+  const sessionSegment = new Map<string, string>()
+
+  for (const row of rows) {
+    if (row.event_name === 'abm_pain_click') {
+      const segment = readPainSegment(row)
+      const set = painBySegment.get(segment) ?? new Set<string>()
+      set.add(row.session_key)
+      painBySegment.set(segment, set)
+      sessionSegment.set(row.session_key, segment)
+    }
+  }
+
+  for (const row of rows) {
+    const segment = sessionSegment.get(row.session_key)
+    if (!segment) continue
+    if (row.event_name === 'abm_case_open' || row.event_name === 'showroom_view_case') {
+      const set = caseBySession.get(segment) ?? new Set<string>()
+      set.add(row.session_key)
+      caseBySession.set(segment, set)
+    }
+    if (row.event_name === 'abm_consultation_click') {
+      const set = consultBySession.get(segment) ?? new Set<string>()
+      set.add(row.session_key)
+      consultBySession.set(segment, set)
+    }
+  }
+
+  return [...painBySegment.entries()]
+    .map(([segment, painSet]) => {
+      const painSessions = painSet.size
+      const caseSessions = caseBySession.get(segment)?.size ?? 0
+      const consultSessions = consultBySession.get(segment)?.size ?? 0
+      return {
+        segment,
+        label: PAIN_SEGMENT_LABELS[segment] ?? segment,
+        painSessions,
+        caseSessions,
+        consultSessions,
+        caseRate: painSessions > 0 ? caseSessions / painSessions : 0,
+        consultGivenCase: caseSessions > 0 ? consultSessions / caseSessions : 0,
+      }
+    })
+    .sort((a, b) => b.painSessions - a.painSessions || a.label.localeCompare(b.label, 'ko'))
 }
 
 function buildDailyStackedEnter(rows: AbmEventRow[], periodDays: number): DailyStackDay[] {

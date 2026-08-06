@@ -6,7 +6,7 @@ import {
 import { buildShowroomContextParams } from '@/features/지능형쇼룸홈페이지/showroomEngagementService'
 import type { ShowroomImageAsset } from '@/lib/imageAssetService'
 
-export type ConcernId = 'all' | 'management' | 'renewal' | 'academy' | 'school'
+export type ConcernId = 'all' | 'management' | 'renewal' | 'academy' | 'school' | 'apartment'
 
 export type ConcernCard = {
   id: ConcernId
@@ -64,6 +64,13 @@ export const CONCERN_CARDS: ConcernCard[] = [
     summary: '학교, 고교학점제, 공공성 있는 공간 사례를 우선 보여줍니다.',
     industryKeywords: ['학교'],
     category: '고교학점제 행정 상담',
+  },
+  {
+    id: 'apartment',
+    title: '아파트 독서실 리뉴얼',
+    summary: '입대의·주민 설명에 쓰기 좋은 커뮤니티 독서실 전후를 우선 보여줍니다.',
+    industryKeywords: ['아파트'],
+    category: '아파트 리뉴얼 제안서',
   },
 ]
 

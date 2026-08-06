@@ -21,19 +21,41 @@ export default function ContactPage() {
   const [submitting, setSubmitting] = useState(false)
   const [submitMessage, setSubmitMessage] = useState<string | null>(null)
 
+  const isSchoolSoft = category.trim() === '고교학점제 행정 상담'
+  const isApartmentSoft = category.trim() === '아파트 리뉴얼 제안서'
+  const isSoftCommit = isSchoolSoft || isApartmentSoft
+
   useEffect(() => {
     if (showroomContext.trim()) {
       const prefix = showroomEntryLabel.trim() ? `[${showroomEntryLabel.trim()}] ` : ''
-      setMessage(`${prefix}${showroomContext.trim()} 관련 상담을 요청합니다.`)
+      setMessage(
+        isSoftCommit
+          ? `${prefix}${showroomContext.trim()} 관련해 내부 검토용 사례 정리를 요청합니다.`
+          : `${prefix}${showroomContext.trim()} 관련 상담을 요청합니다.`,
+      )
+      return
+    }
+    if (isSchoolSoft) {
+      setMessage(
+        '고교학점제·학교 자습공간 관련해, 내부 보고·행정 검토용으로 유사 학교 사례와 체크포인트를 정리해 주세요. (지금 바로 업체 선정·견적 단계가 아닙니다.)',
+      )
+      return
+    }
+    if (isApartmentSoft) {
+      setMessage(
+        '아파트 독서실·커뮤니티 리뉴얼 관련해, 입대의·주민 설명용으로 전후 사례 요약을 정리해 주세요. (지금 바로 시공 결정 단계가 아닙니다.)',
+      )
       return
     }
     setMessage(siteName ? DEFAULT_MESSAGE(siteName) : '')
-  }, [showroomContext, showroomEntryLabel, siteName])
+  }, [showroomContext, showroomEntryLabel, siteName, isSchoolSoft, isApartmentSoft, isSoftCommit])
 
   const title = useMemo(() => {
+    if (isSchoolSoft) return '행정 검토 자료 요청'
+    if (isApartmentSoft) return '입대의 보고용 요약 요청'
     if (siteName) return `${siteName} 사례 관련 문의`
     return category
-  }, [category, siteName])
+  }, [category, siteName, isSchoolSoft, isApartmentSoft])
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -81,7 +103,9 @@ export default function ContactPage() {
             <p className="text-xs font-medium uppercase tracking-[0.2em] text-stone-400">Contact</p>
             <h1 className="mt-2 text-3xl font-semibold text-white">{title}</h1>
             <p className="mt-3 max-w-2xl text-sm leading-7 text-stone-300">
-                사례 맥락을 함께 전달해, 담당자가 비슷한 현장과 기준을 빠르게 안내할 수 있도록 구성한 문의 폼입니다.
+              {isSoftCommit
+                ? '내부 회의·보고에 쓰기 좋은 유사 사례와 체크포인트를 먼저 정리해 드립니다. 바로 시공·업체를 정하는 단계가 아닙니다.'
+                : '사례 맥락을 함께 전달해, 담당자가 비슷한 현장과 기준을 빠르게 안내할 수 있도록 구성한 문의 폼입니다.'}
             </p>
           </div>
           <Link to="/showroom" className="inline-flex items-center justify-center rounded-xl border border-white/15 bg-white/5 px-5 py-3 text-sm font-medium text-white transition hover:bg-white/10">
@@ -107,11 +131,19 @@ export default function ContactPage() {
         <form onSubmit={handleSubmit} className="mt-8 space-y-5">
           <div className="grid gap-5 md:grid-cols-2">
             <label className="block">
-              <span className="mb-2 block text-sm font-medium text-stone-200">업체명</span>
+              <span className="mb-2 block text-sm font-medium text-stone-200">
+                {isSchoolSoft ? '학교명' : isApartmentSoft ? '아파트 단지명' : '업체명'}
+              </span>
               <input
                 value={companyName}
                 onChange={(event) => setCompanyName(event.target.value)}
-                placeholder="예: OO학원"
+                placeholder={
+                  isSchoolSoft
+                    ? '예: OO고등학교'
+                    : isApartmentSoft
+                      ? '예: OO 아파트, OO 힐스테이트'
+                      : '예: OO학원'
+                }
                 className="h-12 w-full rounded-xl border border-white/10 bg-white/5 px-4 text-sm text-white placeholder:text-stone-500 focus:border-white/20 focus:outline-none"
               />
             </label>
@@ -179,7 +211,9 @@ export default function ContactPage() {
           )}
 
           <div className="rounded-2xl border border-white/10 bg-black/15 p-4 text-xs leading-6 text-stone-400">
-            남겨주신 정보는 상담 연락과 사례 안내 용도로만 사용합니다. 빠른 비교 견적보다 현재 상황에 맞는 방향을 먼저 안내드리는 방식으로 확인합니다.
+            {isSoftCommit
+              ? '남겨주신 정보는 내부 검토용 사례 정리·안내 연락에만 사용합니다. 견적 압박 없이 보고 자료를 먼저 준비하는 흐름입니다.'
+              : '남겨주신 정보는 상담 연락과 사례 안내 용도로만 사용합니다. 빠른 비교 견적보다 현재 상황에 맞는 방향을 먼저 안내드리는 방식으로 확인합니다.'}
           </div>
 
           <button
@@ -187,7 +221,13 @@ export default function ContactPage() {
             disabled={submitting}
             className="inline-flex w-full items-center justify-center rounded-xl bg-amber-400 px-5 py-3.5 text-sm font-semibold text-stone-950 transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-70"
           >
-            {submitting ? '접수 중…' : '문의 접수하기'}
+            {submitting
+              ? '접수 중…'
+              : isSchoolSoft
+                ? '행정 검토 자료 요청하기'
+                : isApartmentSoft
+                  ? '보고용 요약 요청하기'
+                  : '문의 접수하기'}
           </button>
         </form>
       </div>
