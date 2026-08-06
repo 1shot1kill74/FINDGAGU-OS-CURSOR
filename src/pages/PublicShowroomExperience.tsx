@@ -1050,8 +1050,6 @@ export default function PublicShowroomExperience({
         afterSrc={afterSrc}
         altLabel={publicLabel}
         aspectClassName={compactPreview ? 'aspect-[16/10]' : 'aspect-[4/3]'}
-        imageHref={storyHref}
-        onImageActivate={storyHref ? trackStoryClick : undefined}
       />
     )
     const footerBlock = (
@@ -1087,7 +1085,7 @@ export default function PublicShowroomExperience({
           highlighted && 'ring-2 ring-[#5f7058] ring-offset-2',
         )}
       >
-        {/* 슬라이더=비교, 하단=이야기 진입. 허브에는 블로그 티저 문단을 두지 않음 */}
+        {/* 사진=전후 비교, 하단 CTA=이야기·블로그 진입. 허브에는 블로그 티저 문단을 두지 않음 */}
         {beforeAfterPreview}
         {storyHref ? (
           <Link

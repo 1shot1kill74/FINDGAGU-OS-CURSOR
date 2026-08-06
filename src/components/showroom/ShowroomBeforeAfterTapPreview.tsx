@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 
 type ShowroomBeforeAfterTapPreviewProps = {
@@ -9,19 +8,12 @@ type ShowroomBeforeAfterTapPreviewProps = {
   /** 기본 4/3. compact 카드는 16/10 등 */
   aspectClassName?: string
   className?: string
-  /**
-   * 사진 영역 클릭 시 이동할 경로.
-   * 있으면 사진=사례 더보기, 하단 버튼만 전후 토글.
-   * 없으면 사진·버튼 모두 전후 토글.
-   */
-  imageHref?: string | null
-  /** imageHref 이동 시 트래킹 등 */
-  onImageActivate?: () => void
 }
 
 /**
  * Before/After 클릭 토글 프리뷰.
- * 스크롤을 막는 드래그 슬라이더 대신, 탭으로 Before ↔ After를 전환한다.
+ * 사진(또는 안내 버튼)을 누르면 Before ↔ After를 전환한다.
+ * 사례 블로그 이동은 카드 하단 CTA에서 처리한다.
  */
 export function ShowroomBeforeAfterTapPreview({
   beforeSrc,
@@ -29,8 +21,6 @@ export function ShowroomBeforeAfterTapPreview({
   altLabel,
   aspectClassName = 'aspect-[4/3]',
   className,
-  imageHref,
-  onImageActivate,
 }: ShowroomBeforeAfterTapPreviewProps) {
   const [showAfter, setShowAfter] = useState(true)
   const src = showAfter ? afterSrc : beforeSrc
@@ -42,17 +32,6 @@ export function ShowroomBeforeAfterTapPreview({
     setShowAfter((prev) => !prev)
   }
 
-  const media = (
-    <img
-      src={src}
-      alt={`${altLabel} ${sideLabel}`}
-      className="absolute inset-0 h-full w-full object-cover transition-opacity duration-200"
-      loading="lazy"
-      decoding="async"
-      draggable={false}
-    />
-  )
-
   return (
     <div
       className={cn(
@@ -61,25 +40,21 @@ export function ShowroomBeforeAfterTapPreview({
         className,
       )}
     >
-      {imageHref ? (
-        <Link
-          to={imageHref}
-          className="absolute inset-0 block"
-          aria-label={`${altLabel} 사례 이야기·사진 더 보기`}
-          onClick={() => onImageActivate?.()}
-        >
-          {media}
-        </Link>
-      ) : (
-        <button
-          type="button"
-          className="absolute inset-0 block cursor-pointer"
-          aria-label={`${altLabel} 전후 비교 전환. 현재 ${sideLabel}`}
-          onClick={toggle}
-        >
-          {media}
-        </button>
-      )}
+      <button
+        type="button"
+        className="absolute inset-0 block cursor-pointer"
+        aria-label={`${altLabel} 전후 비교 전환. 현재 ${sideLabel}`}
+        onClick={toggle}
+      >
+        <img
+          src={src}
+          alt={`${altLabel} ${sideLabel}`}
+          className="absolute inset-0 h-full w-full object-cover transition-opacity duration-200"
+          loading="lazy"
+          decoding="async"
+          draggable={false}
+        />
+      </button>
 
       <span
         className={cn(
