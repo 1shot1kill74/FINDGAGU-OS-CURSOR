@@ -167,7 +167,22 @@ export default function ShowroomCaseStudioPage() {
   function buildBlogPreviewHtmlForRow(row: CaseDraftState): string {
     if (!row.canonicalBlogPost) return ''
     if (row.canonicalBlogPost.bodyMarkdown?.trim()) {
-      return renderCanonicalBlogPostHtml(row.canonicalBlogPost)
+      const overlayHints = row.projectImages.flatMap((img) => {
+        const urls = [getShowroomImagePreviewUrl(img), img.cloudinary_url, img.thumbnail_url]
+        return urls
+          .map((url) => url?.trim())
+          .filter((url): url is string => Boolean(url))
+          .map((url) => ({
+            url,
+            beforeAfter:
+              img.before_after_role === 'before' || img.before_after_role === 'after'
+                ? img.before_after_role
+                : null,
+            productName: img.product_name?.trim() || null,
+            colorName: img.color_name?.trim() || null,
+          }))
+      })
+      return renderCanonicalBlogPostHtml(row.canonicalBlogPost, { overlayHints })
     }
     const previewFigures = [
       ...row.canonicalBlogPost.images.map((img) => ({ url: img.url, alt: img.alt })),

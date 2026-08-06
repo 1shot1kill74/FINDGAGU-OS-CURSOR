@@ -141,7 +141,7 @@ export function ShowroomCaseBlogHtml({ html, className }: ShowroomCaseBlogHtmlPr
           '[&_p]:mb-4 [&_p]:leading-[1.75] [&_p]:text-neutral-700',
           '[&_img]:max-h-96 [&_img]:w-full [&_img]:cursor-zoom-in [&_img]:rounded-xl [&_img]:object-cover',
           '[&_img]:outline-none [&_img]:ring-offset-2 focus-visible:[&_img]:ring-2 focus-visible:[&_img]:ring-emerald-500',
-          '[&_figure]:relative [&_figure]:my-6 [&_figure]:overflow-visible',
+          '[&_figure]:relative [&_figure]:my-6 [&_figure]:overflow-hidden [&_figure]:rounded-lg',
           className,
         )}
         role="presentation"

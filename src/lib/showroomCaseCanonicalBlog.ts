@@ -39,6 +39,17 @@ export type ShowroomCaseCanonicalBlogImageBlock = {
   alt: string
   caption?: string | null
   placement?: ShowroomCaseCanonicalBlogImagePlacement | null
+  /** 쇼룸 라이트박스와 동일한 사진 오버레이용 메타 */
+  beforeAfter?: 'before' | 'after' | null
+  productName?: string | null
+  colorName?: string | null
+}
+
+/** 블로그 사진 우측 상단 오버레이 (Before/After · 제품명 · 색상) */
+export type ShowroomCaseBlogImageOverlayMeta = {
+  beforeAfter?: 'before' | 'after' | null
+  productName?: string | null
+  colorName?: string | null
 }
 
 export type ShowroomCaseCanonicalBlogSeo = {
@@ -115,6 +126,12 @@ function parseImages(value: unknown): ShowroomCaseCanonicalBlogImageBlock[] | nu
         : null
     const imageAssetId = readString(img, 'imageAssetId') ?? readString(img, 'image_asset_id')
     const caption = readString(img, 'caption')
+    const beforeAfterRaw =
+      readString(img, 'beforeAfter') ?? readString(img, 'before_after') ?? readString(img, 'before_after_role')
+    const beforeAfter =
+      beforeAfterRaw === 'before' || beforeAfterRaw === 'after' ? beforeAfterRaw : null
+    const productName = readString(img, 'productName') ?? readString(img, 'product_name')
+    const colorName = readString(img, 'colorName') ?? readString(img, 'color_name')
     out.push({
       id,
       url,
@@ -122,6 +139,9 @@ function parseImages(value: unknown): ShowroomCaseCanonicalBlogImageBlock[] | nu
       imageAssetId: imageAssetId ?? null,
       caption: caption ?? null,
       placement: placementNorm,
+      beforeAfter,
+      productName: productName ?? null,
+      colorName: colorName ?? null,
     })
   }
   return out
@@ -284,6 +304,12 @@ export function serializeCanonicalBlogPost(post: ShowroomCaseCanonicalBlogPost):
       alt: img.alt,
       caption: img.caption ?? null,
       placement: img.placement ?? null,
+      before_after: img.beforeAfter ?? null,
+      beforeAfter: img.beforeAfter ?? null,
+      product_name: img.productName ?? null,
+      productName: img.productName ?? null,
+      color_name: img.colorName ?? null,
+      colorName: img.colorName ?? null,
     })),
     seo: {
       title: post.seo.title,
@@ -350,13 +376,85 @@ export function filterCanonicalBlogImagesNotInBodyHtml(
 }
 
 /**
+ * 같은 원본 사진을 URL 형태와 무관하게 묶기 위한 키.
+ *
+ * 본문(썸네일 변환), 공개 쇼룸(워터마크 오버레이 여러 겹), 원본(v12345)이 모두
+ * 마지막에 같은 Cloudinary public id 조각을 남기므로 그 조각만 비교한다.
+ * Cloudinary가 아닌 프록시 URL은 마지막 조각이 variant 이름이라 경로 전체를 쓴다.
+ */
+export function canonicalBlogImageMatchKey(url: string): string {
+  const raw = String(url ?? '').trim().split('?')[0]
+  if (!raw) return ''
+  let decoded = raw
+  try {
+    decoded = decodeURIComponent(raw)
+  } catch {
+    decoded = raw
+  }
+  const uploadIdx = decoded.indexOf('/image/upload/')
+  if (uploadIdx === -1) return decoded.toLowerCase()
+  const segments = decoded.slice(uploadIdx + '/image/upload/'.length).split('/').filter(Boolean)
+  const last = segments[segments.length - 1] ?? ''
+  return last.replace(/\.[a-z0-9]{2,5}$/i, '').toLowerCase()
+}
+
+function mergeBlogImageOverlayMeta(
+  base: ShowroomCaseBlogImageOverlayMeta | undefined,
+  next: ShowroomCaseBlogImageOverlayMeta | undefined,
+): ShowroomCaseBlogImageOverlayMeta | undefined {
+  if (!base && !next) return undefined
+  const beforeAfter = next?.beforeAfter ?? base?.beforeAfter ?? null
+  const productName = (next?.productName ?? base?.productName)?.trim() || null
+  const colorName = (next?.colorName ?? base?.colorName)?.trim() || null
+  if (!beforeAfter && !productName && !colorName) return undefined
+  return { beforeAfter, productName, colorName }
+}
+
+export type ShowroomCaseBlogImageOverlayHint = ShowroomCaseBlogImageOverlayMeta & {
+  url: string
+}
+
+/** 정본 `images[]` + 페이지 힌트(비포/애프 자산 등)로 URL 키 → 오버레이 메타 맵을 만든다. */
+export function buildCanonicalBlogOverlayLookup(
+  post: ShowroomCaseCanonicalBlogPost,
+  overlayHints?: ShowroomCaseBlogImageOverlayHint[] | null,
+): Map<string, ShowroomCaseBlogImageOverlayMeta> {
+  const map = new Map<string, ShowroomCaseBlogImageOverlayMeta>()
+  const put = (url: string | null | undefined, meta: ShowroomCaseBlogImageOverlayMeta | undefined) => {
+    const key = canonicalBlogImageMatchKey(url ?? '')
+    if (!key || !meta) return
+    const merged = mergeBlogImageOverlayMeta(map.get(key), meta)
+    if (merged) map.set(key, merged)
+  }
+  for (const img of post.images ?? []) {
+    put(img.url, {
+      beforeAfter: img.beforeAfter ?? null,
+      productName: img.productName ?? null,
+      colorName: img.colorName ?? null,
+    })
+  }
+  for (const hint of overlayHints ?? []) {
+    put(hint.url, {
+      beforeAfter: hint.beforeAfter ?? null,
+      productName: hint.productName ?? null,
+      colorName: hint.colorName ?? null,
+    })
+  }
+  return map
+}
+
+/**
  * 화면 렌더의 진실 원천은 `bodyMarkdown`이다.
  * - 새 정본: `bodyMarkdown` → 최신 파서로 매 렌더마다 HTML 생성
  * - 구 정본: `bodyHtml` fallback
  */
-export function renderCanonicalBlogPostHtml(post: ShowroomCaseCanonicalBlogPost): string {
+export function renderCanonicalBlogPostHtml(
+  post: ShowroomCaseCanonicalBlogPost,
+  options?: { overlayHints?: ShowroomCaseBlogImageOverlayHint[] | null },
+): string {
   const markdown = post.bodyMarkdown?.trim()
-  if (markdown) return plainMarkdownToSafeArticleHtml(markdown)
+  const overlayByUrl = buildCanonicalBlogOverlayLookup(post, options?.overlayHints)
+  if (markdown) return plainMarkdownToSafeArticleHtml(markdown, { overlayByUrl })
   return post.bodyHtml
 }
 
@@ -584,30 +682,58 @@ function detectImageLabelFromAlt(alt: string): ImageLabelKind {
   return null
 }
 
-function buildLabeledFigureHtml(safeUrl: string, alt: string, label: 'Before' | 'After'): string {
-  const srcEsc = escapeHtmlForCanonicalBlog(safeUrl)
-  const altEsc = escapeHtmlForCanonicalBlog(alt)
-  const badgeBg = label === 'Before' ? 'bg-slate-900/85' : 'bg-emerald-700/90'
-  return (
-    `<figure class="my-6 mx-auto max-w-3xl">` +
-    `<img src="${srcEsc}" alt="${altEsc}" class="w-full rounded-lg object-cover" loading="lazy" decoding="async" />` +
-    `<figcaption class="mt-2 flex justify-center">` +
-    `<span class="inline-flex items-center rounded-full ${badgeBg} px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-white">${label}</span>` +
-    `</figcaption>` +
-    `</figure>`
-  )
+function buildBlogImageOverlayHtml(meta: ShowroomCaseBlogImageOverlayMeta | undefined): string {
+  if (!meta) return ''
+  const productName = meta.productName?.trim() || ''
+  const colorName = meta.colorName?.trim() || ''
+  const role = meta.beforeAfter === 'before' || meta.beforeAfter === 'after' ? meta.beforeAfter : null
+  if (!role && !productName && !colorName) return ''
+
+  // dangerouslySetInnerHTML + Tailwind JIT 누락을 피하려고 핵심 레이아웃/색은 inline style로 고정
+  const parts: string[] = [
+    `<div data-blog-image-overlay="1" style="position:absolute;top:8px;right:8px;z-index:10;max-width:70%;border-radius:0.5rem;background:rgba(0,0,0,0.72);padding:0.5rem 0.75rem;color:#fff;font-size:0.875rem;line-height:1.35;text-align:left;pointer-events:none;box-shadow:0 10px 15px -3px rgba(0,0,0,0.35);backdrop-filter:blur(4px)">`,
+  ]
+  if (role) {
+    const label = role === 'before' ? 'Before' : 'After'
+    parts.push(
+      `<div style="margin-bottom:0.25rem"><span style="display:inline-flex;align-items:center;border-radius:9999px;background:rgba(255,255,255,0.15);padding:0.125rem 0.5rem;font-size:11px;font-weight:600;color:#fff">${label}</span></div>`,
+    )
+  }
+  if (productName) {
+    parts.push(
+      `<div style="font-weight:600">제품명 ${escapeHtmlForCanonicalBlog(productName)}</div>`,
+    )
+  }
+  if (colorName) {
+    parts.push(
+      `<div style="margin-top:0.125rem;font-size:0.75rem;color:rgba(229,229,229,0.95)">색상 ${escapeHtmlForCanonicalBlog(colorName)}</div>`,
+    )
+  }
+  parts.push(`</div>`)
+  return parts.join('')
 }
 
-function buildPlainFigureHtml(safeUrl: string, alt: string): string {
+function buildFigureHtml(
+  safeUrl: string,
+  alt: string,
+  overlay?: ShowroomCaseBlogImageOverlayMeta,
+): string {
   const srcEsc = escapeHtmlForCanonicalBlog(safeUrl)
   const altEsc = escapeHtmlForCanonicalBlog(alt)
-  return `<figure class="my-6 mx-auto max-w-3xl"><img src="${srcEsc}" alt="${altEsc}" class="w-full rounded-lg object-cover" loading="lazy" decoding="async" /></figure>`
+  const overlayHtml = buildBlogImageOverlayHtml(overlay)
+  return (
+    `<figure style="position:relative;margin:1.5rem auto;max-width:48rem;overflow:hidden;border-radius:0.5rem">` +
+    `<img src="${srcEsc}" alt="${altEsc}" class="w-full rounded-lg object-cover" loading="lazy" decoding="async" />` +
+    overlayHtml +
+    `</figure>`
+  )
 }
 
 type ArticleRenderState = {
   beforeLabeled: boolean
   afterLabeled: boolean
   imageIndex: number
+  overlayByUrl: Map<string, ShowroomCaseBlogImageOverlayMeta>
 }
 
 const CANONICAL_BLOG_HEADING_CLASS: Record<number, string> = {
@@ -644,6 +770,29 @@ function renderMarkdownTextBlockHtml(text: string): string {
   return renderCanonicalBlogParagraphHtml(t)
 }
 
+function resolveFigureOverlay(
+  safeUrl: string,
+  alt: string,
+  state: ArticleRenderState,
+): ShowroomCaseBlogImageOverlayMeta | undefined {
+  const fromMeta = state.overlayByUrl.get(canonicalBlogImageMatchKey(safeUrl))
+  const detected = detectImageLabelFromAlt(alt)
+  const isHeadArea = state.imageIndex < 2
+
+  let beforeAfter = fromMeta?.beforeAfter ?? null
+  if (!beforeAfter) {
+    if (detected === 'before' && !state.beforeLabeled && isHeadArea) beforeAfter = 'before'
+    else if (detected === 'after' && !state.afterLabeled && isHeadArea) beforeAfter = 'after'
+    else if (!state.beforeLabeled && state.imageIndex === 0) beforeAfter = 'before'
+    else if (!state.afterLabeled && state.imageIndex === 1) beforeAfter = 'after'
+  }
+
+  if (beforeAfter === 'before') state.beforeLabeled = true
+  if (beforeAfter === 'after') state.afterLabeled = true
+
+  return mergeBlogImageOverlayMeta(fromMeta, { beforeAfter, productName: null, colorName: null })
+}
+
 function renderMarkdownBlockHtml(block: string, state: ArticleRenderState): string {
   const trimmed = block.trim()
   if (!trimmed) return ''
@@ -667,25 +816,8 @@ function renderMarkdownBlockHtml(block: string, state: ArticleRenderState): stri
       textBuf += `![${ch.alt}](${ch.urlRaw})`
       continue
     }
-    const detected = detectImageLabelFromAlt(ch.alt)
-    const isHeadArea = state.imageIndex < 2
-    let figureHtml: string
-    if (detected === 'before' && !state.beforeLabeled && isHeadArea) {
-      figureHtml = buildLabeledFigureHtml(safeUrl, ch.alt, 'Before')
-      state.beforeLabeled = true
-    } else if (detected === 'after' && !state.afterLabeled && isHeadArea) {
-      figureHtml = buildLabeledFigureHtml(safeUrl, ch.alt, 'After')
-      state.afterLabeled = true
-    } else if (!state.beforeLabeled && state.imageIndex === 0) {
-      figureHtml = buildLabeledFigureHtml(safeUrl, ch.alt, 'Before')
-      state.beforeLabeled = true
-    } else if (!state.afterLabeled && state.imageIndex === 1) {
-      figureHtml = buildLabeledFigureHtml(safeUrl, ch.alt, 'After')
-      state.afterLabeled = true
-    } else {
-      figureHtml = buildPlainFigureHtml(safeUrl, ch.alt)
-    }
-    pieces.push(figureHtml)
+    const overlay = resolveFigureOverlay(safeUrl, ch.alt, state)
+    pieces.push(buildFigureHtml(safeUrl, ch.alt, overlay))
     state.imageIndex += 1
   }
   flushText()
@@ -693,11 +825,19 @@ function renderMarkdownBlockHtml(block: string, state: ArticleRenderState): stri
 }
 
 /** 마크다운 본문을 안전 HTML로 변환. 단락(`\\n\\n`) 구분, `![alt](https…)` 이미지는 figure/img로 렌더. */
-export function plainMarkdownToSafeArticleHtml(markdown: string): string {
+export function plainMarkdownToSafeArticleHtml(
+  markdown: string,
+  options?: { overlayByUrl?: Map<string, ShowroomCaseBlogImageOverlayMeta> },
+): string {
   const t = String(markdown ?? '').trim()
   if (!t) return '<article class="showroom-canonical-blog"></article>'
   const blocks = t.split(/\n\n+/).filter(Boolean)
-  const state: ArticleRenderState = { beforeLabeled: false, afterLabeled: false, imageIndex: 0 }
+  const state: ArticleRenderState = {
+    beforeLabeled: false,
+    afterLabeled: false,
+    imageIndex: 0,
+    overlayByUrl: options?.overlayByUrl ?? new Map(),
+  }
   const inner = blocks.map((b) => renderMarkdownBlockHtml(b, state)).join('')
   return `<article class="showroom-canonical-blog max-w-none">${inner}</article>`
 }
@@ -920,48 +1060,82 @@ export function buildCanonicalBlogPostFromN8nBlogResponse(params: BuildCanonical
   const createdAt = params.existingCreatedAt?.trim() || now
 
   const images: ShowroomCaseCanonicalBlogImageBlock[] = []
-  const seenImageUrls = new Set<string>()
+  const seenImageKeys = new Set<string>()
+  const ctx = params.imageContext ?? []
+
+  const findContextRow = (url: string | null | undefined) => {
+    const key = canonicalBlogImageMatchKey(url ?? '')
+    if (!key) return null
+    return ctx.find((row) => canonicalBlogImageMatchKey(row.url) === key) ?? null
+  }
+
+  const pushImage = (block: ShowroomCaseCanonicalBlogImageBlock) => {
+    const key = canonicalBlogImageMatchKey(block.url)
+    if (!key || seenImageKeys.has(key)) return
+    seenImageKeys.add(key)
+    images.push(block)
+  }
+
   const beforeUrl = params.beforeImageUrl?.trim()
   if (beforeUrl) {
-    seenImageUrls.add(beforeUrl)
-    images.push({
+    const row = findContextRow(beforeUrl)
+    pushImage({
       id: 'before-hero',
       url: beforeUrl,
       alt: `${params.siteName} 비포 현장`,
       caption: '비포',
       placement: 'full',
+      beforeAfter: 'before',
+      productName: row?.productName ?? null,
+      colorName: row?.colorName ?? null,
+      imageAssetId: row?.assetId ?? null,
     })
   }
   const afterUrl = params.afterImageUrl?.trim()
   if (afterUrl) {
-    seenImageUrls.add(afterUrl)
-    images.push({
+    const row = findContextRow(afterUrl)
+    pushImage({
       id: 'after-hero',
       url: afterUrl,
       alt: `${params.siteName} 애프터 현장`,
       caption: '애프터',
       placement: 'full',
+      beforeAfter: 'after',
+      productName: row?.productName ?? null,
+      colorName: row?.colorName ?? null,
+      imageAssetId: row?.assetId ?? null,
     })
   }
 
-  const ctx = params.imageContext ?? []
   for (const row of ctx) {
     const url = row.url?.trim()
     if (!url || !/^https:\/\//i.test(url)) continue
-    if (seenImageUrls.has(url)) continue
-    seenImageUrls.add(url)
-    images.push({
+    pushImage({
       id: `asset-${row.assetId}`,
       imageAssetId: row.assetId,
       url,
       alt: altFromImageContextRow(row),
       caption: null,
       placement: 'inline',
+      beforeAfter: row.beforeAfter ?? null,
+      productName: row.productName ?? null,
+      colorName: row.colorName ?? null,
     })
   }
 
   const cleanedMarkdown = stripBrokenBlogImageTailLines(extracted.bodyMarkdown)
-  const bodyHtml = plainMarkdownToSafeArticleHtml(cleanedMarkdown)
+  const overlayByUrl = new Map<string, ShowroomCaseBlogImageOverlayMeta>()
+  for (const img of images) {
+    const key = canonicalBlogImageMatchKey(img.url)
+    if (!key) continue
+    const meta = mergeBlogImageOverlayMeta(undefined, {
+      beforeAfter: img.beforeAfter ?? null,
+      productName: img.productName ?? null,
+      colorName: img.colorName ?? null,
+    })
+    if (meta) overlayByUrl.set(key, meta)
+  }
+  const bodyHtml = plainMarkdownToSafeArticleHtml(cleanedMarkdown, { overlayByUrl })
   const summaryForSeo = extracted.summary.trim()
   const fallbackDescription =
     summaryForSeo.length > 160 ? `${summaryForSeo.slice(0, 157)}…` : summaryForSeo || `${extracted.title} — 파인드가구 온라인 쇼룸 사례`

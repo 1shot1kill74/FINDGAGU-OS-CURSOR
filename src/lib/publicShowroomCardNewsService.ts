@@ -264,6 +264,7 @@ export async function loadPublicShowroomCardNewsBundle(siteKeyParam: string): Pr
     businessTypes: string[]
     beforeImage: ShowroomImageAsset | null
     afterImage: ShowroomImageAsset | null
+    siteImages: ShowroomImageAsset[]
     profile: ShowroomCaseProfileDraft
   }
 } | {
@@ -307,6 +308,9 @@ export async function loadPublicShowroomCardNewsBundle(siteKeyParam: string): Pr
         businessTypes: context.businessTypes.length > 0 ? context.businessTypes : (match.industry ? [match.industry] : []),
         beforeImage: context.beforeImage,
         afterImage: context.afterImage,
+        siteImages: [context.beforeImage, context.afterImage].filter(
+          (img): img is ShowroomImageAsset => Boolean(img),
+        ),
         profile: match,
       },
     }

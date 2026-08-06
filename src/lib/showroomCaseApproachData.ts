@@ -96,6 +96,8 @@ export type ShowroomCaseApproachBundle = {
   businessTypes: string[]
   beforeImage: ShowroomImageAsset | null
   afterImage: ShowroomImageAsset | null
+  /** 동일 현장 사진 전체 — 블로그 오버레이(제품/색상/BA) 매칭용 */
+  siteImages: ShowroomImageAsset[]
   profile: ShowroomCaseProfileDraft | null
 }
 
@@ -270,6 +272,7 @@ async function loadShowroomCaseApproachBundleFromProfileQuery(
       businessTypes: approved.industry?.trim() ? [approved.industry.trim()] : [],
       beforeImage: null,
       afterImage: null,
+      siteImages: [],
       profile: approved,
     }
   }
@@ -280,6 +283,7 @@ async function loadShowroomCaseApproachBundleFromProfileQuery(
     businessTypes: profile!.industry?.trim() ? [profile!.industry.trim()] : [],
     beforeImage: null,
     afterImage: null,
+    siteImages: [],
     profile: profile!,
   }
 }
@@ -351,6 +355,7 @@ export async function loadShowroomCaseApproachBundle(
         businessTypes,
         beforeImage: before,
         afterImage: after,
+        siteImages: matched,
         profile,
       },
     }

@@ -4,7 +4,11 @@ import { ArrowLeft, FileText, Images } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { usePublicShowroomChannelTalk } from '@/hooks/usePublicShowroomChannelTalk'
-import { buildCanonicalBlogPostFromN8nBlogResponse, renderCanonicalBlogPostHtml } from '@/lib/showroomCaseCanonicalBlog'
+import {
+  buildCanonicalBlogPostFromN8nBlogResponse,
+  renderCanonicalBlogPostHtml,
+  type ShowroomCaseBlogImageOverlayHint,
+} from '@/lib/showroomCaseCanonicalBlog'
 import { usePageHead, type PageHeadJsonLd, type PageHeadMetaTag } from '@/lib/usePageHead'
 import { getPublicShowroomDefaultOgImageUrl } from '@/lib/publicShowroomSeo'
 import {
@@ -233,6 +237,7 @@ export default function ShowroomCaseApproachPage({ mode = 'public' }: { mode?: M
     businessTypes: [],
     beforeImage: null,
     afterImage: null,
+    siteImages: [],
     profile: null,
   }
   const pain = resolvedBundle.profile?.painPoint?.trim() || (resolvedBundle.profile?.problemCode ? PROBLEM_FRAME_SUMMARY[resolvedBundle.profile.problemCode] ?? '' : '')
@@ -482,7 +487,29 @@ export default function ShowroomCaseApproachPage({ mode = 'public' }: { mode?: M
               ) : null}
             </div>
             {(() => {
-              const previewHtml = renderCanonicalBlogPostHtml(displayBlog)
+              const overlayHints: ShowroomCaseBlogImageOverlayHint[] = []
+              const pushAssetHint = (asset: ShowroomImageAsset | null | undefined) => {
+                if (!asset) return
+                const urls = [asset.cloudinary_url, asset.thumbnail_url]
+                for (const url of urls) {
+                  const trimmed = url?.trim()
+                  if (!trimmed) continue
+                  overlayHints.push({
+                    url: trimmed,
+                    beforeAfter:
+                      asset.before_after_role === 'before' || asset.before_after_role === 'after'
+                        ? asset.before_after_role
+                        : null,
+                    productName: asset.product_name?.trim() || null,
+                    colorName: asset.color_name?.trim() || null,
+                  })
+                }
+              }
+              const siteAssets = resolvedBundle.siteImages?.length
+                ? resolvedBundle.siteImages
+                : [resolvedBundle.beforeImage, resolvedBundle.afterImage]
+              for (const asset of siteAssets) pushAssetHint(asset)
+              const previewHtml = renderCanonicalBlogPostHtml(displayBlog, { overlayHints })
               return (
                 <div className="rounded-2xl border border-neutral-200 bg-white p-5 text-neutral-800">
                   {featuredAnswer ? (
