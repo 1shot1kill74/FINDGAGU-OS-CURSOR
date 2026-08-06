@@ -42,10 +42,10 @@ export function ShowroomMainStickyConsultCta({
     >
       <div className="mx-auto flex max-w-3xl flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
         <div className="min-w-0 flex-1">
-          <p className="text-xs leading-snug text-neutral-700">
+          <p className="text-sm leading-snug text-neutral-700">
             고객님의 업종·평수·운영 방식에 맞는 최적 레이아웃을 제안합니다.
           </p>
-          <p className="mt-0.5 inline-flex items-center gap-1 text-[11px] text-neutral-500">
+          <p className="mt-0.5 inline-flex items-center gap-1 text-xs text-neutral-500">
             <ShieldCheck className="h-3 w-3 shrink-0 text-[#5f7058]" aria-hidden />
             현장 맞춤 1차 레이아웃 · 채팅 상담
           </p>

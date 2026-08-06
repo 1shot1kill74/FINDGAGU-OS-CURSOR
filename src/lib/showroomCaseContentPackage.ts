@@ -366,8 +366,9 @@ function compactLines(values: Array<string | null | undefined>): string[] {
 }
 
 export function getShowroomCasePublicDisplayName(seed: ShowroomCaseContentSeed): string {
-  return clean(seed.siteName)
-    || clean(seed.externalLabel)
+  // 공개 본문·카드뉴스·n8n displayName은 외부명 우선. siteName은 내부 매칭/폴백용.
+  return clean(seed.externalLabel)
+    || clean(seed.siteName)
     || '시공 사례'
 }
 
