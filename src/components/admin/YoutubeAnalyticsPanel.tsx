@@ -29,6 +29,17 @@ function formatDateTime(value: string | null) {
   return parsed.toLocaleString('ko-KR')
 }
 
+function formatUploadDate(value: string | null | undefined) {
+  if (!value) return '—'
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return value
+  return parsed.toLocaleDateString('ko-KR', {
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+  })
+}
+
 export default function YoutubeAnalyticsPanel({
   returnTo = '/admin/ad-inbox',
   reportLimit = 15,
@@ -170,6 +181,7 @@ export default function YoutubeAnalyticsPanel({
             <thead className="bg-muted/40 text-muted-foreground">
               <tr>
                 <th className="px-3 py-2 font-medium">영상</th>
+                <th className="px-3 py-2 font-medium whitespace-nowrap">업로드</th>
                 <th className="px-3 py-2 font-medium text-right">조회</th>
                 <th className="px-3 py-2 font-medium text-right">Engaged</th>
                 <th className="px-3 py-2 font-medium text-right">Engaged%</th>
@@ -188,6 +200,12 @@ export default function YoutubeAnalyticsPanel({
                     >
                       {(row.title || row.video_id).slice(0, 48)}
                     </a>
+                  </td>
+                  <td
+                    className="px-3 py-2 whitespace-nowrap tabular-nums text-muted-foreground"
+                    title={row.published_at ? formatDateTime(row.published_at) ?? undefined : undefined}
+                  >
+                    {formatUploadDate(row.published_at)}
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums">
                     {Number(row.views).toLocaleString()}

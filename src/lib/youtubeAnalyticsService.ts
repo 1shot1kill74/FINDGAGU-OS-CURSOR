@@ -15,6 +15,7 @@ export type YoutubeAnalyticsStatus = {
 export type YoutubeShortsAnalyticsRow = {
   video_id: string
   title: string | null
+  published_at: string | null
   views: number
   engaged_views: number
   engaged_pct: number | null
@@ -170,7 +171,7 @@ export async function fetchYoutubeShortsAnalyticsByVideoIds(
     const { data, error } = await supabase
       .from('youtube_shorts_analytics')
       .select(
-        'video_id, title, views, engaged_views, avg_view_percentage, avg_view_duration_sec, likes, comments, shares, period_start, period_end, synced_at',
+        'video_id, title, published_at, views, engaged_views, avg_view_percentage, avg_view_duration_sec, likes, comments, shares, period_start, period_end, synced_at',
       )
       .in('video_id', chunk)
     if (error) throw new Error(error.message)
@@ -180,6 +181,7 @@ export async function fetchYoutubeShortsAnalyticsByVideoIds(
       map.set(row.video_id, {
         video_id: row.video_id,
         title: row.title ?? null,
+        published_at: row.published_at ?? null,
         views,
         engaged_views: engaged,
         engaged_pct: views > 0 ? Math.round((1000 * engaged) / views) / 10 : null,

@@ -417,6 +417,7 @@ type TargetRow = {
 type MetricRow = {
   video_id: string
   title: string | null
+  published_at: string | null
   views: number
   engaged_views: number
   avg_view_percentage: number | null
@@ -440,8 +441,9 @@ function numAt(row: unknown[], idx: number): number {
   return 0
 }
 
-async function fetchVideoTitles(accessToken: string, videoIds: string[]) {
+async function fetchVideoSnippets(accessToken: string, videoIds: string[]) {
   const titles = new Map<string, string>()
+  const publishedAt = new Map<string, string>()
   for (let i = 0; i < videoIds.length; i += 50) {
     const chunk = videoIds.slice(i, i + 50)
     const url = new URL('https://www.googleapis.com/youtube/v3/videos')
@@ -451,14 +453,19 @@ async function fetchVideoTitles(accessToken: string, videoIds: string[]) {
       headers: { Authorization: `Bearer ${accessToken}` },
     })
     const json = (await res.json()) as {
-      items?: Array<{ id?: string; snippet?: { title?: string } }>
+      items?: Array<{
+        id?: string
+        snippet?: { title?: string; publishedAt?: string }
+      }>
     }
     if (!res.ok) continue
     for (const item of json.items ?? []) {
-      if (item.id && item.snippet?.title) titles.set(item.id, item.snippet.title)
+      if (!item.id) continue
+      if (item.snippet?.title) titles.set(item.id, item.snippet.title)
+      if (item.snippet?.publishedAt) publishedAt.set(item.id, item.snippet.publishedAt)
     }
   }
-  return titles
+  return { titles, publishedAt }
 }
 
 async function queryAnalyticsByVideo(input: {
@@ -594,6 +601,7 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
     if (targetsError) throw new Error(targetsError.message)
 
     const titleById = new Map<string, string>()
+    const publishedAtById = new Map<string, string>()
     const videoIds: string[] = []
     for (const row of (targets ?? []) as TargetRow[]) {
       const id =
@@ -601,6 +609,7 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
       if (!id || videoIds.includes(id)) continue
       videoIds.push(id)
       if (row.title?.trim()) titleById.set(id, row.title.trim())
+      if (row.published_at) publishedAtById.set(id, row.published_at)
     }
 
     if (videoIds.length === 0) {
@@ -619,9 +628,13 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
     const periodStart = isoDate(start)
     const periodEnd = isoDate(end)
 
-    const apiTitles = await fetchVideoTitles(accessToken, videoIds)
-    for (const [id, title] of apiTitles) {
+    const snippets = await fetchVideoSnippets(accessToken, videoIds)
+    for (const [id, title] of snippets.titles) {
       if (!titleById.has(id)) titleById.set(id, title)
+    }
+    for (const [id, publishedAt] of snippets.publishedAt) {
+      // Prefer YouTube canonical upload time when available
+      publishedAtById.set(id, publishedAt)
     }
 
     // Analytics filters allow limited video list; chunk by 20
@@ -645,6 +658,7 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
       return {
         video_id: videoId,
         title: titleById.get(videoId) ?? null,
+        published_at: publishedAtById.get(videoId) ?? null,
         views: m?.views ?? 0,
         engaged_views: m?.engagedViews ?? 0,
         avg_view_percentage: m?.avgViewPercentage ?? null,
