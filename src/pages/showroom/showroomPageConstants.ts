@@ -90,12 +90,6 @@ export const HUB_FEATURED_BA_INDUSTRY_BLOCKS: readonly {
     featuredKeys: ['6888', '8450', '6984'],
   },
   {
-    industry: '스터디카페',
-    title: '스터디카페',
-    blurb: '매출·회전을 염두에 둔 리뉴얼 전후입니다.',
-    featuredKeys: ['7947'],
-  },
-  {
     industry: '학원',
     title: '학원 자습실',
     blurb: '학원 자습 공간을 스터디카페형으로 바꾼 사례입니다.',
@@ -112,5 +106,11 @@ export const HUB_FEATURED_BA_INDUSTRY_BLOCKS: readonly {
     title: '아파트 커뮤니티',
     blurb: '입주민이 찾는 커뮤니티 독서실 전후입니다.',
     featuredKeys: ['692', '6258', '4528'],
+  },
+  {
+    industry: '스터디카페',
+    title: '스터디카페',
+    blurb: '매출·회전을 염두에 둔 리뉴얼 전후입니다.',
+    featuredKeys: ['7947'],
   },
 ]

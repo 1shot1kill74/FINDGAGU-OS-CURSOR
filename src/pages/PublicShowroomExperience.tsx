@@ -1317,12 +1317,12 @@ export default function PublicShowroomExperience({
 
       <main className="max-w-6xl mx-auto px-4 py-8 md:px-8">
         {isHub ? (
-          <section className="mb-6" aria-labelledby="showroom-main-heading">
+          <section className="mb-5" aria-labelledby="showroom-main-heading">
             <h1 id="showroom-main-heading" className="text-2xl md:text-3xl font-bold text-neutral-900 leading-tight mb-1">
               실패하지 않는 공간 기획, 그 차이는 <span className="text-amber-600">디테일</span>에 있습니다.
             </h1>
             <p className="text-neutral-600 text-base md:text-lg">
-              우리 업종에 가까운 변화부터 확인한 뒤, 시공사례 더보기에서 사진을 더 찾아보세요.
+              아래에서 업종을 고르면, 대표 전후 사례부터 바로 볼 수 있습니다.
             </p>
           </section>
         ) : (
@@ -1347,15 +1347,19 @@ export default function PublicShowroomExperience({
             className="mb-8 scroll-mt-24 md:scroll-mt-28"
             aria-labelledby="showroom-featured-ba-heading"
           >
-            <div className="mb-5">
-              <h2 id="showroom-featured-ba-heading" className="text-lg font-semibold text-neutral-900">
+            <div className="mb-6 rounded-2xl border border-[#5f7058]/25 bg-[#f4f7f1] px-4 py-5 md:px-6 md:py-6">
+              <p className="text-sm font-semibold text-amber-600">STEP 1 · 먼저 업종을 선택하세요</p>
+              <h2
+                id="showroom-featured-ba-heading"
+                className="mt-1 text-xl font-bold tracking-tight text-neutral-900 md:text-2xl"
+              >
                 업종 선택
               </h2>
-              <p className="mt-1 text-sm text-neutral-600">
-                우리 업종을 고르면 대표 전후 사례를 보여 드립니다.
+              <p className="mt-1.5 text-sm text-neutral-600 md:text-base">
+                고른 업종의 대표 Before/After만 바로 아래에 보여 드립니다.
               </p>
               <div
-                className="mt-3 flex flex-wrap items-center gap-2"
+                className="mt-4 flex flex-wrap items-center gap-2.5"
                 role="tablist"
                 aria-label="업종 선택"
               >
@@ -1366,14 +1370,13 @@ export default function PublicShowroomExperience({
                       key={`hub-ba-industry-${section.industry}`}
                       type="button"
                       variant="outline"
-                      size="sm"
                       role="tab"
                       aria-selected={isActive}
                       className={cn(
-                        'shrink-0 rounded-full',
+                        'h-11 shrink-0 rounded-full px-4 text-sm shadow-sm',
                         isActive
                           ? selectedBrowseButtonClass
-                          : 'font-medium text-neutral-700 hover:border-neutral-300 hover:bg-neutral-50',
+                          : 'border-neutral-300 bg-white font-semibold text-neutral-800 hover:border-[#5f7058]/45 hover:bg-white hover:text-neutral-900',
                       )}
                       onClick={() => {
                         setSelectedHubBaIndustry(section.industry)
@@ -1398,7 +1401,12 @@ export default function PublicShowroomExperience({
               className="scroll-mt-28 md:scroll-mt-32"
             >
               <div className="mb-3 flex flex-col gap-0.5 sm:flex-row sm:items-end sm:justify-between">
-                <p className="text-sm text-neutral-600">{activeHubBaSection.blurb}</p>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-[#5f7058]">
+                    STEP 2 · {activeHubBaSection.title} 전후 사례
+                  </p>
+                  <p className="mt-0.5 text-sm text-neutral-600">{activeHubBaSection.blurb}</p>
+                </div>
                 <p className="text-xs text-neutral-500">
                   {activeHubBaSection.groups.length}개 현장
                   {activeHubBaSection.totalPages > 1
