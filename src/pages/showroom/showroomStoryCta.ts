@@ -73,19 +73,18 @@ export function resolveShowroomCaseConsultationCopy(input: {
   const config = validConcern ? CONCERN_STORY_CTA[validConcern] : null
   const siteLabel = trimSiteLabel(input.siteDisplayName)
   const buttonLabel = config?.buttonLabel ?? `${siteLabel} 같은 공간 1차 상담`
-  const stickyShortLabel = buttonLabel.length > 22 ? '1차 상담 받기' : buttonLabel
-  const topicHint = config?.inlineHint ?? '비슷한 공간 레이아웃'
+  const stickyShortLabel = buttonLabel.length > 22 ? '현장 맞춤 레이아웃 상담' : buttonLabel
 
   return {
     concern: validConcern,
     buttonLabel,
     stickyShortLabel,
-    helperLine: `${siteLabel} 사례를 참고해 ${topicHint} 방향을 채팅으로 안내드립니다.`,
-    trustLine: '전화 영업 없음 · 1차 방향·레이아웃 제안',
+    helperLine: '고객님의 업종·평수·운영 방식에 맞는 최적 레이아웃을 제안합니다.',
+    trustLine: '현장 맞춤 1차 레이아웃 · 채팅 상담',
     inlineTitle: validConcern
-      ? `우리 공간도 ${config?.inlineHint ?? '이런 방향'}으로 가능할까요?`
+      ? `우리 ${config?.inlineHint ?? '공간'}에 맞는 최적 레이아웃, 가능할까요?`
       : `${siteLabel} 같은 공간, 우리 현장도 가능할까요?`,
-    inlineBody: '현장 사진·평수·좌석 수만 알려주세요. 견적 강요 없이 채팅으로 1차 방향을 드립니다.',
+    inlineBody: '평수·좌석 수·운영 방식만 알려주세요. 우리 현장 상황에 맞는 최적 배치를 제안합니다.',
   }
 }
 
