@@ -120,10 +120,28 @@ interface AnalyzeQuoteResponse {
   category?: FileCategory
   result?: { type: 'Estimates'; data: ParsedEstimateFromPDF } | { type: 'VendorPrice'; data: ParsedVendorPrice }
   items?: ParsedUnitPriceItem[]
+  skipped?: boolean
+  reason?: string
   error?: string
   detail?: string
   stage?: string
   model?: string
+}
+
+function skippedReasonMessage(reason?: string): string {
+  const code = (reason ?? '').trim()
+  switch (code) {
+    case 'Not a quotation':
+      return '견적서로 인식되지 않았습니다. 견적일·품목표·공급가액/VAT·수신처(○○ 귀하) 등이 보이는 이미지인지 확인해 주세요.'
+    case 'Not our company':
+      return '파인드가구 발행 견적서가 아닌 것으로 판단되었습니다. 참조용으로만 업로드하거나, 파인드가구 견적서 이미지를 사용해 주세요.'
+    case 'Required fields insufficient':
+      return '견적서 필수 항목(사업자번호·공급가액·VAT·합계·품명 등)이 충분히 보이지 않아 추출을 건너뛰었습니다.'
+    default:
+      return code
+        ? `AI가 이 문서를 건너뛰었습니다. (${code})`
+        : 'AI가 이 문서를 견적서로 추출하지 못했습니다.'
+  }
 }
 
 export interface EdgeFunctionError extends Error {
@@ -234,6 +252,10 @@ export async function parseFileWithAI(
     throw new Error('지원하지 않는 파일 형식입니다. PDF 또는 이미지(png, jpg, webp)만 업로드할 수 있습니다.')
   }
 
+  if (response.skipped) {
+    throw new Error(skippedReasonMessage(response.reason))
+  }
+
   if (response.result) {
     return {
       category: response.result.type === 'Estimates' ? 'Estimates' : 'VendorPrice',
@@ -241,7 +263,7 @@ export async function parseFileWithAI(
     }
   }
 
-  throw new Error('AI 분석 결과가 비어 있습니다.')
+  throw new Error('AI 분석 결과가 비어 있습니다. (응답에 추출 데이터가 없습니다)')
 }
 
 export async function detectIsOurCompanyEstimate(file: File): Promise<boolean> {

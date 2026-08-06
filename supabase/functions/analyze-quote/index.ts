@@ -21,21 +21,26 @@ const GEMINI_MODEL = Deno.env.get("GOOGLE_GEMINI_MODEL")?.trim() || "gemini-3.5-
 /** 견적서 이미지 분석 프롬프트 */
 const VISION_ESTIMATE_PROMPT = `당신은 가구 견적서 이미지 분석 전문가입니다. **반드시 아래 순서대로 검증 후** 추출을 진행하세요.
 
-**0) Pre-check (가장 먼저 수행)**:
-- 문서 중앙 상단에 "견 적 서" 또는 "견적서" 타이틀이 있는지 확인해.
-- 없다면 견적서가 아니므로 다음 JSON만 출력하고 즉시 중단: {"skipped": true, "reason": "Not a quotation"}
-
-**1) 회사명 매칭 (우선 체크)**:
-- 이미지에 "주식회사 파인드가구" 또는 "파인드가구" 텍스트가 있는지 확인해.
+**0) 회사명 매칭 (우선 체크)**:
+- 이미지에 "주식회사 파인드가구", "㈜파인드가구", "파인드가구" 중 하나가 있는지 확인해.
 - 없다면 우리 회사가 발행한 서류가 아니므로: {"skipped": true, "reason": "Not our company"}
 
+**1) 견적서 형태 판별** (타이틀 "견적서"/"견 적 서"가 없어도 됨):
+- 아래 신호 중 2개 이상이면 견적서로 인정하고 추출을 진행해.
+  · "견적일" / "견 적 일" / 견적일자
+  · 품명·규격·수량·단가·금액 표(또는 동일 열 구조)
+  · 공급가액 / VAT / 총계(합계)
+  · "○○ 귀하" 수신처 + 등록번호(사업자번호) 헤더
+- 신호가 2개 미만이면: {"skipped": true, "reason": "Not a quotation"}
+
 **2) 필수 항목 체크 (견적서라면)**:
-- [사업자번호, 공급가액, VAT, 합계, 품명] 5가지 키워드 중 3개 이상이 문서에 포함되어 있어야 함.
+- [사업자번호/등록번호, 공급가액, VAT, 합계/총계, 품명] 5가지 중 3개 이상이 문서에 포함되어 있어야 함.
 - 3개 미만이면: {"skipped": true, "reason": "Required fields insufficient"}
 
 **3) 표(Table) 구조 추출** (위 검증 모두 통과 시):
 - 품목·규격·수량·단가·금액 열을 정확히 구분. 병합 셀·여러 행 구조 이해.
 - 추출 필드: siteName, region, industry, quoteDate(YYYY-MM-DD), recipientContact, customer_name, customer_phone, site_location, total_amount, rows[{no,name,spec,qty,unit,unitPrice,note}]. unitPrice=판매가(원), spec="1200×600×720".
+- customer_name: "○○ 귀하"의 ○○. quoteDate: "견적일" 값.
 - 규칙: 추출 불가 필드는 빈 문자열·null·0. 유효한 JSON만 출력.`
 
 /** 원가표 이미지 분석 프롬프트 */
@@ -94,8 +99,11 @@ function truncateDebugText(value: string, max = 240): string {
 }
 
 /** exists 모드: 견적서 존재 여부 YES/NO만 판별 (경량, 503 최소화) */
-const EXISTS_PROMPT = `이 이미지 상단에 "견적서" 또는 "견 적 서" 표시가 보이면 YES, 없으면 NO.
-다음 JSON만 출력: {"exists":"YES"} 또는 {"exists":"NO"}`
+const EXISTS_PROMPT = `이 이미지가 파인드가구 판매 견적서 형태인지 판별하라.
+"견적서" 타이틀이 없어도 된다. 다음 중 2개 이상이면 YES:
+- 파인드가구(또는 ㈜파인드가구)
+- 견적일 / 품명·수량·단가 표 / 공급가액·VAT·총계 / ○○ 귀하+등록번호
+그 외는 NO. JSON만 출력: {"exists":"YES"} 또는 {"exists":"NO"}`
 
 /** detect 모드: 파인드가구·김지윤 키워드로 견적서 여부 판별 */
 const DETECT_PROMPT = `이미지 또는 텍스트에서 '파인드가구'와 '김지윤' 키워드를 찾아라. 문서 상단·직인(도장)·헤더 근처를 집중 확인. 둘 다 있으면 우리 회사 판매 견적서.
@@ -264,11 +272,11 @@ Deno.serve(async (req: Request) => {
       const mimeType = getMimeFromFileName(fileName)
       const isCaptureImage = /file-image|^image\.(png|jpg|jpeg)$/i.test(fileName)
       const captureHint = isCaptureImage
-        ? "이 문서는 캡처된 견적서 이미지야. '견 적 서' 타이틀과 품목 리스트를 집중적으로 찾아줘. "
+        ? "이 문서는 캡처된 견적서 이미지야. '견적서' 타이틀이 없어도 견적일·품목표·공급가액/VAT를 기준으로 찾아줘. "
         : ""
       const userPrompt =
         mode === "exists"
-          ? "이 이미지 상단에 견적서라는 단어가 보이면 YES, 아니면 NO만 답하세요."
+          ? "이 이미지가 파인드가구 견적서 형태인지 판별하세요. '견적서' 타이틀이 없어도 견적일·품목표·공급가액/VAT·귀하 헤더가 있으면 YES입니다."
           : mode === "detect"
             ? '이 이미지에 "파인드가구"와 "김지윤"이 둘 다 보이는지 확인하세요.'
             : mode === "unit_price"
@@ -276,7 +284,7 @@ Deno.serve(async (req: Request) => {
             : mode === "privacy"
               ? "이 이미지에서 공개 전 가려야 할 민감정보가 있는지 판정하세요."
               : mode === "estimates"
-                ? `${captureHint}가장 먼저 문서 중앙 상단에 '견 적 서' 타이틀이 있는지 확인해. 없다면 견적서가 아니므로 skipped로 응답. 통과하면 '주식회사 파인드가구' 확인, 필수 항목(사업자번호·공급가액·VAT·합계·품명 중 3개 이상) 확인 후, 이 견적서 이미지에서 모든 정보를 추출하세요.`
+                ? `${captureHint}'견적서' 타이틀이 없어도 됩니다. 먼저 '파인드가구'(또는 ㈜파인드가구) 확인 → 견적일/품목표/공급가액·VAT·○○ 귀하 등 신호 2개 이상이면 견적서로 인정 → 필수 항목(사업자번호·공급가액·VAT·합계·품명 중 3개 이상) 확인 후 모든 정보를 추출하세요.`
                 : "이 원가 명세서 이미지에서 표와 도면 옆 수기 메모를 모두 분석해, 모든 품목을 items 배열로 추출하세요."
       failureStage = "gemini_generate_image"
       result = await model.generateContent([

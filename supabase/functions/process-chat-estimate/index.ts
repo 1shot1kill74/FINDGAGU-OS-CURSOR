@@ -21,21 +21,22 @@ const ESTIMATE_FILES_BUCKET = "estimate-files"
 const GEMINI_MODEL = "gemini-3.1-flash-lite-preview"
 const VISION_ESTIMATE_PROMPT = `당신은 가구 견적서 이미지 분석 전문가입니다. 반드시 아래 순서대로 검증 후 추출을 진행하세요.
 
-0) Pre-check:
-- 문서 중앙 상단에 "견 적 서" 또는 "견적서" 타이틀이 있는지 확인.
-- 없으면 다음 JSON만 출력: {"skipped": true, "reason": "Not a quotation"}
-
-1) 회사명 매칭:
-- 이미지에 "주식회사 파인드가구" 또는 "파인드가구" 텍스트가 있는지 확인.
+0) 회사명 매칭:
+- 이미지에 "주식회사 파인드가구", "㈜파인드가구", "파인드가구" 중 하나가 있는지 확인.
 - 없으면 다음 JSON만 출력: {"skipped": true, "reason": "Not our company"}
 
+1) 견적서 형태 판별 (타이틀 "견적서"/"견 적 서"가 없어도 됨):
+- 아래 신호 중 2개 이상이면 견적서로 인정: 견적일, 품명·규격·수량·단가·금액 표, 공급가액/VAT/총계, ○○ 귀하+등록번호.
+- 신호가 2개 미만이면: {"skipped": true, "reason": "Not a quotation"}
+
 2) 필수 항목 체크:
-- [사업자번호, 공급가액, VAT, 합계, 품명] 5개 중 3개 이상이 포함되어야 함.
+- [사업자번호/등록번호, 공급가액, VAT, 합계/총계, 품명] 5개 중 3개 이상이 포함되어야 함.
 - 3개 미만이면 다음 JSON만 출력: {"skipped": true, "reason": "Required fields insufficient"}
 
 3) 추출:
 - siteName, region, industry, quoteDate(YYYY-MM-DD), recipientContact, customer_name, customer_phone, total_amount
 - rows[{no,name,spec,qty,unit,unitPrice,note}]
+- customer_name: "○○ 귀하"의 ○○. quoteDate: "견적일" 값.
 - 추출 불가 필드는 빈 문자열, null, 0 사용
 - 유효한 JSON만 출력`
 
@@ -226,9 +227,9 @@ Deno.serve(async (req: Request) => {
     })
     const isCaptureImage = /file-image|^image\.(png|jpg|jpeg)$/i.test(fileName)
     const captureHint = isCaptureImage
-      ? "이 문서는 캡처된 견적서 이미지야. '견 적 서' 타이틀과 품목 리스트를 집중적으로 찾아줘. "
+      ? "이 문서는 캡처된 견적서 이미지야. '견적서' 타이틀이 없어도 견적일·품목표·공급가액/VAT를 기준으로 찾아줘. "
       : ""
-    const userPrompt = `${captureHint}가장 먼저 문서 중앙 상단에 '견 적 서' 타이틀이 있는지 확인해. 없다면 견적서가 아니므로 skipped로 응답. 통과하면 '주식회사 파인드가구' 확인, 필수 항목(사업자번호·공급가액·VAT·합계·품명 중 3개 이상) 확인 후, 이 견적서 이미지에서 모든 정보를 추출하세요.`
+    const userPrompt = `${captureHint}'견적서' 타이틀이 없어도 됩니다. 먼저 '파인드가구'(또는 ㈜파인드가구) 확인 → 견적일/품목표/공급가액·VAT·○○ 귀하 등 신호 2개 이상이면 견적서로 인정 → 필수 항목(사업자번호·공급가액·VAT·합계·품명 중 3개 이상) 확인 후 모든 정보를 추출하세요.`
     const result = await model.generateContent([
       userPrompt,
       { inlineData: { data: imageBase64, mimeType: getMimeType(fileName) } },
