@@ -1025,7 +1025,7 @@ export default function PublicShowroomExperience({
       />
     )
     const footerBlock = (
-      <div className={cn('flex flex-col gap-1.5 border-t border-neutral-100', compactPreview ? 'p-3' : 'p-4')}>
+      <div className={cn('flex flex-col gap-3 border-t border-neutral-100', compactPreview ? 'p-3' : 'p-4')}>
         <h4
           className={cn(
             'font-semibold leading-snug text-neutral-900',
@@ -1034,10 +1034,16 @@ export default function PublicShowroomExperience({
         >
           {publicLabel}
         </h4>
-        <p className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700">
+        <span
+          className={cn(
+            'inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-[#5f7058] font-semibold text-white shadow-sm transition-colors',
+            'group-hover:bg-[#4a5744] group-active:bg-[#3f4b3a]',
+            compactPreview ? 'px-3 py-2 text-xs' : 'px-4 py-2.5 text-sm',
+          )}
+        >
           사례 이야기·사진 더 보기
-          <ArrowRight className="h-3.5 w-3.5" aria-hidden />
-        </p>
+          <ArrowRight className={cn('shrink-0', compactPreview ? 'h-3.5 w-3.5' : 'h-4 w-4')} aria-hidden />
+        </span>
       </div>
     )
 
@@ -1056,7 +1062,7 @@ export default function PublicShowroomExperience({
         {storyHref ? (
           <Link
             to={storyHref}
-            className="flex w-full flex-1 flex-col text-left"
+            className="group flex w-full flex-1 flex-col text-left"
             onClick={() => {
               trackShowroomAbmEvent({
                 eventName: 'abm_ba_story_click',
@@ -1072,7 +1078,7 @@ export default function PublicShowroomExperience({
           <button
             type="button"
             onClick={() => openDetail('beforeAfter', group.siteName)}
-            className="flex w-full flex-1 flex-col text-left"
+            className="group flex w-full flex-1 flex-col text-left"
           >
             {footerBlock}
           </button>
