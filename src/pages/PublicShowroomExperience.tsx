@@ -151,6 +151,7 @@ export default function PublicShowroomExperience({
   const [detailPan, setDetailPan] = useState({ x: 0, y: 0 })
   const [industryPageBySection, setIndustryPageBySection] = useState<Record<string, number>>({})
   const [hubBaPageByIndustry, setHubBaPageByIndustry] = useState<Record<string, number>>({})
+  const [selectedHubBaIndustry, setSelectedHubBaIndustry] = useState<string | null>(null)
   const [focusedHubBaSiteName, setFocusedHubBaSiteName] = useState<string | null>(null)
   const focusedHubBaSiteParamRef = useRef<string | null>(null)
   const mountedRef = useRef(true)
@@ -535,6 +536,24 @@ export default function PublicShowroomExperience({
       }
     })
   }, [hubFeaturedBeforeAfterSections, hubBaPageByIndustry])
+  const activeHubBaSection = useMemo(() => {
+    if (paginatedHubBaSections.length === 0) return null
+    return (
+      paginatedHubBaSections.find((section) => section.industry === selectedHubBaIndustry) ??
+      paginatedHubBaSections[0]
+    )
+  }, [paginatedHubBaSections, selectedHubBaIndustry])
+
+  useEffect(() => {
+    if (paginatedHubBaSections.length === 0) {
+      if (selectedHubBaIndustry !== null) setSelectedHubBaIndustry(null)
+      return
+    }
+    const exists = paginatedHubBaSections.some((section) => section.industry === selectedHubBaIndustry)
+    if (!exists) {
+      setSelectedHubBaIndustry(paginatedHubBaSections[0].industry)
+    }
+  }, [paginatedHubBaSections, selectedHubBaIndustry])
   const detailImages = useMemo(() => {
     if (!detailKey || detailOpen === null) return []
     if (detailOpen === 'site') {
@@ -867,11 +886,12 @@ export default function PublicShowroomExperience({
     if (!hit) return
 
     focusedHubBaSiteParamRef.current = baSite
+    setSelectedHubBaIndustry(hit.industry)
     setHubBaPageByIndustry((prev) => ({ ...prev, [hit.industry]: hit.page }))
     setFocusedHubBaSiteName(hit.siteName)
 
     const t = window.setTimeout(() => {
-      scrollToSectionWithOffset(`showroom-hub-ba-${hit.industry}`)
+      scrollToSectionWithOffset('showroom-featured-ba-heading')
     }, 320)
     return () => window.clearTimeout(t)
   }, [
@@ -1016,12 +1036,22 @@ export default function PublicShowroomExperience({
 
     const beforeSrc = beforeImage.thumbnail_url || beforeImage.cloudinary_url || ''
     const afterSrc = afterImage.thumbnail_url || afterImage.cloudinary_url || ''
+    const trackStoryClick = () => {
+      trackShowroomAbmEvent({
+        eventName: 'abm_ba_story_click',
+        concern: selectedConcernTag,
+        siteName: group.siteName,
+        industry: group.businessTypes[0] ?? null,
+      })
+    }
     const beforeAfterPreview = (
       <ShowroomBeforeAfterTapPreview
         beforeSrc={beforeSrc}
         afterSrc={afterSrc}
         altLabel={publicLabel}
         aspectClassName={compactPreview ? 'aspect-[16/10]' : 'aspect-[4/3]'}
+        imageHref={storyHref}
+        onImageActivate={storyHref ? trackStoryClick : undefined}
       />
     )
     const footerBlock = (
@@ -1063,14 +1093,7 @@ export default function PublicShowroomExperience({
           <Link
             to={storyHref}
             className="group flex w-full flex-1 flex-col text-left"
-            onClick={() => {
-              trackShowroomAbmEvent({
-                eventName: 'abm_ba_story_click',
-                concern: selectedConcernTag,
-                siteName: group.siteName,
-                industry: group.businessTypes[0] ?? null,
-              })
-            }}
+            onClick={trackStoryClick}
           >
             {footerBlock}
           </Link>
@@ -1321,92 +1344,126 @@ export default function PublicShowroomExperience({
           </section>
         )}
 
-        {isHub && hasHubFeaturedBeforeAfter && (
+        {isHub && hasHubFeaturedBeforeAfter && activeHubBaSection && (
           <section
             className="mb-8 scroll-mt-24 md:scroll-mt-28"
             aria-labelledby="showroom-featured-ba-heading"
           >
             <div className="mb-5">
               <h2 id="showroom-featured-ba-heading" className="text-lg font-semibold text-neutral-900">
-                현장 Before/After
+                업종 선택
               </h2>
               <p className="mt-1 text-sm text-neutral-600">
-                핸들을 좌우로 밀어 전후를 비교하세요.
+                우리 업종을 고르면 대표 전후 사례를 보여 드립니다.
               </p>
+              <div
+                className="mt-3 flex flex-wrap items-center gap-2"
+                role="tablist"
+                aria-label="업종 선택"
+              >
+                {paginatedHubBaSections.map((section) => {
+                  const isActive = section.industry === activeHubBaSection.industry
+                  return (
+                    <Button
+                      key={`hub-ba-industry-${section.industry}`}
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      role="tab"
+                      aria-selected={isActive}
+                      className={cn(
+                        'shrink-0 rounded-full',
+                        isActive
+                          ? selectedBrowseButtonClass
+                          : 'font-medium text-neutral-700 hover:border-neutral-300 hover:bg-neutral-50',
+                      )}
+                      onClick={() => {
+                        setSelectedHubBaIndustry(section.industry)
+                        trackShowroomAbmEvent({
+                          eventName: 'abm_gallery_browse',
+                          concern: selectedConcernTag,
+                          metadata: { hubBaIndustry: section.industry, entry: 'hub_ba_industry' },
+                        })
+                      }}
+                    >
+                      {section.title}
+                    </Button>
+                  )
+                })}
+              </div>
             </div>
-            <div className="space-y-8">
-              {paginatedHubBaSections.map((section) => (
-                <div
-                  key={`hub-ba-${section.industry}`}
-                  id={`showroom-hub-ba-${section.industry}`}
-                  className="scroll-mt-28 md:scroll-mt-32"
-                >
-                  <div className="mb-3 flex flex-col gap-0.5 sm:flex-row sm:items-end sm:justify-between">
-                    <div>
-                      <h3 className="text-base font-semibold text-neutral-900">{section.title}</h3>
-                      <p className="text-sm text-neutral-600">{section.blurb}</p>
-                    </div>
-                    <p className="text-xs text-neutral-500">
-                      {section.groups.length}개 현장
-                      {section.totalPages > 1
-                        ? ` · ${section.currentPage}/${section.totalPages}페이지`
-                        : null}
-                    </p>
+            <div
+              key={`hub-ba-${activeHubBaSection.industry}`}
+              id={`showroom-hub-ba-${activeHubBaSection.industry}`}
+              role="tabpanel"
+              aria-label={activeHubBaSection.title}
+              className="scroll-mt-28 md:scroll-mt-32"
+            >
+              <div className="mb-3 flex flex-col gap-0.5 sm:flex-row sm:items-end sm:justify-between">
+                <p className="text-sm text-neutral-600">{activeHubBaSection.blurb}</p>
+                <p className="text-xs text-neutral-500">
+                  {activeHubBaSection.groups.length}개 현장
+                  {activeHubBaSection.totalPages > 1
+                    ? ` · ${activeHubBaSection.currentPage}/${activeHubBaSection.totalPages}페이지`
+                    : null}
+                </p>
+              </div>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+                {activeHubBaSection.pagedGroups.map((group) =>
+                  renderBeforeAfterCard(group, {
+                    linkToStory: true,
+                    highlighted: focusedHubBaSiteName === group.siteName,
+                  }),
+                )}
+              </div>
+              {activeHubBaSection.totalPages > 1 && (
+                <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5"
+                    disabled={activeHubBaSection.currentPage <= 1}
+                    onClick={() =>
+                      moveHubBaPage(activeHubBaSection.industry, activeHubBaSection.currentPage - 1)
+                    }
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                    이전
+                  </Button>
+                  <div className="flex flex-wrap items-center justify-center gap-1">
+                    {Array.from({ length: activeHubBaSection.totalPages }, (_, index) => {
+                      const pageNumber = index + 1
+                      const isCurrent = pageNumber === activeHubBaSection.currentPage
+                      return (
+                        <Button
+                          key={`hub-ba-${activeHubBaSection.industry}-page-${pageNumber}`}
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className={cn('min-w-9 px-0', isCurrent && selectedBrowseButtonClass)}
+                          onClick={() => moveHubBaPage(activeHubBaSection.industry, pageNumber)}
+                        >
+                          {pageNumber}
+                        </Button>
+                      )
+                    })}
                   </div>
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-                    {section.pagedGroups.map((group) =>
-                      renderBeforeAfterCard(group, {
-                        linkToStory: true,
-                        highlighted: focusedHubBaSiteName === group.siteName,
-                      }),
-                    )}
-                  </div>
-                  {section.totalPages > 1 && (
-                    <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="gap-1.5"
-                        disabled={section.currentPage <= 1}
-                        onClick={() => moveHubBaPage(section.industry, section.currentPage - 1)}
-                      >
-                        <ChevronLeft className="h-4 w-4" />
-                        이전
-                      </Button>
-                      <div className="flex flex-wrap items-center justify-center gap-1">
-                        {Array.from({ length: section.totalPages }, (_, index) => {
-                          const pageNumber = index + 1
-                          const isCurrent = pageNumber === section.currentPage
-                          return (
-                            <Button
-                              key={`hub-ba-${section.industry}-page-${pageNumber}`}
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className={cn('min-w-9 px-0', isCurrent && selectedBrowseButtonClass)}
-                              onClick={() => moveHubBaPage(section.industry, pageNumber)}
-                            >
-                              {pageNumber}
-                            </Button>
-                          )
-                        })}
-                      </div>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="gap-1.5"
-                        disabled={section.currentPage >= section.totalPages}
-                        onClick={() => moveHubBaPage(section.industry, section.currentPage + 1)}
-                      >
-                        다음
-                        <ChevronRight className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  )}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5"
+                    disabled={activeHubBaSection.currentPage >= activeHubBaSection.totalPages}
+                    onClick={() =>
+                      moveHubBaPage(activeHubBaSection.industry, activeHubBaSection.currentPage + 1)
+                    }
+                  >
+                    다음
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
                 </div>
-              ))}
+              )}
             </div>
             <div className="mt-8 flex justify-center">
               <Button
