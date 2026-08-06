@@ -61,6 +61,7 @@ npx supabase secrets set \
 - `YouTube`는 `V2` 또는 `V3`의 YouTube 경로 유지
 - `Facebook / Instagram`은 `V4 Make` 사용 권장
 - 구조 설명과 payload 예시는 `docs/SHOWROOM_SHORTS_MAKE_HANDOFF_SETUP.md` 참고
+- **YouTube 업로드 노드 실패 시** Error Workflow 또는 `continueOnFail` → `status=failed` callback을 보내세요. 콜백이 없으면 Supabase 워치독이 20분 뒤 `failed`+Slack으로 잡지만, 즉시 알림은 콜백이 더 빠릅니다.
 
 공통으로 `prepare`에서는 제목/설명/체크리스트를 만들고 `launch_ready` callback을 전송합니다.
 

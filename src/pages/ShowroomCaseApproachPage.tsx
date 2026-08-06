@@ -15,6 +15,8 @@ import {
 import { fetchApprovedBlogShowroomCaseProfileDrafts, type ShowroomCaseProfileDraft } from '@/lib/showroomCaseProfileService'
 import { fetchPublicShowroomAssets } from '@/lib/showroomShareService'
 import type { ShowroomImageAsset } from '@/lib/imageAssetService'
+import { ShowroomBeforeAfterTapPreview } from '@/components/showroom/ShowroomBeforeAfterTapPreview'
+import { ShowroomCaseBlogHtml } from '@/components/showroom/ShowroomCaseBlogHtml'
 import { ShowroomStoryStickyMiniCta } from '@/pages/showroom/ShowroomStoryStickyMiniCta'
 import { ShowroomCaseConsultationCta } from '@/pages/showroom/ShowroomCaseConsultationCta'
 import { getBroadPublicLabel } from '@/pages/showroom/showroomPageGrouping'
@@ -153,7 +155,7 @@ function useRelatedApprovedBlogCases(params: UseRelatedApprovedBlogCasesParams):
         if (b.score !== a.score) return b.score - a.score
         return a.title.localeCompare(b.title, 'ko')
       })
-    return scored.slice(0, 4)
+    return scored.slice(0, 2)
   }, [enabled, drafts, publicAssets, currentSiteName, currentIndustry, currentProblemCode, currentSolutionCode, currentBusinessTypes])
 }
 
@@ -422,55 +424,62 @@ export default function ShowroomCaseApproachPage({ mode = 'public' }: { mode?: M
         </div>
       </header>
 
-      <main className={cn('mx-auto max-w-3xl space-y-10 px-4 py-8 md:px-6 md:py-10', isStoryLayout && 'pb-24')}>
+      <main className={cn('mx-auto max-w-3xl space-y-8 px-4 py-8 md:px-6 md:py-10', isStoryLayout && 'pb-24')}>
+        {/* 공개 스토리: 전후(짧게) → 이야기 → 상담 → (아래) FAQ·지역·관련사례·쇼룸복귀. 데이터 삭제 없이 배치만 조정 */}
         {hasBeforeAfterImages ? (
-          <section className="space-y-3" aria-labelledby="approach-ba-hero">
+          <section className="space-y-2" aria-labelledby="approach-ba-hero">
             {isStoryLayout ? (
-              <div className="space-y-1">
+              <div className="space-y-0.5">
                 <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">전후 비교</p>
-                <h2 id="approach-ba-hero" className="text-xl font-semibold text-neutral-900">이 현장의 변화</h2>
-                <p className="text-sm leading-relaxed text-neutral-600">
-                  Before·After로 공간 변화를 확인해 보세요.
-                </p>
+                <h2 id="approach-ba-hero" className="text-lg font-semibold text-neutral-900">이 현장의 변화</h2>
               </div>
             ) : (
               <h2 id="approach-ba-hero" className="text-lg font-semibold text-neutral-900">전후 비교</h2>
             )}
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
-                <div className="relative aspect-[4/3] bg-neutral-100">
-                  <img src={beforeHeroUrl} alt="" className="h-full w-full object-cover" />
-                  <span className="absolute left-2 top-2 rounded-full bg-black/75 px-2 py-1 text-[11px] font-semibold text-white">
-                    Before
-                  </span>
+            {isStoryLayout ? (
+              <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white">
+                <ShowroomBeforeAfterTapPreview
+                  beforeSrc={beforeHeroUrl}
+                  afterSrc={afterHeroUrl}
+                  altLabel={headlineName}
+                  aspectClassName="aspect-[16/10]"
+                />
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
+                  <div className="relative aspect-[4/3] bg-neutral-100">
+                    <img src={beforeHeroUrl} alt="" className="h-full w-full object-cover" />
+                    <span className="absolute left-2 top-2 rounded-full bg-black/75 px-2 py-1 text-[11px] font-semibold text-white">
+                      Before
+                    </span>
+                  </div>
+                </div>
+                <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
+                  <div className="relative aspect-[4/3] bg-neutral-100">
+                    <img src={afterHeroUrl} alt="" className="h-full w-full object-cover" />
+                    <span className="absolute left-2 top-2 rounded-full bg-emerald-600/90 px-2 py-1 text-[11px] font-semibold text-white">
+                      After
+                    </span>
+                  </div>
                 </div>
               </div>
-              <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
-                <div className="relative aspect-[4/3] bg-neutral-100">
-                  <img src={afterHeroUrl} alt="" className="h-full w-full object-cover" />
-                  <span className="absolute left-2 top-2 rounded-full bg-emerald-600/90 px-2 py-1 text-[11px] font-semibold text-white">
-                    After
-                  </span>
-                </div>
-              </div>
-            </div>
+            )}
           </section>
         ) : null}
 
         {showCanonicalBlogSection && displayBlog ? (
           <section className="space-y-3" aria-labelledby="canonical-blog-article">
-            <div className="space-y-1">
-              <div className="flex flex-wrap items-center gap-2 text-neutral-900">
-                <FileText className="h-5 w-5 text-emerald-700" aria-hidden />
-                <h2 id="canonical-blog-article" className="text-lg font-semibold">
-                  {isStoryLayout ? '사례 이야기' : '사례 블로그 글'}
-                </h2>
-                {mode === 'internal' && displayBlog.status !== 'approved' ? (
-                  <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-medium text-amber-900">
-                    미승인 정본은 공개 사용자에게 숨김 · 작업실에서 승인 필요
-                  </span>
-                ) : null}
-              </div>
+            <div className="flex flex-wrap items-center gap-2 text-neutral-900">
+              <FileText className="h-5 w-5 text-emerald-700" aria-hidden />
+              <h2 id="canonical-blog-article" className="text-lg font-semibold">
+                {isStoryLayout ? '사례 이야기' : '사례 블로그 글'}
+              </h2>
+              {mode === 'internal' && displayBlog.status !== 'approved' ? (
+                <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-medium text-amber-900">
+                  미승인 정본은 공개 사용자에게 숨김 · 작업실에서 승인 필요
+                </span>
+              ) : null}
             </div>
             {(() => {
               const previewHtml = renderCanonicalBlogPostHtml(displayBlog)
@@ -485,38 +494,7 @@ export default function ShowroomCaseApproachPage({ mode = 'public' }: { mode?: M
                       <p className="whitespace-pre-wrap">{featuredAnswer}</p>
                     </aside>
                   ) : null}
-                  <div
-                    className="showroom-canonical-blog-public max-w-none text-sm leading-relaxed [&_img]:max-h-96 [&_img]:w-full [&_img]:rounded-xl [&_img]:object-cover [&_p]:mb-4"
-                    dangerouslySetInnerHTML={{ __html: previewHtml }}
-                  />
-                  {faqItems.length > 0 ? (
-                    <section aria-label="자주 묻는 질문" className="mt-8 border-t border-neutral-100 pt-6">
-                      <h3 className="mb-3 text-base font-semibold text-neutral-900">자주 묻는 질문</h3>
-                      <ul className="space-y-3">
-                        {faqItems.map((qa, idx) => (
-                          <li key={`${idx}-${qa.question}`} className="rounded-xl border border-neutral-100 bg-neutral-50/60 px-4 py-3">
-                            <p className="text-sm font-semibold text-neutral-900">Q. {qa.question}</p>
-                            <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-neutral-700">A. {qa.answer}</p>
-                          </li>
-                        ))}
-                      </ul>
-                    </section>
-                  ) : null}
-                  {geoPoints.length > 0 ? (
-                    <section aria-label="지역 정보" className="mt-6 border-t border-neutral-100 pt-6">
-                      <h3 className="mb-2 text-sm font-semibold text-neutral-900">지역 · 위치 메모</h3>
-                      <ul className="flex flex-wrap gap-2">
-                        {geoPoints.map((g, idx) => (
-                          <li
-                            key={`${idx}-${g}`}
-                            className="inline-flex rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs text-neutral-700"
-                          >
-                            {g}
-                          </li>
-                        ))}
-                      </ul>
-                    </section>
-                  ) : null}
+                  <ShowroomCaseBlogHtml html={previewHtml} />
                 </div>
               )
             })()}
@@ -532,31 +510,75 @@ export default function ShowroomCaseApproachPage({ mode = 'public' }: { mode?: M
           />
         ) : null}
 
-        {showRelatedCases && relatedCases.length > 0 ? (
-          <section className="space-y-3" aria-labelledby="related-cases">
-            <div className="flex items-center gap-2 text-neutral-900">
-              <Images className="h-5 w-5 text-emerald-700" aria-hidden />
-              <h2 id="related-cases" className="text-lg font-semibold">관련 사례 더 보기</h2>
-            </div>
-            <ul className="grid gap-3 sm:grid-cols-2">
-              {relatedCases.map((c) => (
-                <li key={c.siteName}>
-                  <Link
-                    to={appendShowroomConcernQuery(c.href, storyConcern)}
-                    className="block h-full rounded-2xl border border-neutral-200 bg-white p-4 transition hover:border-emerald-300 hover:bg-emerald-50/40"
-                  >
-                    {c.industry ? (
-                      <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">{c.industry}</p>
-                    ) : null}
-                    <p className="mt-1 text-sm font-semibold text-neutral-900">{c.title}</p>
-                    {c.summary ? (
-                      <p className="mt-2 line-clamp-3 text-xs leading-relaxed text-neutral-600">{c.summary}</p>
-                    ) : null}
-                  </Link>
-                </li>
-              ))}
-            </ul>
+        {/* 부가 정보: 데이터 유지, 상담 아래로 내려 접어 둠 */}
+        {isStoryLayout && (faqItems.length > 0 || geoPoints.length > 0) ? (
+          <section className="space-y-2" aria-label="부가 정보">
+            {faqItems.length > 0 ? (
+              <details className="rounded-2xl border border-neutral-200 bg-white px-4 py-3">
+                <summary className="cursor-pointer text-sm font-semibold text-neutral-800">
+                  자주 묻는 질문 ({faqItems.length})
+                </summary>
+                <ul className="mt-3 space-y-3 border-t border-neutral-100 pt-3">
+                  {faqItems.map((qa, idx) => (
+                    <li key={`${idx}-${qa.question}`} className="rounded-xl border border-neutral-100 bg-neutral-50/60 px-4 py-3">
+                      <p className="text-sm font-semibold text-neutral-900">Q. {qa.question}</p>
+                      <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-neutral-700">A. {qa.answer}</p>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            ) : null}
+            {geoPoints.length > 0 ? (
+              <details className="rounded-2xl border border-neutral-200 bg-white px-4 py-3">
+                <summary className="cursor-pointer text-sm font-semibold text-neutral-800">
+                  지역 · 위치 메모 ({geoPoints.length})
+                </summary>
+                <ul className="mt-3 flex flex-wrap gap-2 border-t border-neutral-100 pt-3">
+                  {geoPoints.map((g, idx) => (
+                    <li
+                      key={`${idx}-${g}`}
+                      className="inline-flex rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1 text-xs text-neutral-700"
+                    >
+                      {g}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            ) : null}
           </section>
+        ) : null}
+
+        {!isStoryLayout && showCanonicalBlogSection && displayBlog ? (
+          <>
+            {faqItems.length > 0 ? (
+              <section aria-label="자주 묻는 질문" className="rounded-2xl border border-neutral-200 bg-white p-5">
+                <h3 className="mb-3 text-base font-semibold text-neutral-900">자주 묻는 질문</h3>
+                <ul className="space-y-3">
+                  {faqItems.map((qa, idx) => (
+                    <li key={`${idx}-${qa.question}`} className="rounded-xl border border-neutral-100 bg-neutral-50/60 px-4 py-3">
+                      <p className="text-sm font-semibold text-neutral-900">Q. {qa.question}</p>
+                      <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-neutral-700">A. {qa.answer}</p>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+            {geoPoints.length > 0 ? (
+              <section aria-label="지역 정보" className="rounded-2xl border border-neutral-200 bg-white p-5">
+                <h3 className="mb-2 text-sm font-semibold text-neutral-900">지역 · 위치 메모</h3>
+                <ul className="flex flex-wrap gap-2">
+                  {geoPoints.map((g, idx) => (
+                    <li
+                      key={`${idx}-${g}`}
+                      className="inline-flex rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs text-neutral-700"
+                    >
+                      {g}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+          </>
         ) : null}
 
         {!isStoryLayout && !hasCopy && (
@@ -628,25 +650,49 @@ export default function ShowroomCaseApproachPage({ mode = 'public' }: { mode?: M
           </section>
         )}
 
-        <section className="flex flex-col gap-3 rounded-2xl border border-emerald-200 bg-emerald-50/60 p-5 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-sm text-neutral-700">
+        {showRelatedCases && relatedCases.length > 0 ? (
+          <section className="space-y-2 border-t border-neutral-200 pt-6" aria-labelledby="related-cases">
+            <h2 id="related-cases" className="text-sm font-semibold text-neutral-600">
+              관련 사례 더 보기
+            </h2>
+            <ul className="grid gap-2 sm:grid-cols-2">
+              {relatedCases.map((c) => (
+                <li key={c.siteName}>
+                  <Link
+                    to={appendShowroomConcernQuery(c.href, storyConcern)}
+                    className="block h-full rounded-xl border border-neutral-200 bg-white px-3 py-3 transition hover:border-neutral-300 hover:bg-neutral-50"
+                  >
+                    {c.industry ? (
+                      <p className="text-[11px] font-medium text-neutral-500">{c.industry}</p>
+                    ) : null}
+                    <p className="mt-0.5 text-sm font-medium text-neutral-800">{c.title}</p>
+                    {c.summary ? (
+                      <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-neutral-500">{c.summary}</p>
+                    ) : null}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
+
+        <div className="flex flex-col items-start gap-2 border-t border-neutral-100 pt-4 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-xs text-neutral-500">
             {isStoryLayout
               ? (storyConcern
-                ? '같은 고민의 다른 성공 사례를 더 보고 싶다면 쇼룸으로 돌아갈 수 있습니다.'
-                : '다른 성공 사례를 더 보고 싶다면 쇼룸으로 돌아갈 수 있습니다.')
+                ? '같은 고민의 다른 성공 사례를 더 보려면 쇼룸으로 돌아가세요.'
+                : '다른 성공 사례를 더 보려면 쇼룸으로 돌아가세요.')
               : '같은 형태로 우리 공간을 상담받고 싶다면 문의로 연결해 주세요.'}
           </p>
-          <div className="flex flex-wrap gap-2">
-            <Button asChild variant="outline" className="gap-1.5 bg-white">
-              <Link to={backHref}>
-                <Images className="h-4 w-4" />
-                {mode === 'public'
-                  ? (storyConcern ? '같은 고민 사례 더 보기' : '쇼룸 더 보기')
-                  : '작업실로 돌아가기'}
-              </Link>
-            </Button>
-          </div>
-        </section>
+          <Button asChild variant="ghost" size="sm" className="h-8 gap-1.5 px-2 text-neutral-600">
+            <Link to={backHref}>
+              <Images className="h-3.5 w-3.5" />
+              {mode === 'public'
+                ? (storyConcern ? '같은 고민 사례 더 보기' : '쇼룸 더 보기')
+                : '작업실로 돌아가기'}
+            </Link>
+          </Button>
+        </div>
       </main>
       {isStoryLayout ? (
         <ShowroomStoryStickyMiniCta

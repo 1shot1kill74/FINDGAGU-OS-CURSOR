@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from "npm:@supabase/supabase-js@2"
+import { sendShowroomShortsSlackAlert } from "../_shared/showroomShortsSlackAlert.ts"
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -149,7 +150,7 @@ Deno.serve(async (req) => {
 
     const { data: target, error: targetError } = await supabase
       .from(tables.targets)
-      .select(`id, ${tables.parentIdField}, channel, publish_status, preparation_payload`)
+      .select(`id, ${tables.parentIdField}, channel, title, publish_status, preparation_payload`)
       .eq("id", targetId)
       .single()
 
@@ -222,6 +223,20 @@ Deno.serve(async (req) => {
       },
       sourceType,
     })
+
+    if (status === "failed") {
+      await sendShowroomShortsSlackAlert({
+        reason: "failed",
+        channel: String(target.channel ?? ""),
+        title: typeof target.title === "string" ? target.title : null,
+        targetId,
+        jobId: String(target[tables.parentIdField] ?? ""),
+        publishStatus: "failed",
+        errorSummary: message,
+        sourceType,
+        action,
+      })
+    }
 
     return json({
       ok: true,

@@ -19,17 +19,10 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useColorChips } from '@/hooks/useColorChips'
 import { cn } from '@/lib/utils'
-import { Search, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Package, Images, FileText, MousePointerClick, MessageCircle, FileCheck, Users, Wrench, ClipboardCheck, ArrowRight, ArrowLeft, Copy, Check, Video, BarChart3, Building2, Palette, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react'
+import { Search, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Package, Images, FileText, MessageCircle, ArrowRight, ArrowLeft, Copy, Check, Video, BarChart3, Building2, Palette, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react'
 import { toast } from 'sonner'
 import { parseShowroomCtaAttribution, trackShowroomCtaVisit } from '@/lib/showroomCtaTracking'
 import { captureShowroomAbmAttribution } from '@/lib/showroomAbmTraffic'
-import { openShowroomBlogTeaserLine } from '@/lib/showroomCaseCanonicalBlog'
-import {
-  fetchApprovedBlogShowroomCaseProfileDrafts,
-  fetchPublishedShowroomCaseProfileDrafts,
-  fetchShowroomCaseProfileDrafts,
-} from '@/lib/showroomCaseProfileService'
-import { collectShowroomAliasNamesFromImages, collectShowroomIdentityKeys } from '@/lib/showroomCaseAlias'
 import { appendShowroomConcernQuery, openShowroomConsultationChat } from '@/pages/showroom/showroomStoryCta'
 import { trackShowroomAbmEvent, trackShowroomAbmHeaderNavClick } from '@/lib/showroomAbmTracking'
 import ShowroomAeoGuideTeaser from '@/components/showroom/ShowroomAeoGuideTeaser'
@@ -40,11 +33,12 @@ import {
   formatShowroomProductSeriesOptionLabel,
   getShowroomProductSeriesDescription,
   compareShowroomProductSeriesNames,
+  HUB_FEATURED_BA_MAX_PER_INDUSTRY,
   INDUSTRY_PAGE_SIZE,
   INDUSTRY_PREFERRED_ORDER,
   SWIPE_THRESHOLD_PX,
+  toHubOperatingInsightLine,
 } from '@/pages/showroom/showroomPageConstants'
-import { highlightKeywords } from '@/pages/showroom/showroomHighlightKeywords'
 import { ShowroomLightboxSlide } from '@/pages/showroom/ShowroomLightboxSlide'
 import {
   prefetchShowroomLightboxNeighbors,
@@ -60,7 +54,8 @@ import {
   getConcernIndustryFilter,
   getGroupPublicLabel,
   getPreferredExternalDisplayName,
-  resolveConcernBeforeAfterGroups,
+  findHubBeforeAfterPageForSiteKey,
+  resolveHubFeaturedBeforeAfterSections,
   getInternalShowroomSiteName,
   getPreferredShowroomSiteName,
   getPrimaryIndustryLabel,
@@ -73,23 +68,14 @@ import {
 } from '@/pages/showroom/showroomPageGrouping'
 import { ShowroomExpertConsultationButton } from '@/pages/showroom/ShowroomExpertConsultationButton'
 import { ShowroomMainStickyConsultCta } from '@/pages/showroom/ShowroomMainStickyConsultCta'
-import { ShowroomMobileExpertComment } from '@/pages/showroom/ShowroomMobileExpertComment'
 import { loadShowroomDataset } from '@/pages/showroom/showroomDataset'
 import type {
   ColorGroup,
   IndustrySection,
   PaginatedIndustrySection,
   ProductGroup,
-  ShowroomCaseProfileDraftState,
   SiteGroup,
   ViewMode,
-} from '@/pages/showroom/showroomPageTypes'
-import {
-  EMPTY_SHOWROOM_CASE_PROFILE_DRAFT,
-  blogPublicationFromPost,
-  preferCanonicalBlogPost,
-  resolveShowroomBlogPublicationForSiteGroup,
-  showroomCaseProfileExactSiteKeys,
 } from '@/pages/showroom/showroomPageTypes'
 
 const DETAIL_ZOOM_MIN = 1
@@ -130,8 +116,18 @@ function bindPenSafeButtonHandlers(action: () => void) {
   }
 }
 
-export default function PublicShowroomExperience() {
+export type PublicShowroomSurface = 'hub' | 'gallery'
+
+const PUBLIC_SHOWROOM_GALLERY_HREF = '/public/showroom/gallery'
+
+export default function PublicShowroomExperience({
+  surface = 'hub',
+}: {
+  surface?: PublicShowroomSurface
+} = {}) {
   const mode = 'public' as const
+  const isHub = surface === 'hub'
+  const isGallery = surface === 'gallery'
   const headerRef = useRef<HTMLElement | null>(null)
   const selectionBarRef = useRef<HTMLDivElement | null>(null)
   const { chips: colorChips, isLoading: colorLoading } = useColorChips()
@@ -157,16 +153,15 @@ export default function PublicShowroomExperience() {
   const [detailZoom, setDetailZoom] = useState(DETAIL_ZOOM_MIN)
   const [detailPan, setDetailPan] = useState({ x: 0, y: 0 })
   const [industryPageBySection, setIndustryPageBySection] = useState<Record<string, number>>({})
-  const [beforeAfterPage, setBeforeAfterPage] = useState(1)
-  const [caseProfileDraftBySite, setCaseProfileDraftBySite] = useState<Record<string, ShowroomCaseProfileDraftState>>({})
+  const [hubBaPageByIndustry, setHubBaPageByIndustry] = useState<Record<string, number>>({})
+  const [focusedHubBaSiteName, setFocusedHubBaSiteName] = useState<string | null>(null)
+  const focusedHubBaSiteParamRef = useRef<string | null>(null)
   const mountedRef = useRef(true)
   const refreshInFlightRef = useRef(false)
   const lastAutoRefreshAtRef = useRef(0)
   const trackedPublicEntryRef = useRef(false)
   const trackedAbmEnterRef = useRef(false)
   const originalArchivePath = '/public/showroom/original'
-  const [concernSectionExpanded, setConcernSectionExpanded] = useState(true)
-
   // 딥링크: URL ?q, ?concern 변경 시(뒤로가기 등) 상태 동기화. 레거시 ?tag도 지원.
   useEffect(() => {
     const q = searchParams.get('q')
@@ -175,7 +170,6 @@ export default function PublicShowroomExperience() {
     setSearchQuery(q ?? (normalizeConcernTag(legacyTag) ? '' : (legacyTag ?? '')))
     const nextConcern = normalizeConcernTag(concern) ?? normalizeConcernTag(legacyTag)
     setSelectedConcernTag(nextConcern)
-    if (nextConcern) setConcernSectionExpanded(true)
   }, [searchParams])
 
   useEffect(() => {
@@ -244,7 +238,6 @@ export default function PublicShowroomExperience() {
   const setConcernTagAndUrl = (value: string | null) => {
     setSelectedConcernTag(value)
     updateShowroomParams({ concern: value })
-    if (value) setConcernSectionExpanded(true)
     if (mode === 'public' && value) {
       trackShowroomAbmEvent({
         eventName: 'abm_concern_select',
@@ -252,40 +245,6 @@ export default function PublicShowroomExperience() {
       })
     }
   }
-
-  const buildIndustryAwareDisplayName = useCallback((siteName: string | null | undefined, industry: string | null | undefined) => {
-    const base = getBroadPublicLabel(siteName, null).trim()
-    const normalizedIndustry = (industry ?? '').trim()
-    if (!base || !normalizedIndustry) return base
-    if (base.includes(normalizedIndustry)) return base
-
-    const displayIndustryTokens = ['관리형', '학원', '스터디카페', '학교', '아파트', '기타']
-    for (const token of displayIndustryTokens) {
-      if (token !== normalizedIndustry && base.includes(token)) {
-        return base.replace(token, normalizedIndustry)
-      }
-    }
-
-    const parts = base.split(' ')
-    const last = parts.length > 0 ? parts[parts.length - 1] ?? '' : ''
-    if (/^\d{4}$/.test(last) && parts.length >= 2) {
-      return [...parts.slice(0, -1), normalizedIndustry, last].join(' ')
-    }
-    return `${base} ${normalizedIndustry}`.trim()
-  }, [])
-
-  const readGeneratedDisplayName = useCallback((response: unknown): string | null => {
-    if (!response || typeof response !== 'object' || Array.isArray(response)) return null
-    const record = response as Record<string, unknown>
-    const direct = typeof record.displayName === 'string' ? record.displayName.trim() : ''
-    if (direct) return direct
-    const request = record.request
-    if (!request || typeof request !== 'object' || Array.isArray(request)) return null
-    const nested = typeof (request as Record<string, unknown>).displayName === 'string'
-      ? ((request as Record<string, unknown>).displayName as string).trim()
-      : ''
-    return nested || null
-  }, [])
 
   const loadShowroomData = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
     if (refreshInFlightRef.current) return
@@ -571,35 +530,25 @@ export default function PublicShowroomExperience() {
   }, [industrySections, industryPageBySection])
 
   const visibleBeforeAfterGroups = useMemo(() => beforeAfterGroups, [beforeAfterGroups])
-  const concernBeforeAfterGroups = useMemo(
-    () => resolveConcernBeforeAfterGroups(beforeAfterGroups, selectedConcernTag, concernIndustryFilter),
-    [beforeAfterGroups, concernIndustryFilter, selectedConcernTag]
+  const hubFeaturedBeforeAfterSections = useMemo(
+    () => resolveHubFeaturedBeforeAfterSections(visibleBeforeAfterGroups),
+    [visibleBeforeAfterGroups],
   )
-  const featuredBeforeAfterGroups = useMemo(
-    () => visibleBeforeAfterGroups.slice(0, 2),
-    [visibleBeforeAfterGroups]
-  )
-  const concernBeforeAfterTotalPages = useMemo(
-    () => Math.max(1, Math.ceil(concernBeforeAfterGroups.length / INDUSTRY_PAGE_SIZE)),
-    [concernBeforeAfterGroups.length]
-  )
-  const currentConcernBeforeAfterPage = Math.min(
-    Math.max(beforeAfterPage, 1),
-    concernBeforeAfterTotalPages
-  )
-  const pagedConcernBeforeAfterGroups = useMemo(() => {
-    const startIndex = (currentConcernBeforeAfterPage - 1) * INDUSTRY_PAGE_SIZE
-    return concernBeforeAfterGroups.slice(startIndex, startIndex + INDUSTRY_PAGE_SIZE)
-  }, [concernBeforeAfterGroups, currentConcernBeforeAfterPage])
-  const beforeAfterTotalPages = useMemo(
-    () => Math.max(1, Math.ceil(visibleBeforeAfterGroups.length / INDUSTRY_PAGE_SIZE)),
-    [visibleBeforeAfterGroups.length]
-  )
-  const currentBeforeAfterPage = Math.min(Math.max(beforeAfterPage, 1), beforeAfterTotalPages)
-  const pagedBeforeAfterGroups = useMemo(() => {
-    const startIndex = (currentBeforeAfterPage - 1) * INDUSTRY_PAGE_SIZE
-    return visibleBeforeAfterGroups.slice(startIndex, startIndex + INDUSTRY_PAGE_SIZE)
-  }, [visibleBeforeAfterGroups, currentBeforeAfterPage])
+  const hasHubFeaturedBeforeAfter = hubFeaturedBeforeAfterSections.length > 0
+  const paginatedHubBaSections = useMemo(() => {
+    const pageSize = HUB_FEATURED_BA_MAX_PER_INDUSTRY
+    return hubFeaturedBeforeAfterSections.map((section) => {
+      const totalPages = Math.max(1, Math.ceil(section.groups.length / pageSize))
+      const currentPage = Math.min(Math.max(hubBaPageByIndustry[section.industry] ?? 1, 1), totalPages)
+      const startIndex = (currentPage - 1) * pageSize
+      return {
+        ...section,
+        currentPage,
+        totalPages,
+        pagedGroups: section.groups.slice(startIndex, startIndex + pageSize),
+      }
+    })
+  }, [hubFeaturedBeforeAfterSections, hubBaPageByIndustry])
   const detailImages = useMemo(() => {
     if (!detailKey || detailOpen === null) return []
     if (detailOpen === 'site') {
@@ -647,107 +596,6 @@ export default function PublicShowroomExperience() {
     prefetchShowroomLightboxNeighbors(detailImages, lightboxIndex, 2)
   }, [detailOpen, detailImages, detailViewMode, lightboxIndex])
 
-  useEffect(() => {
-    const siteNames = Array.from(new Set(
-      beforeAfterGroups.flatMap((group) => collectShowroomAliasNamesFromImages(group.images))
-    ))
-    if (siteNames.length === 0) return
-
-    let cancelled = false
-    void Promise.all([
-      fetchShowroomCaseProfileDrafts(siteNames),
-      fetchPublishedShowroomCaseProfileDrafts(),
-      fetchApprovedBlogShowroomCaseProfileDrafts(),
-    ])
-      .then(([exactRows, publishedRows, approvedBlogRows]) => {
-        if (cancelled) return
-        setCaseProfileDraftBySite((prev) => {
-          const next = { ...prev }
-          const mergedRows = new Map<string, typeof exactRows[number]>()
-          ;[...exactRows, ...publishedRows, ...approvedBlogRows].forEach((row) => {
-            const siteName = row.siteName.trim()
-            if (!siteName) return
-            const existing = mergedRows.get(siteName)
-            if (!existing) {
-              mergedRows.set(siteName, row)
-              return
-            }
-            mergedRows.set(siteName, {
-              ...existing,
-              painPoint: existing.painPoint ?? row.painPoint,
-              headlineHook: existing.headlineHook ?? row.headlineHook,
-              cardNewsPublication: row.cardNewsPublication.isPublished
-                ? row.cardNewsPublication
-                : existing.cardNewsPublication,
-              canonicalBlogPost: preferCanonicalBlogPost(existing.canonicalBlogPost, row.canonicalBlogPost),
-            })
-          })
-
-          const allExactSiteKeys = new Set<string>()
-          mergedRows.forEach((row) => {
-            showroomCaseProfileExactSiteKeys(row).forEach((key) => allExactSiteKeys.add(key))
-          })
-
-          mergedRows.forEach((row) => {
-            const publicSiteName = getBroadPublicLabel(row.siteName, null)
-            const publicCanonicalSiteName = getBroadPublicLabel(row.canonicalSiteName, null)
-            const industryAwareSiteName = buildIndustryAwareDisplayName(row.siteName, row.industry)
-            const industryAwareCanonicalSiteName = buildIndustryAwareDisplayName(row.canonicalSiteName, row.industry)
-            const canonicalBlogTitle = row.canonicalBlogPost?.title?.trim() ?? ''
-            const canonicalBlogSeoTitle = row.canonicalBlogPost?.seo.title?.trim() ?? ''
-            const cardNewsDisplayName = readGeneratedDisplayName(row.cardNewsGeneration.response)
-            const blogDisplayName = readGeneratedDisplayName(row.blogGeneration.response)
-            const exactKeys = showroomCaseProfileExactSiteKeys(row)
-            const exactKeySet = new Set(exactKeys)
-            const aliasKeys = [
-              ...exactKeys,
-              publicSiteName,
-              publicCanonicalSiteName,
-              industryAwareSiteName,
-              industryAwareCanonicalSiteName,
-              canonicalBlogTitle,
-              canonicalBlogSeoTitle,
-              cardNewsDisplayName ?? '',
-              blogDisplayName ?? '',
-            ].filter(Boolean)
-            const identityKeys = collectShowroomIdentityKeys(aliasKeys)
-            const keys = Array.from(new Set([
-              ...aliasKeys,
-              ...identityKeys,
-            ]))
-            const blogPublication = blogPublicationFromPost(row.canonicalBlogPost)
-            const value: ShowroomCaseProfileDraftState = {
-              painPoint: row.painPoint ?? '',
-              headlineHook: row.headlineHook ?? '',
-              cardNewsPublication: {
-                isPublished: row.cardNewsPublication.isPublished,
-                siteKey: row.cardNewsPublication.siteKey,
-              },
-              blogPublication,
-              blogTeaserLine: openShowroomBlogTeaserLine(row.canonicalBlogPost),
-            }
-            const looseValue: ShowroomCaseProfileDraftState = {
-              ...value,
-              blogPublication: { status: null },
-            }
-            keys.forEach((key) => {
-              if (exactKeySet.has(key)) {
-                next[key] = value
-                return
-              }
-              if (allExactSiteKeys.has(key)) return
-              next[key] = looseValue
-            })
-          })
-          return next
-        })
-      })
-      .catch(() => {})
-
-    return () => {
-      cancelled = true
-    }
-  }, [beforeAfterGroups, buildIndustryAwareDisplayName, readGeneratedDisplayName])
   const detailImageFrameRef = useRef<HTMLDivElement | null>(null)
   const detailAnimatedImageIdRef = useRef<string | null>(null)
   const detailTransitionDirectionRef = useRef<'next' | 'prev'>('next')
@@ -953,35 +801,6 @@ export default function PublicShowroomExperience() {
     resetDetailZoom()
   }, [detailOpen, detailViewMode, lightboxIndex, resetDetailZoom])
 
-  const getBeforeAfterProfileDraft = useCallback((group: SiteGroup): ShowroomCaseProfileDraftState => {
-    const publicLabel = getGroupPublicLabel(group)
-    const imageAliases = collectShowroomAliasNamesFromImages(group.images)
-    const aliases = Array.from(new Set([
-      group.siteName,
-      publicLabel,
-      group.externalDisplayName ?? '',
-      ...imageAliases,
-      ...collectShowroomIdentityKeys([
-        group.siteName,
-        publicLabel,
-        group.externalDisplayName ?? '',
-        ...imageAliases,
-      ]),
-    ].filter(Boolean)))
-    const matched = aliases
-      .map((key) => caseProfileDraftBySite[key])
-      .find(Boolean)
-    const base = matched
-      ?? caseProfileDraftBySite[group.siteName]
-      ?? (group.externalDisplayName ? caseProfileDraftBySite[group.externalDisplayName] : undefined)
-      ?? (publicLabel ? caseProfileDraftBySite[publicLabel] : undefined)
-      ?? EMPTY_SHOWROOM_CASE_PROFILE_DRAFT
-    return {
-      ...base,
-      blogPublication: resolveShowroomBlogPublicationForSiteGroup(group, caseProfileDraftBySite),
-    }
-  }, [caseProfileDraftBySite])
-
   const getBeforeAfterStoryHref = useCallback((group: SiteGroup) => {
     const candidates = [
       getInternalShowroomSiteName(group.images).trim(),
@@ -1002,6 +821,13 @@ export default function PublicShowroomExperience() {
     }))
   }, [])
 
+  const moveHubBaPage = useCallback((industry: string, nextPage: number) => {
+    setHubBaPageByIndustry((prev) => ({
+      ...prev,
+      [industry]: nextPage,
+    }))
+  }, [])
+
   const scrollToSectionWithOffset = useCallback((elementId: string) => {
     const target = document.getElementById(elementId)
     if (!target) return
@@ -1016,80 +842,84 @@ export default function PublicShowroomExperience() {
     scrollToSectionWithOffset(`showroom-industry-${industry}`)
   }, [scrollToSectionWithOffset])
 
-  const jumpToGalleryView = useCallback((mode: ViewMode) => {
+  const goToGalleryPage = useCallback(() => {
+    trackShowroomAbmHeaderNavClick({ target: 'gallery_more', concern: selectedConcernTag })
     trackShowroomAbmEvent({
       eventName: 'abm_gallery_browse',
       concern: selectedConcernTag,
-      metadata: { viewMode: mode },
+      metadata: { viewMode, entry: 'hub_nav' },
     })
-    setViewMode(mode)
-    requestAnimationFrame(() => {
-      scrollToSectionWithOffset('showroom-gallery-browse')
-    })
-  }, [scrollToSectionWithOffset, selectedConcernTag])
+    navigate(PUBLIC_SHOWROOM_GALLERY_HREF)
+  }, [navigate, selectedConcernTag, viewMode])
 
+  /** URL 해시로 진입 시 해당 섹션으로 스크롤 */
   useEffect(() => {
-    setBeforeAfterPage(1)
-  }, [selectedConcernTag])
-
-  useEffect(() => {
-    if (beforeAfterPage > beforeAfterTotalPages) {
-      setBeforeAfterPage(beforeAfterTotalPages)
-    }
-  }, [beforeAfterPage, beforeAfterTotalPages])
-
-  useEffect(() => {
-    if (beforeAfterPage > concernBeforeAfterTotalPages) {
-      setBeforeAfterPage(concernBeforeAfterTotalPages)
-    }
-  }, [beforeAfterPage, concernBeforeAfterTotalPages])
-
-  const scrollToBeforeAfterSection = useCallback(() => {
-    trackShowroomAbmHeaderNavClick({ target: 'before_after', concern: selectedConcernTag })
-    scrollToSectionWithOffset('showroom-featured-ba-heading')
-  }, [scrollToSectionWithOffset, selectedConcernTag])
-
-  const scrollToExpertRecommendSection = useCallback(() => {
-    trackShowroomAbmHeaderNavClick({ target: 'expert_recommend', concern: selectedConcernTag })
-    setConcernSectionExpanded(true)
-    requestAnimationFrame(() => {
-      scrollToSectionWithOffset('showroom-concern-heading')
-    })
-  }, [scrollToSectionWithOffset, selectedConcernTag])
-
-  /** URL 해시(#showroom-featured-ba-heading)로 진입 시 전후 비교 섹션으로 스크롤 */
-  useEffect(() => {
-    if (location.hash !== '#showroom-featured-ba-heading') return
+    if (!isHub) return
     if (loading) return
+    const hash = location.hash.replace(/^#/, '')
+    if (hash !== 'showroom-featured-ba-heading' && hash !== 'showroom-concern-heading' && hash !== 'showroom-concern-result-anchor') {
+      return
+    }
+    const targetId = hash === 'showroom-concern-result-anchor' ? 'showroom-concern-heading' : hash
     const t = window.setTimeout(() => {
-      scrollToSectionWithOffset('showroom-featured-ba-heading')
+      scrollToSectionWithOffset(targetId)
     }, 280)
     return () => window.clearTimeout(t)
-  }, [location.hash, loading, scrollToSectionWithOffset])
+  }, [isHub, location.hash, loading, scrollToSectionWithOffset])
+
+  /** 숏츠·SNS deep link(?baSite=) → 해당 현장이 있는 BA 페이지로 이동 */
+  useEffect(() => {
+    if (!isHub || loading) return
+    const baSite = (searchParams.get('baSite') ?? searchParams.get('site') ?? '').trim()
+    if (!baSite) return
+    if (focusedHubBaSiteParamRef.current === baSite) return
+
+    const hit = findHubBeforeAfterPageForSiteKey(
+      hubFeaturedBeforeAfterSections,
+      baSite,
+      HUB_FEATURED_BA_MAX_PER_INDUSTRY,
+    )
+    if (!hit) return
+
+    focusedHubBaSiteParamRef.current = baSite
+    setHubBaPageByIndustry((prev) => ({ ...prev, [hit.industry]: hit.page }))
+    setFocusedHubBaSiteName(hit.siteName)
+
+    const t = window.setTimeout(() => {
+      scrollToSectionWithOffset(`showroom-hub-ba-${hit.industry}`)
+    }, 320)
+    return () => window.clearTimeout(t)
+  }, [
+    isHub,
+    loading,
+    searchParams,
+    hubFeaturedBeforeAfterSections,
+    scrollToSectionWithOffset,
+  ])
 
   const renderSectionBookmarkTabs = () => (
     <nav
       className="fixed right-0 top-32 z-30 flex flex-col items-end gap-2 md:top-40"
       aria-label="쇼룸 주요 섹션 바로가기"
     >
-      {featuredBeforeAfterGroups.length > 0 ? (
-        <button
-          type="button"
-          onClick={scrollToBeforeAfterSection}
+      {isHub ? (
+          <button
+            type="button"
+            onClick={goToGalleryPage}
+            className="rounded-l-2xl border border-r-0 border-[#5f7058]/25 bg-white/95 px-2.5 py-3 text-[12px] font-semibold text-[#43503e] shadow-[0_8px_22px_rgba(0,0,0,0.14)] backdrop-blur transition hover:-translate-x-1 hover:bg-[#f4f7f1] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#5f7058]/35"
+            style={{ writingMode: 'vertical-rl' }}
+          >
+            시공사례 더보기
+          </button>
+      ) : (
+        <Link
+          to="/public/showroom"
           className="rounded-l-2xl border border-r-0 border-[#5f7058]/25 bg-white/95 px-2.5 py-3 text-[12px] font-semibold text-[#43503e] shadow-[0_8px_22px_rgba(0,0,0,0.14)] backdrop-blur transition hover:-translate-x-1 hover:bg-[#f4f7f1] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#5f7058]/35"
           style={{ writingMode: 'vertical-rl' }}
         >
-          현장 전후
-        </button>
-      ) : null}
-      <button
-        type="button"
-        onClick={scrollToExpertRecommendSection}
-        className="rounded-l-2xl border border-r-0 border-amber-300/70 bg-amber-50/95 px-2.5 py-3 text-[12px] font-semibold text-amber-800 shadow-[0_8px_22px_rgba(0,0,0,0.14)] backdrop-blur transition hover:-translate-x-1 hover:bg-amber-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/50"
-        style={{ writingMode: 'vertical-rl' }}
-      >
-        전문가 추천
-      </button>
+          쇼룸 홈
+        </Link>
+      )}
     </nav>
   )
 
@@ -1185,15 +1015,18 @@ export default function PublicShowroomExperience() {
     )
   }
 
-  const renderBeforeAfterCard = (group: SiteGroup, options?: { linkToStory?: boolean; compactPreview?: boolean }) => {
+  const renderBeforeAfterCard = (
+    group: SiteGroup,
+    options?: { linkToStory?: boolean; compactPreview?: boolean; highlighted?: boolean },
+  ) => {
     const beforeImages = group.images.filter((image) => image.before_after_role === 'before')
     const afterImages = group.images.filter((image) => image.before_after_role === 'after')
     const beforeImage = beforeImages[0] ?? null
     const afterImage = afterImages.find((image) => image.is_main) ?? afterImages[0] ?? null
-    const caseProfileDraft = getBeforeAfterProfileDraft(group)
     const publicLabel = getGroupPublicLabel(group)
     const storyHref = options?.linkToStory ? getBeforeAfterStoryHref(group) : null
     const compactPreview = options?.compactPreview ?? false
+    const highlighted = options?.highlighted ?? false
     if (!beforeImage || !afterImage) return null
 
     const beforeSrc = beforeImage.thumbnail_url || beforeImage.cloudinary_url || ''
@@ -1206,8 +1039,8 @@ export default function PublicShowroomExperience() {
         aspectClassName={compactPreview ? 'aspect-[16/10]' : 'aspect-[4/3]'}
       />
     )
-    const titleBlock = (
-      <div className={cn('flex items-start', compactPreview ? 'p-3' : 'min-h-[5.5rem] p-4')}>
+    const footerBlock = (
+      <div className={cn('flex flex-col gap-1.5 border-t border-neutral-100', compactPreview ? 'p-3' : 'p-4')}>
         <h4
           className={cn(
             'font-semibold leading-snug text-neutral-900',
@@ -1216,40 +1049,24 @@ export default function PublicShowroomExperience() {
         >
           {publicLabel}
         </h4>
-      </div>
-    )
-
-    const publicBlogTeaser = (
-      <div className={cn('border-t border-emerald-100 bg-emerald-50/50 px-3 py-2', compactPreview && 'px-2.5 py-2')}>
-        <div className="rounded-xl bg-white px-3 py-2.5 shadow-sm ring-1 ring-emerald-200/90">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">블로그 소개</p>
-          <p
-            className={cn(
-              'mt-1 text-sm leading-relaxed text-slate-600',
-              compactPreview ? 'line-clamp-2' : 'min-h-[7.5rem] line-clamp-4',
-            )}
-          >
-            {(caseProfileDraft.blogTeaserLine ?? '').trim()}
-          </p>
-          {storyHref ? (
-            <p className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-emerald-700">
-              사례 블로그에서 자세히 보기
-              <ArrowRight className="h-3.5 w-3.5" aria-hidden />
-            </p>
-          ) : null}
-        </div>
+        <p className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700">
+          사례 이야기·사진 더 보기
+          <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+        </p>
       </div>
     )
 
     return (
       <div
         key={`before-after-${group.siteName}`}
+        id={highlighted ? 'showroom-hub-ba-focus' : undefined}
         className={cn(
           'flex h-full flex-col overflow-hidden rounded-2xl border border-emerald-200 bg-white text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md',
           compactPreview && 'rounded-xl shadow-none hover:translate-y-0 hover:shadow-sm',
+          highlighted && 'ring-2 ring-[#5f7058] ring-offset-2',
         )}
       >
-        {/* 이미지는 모바일 탭 토글 전용. 상세/블로그는 제목·티저로만 연결해 토글과 충돌 방지 */}
+        {/* 슬라이더=비교, 하단=이야기 진입. 허브에는 블로그 티저 문단을 두지 않음 */}
         {beforeAfterPreview}
         {storyHref ? (
           <Link
@@ -1264,20 +1081,16 @@ export default function PublicShowroomExperience() {
               })
             }}
           >
-            {titleBlock}
-            {publicBlogTeaser}
+            {footerBlock}
           </Link>
         ) : (
-          <>
-            <button
-              type="button"
-              onClick={() => openDetail('beforeAfter', group.siteName)}
-              className="flex w-full flex-1 flex-col text-left"
-            >
-              {titleBlock}
-            </button>
-            {publicBlogTeaser}
-          </>
+          <button
+            type="button"
+            onClick={() => openDetail('beforeAfter', group.siteName)}
+            className="flex w-full flex-1 flex-col text-left"
+          >
+            {footerBlock}
+          </button>
         )}
       </div>
     )
@@ -1491,33 +1304,156 @@ export default function PublicShowroomExperience() {
       {renderSectionBookmarkTabs()}
 
       <main className="max-w-6xl mx-auto px-4 py-8 md:px-8">
-        {/* 메인 카피: 사진-first — 고민 선택은 선택 사항 */}
-        <section className="mb-6" aria-labelledby="showroom-main-heading">
-          <h1 id="showroom-main-heading" className="text-2xl md:text-3xl font-bold text-neutral-900 leading-tight mb-1">
-            실패하지 않는 공간 기획, 그 차이는 <span className="text-amber-600">디테일</span>에 있습니다.
-          </h1>
-          <p className="text-neutral-600 text-base md:text-lg">
-            실제 시공 사례부터 편하게 둘러보세요. 고민 선택은 나중에 해도 됩니다.
-          </p>
-        </section>
+        {isHub ? (
+          <section className="mb-6" aria-labelledby="showroom-main-heading">
+            <h1 id="showroom-main-heading" className="text-2xl md:text-3xl font-bold text-neutral-900 leading-tight mb-1">
+              실패하지 않는 공간 기획, 그 차이는 <span className="text-amber-600">디테일</span>에 있습니다.
+            </h1>
+            <p className="text-neutral-600 text-base md:text-lg">
+              우리 업종에 가까운 변화부터 확인한 뒤, 시공사례 더보기에서 사진을 더 찾아보세요.
+            </p>
+          </section>
+        ) : (
+          <section className="mb-6" aria-labelledby="showroom-gallery-main-heading">
+            <Button asChild variant="ghost" size="sm" className="mb-3 h-8 gap-1.5 px-0 text-neutral-600">
+              <Link to="/public/showroom">
+                <ArrowLeft className="h-4 w-4" />
+                쇼룸 홈
+              </Link>
+            </Button>
+            <h1 id="showroom-gallery-main-heading" className="text-2xl md:text-3xl font-bold text-neutral-900 leading-tight mb-1">
+              시공사례 더보기
+            </h1>
+            <p className="text-neutral-600 text-base md:text-lg">
+              업종 · 제품 · 색상 기준으로 After 사진을 더 둘러보세요.
+            </p>
+          </section>
+        )}
 
+        {isHub && hasHubFeaturedBeforeAfter && (
+          <section
+            className="mb-8 scroll-mt-24 md:scroll-mt-28"
+            aria-labelledby="showroom-featured-ba-heading"
+          >
+            <div className="mb-5">
+              <h2 id="showroom-featured-ba-heading" className="text-lg font-semibold text-neutral-900">
+                현장 Before/After
+              </h2>
+              <p className="mt-1 text-sm text-neutral-600">
+                핸들을 좌우로 밀어 전후를 비교하세요.
+              </p>
+            </div>
+            <div className="space-y-8">
+              {paginatedHubBaSections.map((section) => (
+                <div
+                  key={`hub-ba-${section.industry}`}
+                  id={`showroom-hub-ba-${section.industry}`}
+                  className="scroll-mt-28 md:scroll-mt-32"
+                >
+                  <div className="mb-3 flex flex-col gap-0.5 sm:flex-row sm:items-end sm:justify-between">
+                    <div>
+                      <h3 className="text-base font-semibold text-neutral-900">{section.title}</h3>
+                      <p className="text-sm text-neutral-600">{section.blurb}</p>
+                    </div>
+                    <p className="text-xs text-neutral-500">
+                      {section.groups.length}개 현장
+                      {section.totalPages > 1
+                        ? ` · ${section.currentPage}/${section.totalPages}페이지`
+                        : null}
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+                    {section.pagedGroups.map((group) =>
+                      renderBeforeAfterCard(group, {
+                        linkToStory: true,
+                        highlighted: focusedHubBaSiteName === group.siteName,
+                      }),
+                    )}
+                  </div>
+                  {section.totalPages > 1 && (
+                    <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5"
+                        disabled={section.currentPage <= 1}
+                        onClick={() => moveHubBaPage(section.industry, section.currentPage - 1)}
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                        이전
+                      </Button>
+                      <div className="flex flex-wrap items-center justify-center gap-1">
+                        {Array.from({ length: section.totalPages }, (_, index) => {
+                          const pageNumber = index + 1
+                          const isCurrent = pageNumber === section.currentPage
+                          return (
+                            <Button
+                              key={`hub-ba-${section.industry}-page-${pageNumber}`}
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className={cn('min-w-9 px-0', isCurrent && selectedBrowseButtonClass)}
+                              onClick={() => moveHubBaPage(section.industry, pageNumber)}
+                            >
+                              {pageNumber}
+                            </Button>
+                          )
+                        })}
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5"
+                        disabled={section.currentPage >= section.totalPages}
+                        onClick={() => moveHubBaPage(section.industry, section.currentPage + 1)}
+                      >
+                        다음
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className="mt-8 flex justify-center">
+              <Button
+                type="button"
+                onClick={goToGalleryPage}
+                className="h-11 gap-2 rounded-xl bg-[#5f7058] px-5 text-sm font-semibold text-white hover:bg-[#4a5744]"
+              >
+                <Images className="h-4 w-4" />
+                시공사례 더보기
+              </Button>
+            </div>
+          </section>
+        )}
+
+        {isHub && !hasHubFeaturedBeforeAfter && (
+          <div className="mb-8 flex justify-center">
+            <Button
+              type="button"
+              onClick={goToGalleryPage}
+              className="h-11 gap-2 rounded-xl bg-[#5f7058] px-5 text-sm font-semibold text-white hover:bg-[#4a5744]"
+            >
+              <Images className="h-4 w-4" />
+              시공사례 더보기
+            </Button>
+          </div>
+        )}
+
+        {isGallery && (
           <section
             id="showroom-gallery-browse"
             className="scroll-mt-24 md:scroll-mt-28"
             aria-labelledby="showroom-gallery-browse-heading"
           >
-            <div className="mb-6">
-              <h2 id="showroom-gallery-browse-heading" className="text-lg font-semibold text-neutral-900">
-                시공 사례 사진 바로 찾기
-              </h2>
-              <p className="mt-1 text-sm text-neutral-600">
-                고민 선택 없이 업종 · 제품 · 색상 기준으로 사례 사진을 둘러보실 수 있습니다.
-              </p>
-            </div>
             <div className="mb-8 flex flex-col gap-4 md:mb-10">{renderGalleryBrowseControls()}</div>
           </section>
+        )}
 
-        {viewMode === 'product' && (
+        {isGallery && viewMode === 'product' && (
           <div id="showroom-gallery" className="grid grid-cols-2 lg:grid-cols-3 gap-6 items-stretch">
             {productFilteredGroups.map((group) => {
               const mainImg = group.mainImage
@@ -1628,7 +1564,7 @@ export default function PublicShowroomExperience() {
           </div>
         )}
 
-        {viewMode === 'color' && (
+        {isGallery && viewMode === 'color' && (
           <div id="showroom-gallery" className="grid grid-cols-2 lg:grid-cols-3 gap-6 items-stretch">
             {colorFilteredGroups.map((group) => {
               const mainImg = group.mainImage
@@ -1746,7 +1682,7 @@ export default function PublicShowroomExperience() {
           </div>
         )}
 
-        {viewMode === 'industry' && (
+        {isGallery && viewMode === 'industry' && (
           <>
             <div id="showroom-gallery" className="space-y-10">
               {paginatedIndustrySections.map((section, index) => (
@@ -1836,409 +1772,100 @@ export default function PublicShowroomExperience() {
           </>
         )}
 
-        {viewMode === 'product' && productFilteredGroups.length === 0 && (
+        {isGallery && viewMode === 'product' && productFilteredGroups.length === 0 && (
           <p className="text-center text-neutral-500 py-12">검색 결과가 없습니다.</p>
         )}
-        {viewMode === 'color' && colorFilteredGroups.length === 0 && (
+        {isGallery && viewMode === 'color' && colorFilteredGroups.length === 0 && (
           <p className="text-center text-neutral-500 py-12">검색 결과가 없습니다.</p>
         )}
-        {viewMode === 'industry' && paginatedIndustrySections.length === 0 && (
+        {isGallery && viewMode === 'industry' && paginatedIndustrySections.length === 0 && (
           <p className="text-center text-neutral-500 py-12">검색 결과가 없습니다.</p>
         )}
 
-        {featuredBeforeAfterGroups.length > 0 && (
-          <div className="mt-8 mb-8 rounded-xl border border-neutral-200 bg-neutral-50/80 p-4" aria-labelledby="showroom-featured-ba-heading">
-            <h3 id="showroom-featured-ba-heading" className="text-sm font-semibold text-neutral-800">
-              현장 Before/After
-            </h3>
-            <p className="mt-0.5 text-xs text-neutral-500">같은 현장의 Before/After를 빠르게 확인해 보세요.</p>
-            <div className="mt-3 grid w-full grid-cols-1 gap-4 sm:grid-cols-2">
-              {featuredBeforeAfterGroups.map((group) => (
-                <div
-                  key={`featured-ba-${getGroupPublicLabel(group)}`}
-                  className="w-full min-w-0"
-                >
-                  {renderBeforeAfterCard(group, { linkToStory: true, compactPreview: true })}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* 전문가가 먼저 질문하는 공감 카드: 말풍선 + 핵심어 하이라이트 + 성공 사례 보기 CTA */}
+        {isGallery && (
         <section
-          className="mb-8 rounded-2xl border border-neutral-200 bg-white overflow-hidden"
-          aria-labelledby="showroom-concern-heading"
+          className="mb-8 rounded-2xl border border-[#5f7058]/20 bg-[#f6f8f4] p-5 md:p-6"
+          aria-labelledby="showroom-gallery-consult-heading"
         >
-          <div className="p-4">
-            <div className="min-w-0 flex-1">
-              <h2 id="showroom-concern-heading" className="text-lg font-semibold text-neutral-900">
-                전문가추천
-              </h2>
-              <p className="mt-1 text-sm text-neutral-600">
-                {selectedConcernTag
-                  ? `선택: ${selectedConcernTag} · 전문가 코멘트와 맞춤 Before/After`
-                  : '우리 상황에 가까운 질문을 고르면 전문가 코멘트와 사례를 이어서 보여 드립니다.'}
-              </p>
-            </div>
+          <h2 id="showroom-gallery-consult-heading" className="text-lg font-semibold text-neutral-900">
+            비슷한 공간이 보이셨나요?
+          </h2>
+          <p className="mt-1 text-sm text-neutral-600">
+            업종·규모가 가까운 사례를 골랐다면, 우리 현장에 맞게 어떻게 가져올지 이어서 확인해 보세요.
+          </p>
+          <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center">
+            <ShowroomExpertConsultationButton concern={selectedConcernTag} surface="gallery_close">
+              우리 공간 맞춤 상담하기
+            </ShowroomExpertConsultationButton>
+            <Link
+              to="/public/showroom"
+              className="inline-flex items-center justify-center rounded-xl border border-neutral-300 bg-white px-4 py-3 text-sm font-semibold text-neutral-700 transition hover:bg-neutral-50"
+            >
+              쇼룸 홈으로
+            </Link>
           </div>
-          <div className="border-t border-neutral-100 px-4 pb-4 pt-2">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        </section>
+        )}
+
+        {/* 허브 클로징: 가벼운 운영 인사이트 + 상담 푸시 (추천 탐색 UI 아님) */}
+        {isHub && (
+        <>
+        <section
+          id="showroom-concern-heading"
+          className="mb-8 scroll-mt-28 rounded-2xl border border-neutral-200 bg-white p-5 md:p-6 md:scroll-mt-32"
+          aria-labelledby="showroom-insight-title"
+        >
+          <h2 id="showroom-insight-title" className="text-lg font-semibold text-neutral-900">
+            현장에서 보는 차이
+          </h2>
+          <p className="mt-1 text-sm text-neutral-600">
+            사진으로도 확신이 안 설 때, 운영에서 갈리는 포인트입니다.
+          </p>
+          <ul className="mt-4 space-y-2.5">
             {CONCERN_CARDS.map((card) => {
               const isSelected = selectedConcernTag === card.tag
-              const handleCardClick = () => {
-                if (selectedConcernTag !== card.tag) {
-                  setConcernTagAndUrl(card.tag)
-                }
-                requestAnimationFrame(() => {
-                  document.getElementById('showroom-concern-result-anchor')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-                })
-              }
               return (
-                <button
-                  key={card.tag}
-                  type="button"
-                  onClick={handleCardClick}
-                  className="group flex flex-col gap-3 text-left rounded-2xl p-4 bg-white border-2 border-neutral-200 shadow-sm hover:shadow-xl hover:border-amber-300 hover:-translate-y-1 active:scale-[0.99] transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-2 min-h-[88px] cursor-pointer"
-                >
-                  <div className="flex items-center gap-3 flex-1 min-h-0">
-                    <div className="flex shrink-0 self-center flex-col items-center justify-center gap-2">
-                      <span
-                        className="w-14 h-14 rounded-full bg-neutral-100 flex items-center justify-center text-3xl border-2 border-neutral-200 group-hover:border-amber-200 transition-colors overflow-hidden"
-                        aria-hidden
-                      >
-                        {card.imageSrc ? (
-                          <img src={card.imageSrc} alt="" className="w-full h-full object-cover object-top" />
-                        ) : (
-                          card.emoji
-                        )}
-                      </span>
-                      <span className="inline-flex flex-col items-center rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold leading-tight text-slate-700 ring-1 ring-slate-200">
-                        {card.industryFilter === '관리형전환' ? (
-                          <>
-                            <span>스터디카페의</span>
-                            <span>관리형전환</span>
-                          </>
-                        ) : (
-                          getConcernIndustryDisplayLabel(card.industryFilter)
-                        )}
-                      </span>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div
-                        className={`rounded-xl rounded-tl-none px-4 py-3 border border-neutral-100 group-hover:bg-amber-50/50 group-hover:border-amber-100 transition-colors ${
-                          isSelected ? 'bg-amber-50/80 border-amber-200' : ''
-                        }`}
-                        style={{ boxShadow: '0 1px 2px rgba(0,0,0,0.04)' }}
-                      >
-                      <p className="text-sm text-neutral-700 leading-relaxed font-medium">
-                        {highlightKeywords(card.message)}
-                      </p>
-                      </div>
-                    </div>
-                  </div>
-                  <span className="inline-flex items-center gap-1 self-end rounded-full bg-amber-500 text-white text-xs font-semibold px-3 py-1.5 shadow-md">
-                    <MousePointerClick className="h-3.5 w-3.5" />
-                    성공 사례 보기
-                  </span>
-                </button>
+                <li key={card.tag}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setConcernTagAndUrl(isSelected ? null : card.tag)
+                    }}
+                    className={cn(
+                      'flex w-full items-start gap-3 rounded-xl border px-3.5 py-3 text-left transition',
+                      isSelected
+                        ? 'border-[#5f7058]/40 bg-[#f4f7f1]'
+                        : 'border-neutral-200 bg-neutral-50/80 hover:border-neutral-300 hover:bg-white',
+                    )}
+                  >
+                    <span className="mt-0.5 shrink-0 rounded-md bg-white px-2 py-1 text-[11px] font-semibold text-neutral-600 ring-1 ring-neutral-200">
+                      {card.industryFilter === '관리형전환' ? '관리형전환' : getConcernIndustryDisplayLabel(card.industryFilter)}
+                    </span>
+                    <span className="min-w-0 text-sm leading-relaxed text-neutral-700">
+                      {toHubOperatingInsightLine(card.message)}
+                    </span>
+                  </button>
+                </li>
               )
             })}
+          </ul>
+          <div className="mt-5 flex flex-col gap-3 border-t border-neutral-100 pt-5 sm:flex-row sm:items-center">
+            <ShowroomExpertConsultationButton concern={selectedConcernTag} surface="hub_insight">
+              우리 공간 맞춤 상담하기
+            </ShowroomExpertConsultationButton>
+            <button
+              type="button"
+              onClick={goToGalleryPage}
+              className="inline-flex items-center justify-center rounded-xl border border-neutral-300 bg-white px-4 py-3 text-sm font-semibold text-neutral-700 transition hover:bg-neutral-50"
+            >
+              시공사례 더 둘러보기
+            </button>
           </div>
-            </div>
         </section>
         <div id="showroom-concern-result-anchor" className="h-px scroll-mt-28 md:scroll-mt-32" aria-hidden />
-        {/* 전문가 코멘트: 해당 카드 클릭 시에만 표시 — 왼쪽 코멘트, 오른쪽 전문가 이미지(답하는 느낌) */}
-        { selectedConcernTag === '관리형 창업 또는 전환' && (
-          <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
-            <div className="flex-1 min-w-0 py-5 px-5">
-              <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
-              <ShowroomMobileExpertComment>
-                <p>
-                  관리형 공간은 단순한 인테리어가 아닙니다. 아이들의 <span className="font-bold text-slate-800">성과를 만들어내는 학습 엔진</span>이어야 합니다.
-                </p>
-                <p>
-                  누군가 우리 공간의 겉모습을 카피하는 것은 쉽습니다. 자재를 줄여서 가격을 낮추는 것도 어렵지 않습니다. 하지만 장시간 학습의 피로도를 낮추는 인체공학적 설계, 교시제 운영을 고려한 정교한 동선, 조도와 환기 시스템의 최적화까지—그 <span className="font-bold text-slate-800">이유를 알고 설계하는 것</span>과 모르고 흉내 내는 것은 결과에서 천지 차이를 만듭니다.
-                </p>
-                <p>
-                  결국, 성공하는 공간은 보이지 않는 <span className="font-bold text-slate-800">디테일에서 결정됩니다.</span> 그 한 끗 차이의 디테일이 원장님의 사업을 성공으로 이끕니다.
-                </p>
-              </ShowroomMobileExpertComment>
-              <div className="mt-4 pt-4 border-t border-slate-200">
-                <ShowroomExpertConsultationButton concern={selectedConcernTag}>
-                  관리형 맞춤형 레이아웃 상담하기
-                </ShowroomExpertConsultationButton>
-              </div>
-            </div>
-            <div className="sm:w-40 shrink-0 flex items-center justify-center sm:justify-end pr-4 pb-2">
-              <span className="w-32 h-32 sm:w-40 sm:h-40 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center shrink-0">
-                <img
-                  src="/showroom-expert-comment.png"
-                  alt=""
-                  className="w-full h-full object-cover object-top"
-                />
-              </span>
-            </div>
-          </section>
-        )}
-        { selectedConcernTag === '매출 향상 스터디카페 리뉴얼' && (
-          <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
-            <div className="flex-1 min-w-0 py-5 px-5">
-              <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
-              <p className="text-slate-700 text-sm font-medium mb-3">비슷해 보인다고 똑같은 스터디카페가 아닙니다.</p>
-              <ShowroomMobileExpertComment>
-                <p>
-                  수많은 스터디카페가 생겨나고, 이제 인테리어는 상향 평준화되어 다 비슷해 보입니다. 하지만 현장에는 <span className="font-bold text-slate-800">유독 잘되는 집과 안 되는 집</span>의 극명한 차이가 존재합니다.
-                </p>
-                <p>
-                  우리는 그 차이를 명확히 압니다. 성공하는 스터디카페는 화려한 조명보다, 고객이 <span className="font-bold text-slate-800">&apos;무의식중에 편하다&apos;라고 느끼는 공간 디테일</span>에서 승부가 갈리기 때문입니다.
-                </p>
-                <p>
-                  점주의 관리 방식이 녹아든 가구 배치, 무의식적인 피로감을 줄여주는 책상의 높이와 각도—이런 보이지 않는 <span className="font-bold text-slate-800">디테일의 격차</span>가 모여 고객이 다시 찾는 &apos;잘되는 집&apos;을 만듭니다. 그 차이를 아는 전문가와 함께 시작하십시오.
-                </p>
-              </ShowroomMobileExpertComment>
-              <div className="mt-4 pt-4 border-t border-slate-200">
-                <ShowroomExpertConsultationButton concern={selectedConcernTag}>
-                  스터디카페 리뉴얼 맞춤형 상담하기
-                </ShowroomExpertConsultationButton>
-              </div>
-            </div>
-            <div className="sm:w-40 shrink-0 flex items-center justify-center sm:justify-end pr-4 pb-2">
-              <span className="w-32 h-32 sm:w-40 sm:h-40 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center shrink-0">
-                <img
-                  src="/showroom-expert-comment.png"
-                  alt=""
-                  className="w-full h-full object-cover object-top"
-                />
-              </span>
-            </div>
-          </section>
-        )}
-        { selectedConcernTag === '스터디카페를 관리형으로 전환' && (
-          <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
-            <div className="flex-1 min-w-0 py-5 px-5">
-              <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
-              <p className="text-slate-700 text-sm font-medium mb-3">같은 스터디카페처럼 보여서는 나중에 프리미엄을 받기 어렵습니다.</p>
-              <ShowroomMobileExpertComment>
-                <p>
-                  지금 운영 중인 스터디카페라도, 공간·동선·운영 구조를 <span className="font-bold text-slate-800">관리형으로 전환</span>하면 기존 매장과의 차별화가 훨씬 선명해집니다.
-                </p>
-                <p>
-                  이것은 단순히 예쁘게 바꾸는 리뉴얼이 아닙니다. 고객이 느끼는 프리미엄을 높이고, 향후 관리형 오픈을 고민하는 인수자에게도 <span className="font-bold text-slate-800">더 설득력 있는 매장 자산</span>으로 보이게 만드는 전략입니다.
-                </p>
-                <p>
-                  결국 잘된 전환은 현재의 경쟁력을 만들고, 나중의 엑시트 가능성까지 바꿉니다. 파인드가구는 그 흐름까지 고려해 공간을 제안합니다.
-                </p>
-              </ShowroomMobileExpertComment>
-              <div className="mt-4 pt-4 border-t border-slate-200">
-                <ShowroomExpertConsultationButton concern={selectedConcernTag}>
-                  스터디카페를 관리형으로 전환 상담하기
-                </ShowroomExpertConsultationButton>
-              </div>
-            </div>
-            <div className="sm:w-40 shrink-0 flex items-center justify-center sm:justify-end pr-4 pb-2">
-              <span className="w-32 h-32 sm:w-40 sm:h-40 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center shrink-0">
-                <img
-                  src="/showroom-expert-comment.png"
-                  alt=""
-                  className="w-full h-full object-cover object-top"
-                />
-              </span>
-            </div>
-          </section>
-        )}
-        { selectedConcernTag === '스터디카페 같은 학원 자습실' && (
-          <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
-            <div className="flex-1 min-w-0 py-5 px-5">
-              <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
-              <p className="text-slate-700 text-sm font-medium mb-3">유료인가요, 무료인가요? 목적이 분명해야 성공합니다.</p>
-              <ShowroomMobileExpertComment>
-                <p>
-                  학원 자습실 기획의 첫 단추는 <span className="font-bold text-slate-800">유료 공간인지, 무료 서비스 공간인지</span>를 결정하는 것입니다.
-                </p>
-                <p>
-                  유료 공간이라면 학부모와 학생이 지불한 비용만큼의 &apos;특별한 가치&apos;가 체감되어야 합니다. 반면, 무료 공간이라면 관리 효율과 기본기에 집중하여 예산의 최적화를 이뤄내야 하죠.
-                </p>
-                <p>
-                  원장님, 자습실은 단순히 아이들이 머무는 곳이 아닙니다. <span className="font-bold text-slate-800">학생들에게는 몰입의 경험을, 원장님께는 추가 매출</span>과 재등록률 상승을 가져다주는 <span className="font-bold text-slate-800">&apos;전략적 자산&apos;</span>이어야 합니다. 목적에 맞는 정교한 기획이 예산 낭비를 막고 학원의 가치를 높입니다.
-                </p>
-              </ShowroomMobileExpertComment>
-              <div className="mt-4 pt-4 border-t border-slate-200">
-                <ShowroomExpertConsultationButton concern={selectedConcernTag}>
-                  우리 학원 맞춤형 자습실 예산 상담하기
-                </ShowroomExpertConsultationButton>
-              </div>
-            </div>
-            <div className="sm:w-40 shrink-0 flex items-center justify-center sm:justify-end pr-4 pb-2">
-              <span className="w-32 h-32 sm:w-40 sm:h-40 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center shrink-0">
-                <img
-                  src="/showroom-expert-comment.png"
-                  alt=""
-                  className="w-full h-full object-cover object-top"
-                />
-              </span>
-            </div>
-          </section>
-        )}
 
-        { selectedConcernTag === '고교학점제 자습공간 구축' && (
-          <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
-            <div className="flex-1 min-w-0 py-5 px-5">
-              <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
-              <p className="text-slate-700 text-sm font-medium mb-3">
-                모호했던 고교학점제 공간 기획, 이제 <span className="font-bold text-slate-900">&apos;검증된 표준&apos;</span>이 정답입니다.
-              </p>
-              <ShowroomMobileExpertComment>
-                <p>
-                  고교학점제 시행 초기, 교육 현장에는 수많은 고민이 있었습니다. 공간의 가변성은 어느 정도여야 하는지, 학습 몰입도와 개방성 사이의 균형은 어떻게 잡아야 하는지…
-                </p>
-                <p>
-                  이제 수많은 시공 사례를 통해 최적의 방향성은 명확해졌습니다. 고교학점제 자율학습 공간은 단순한 휴게실이 아닌, 학생 개개인의 공강 시간을 실질적인 학습 성과로 연결하는 <span className="font-bold text-slate-800">&apos;맞춤형 거점&apos;</span>이어야 합니다.
-                </p>
-                <p>
-                  복잡한 행정 절차와 예산에 맞춘 최적의 공간 설계, 이제 고민하지 마십시오. 수많은 학교 현장에서 검증된 <span className="font-bold text-slate-800">파인드가구만의 특화된 공간 솔루션</span>이 선생님의 명쾌한 해답이 되어드리겠습니다.
-                </p>
-              </ShowroomMobileExpertComment>
-              <div className="mt-4 pt-4 border-t border-slate-200">
-                <ShowroomExpertConsultationButton concern={selectedConcernTag}>
-                  우리 학교 맞춤형 제안서 및 견적 상담하기
-                </ShowroomExpertConsultationButton>
-              </div>
-            </div>
-            <div className="sm:w-40 shrink-0 flex items-center justify-center sm:justify-end pr-4 pb-2">
-              <span className="w-32 h-32 sm:w-40 sm:h-40 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center shrink-0">
-                <img
-                  src="/showroom-expert-comment.png"
-                  alt=""
-                  className="w-full h-full object-cover object-top"
-                />
-              </span>
-            </div>
-          </section>
-        )}
-
-        { selectedConcernTag === '아파트 독서실 리뉴얼' && (
-          <section className="my-6 flex flex-col sm:flex-row gap-4 sm:gap-6 items-stretch rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden">
-            <div className="flex-1 min-w-0 py-5 px-5">
-              <h3 className="text-sm font-semibold text-slate-800 mb-2">전문가 코멘트</h3>
-              <p className="text-slate-700 text-sm font-medium mb-3">단순한 시설 교체가 아닙니다. 입주민의 자부심을 설계하는 일입니다.</p>
-              <ShowroomMobileExpertComment>
-                <p>
-                  최근 아파트 커뮤니티의 중심이 &apos;미니 도서관&apos;에서 &apos;프리미엄 독서실·스터디카페&apos;로 빠르게 재편되고 있습니다. 이용자는 늘었지만, 낡은 시설이 단지의 가치를 떨어뜨리고 있지는 않습니까?
-                </p>
-                <p>
-                  아파트 리뉴얼은 일반 창업과 다릅니다. 의사결정 주체에 따른 계약 방식의 차이, 단지 내 관리 규정 준수 등 <span className="font-bold text-slate-800">복잡한 행정 절차를 완벽하게 이해</span>해야 합니다. 단순히 가구를 잘 만드는 것을 넘어, <span className="font-bold text-slate-800">실수 없는 행정 처리와 투명한 공정 관리</span>가 동반되어야 입주민들의 신뢰를 얻을 수 있습니다.
-                </p>
-                <p>
-                  입주민의 만족과 단지의 가치를 함께 높이는 공간은 기본입니다. 복잡한 절차는 파인드가구가 책임지고, 입주자대표회의에는 <span className="font-bold text-slate-800">단지의 가치가 올라가는 결과</span>만 드립니다.
-                </p>
-              </ShowroomMobileExpertComment>
-              <div className="mt-4 flex flex-wrap items-center gap-1.5 sm:gap-2 text-xs text-slate-700">
-                <span className="flex items-center gap-1 shrink-0"><MessageCircle className="h-3.5 w-3.5" aria-hidden /> 상담</span>
-                <ArrowRight className="h-3.5 w-3.5 text-slate-500 shrink-0" aria-hidden />
-                <span className="flex items-center gap-1 shrink-0"><FileCheck className="h-3.5 w-3.5" aria-hidden /> 규정 검토</span>
-                <ArrowRight className="h-3.5 w-3.5 text-slate-500 shrink-0" aria-hidden />
-                <span className="flex items-center gap-1 shrink-0"><Users className="h-3.5 w-3.5" aria-hidden /> 입주민 동의 지원</span>
-                <ArrowRight className="h-3.5 w-3.5 text-slate-500 shrink-0" aria-hidden />
-                <span className="flex items-center gap-1 shrink-0"><Wrench className="h-3.5 w-3.5" aria-hidden /> 시공</span>
-                <ArrowRight className="h-3.5 w-3.5 text-slate-500 shrink-0" aria-hidden />
-                <span className="flex items-center gap-1 shrink-0"><ClipboardCheck className="h-3.5 w-3.5" aria-hidden /> 사후관리</span>
-              </div>
-              <div className="mt-4 pt-4 border-t border-slate-200">
-                <ShowroomExpertConsultationButton concern={selectedConcernTag}>
-                  우리 아파트 맞춤형 리뉴얼 제안서 요청하기
-                </ShowroomExpertConsultationButton>
-              </div>
-            </div>
-            <div className="sm:w-40 shrink-0 flex items-center justify-center sm:justify-end pr-4 pb-2">
-              <span className="w-32 h-32 sm:w-40 sm:h-40 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center shrink-0">
-                <img
-                  src="/showroom-expert-comment.png"
-                  alt=""
-                  className="w-full h-full object-cover object-top"
-                />
-              </span>
-            </div>
-          </section>
-        )}
-
-        {/* AEO 정본은 별도 가이드 페이지 — 쇼룸에는 짧은 진입만 */}
         <ShowroomAeoGuideTeaser />
-
-        { selectedConcernTag && (
-          <section
-            id="showroom-concern-before-after-section"
-            className="mb-8 rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4 md:p-5 scroll-mt-28"
-          >
-            <div className="flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
-              <div>
-                <h2 className="text-base font-semibold text-neutral-900">
-                  {getConcernIndustryDisplayLabel(concernIndustryFilter)} Before/After 사례
-                </h2>
-                <p className="text-sm text-neutral-600">
-                  선택하신 고민과 같은 업종의 전후 비교 사례입니다. 카드를 누르면 사례 블로그에서 스토리와 사진을 이어서 볼 수 있습니다.
-                </p>
-              </div>
-              {concernBeforeAfterGroups.length > 0 && (
-                <p className="text-xs text-neutral-500">{concernBeforeAfterGroups.length}개 현장</p>
-              )}
-            </div>
-            {concernBeforeAfterGroups.length === 0 ? (
-              <p className="mt-4 text-sm text-neutral-500">
-                이 고민에 맞는 전후 비교 사례를 준비 중입니다. 아래 시공사례 갤러리에서 비슷한 업종 사례를 먼저 확인해 보세요.
-              </p>
-            ) : (
-              <>
-                <div className="mt-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {pagedConcernBeforeAfterGroups.map((group) => renderBeforeAfterCard(group, { linkToStory: true }))}
-                </div>
-                {concernBeforeAfterTotalPages > 1 && (
-                  <div className="mt-4 flex flex-wrap items-center justify-center gap-2 pt-1">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="gap-1.5"
-                      disabled={currentConcernBeforeAfterPage <= 1}
-                      onClick={() => setBeforeAfterPage(currentConcernBeforeAfterPage - 1)}
-                    >
-                      <ChevronLeft className="h-4 w-4" />
-                      이전
-                    </Button>
-                    <div className="flex flex-wrap items-center justify-center gap-1">
-                      {Array.from({ length: concernBeforeAfterTotalPages }, (_, index) => {
-                        const pageNumber = index + 1
-                        const isCurrent = pageNumber === currentConcernBeforeAfterPage
-                        return (
-                          <Button
-                            key={`concern-before-after-page-${pageNumber}`}
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className={cn('min-w-9 px-0', isCurrent && selectedBrowseButtonClass)}
-                            onClick={() => setBeforeAfterPage(pageNumber)}
-                          >
-                            {pageNumber}
-                          </Button>
-                        )
-                      })}
-                    </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="gap-1.5"
-                      disabled={currentConcernBeforeAfterPage >= concernBeforeAfterTotalPages}
-                      onClick={() => setBeforeAfterPage(currentConcernBeforeAfterPage + 1)}
-                    >
-                      다음
-                      <ChevronRight className="h-4 w-4" />
-                    </Button>
-                  </div>
-                )}
-              </>
-            )}
-          </section>
+        </>
         )}
 
       </main>

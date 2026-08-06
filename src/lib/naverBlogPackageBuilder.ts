@@ -12,6 +12,7 @@
  * - 운영자 손에 들어가는 결과물은 "복붙 + 사진 업로드"만 하면 끝나야 한다.
  * - 본문 안의 이미지 위치는 마크다운/HTML 어디에서도 똑같이 `[이미지 N]` 으로 보여서
  *   사람이 그 자리에 같은 번호 사진을 끼워 넣기만 하면 된다.
+ * - 패키지 사진은 본문 `![alt](url)` 만 포함. 정본 images[] 잔여 컷은 넣지 않는다.
  * - 본문 끝에는 자가 사이트 사례 페이지 링크(=백링크)를 항상 포함한다.
  *
  * 구글 SEO와의 분업
@@ -117,8 +118,8 @@ function escapeHtml(value: string): string {
  * - 같은 자리는 placeholder `[[IMG:N]]` 로 표시 (이후 HTML/마크다운 변환 시 [이미지 N] 으로 치환).
  * - `**`, `*`, 인라인 링크는 가볍게 그대로 둔다(마크다운 본문에). HTML 변환 시 별도로 처리.
  *
- * 정렬 정책: 본문에서 사용된 순서를 우선시키되, 본문에 없는 정본 images 도 뒤에 덧붙여서
- * 운영자가 추가 사진까지 한 번에 받을 수 있게 한다.
+ * 정렬 정책: 본문에 등장한 `![alt](url)` 만 패키지 사진으로 쓴다.
+ * 정본 images[]에만 있고 본문에 없는 컷은 덧붙이지 않는다.
  */
 function normalizeBlogMarkdownToNaverShape(
   markdown: string,
@@ -151,13 +152,6 @@ function normalizeBlogMarkdownToNaverShape(
       return `\n\n[[IMG:${orderedImages.length}]]\n\n`
     },
   )
-
-  for (const img of postImages) {
-    if (!img?.url) continue
-    if (seenUrls.has(img.url)) continue
-    seenUrls.add(img.url)
-    orderedImages.push(img)
-  }
 
   const compacted = replaced.replace(/\n{3,}/g, '\n\n').trim()
   return { normalizedMarkdown: compacted, orderedImages }
@@ -288,6 +282,7 @@ function buildNaverMarkdown(
 
   const faqs = (post.structured?.faqItems ?? []).filter((q) => q.question.trim() && q.answer.trim())
   if (faqs.length > 0) {
+    lines.push('')
     lines.push('## 자주 묻는 질문')
     for (const qa of faqs) {
       lines.push(`**Q. ${qa.question.trim()}**`)
@@ -349,6 +344,7 @@ function buildNaverHtml(
 
   const faqs = (post.structured?.faqItems ?? []).filter((q) => q.question.trim() && q.answer.trim())
   if (faqs.length > 0) {
+    out.push('<p><br /></p>')
     out.push('<h2>자주 묻는 질문</h2>')
     for (const qa of faqs) {
       out.push(`<p><strong>Q. ${escapeHtml(qa.question.trim())}</strong></p>`)

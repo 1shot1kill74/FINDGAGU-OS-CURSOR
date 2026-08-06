@@ -1,10 +1,12 @@
 import { supabase } from '@/lib/supabase'
+import { scoreEduBlogTarget } from '@/lib/eduOutreachActivation'
 import {
   orgNameFromScore,
   preferredWindowForIndustry,
   scoreEduOutreachSignal,
 } from '@/lib/eduOutreachScoring'
-import { toReadableSourceText } from '@/lib/eduOutreachText'
+import { toReadableSourceText, isTitleLikeSummary } from '@/lib/eduOutreachText'
+import { assertSafeHttpUrl, isSafeHttpUrl } from '@/lib/safeHttpUrl'
 import type {
   EduOutreachDraftRow,
   EduOutreachIndustry,
@@ -27,9 +29,14 @@ type CollectItem = {
   industryHint?: string
   regionHint?: string
   intentHint?: string
+  bloggerLink?: string
+  bloggerName?: string
+  activationLevel?: string
+  samplePostCount?: number
+  lastPostDate?: string
 }
 
-export type EduOutreachCollectProvider = 'naver_news' | 'naver_local' | 'google_news'
+export type EduOutreachCollectProvider = 'naver_news' | 'naver_local' | 'google_news' | 'naver_blog'
 
 function asLead(row: Record<string, unknown>): EduOutreachLeadRow {
   return row as unknown as EduOutreachLeadRow
@@ -48,8 +55,8 @@ export async function listEduOutreachLeads(statuses?: string[]) {
   let query = supabase
     .from('edu_outreach_leads')
     .select('*')
-    .order('fit_score', { ascending: false })
     .order('created_at', { ascending: false })
+    .order('fit_score', { ascending: false })
     .limit(120)
 
   if (statuses?.length) query = query.in('status', statuses)
@@ -118,22 +125,45 @@ async function upsertSignalAndLead(item: {
   regionHint?: string
   intentHint?: string
   telephone?: string
+  bloggerLink?: string
+  bloggerName?: string
+  activationLevel?: string
+  samplePostCount?: number
+  lastPostDate?: string
 }) {
   const readable = toReadableSourceText({ title: item.title, body: item.body })
   const cleanTitle = readable.title || item.title
-  const cleanBody =
-    readable.publisher && !readable.summary.includes(readable.publisher)
-      ? `${readable.summary} — ${readable.publisher}`
+  const isBlog = (item.intentHint || '').trim() === 'blog_activation'
+  // 제목±매체만 반복한 가짜 요약은 저장하지 않음. 블로그 본문은 그대로 저장.
+  const cleanBody = isBlog
+    ? item.body || readable.summary
+    : isTitleLikeSummary(cleanTitle, readable.summary)
+      ? ''
       : readable.summary
 
-  const score = scoreEduOutreachSignal({
-    title: cleanTitle,
-    body: cleanBody,
-    sourceUrl: item.sourceUrl,
-    industryHint: item.industryHint,
-    regionHint: item.regionHint,
-    intentHint: item.intentHint,
-  })
+  const safeSourceUrl = isSafeHttpUrl(item.sourceUrl) ? item.sourceUrl.trim() : ''
+  const safeBloggerLink = item.bloggerLink && isSafeHttpUrl(item.bloggerLink) ? item.bloggerLink.trim() : ''
+  const storedSourceUrl = safeBloggerLink || safeSourceUrl
+
+  const score = isBlog
+    ? scoreEduBlogTarget({
+        orgName: item.bloggerName || cleanTitle,
+        title: cleanTitle,
+        body: cleanBody,
+        sourceUrl: storedSourceUrl,
+        industryHint: item.industryHint,
+        regionHint: item.regionHint,
+        lastPostDateIso: item.lastPostDate || item.publishedAt,
+        samplePostCount: item.samplePostCount ?? 1,
+      })
+    : scoreEduOutreachSignal({
+        title: cleanTitle,
+        body: cleanBody,
+        sourceUrl: safeSourceUrl,
+        industryHint: item.industryHint,
+        regionHint: item.regionHint,
+        intentHint: item.intentHint,
+      })
 
   const { data: signal, error: signalError } = await supabase
     .from('edu_outreach_signals')
@@ -143,7 +173,7 @@ async function upsertSignalAndLead(item: {
         external_id: item.externalId,
         title: cleanTitle,
         body: cleanBody,
-        source_url: item.sourceUrl,
+        source_url: storedSourceUrl,
         published_at: item.publishedAt,
         industry_hint: score.industry,
         region_hint: score.region,
@@ -155,6 +185,14 @@ async function upsertSignalAndLead(item: {
           publisher: readable.publisher || null,
           telephone: item.telephone ?? null,
           intent_hint: item.intentHint ?? null,
+          has_real_summary: Boolean(cleanBody),
+          blogger_link: item.bloggerLink ?? null,
+          blogger_name: item.bloggerName ?? null,
+          activation_level: isBlog
+            ? ('activation_level' in score ? score.activation_level : item.activationLevel) ?? null
+            : item.activationLevel ?? null,
+          sample_post_count: item.samplePostCount ?? null,
+          last_post_date: item.lastPostDate ?? null,
         },
         last_seen_at: new Date().toISOString(),
       },
@@ -174,10 +212,11 @@ async function upsertSignalAndLead(item: {
     return { leadId: existing.id as string, created: false, scored: false }
   }
 
-  // 디렉터리는 이벤트 시그널보다 낮게 — 52+면 큐, 뉴스는 기존 55+
-  const queueThreshold = item.intentHint === 'directory' ? 52 : 55
+  // 블로그 활성 48+ / 디렉터리 52+ / 뉴스 55+
+  const queueThreshold =
+    item.intentHint === 'blog_activation' ? 48 : item.intentHint === 'directory' ? 52 : 55
   const status =
-    score.industry === 'excluded' || score.fit_score < 45
+    score.industry === 'excluded' || score.fit_score < 40
       ? 'excluded'
       : score.fit_score >= queueThreshold
         ? 'queued'
@@ -185,7 +224,9 @@ async function upsertSignalAndLead(item: {
 
   const leadPayload = {
     signal_id: signal.id,
-    org_name: orgNameFromScore(cleanTitle, cleanBody),
+    org_name: isBlog
+      ? item.bloggerName || orgNameFromScore(cleanTitle, cleanBody)
+      : orgNameFromScore(cleanTitle, cleanBody),
     industry: score.industry,
     intent: score.intent,
     region: score.region,
@@ -193,10 +234,10 @@ async function upsertSignalAndLead(item: {
     fit_score: score.fit_score,
     score_payload: score,
     evidence_quote: score.evidence_quote,
-    source_url: score.source_url,
+    source_url: isSafeHttpUrl(score.source_url) ? score.source_url.trim() : storedSourceUrl,
     why: score.why,
     outreach_angle: score.outreach_angle,
-    cta_url: score.cta_url,
+    cta_url: isSafeHttpUrl(score.cta_url) ? score.cta_url.trim() : '',
     preferred_contact_window: preferredWindowForIndustry(score.industry),
     scored_at: new Date().toISOString(),
     queued_at: status === 'queued' ? new Date().toISOString() : null,
@@ -205,8 +246,10 @@ async function upsertSignalAndLead(item: {
         ? 'official_bid'
         : item.telephone
           ? 'phone'
-          : 'unknown',
-    contact_value: item.telephone?.trim() || null,
+          : isBlog
+            ? 'form'
+            : 'unknown',
+    contact_value: item.telephone?.trim() || safeBloggerLink || null,
     updated_at: new Date().toISOString(),
   }
 
@@ -231,7 +274,7 @@ async function upsertSignalAndLead(item: {
       channel: score.industry === 'military' ? 'official_bid' : 'manual_copy',
       subject: `[파인드가구] ${leadPayload.org_name} 교육공간 사례`,
       body: score.draft_message,
-      cta_url: score.cta_url,
+      cta_url: leadPayload.cta_url,
       engine: 'heuristic',
       is_current: true,
     })
@@ -247,16 +290,17 @@ export async function importManualEduNotice(input: {
   body?: string
   industryHint?: EduOutreachIndustry
 }) {
+  const safeUrl = assertSafeHttpUrl(input.sourceUrl, '공개 URL')
   const sources = await listEduOutreachSources()
   const source = sources.find((s) => s.slug === 'g2b_manual_import') ?? null
-  const externalId = `manual:${input.sourceUrl.trim() || input.title.trim()}`
+  const externalId = `manual:${safeUrl || input.title.trim()}`
 
   return upsertSignalAndLead({
     sourceId: source?.id ?? null,
     externalId,
     title: input.title.trim(),
     body: (input.body || '').trim(),
-    sourceUrl: input.sourceUrl.trim(),
+    sourceUrl: safeUrl,
     publishedAt: new Date().toISOString(),
     industryHint: input.industryHint,
   })
@@ -266,6 +310,7 @@ const PROVIDER_SOURCE_SLUG: Record<EduOutreachCollectProvider, string> = {
   naver_news: 'naver_news_edu_furniture',
   naver_local: 'naver_local_edu_places',
   google_news: 'google_news_edu_furniture',
+  naver_blog: 'naver_blog_edu_activation',
 }
 
 function externalIdForProvider(provider: EduOutreachCollectProvider, item: CollectItem) {
@@ -274,6 +319,9 @@ function externalIdForProvider(provider: EduOutreachCollectProvider, item: Colle
   }
   if (provider === 'naver_news') {
     return `nnews:${item.link || item.title}`
+  }
+  if (provider === 'naver_blog') {
+    return `nblog:${item.bloggerLink || item.link || item.title}`
   }
   return `gnews:${item.link || item.title}`
 }
@@ -332,6 +380,11 @@ export async function collectEduOutreachSignals(provider: EduOutreachCollectProv
         regionHint: item.regionHint,
         intentHint: item.intentHint,
         telephone: item.telephone,
+        bloggerLink: item.bloggerLink,
+        bloggerName: item.bloggerName,
+        activationLevel: item.activationLevel,
+        samplePostCount: item.samplePostCount,
+        lastPostDate: item.lastPostDate,
       })
       signalsNew += 1
       if (result.created) leadsNew += 1
@@ -404,6 +457,7 @@ export async function collectNaverLocalEduPlaces() {
 
 export async function fetchEduOutreachArticleBody(input: {
   url: string
+  title?: string | null
   signalId?: string | null
   persist?: boolean
 }) {
@@ -420,6 +474,7 @@ export async function fetchEduOutreachArticleBody(input: {
     },
     body: JSON.stringify({
       url: input.url,
+      title: input.title || undefined,
       signalId: input.signalId || undefined,
       persist: Boolean(input.persist && input.signalId),
     }),

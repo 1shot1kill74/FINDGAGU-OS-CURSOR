@@ -1,6 +1,10 @@
 import { supabase } from '@/lib/supabase'
 import { IMAGE_ASSET_PAGE_SIZE } from '@/lib/imageAssetConstants'
-import { parseBeforeAfterMeta, parseImageAssetMeta } from '@/lib/imageAssetMeta'
+import {
+  buildBroadExternalDisplayName,
+  parseBeforeAfterMeta,
+  parseImageAssetMeta,
+} from '@/lib/imageAssetMeta'
 import type { Json } from '@/types/database'
 
 /** 고객용 시공사례 쇼룸: image_assets 전체 조회 (현장/제품 그룹화용) */
@@ -118,6 +122,11 @@ export function mapPublicShowroomRpcRowToShowroomAsset(r: Record<string, unknown
   const externalDisplayName =
     externalFromMeta
     || (publicSiteName && internalSiteName && publicSiteName !== internalSiteName ? publicSiteName : null)
+    || (publicSiteName || null)
+  const broadExternalDisplayName =
+    meta.broadExternalDisplayName?.trim()
+    || buildBroadExternalDisplayName(externalDisplayName)
+    || null
 
   return {
     before_after_role: beforeAfterRole,
@@ -127,7 +136,7 @@ export function mapPublicShowroomRpcRowToShowroomAsset(r: Record<string, unknown
     canonical_site_name: meta.canonicalSiteName,
     space_display_name: meta.spaceDisplayName,
     external_display_name: externalDisplayName,
-    broad_external_display_name: meta.broadExternalDisplayName,
+    broad_external_display_name: broadExternalDisplayName,
     space_id: meta.spaceId,
     id: String(r.id),
     cloudinary_url: String(r.cloudinary_url ?? ''),

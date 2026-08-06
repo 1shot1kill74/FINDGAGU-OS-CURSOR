@@ -29,7 +29,10 @@
     "handout:oldei:all-assets": "node scripts/generate-oldei-handout-from-metadata.mjs --all-assets",
     "setup:youtube-key": "node scripts/setupYoutubeDataApiKey.mjs",
     "setup:apify-token": "node scripts/setupApifyToken.mjs",
-    "setup:competitor-cron": "node scripts/setupCompetitorMonitorCron.mjs"
+    "setup:competitor-cron": "node scripts/setupCompetitorMonitorCron.mjs",
+    "naver:inject": "tsx scripts/injectNaverBlogDraft.mts",
+    "naver:inject:login": "tsx scripts/injectNaverBlogDraft.mts --login-only",
+    "naver:inject:dry": "tsx scripts/injectNaverBlogDraft.mts --dry-run"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
@@ -69,6 +72,7 @@
     "eslint-plugin-react-refresh": "^0.4.14",
     "globals": "^15.12.0",
     "p-limit": "^7.3.0",
+    "playwright": "^1.62.1",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.19",
     "tsx": "^4.21.0",

@@ -3,10 +3,35 @@ import { broadenPublicDisplayName } from '@/lib/showroomPublicDisplayName'
 export type OpenShowroomWatermarkVariant = 'thumb' | 'full'
 export type OpenShowroomWatermarkStatus = 'pending' | 'ready' | 'failed' | 'skipped'
 
-export const OPEN_SHOWROOM_WATERMARK_VERSION = 1
+export const OPEN_SHOWROOM_WATERMARK_VERSION = 2
 
 function normalizeSpace(value: string | null | undefined): string {
   return (value ?? '').trim().replace(/\s+/g, ' ')
+}
+
+/** Cloudinary text overlay는 `/` 를 경로 구분자로 해석해 400이 난다. */
+export function sanitizeOpenShowroomWatermarkLabel(displayName: string): string {
+  return normalizeSpace(displayName)
+    .replace(/[/\\]/g, '·')
+    .replace(/\s*·\s*/g, ' · ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** 이미 transform이 끼어 있거나 version이 빠진 thumb URL은 워터마크 소스로 쓰지 않는다. */
+function pickWatermarkSourceUrl(
+  sourceUrl: string | null | undefined,
+  thumbnailUrl?: string | null | undefined,
+): string | null {
+  const source = normalizeSpace(sourceUrl)
+  if (source.includes('/image/upload/') && /\/v\d+\//.test(source)) return source
+
+  const thumb = normalizeSpace(thumbnailUrl)
+  if (thumb.includes('/image/upload/') && /\/v\d+\//.test(thumb)) return thumb
+
+  if (source.includes('/image/upload/')) return source
+  if (thumb.includes('/image/upload/')) return thumb
+  return null
 }
 
 function toBroadRegion(location: string | null | undefined): string {
@@ -82,8 +107,9 @@ export function buildOpenShowroomWatermarkTransformation(
   displayName: string,
   variant: OpenShowroomWatermarkVariant
 ): string {
+  const safeDisplayName = sanitizeOpenShowroomWatermarkLabel(displayName)
   const repeatedText = encodeCloudinaryText('FINDGAGU OPEN SHOWROOM')
-  const footerText = encodeCloudinaryText(`파인드가구 오픈쇼룸 | 무단 재사용·재배포 금지 | ${displayName}`)
+  const footerText = encodeCloudinaryText(`파인드가구 오픈쇼룸 | 무단 재사용·재배포 금지 | ${safeDisplayName}`)
   const brandFont = variant === 'thumb' ? '28' : '42'
   const footerFont = variant === 'thumb' ? '20' : '28'
   const quality = variant === 'thumb' ? 'q_auto:good' : 'q_auto'
@@ -117,17 +143,66 @@ export function buildOpenShowroomWatermarkedUrls(params: {
   status: OpenShowroomWatermarkStatus
   version: number
 } {
-  const fullUrl = buildOpenShowroomWatermarkedUrl(params.sourceUrl, params.displayName, 'full')
-  const thumbnailUrl = buildOpenShowroomWatermarkedUrl(
-    params.thumbnailUrl ?? params.sourceUrl,
-    params.displayName,
-    'thumb'
-  )
+  // thumb에 이미 붙은 c_limit 변환을 다시 감싸면 version이 빠지며 404가 난다.
+  const source = pickWatermarkSourceUrl(params.sourceUrl, params.thumbnailUrl)
+  const fullUrl = buildOpenShowroomWatermarkedUrl(source, params.displayName, 'full')
+  const thumbnailUrl = buildOpenShowroomWatermarkedUrl(source, params.displayName, 'thumb')
 
   return {
     fullUrl,
     thumbnailUrl,
     status: fullUrl && thumbnailUrl ? 'ready' : 'failed',
     version: OPEN_SHOWROOM_WATERMARK_VERSION,
+  }
+}
+
+/** image_assets 공개 워터마크 컬럼 패치 (승격·백필 공용) */
+export function buildOpenShowroomWatermarkDbFields(params: {
+  sourceUrl: string | null | undefined
+  thumbnailUrl?: string | null | undefined
+  siteName?: string | null
+  externalDisplayName?: string | null
+  broadExternalDisplayName?: string | null
+  location?: string | null
+  businessType?: string | null
+  createdAt?: string | null
+}): {
+  public_watermarked_url: string | null
+  public_watermarked_thumbnail_url: string | null
+  public_watermark_status: OpenShowroomWatermarkStatus
+  public_watermark_version: number
+  public_watermark_updated_at: string
+} {
+  const displayName = buildOpenShowroomDisplayName({
+    siteName: params.siteName,
+    externalDisplayName: params.externalDisplayName,
+    broadExternalDisplayName: params.broadExternalDisplayName,
+    location: params.location,
+    businessType: params.businessType,
+    createdAt: params.createdAt,
+  })
+  const watermark = buildOpenShowroomWatermarkedUrls({
+    sourceUrl: params.sourceUrl,
+    thumbnailUrl: params.thumbnailUrl,
+    displayName,
+  })
+  const updatedAt = new Date().toISOString()
+
+  if (!watermark.fullUrl || !watermark.thumbnailUrl) {
+    return {
+      public_watermarked_url: null,
+      public_watermarked_thumbnail_url: null,
+      public_watermark_status: 'failed',
+      public_watermark_version: OPEN_SHOWROOM_WATERMARK_VERSION,
+      public_watermark_updated_at: updatedAt,
+    }
+  }
+
+  return {
+    public_watermarked_url: watermark.fullUrl,
+    public_watermarked_thumbnail_url: watermark.thumbnailUrl,
+    public_watermark_status: 'ready',
+    public_watermark_version: OPEN_SHOWROOM_WATERMARK_VERSION,
+    public_watermark_updated_at: updatedAt,
   }
 }

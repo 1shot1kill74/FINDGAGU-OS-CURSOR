@@ -14,6 +14,8 @@ type ShowroomShortsJobRow = {
   kling_job_id?: string | null
   source_video_url: string | null
   final_video_url: string | null
+  before_asset_url?: string | null
+  after_asset_url?: string | null
   duration_seconds: number | null
   composition_config?: {
     audioVariant?: 'tts_hook_bgm' | 'bgm_only'
@@ -21,6 +23,10 @@ type ShowroomShortsJobRow = {
     bgmVolume?: number
     hookLine1?: string
     hookLine2?: string
+    openingMode?: 'after_reveal' | 'problem_focus' | 'split_compare' | 'detail_proof'
+    openingSeconds?: number
+    beforeBeatSeconds?: number
+    afterHoldSeconds?: number
   } | null
   updated_at?: string | null
 }
@@ -259,6 +265,27 @@ app.post('/jobs/compose', requireWorkerAuth, async (req, res) => {
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : '합성 요청 처리 중 오류가 발생했습니다.'
+    res.status(500).json({ ok: false, message })
+  }
+})
+
+/** 기존 작업·발행 상태를 바꾸지 않고, After→Before→타임랩스 테스트 MP4를 별도 저장한다. */
+app.post('/jobs/render-variant-tests', requireWorkerAuth, async (req, res) => {
+  const jobId = getString(req.body?.jobId)
+  if (!jobId) {
+    res.status(400).json({ ok: false, message: 'jobId가 필요합니다.' })
+    return
+  }
+
+  try {
+    const result = await renderAfterBeforeTimelapseTest(jobId, {
+      ttsScript: getString(req.body?.ttsScript) || null,
+      hookLine1: getString(req.body?.hookLine1) || null,
+      hookLine2: getString(req.body?.hookLine2) || null,
+    })
+    res.json({ ok: true, jobId, ...result })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '포맷 비교 영상 생성에 실패했습니다.'
     res.status(500).json({ ok: false, message })
   }
 })
@@ -858,18 +885,48 @@ async function processComposeJob(jobId: string) {
 
     const outputVideoPath = path.join(tempDir, 'final-video.mp4')
     const textPaths = await writeTextAssets(compositionConfig, tempDir)
+    const useAfterColdOpen =
+      Boolean(job.before_asset_url && job.after_asset_url) &&
+      (compositionConfig?.openingMode ?? 'after_reveal') === 'after_reveal'
 
-    console.log(`[showroom-shorts-worker] ffmpeg start job=${jobId}`)
-    await runFfmpegCompose({
-      inputVideoPath,
-      titleOverlayPath,
-      bgmPath,
-      ttsPath: ttsResult.path,
-      bgmVolume: compositionConfig?.bgmVolume,
-      outputVideoPath,
-      durationSeconds,
-      textPaths,
-    })
+    console.log(`[showroom-shorts-worker] ffmpeg start job=${jobId} mode=${useAfterColdOpen ? 'after_cold_open' : 'legacy'}`)
+    if (useAfterColdOpen) {
+      const beforePath = path.join(tempDir, 'before.jpg')
+      const afterPath = path.join(tempDir, 'after.jpg')
+      await Promise.all([
+        downloadToFile(job.before_asset_url!, beforePath),
+        downloadToFile(job.after_asset_url!, afterPath),
+      ])
+      const afterBeforeText = await writeAfterBeforeTextAssets(tempDir, {
+        hookLine1: compositionConfig?.hookLine1?.trim() || '원래 이 공간이',
+        hookLine2: compositionConfig?.hookLine2?.trim() || '이랬다구요?',
+      })
+      await runFfmpegAfterBeforeTimelapse({
+        sourcePath: inputVideoPath,
+        beforePath,
+        afterPath,
+        outputPath: outputVideoPath,
+        sourceDuration: durationSeconds,
+        textPaths: afterBeforeText,
+        bgmPath,
+        ttsPath: ttsResult.path,
+        bgmVolume: compositionConfig?.bgmVolume,
+        afterOpen: compositionConfig?.openingSeconds,
+        beforeBeat: compositionConfig?.beforeBeatSeconds,
+        afterHold: compositionConfig?.afterHoldSeconds,
+      })
+    } else {
+      await runFfmpegCompose({
+        inputVideoPath,
+        titleOverlayPath,
+        bgmPath,
+        ttsPath: ttsResult.path,
+        bgmVolume: compositionConfig?.bgmVolume,
+        outputVideoPath,
+        durationSeconds,
+        textPaths,
+      })
+    }
     console.log(`[showroom-shorts-worker] ffmpeg done job=${jobId}`)
 
     const objectPath = `final/${jobId}/shorts-final-${Date.now()}.mp4`
@@ -1156,7 +1213,9 @@ async function getImageAssetsByIds(ids: string[]) {
 async function getJob(jobId: string) {
   const { data, error } = await supabase
     .from('showroom_shorts_jobs')
-    .select('id, status, source_video_url, final_video_url, duration_seconds, composition_config, updated_at')
+    .select(
+      'id, status, source_video_url, final_video_url, before_asset_url, after_asset_url, duration_seconds, composition_config, updated_at',
+    )
     .eq('id', jobId)
     .maybeSingle<ShowroomShortsJobRow>()
 
@@ -1165,6 +1224,128 @@ async function getJob(jobId: string) {
   }
 
   return data ?? null
+}
+
+type VariantTestVideo = {
+  id: 'after_before_timelapse'
+  label: string
+  url: string
+  ttsStatus: string
+  ttsScript: string
+  hookLine1: string
+  hookLine2: string
+}
+
+async function renderAfterBeforeTimelapseTest(
+  jobId: string,
+  overrides?: {
+    ttsScript?: string | null
+    hookLine1?: string | null
+    hookLine2?: string | null
+  },
+): Promise<{ videos: VariantTestVideo[]; structure: string }> {
+  const job = await getJob(jobId)
+  if (!job?.source_video_url || !job.before_asset_url || !job.after_asset_url) {
+    throw new Error('비교 렌더에는 Kling 원본과 Before·After 이미지가 모두 필요합니다.')
+  }
+
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'showroom-after-before-'))
+  try {
+    const sourcePath = path.join(tempDir, 'source.mp4')
+    const beforePath = path.join(tempDir, 'before.jpg')
+    const afterPath = path.join(tempDir, 'after.jpg')
+    const bgmAudioPath = path.join(tempDir, 'bgm-audio')
+    const ttsAudioPath = path.join(tempDir, 'tts-hook.mp3')
+    const outputPath = path.join(tempDir, 'after-before-timelapse.mp4')
+
+    await Promise.all([
+      downloadToFile(job.source_video_url, sourcePath),
+      downloadToFile(job.before_asset_url, beforePath),
+      downloadToFile(job.after_asset_url, afterPath),
+    ])
+
+    const sourceDuration = Math.max(
+      6,
+      Math.min(await getVideoDurationSeconds(sourcePath, job.duration_seconds ?? DEFAULT_DURATION_SECONDS), 15),
+    )
+    const hookLine1 = overrides?.hookLine1?.trim() || job.composition_config?.hookLine1?.trim() || '원래 이 공간이'
+    const hookLine2 = overrides?.hookLine2?.trim() || job.composition_config?.hookLine2?.trim() || '이랬다구요?'
+    const ttsScript =
+      overrides?.ttsScript?.trim() ||
+      job.composition_config?.ttsScript?.trim() ||
+      '원래 이 공간이 이랬다구요? 일산관리형 공간이 10초 뒤 이렇게 바뀝니다.'
+
+    const textPaths = await writeAfterBeforeTextAssets(tempDir, {
+      hookLine1,
+      hookLine2,
+    })
+    const bgmPath = BGM_SOURCE ? await resolveBgmToFile(BGM_SOURCE, bgmAudioPath) : null
+    const ttsResult = await generateElevenLabsTts(ttsScript, ttsAudioPath)
+
+    await runFfmpegAfterBeforeTimelapse({
+      sourcePath,
+      beforePath,
+      afterPath,
+      outputPath,
+      sourceDuration,
+      textPaths,
+      bgmPath,
+      ttsPath: ttsResult.path,
+      bgmVolume: job.composition_config?.bgmVolume,
+      afterOpen: job.composition_config?.openingSeconds,
+      beforeBeat: job.composition_config?.beforeBeatSeconds,
+      afterHold: job.composition_config?.afterHoldSeconds,
+    })
+
+    const timestamp = Date.now()
+    const objectPath = `tests/${jobId}/after_before_timelapse-${timestamp}.mp4`
+    const output = await fs.readFile(outputPath)
+    const { error: uploadError } = await supabase.storage.from(VIDEO_BUCKET).upload(objectPath, output, {
+      contentType: 'video/mp4',
+      upsert: false,
+    })
+    if (uploadError) throw new Error(`테스트 영상 업로드 실패: ${uploadError.message}`)
+
+    const url = supabase.storage.from(VIDEO_BUCKET).getPublicUrl(objectPath).data.publicUrl
+    return {
+      structure: 'After 0.85s → Before 1.0s → Timelapse → After hold 1.5s',
+      videos: [
+        {
+          id: 'after_before_timelapse',
+          label: 'After→Before→타임랩스',
+          url,
+          ttsStatus: ttsResult.status,
+          ttsScript,
+          hookLine1,
+          hookLine2,
+        },
+      ],
+    }
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true })
+  }
+}
+
+async function writeAfterBeforeTextAssets(
+  tempDir: string,
+  input: { hookLine1: string; hookLine2: string },
+) {
+  const assets = {
+    hookLine1: input.hookLine1,
+    hookLine2: input.hookLine2,
+    afterBadge: 'AFTER',
+    beforeBadge: 'BEFORE',
+    storyLine: '이렇게 바뀌는 과정입니다',
+    ctaLine: '파인드가구 온라인 쇼룸',
+  }
+  const entries = await Promise.all(
+    Object.entries(assets).map(async ([key, value]) => {
+      const filePath = path.join(tempDir, `abt-${key}.txt`)
+      await fs.writeFile(filePath, value, 'utf8')
+      return [key, filePath] as const
+    }),
+  )
+  return Object.fromEntries(entries) as Record<keyof typeof assets, string>
 }
 
 async function updateJob(jobId: string, patch: JsonRecord) {
@@ -1748,6 +1929,134 @@ async function runFfmpegCompose(input: {
     '-t',
     formatSeconds(outputDuration),
     input.outputVideoPath
+  )
+
+  await runCommand('ffmpeg', args)
+}
+
+async function runFfmpegAfterBeforeTimelapse(input: {
+  sourcePath: string
+  beforePath: string
+  afterPath: string
+  outputPath: string
+  sourceDuration: number
+  textPaths: Record<'hookLine1' | 'hookLine2' | 'afterBadge' | 'beforeBadge' | 'storyLine' | 'ctaLine', string>
+  bgmPath: string | null
+  ttsPath: string | null
+  bgmVolume?: number
+  afterOpen?: number
+  beforeBeat?: number
+  afterHold?: number
+}) {
+  const afterOpen = Math.max(0.5, Math.min(input.afterOpen ?? 0.85, 1.5))
+  const beforeBeat = Math.max(0.5, Math.min(input.beforeBeat ?? 1.0, 2))
+  const afterHold = Math.max(0.8, Math.min(input.afterHold ?? 1.5, 2.5))
+  const storyStart = afterOpen + beforeBeat
+  const holdStart = storyStart + input.sourceDuration
+  const outputDuration = holdStart + afterHold
+  const normalize =
+    `scale=${OUTPUT_WIDTH}:${OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,` +
+    `crop=${OUTPUT_WIDTH}:${OUTPUT_HEIGHT},setsar=1,format=yuv420p,fps=30`
+  const escape = escapeFilterValue
+  const afterOpenEnable = escapeExpression(`lt(t,${formatSeconds(afterOpen)})`)
+  const beforeEnable = escapeExpression(
+    `between(t,${formatSeconds(afterOpen)},${formatSeconds(storyStart)})`,
+  )
+  const hookEnable = escapeExpression(`lt(t,${formatSeconds(storyStart + 2.2)})`)
+  const storyEnable = escapeExpression(
+    `between(t,${formatSeconds(storyStart)},${formatSeconds(holdStart)})`,
+  )
+  const holdEnable = escapeExpression(`gte(t,${formatSeconds(holdStart)})`)
+  const bgmVolume =
+    typeof input.bgmVolume === 'number' && Number.isFinite(input.bgmVolume)
+      ? Math.max(0.05, Math.min(input.bgmVolume, 0.4))
+      : 0.22
+
+  const filterParts = [
+    `[0:v]${normalize},trim=duration=${formatSeconds(input.sourceDuration)},setpts=PTS-STARTPTS[source]`,
+    `[1:v]${normalize},trim=duration=${formatSeconds(beforeBeat + 0.2)},setpts=PTS-STARTPTS[beforeStill]`,
+    `[2:v]${normalize},trim=duration=${formatSeconds(Math.max(afterOpen, afterHold) + 0.2)},setpts=PTS-STARTPTS[afterStill]`,
+    '[afterStill]split=2[afterA][afterB]',
+    `[afterA]trim=duration=${formatSeconds(afterOpen)},setpts=PTS-STARTPTS[afterOpen]`,
+    `[beforeStill]trim=duration=${formatSeconds(beforeBeat)},setpts=PTS-STARTPTS[beforeBeat]`,
+    `[afterB]trim=duration=${formatSeconds(afterHold)},setpts=PTS-STARTPTS[afterEnd]`,
+    '[afterOpen][beforeBeat][source][afterEnd]concat=n=4:v=1:a=0[story]',
+    `[story]drawbox=x=28:y=48:w=168:h=54:color=black@0.72:t=fill:enable='${afterOpenEnable}'[s1]`,
+    `[s1]drawtext=fontfile='${escape(BOLD_FONT_FILE)}':textfile='${escape(input.textPaths.afterBadge)}':fontcolor=0xffd54a:fontsize=28:x=64:y=60:enable='${afterOpenEnable}'[s2]`,
+    `[s2]drawbox=x=28:y=48:w=188:h=54:color=black@0.72:t=fill:enable='${beforeEnable}'[s3]`,
+    `[s3]drawtext=fontfile='${escape(BOLD_FONT_FILE)}':textfile='${escape(input.textPaths.beforeBadge)}':fontcolor=white:fontsize=28:x=58:y=60:enable='${beforeEnable}'[s4]`,
+    `[s4]drawbox=x=40:y=980:w=640:h=170:color=black@0.55:t=fill:enable='${hookEnable}'[s5]`,
+    `[s5]drawtext=fontfile='${escape(BOLD_FONT_FILE)}':textfile='${escape(input.textPaths.hookLine1)}':fontcolor=0xffd54a:fontsize=46:borderw=1.2:bordercolor=black@0.25:shadowcolor=black@0.55:shadowx=0:shadowy=3:x=(w-text_w)/2:y=1010:enable='${hookEnable}'[s6]`,
+    `[s6]drawtext=fontfile='${escape(BOLD_FONT_FILE)}':textfile='${escape(input.textPaths.hookLine2)}':fontcolor=0xffd54a:fontsize=46:borderw=1.2:bordercolor=black@0.25:shadowcolor=black@0.55:shadowx=0:shadowy=3:x=(w-text_w)/2:y=1070:enable='${hookEnable}'[s7]`,
+    `[s7]drawtext=fontfile='${escape(BODY_FONT_FILE)}':textfile='${escape(input.textPaths.storyLine)}':fontcolor=white:fontsize=28:borderw=1:bordercolor=black@0.2:x=(w-text_w)/2:y=1188:enable='${storyEnable}'[s8]`,
+    `[s8]drawbox=x=28:y=48:w=168:h=54:color=black@0.72:t=fill:enable='${holdEnable}'[s9]`,
+    `[s9]drawtext=fontfile='${escape(BOLD_FONT_FILE)}':textfile='${escape(input.textPaths.afterBadge)}':fontcolor=0xffd54a:fontsize=28:x=64:y=60:enable='${holdEnable}'[s10]`,
+    `[s10]drawtext=fontfile='${escape(BOLD_FONT_FILE)}':textfile='${escape(input.textPaths.ctaLine)}':fontcolor=white:fontsize=30:borderw=1:bordercolor=black@0.2:x=(w-text_w)/2:y=1100:enable='${holdEnable}'[vout]`,
+  ]
+
+  if (input.ttsPath) {
+    filterParts.push(
+      `[3:a]atrim=duration=${formatSeconds(outputDuration)},asetpts=PTS-STARTPTS,volume=${bgmVolume.toFixed(2)},afade=t=in:st=0:d=0.5,afade=t=out:st=${formatSeconds(Math.max(outputDuration - 0.5, 0))}:d=0.5[bgm]`,
+      `[4:a]atrim=duration=${formatSeconds(outputDuration)},asetpts=PTS-STARTPTS,volume=1.08,afade=t=in:st=0:d=0.05[voice]`,
+      '[bgm][voice]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aout]',
+    )
+  } else {
+    filterParts.push(
+      `[3:a]atrim=duration=${formatSeconds(outputDuration)},asetpts=PTS-STARTPTS,volume=${bgmVolume.toFixed(2)},afade=t=in:st=0:d=0.5,afade=t=out:st=${formatSeconds(Math.max(outputDuration - 0.5, 0))}:d=0.5[aout]`,
+    )
+  }
+
+  const args = [
+    '-y',
+    '-i',
+    input.sourcePath,
+    '-loop',
+    '1',
+    '-t',
+    formatSeconds(Math.max(beforeBeat, afterHold) + 0.5),
+    '-i',
+    input.beforePath,
+    '-loop',
+    '1',
+    '-t',
+    formatSeconds(Math.max(afterOpen, afterHold) + 0.5),
+    '-i',
+    input.afterPath,
+  ]
+  if (input.bgmPath) {
+    args.push('-stream_loop', '-1', '-i', input.bgmPath)
+  } else {
+    args.push('-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=48000')
+  }
+  if (input.ttsPath) {
+    args.push('-i', input.ttsPath)
+  }
+  args.push(
+    '-filter_complex',
+    filterParts.join(';'),
+    '-map',
+    '[vout]',
+    '-map',
+    '[aout]',
+    '-r',
+    '30',
+    '-c:v',
+    'libx264',
+    '-preset',
+    'veryfast',
+    '-crf',
+    '20',
+    '-pix_fmt',
+    'yuv420p',
+    '-c:a',
+    'aac',
+    '-b:a',
+    '160k',
+    '-movflags',
+    '+faststart',
+    '-t',
+    formatSeconds(outputDuration),
+    input.outputPath,
   )
 
   await runCommand('ffmpeg', args)

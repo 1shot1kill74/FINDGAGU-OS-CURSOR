@@ -36,6 +36,7 @@ import {
   SHOWROOM_SHORTS_EMPTY_ROOM_TIMELAPSE_PROMPT,
   SHOWROOM_SHORTS_TIMELAPSE_PROMPT,
 } from '@/lib/showroomShortsTimelapsePrompt'
+import { buildOpenShowroomWatermarkDbFields } from '@/lib/openShowroomWatermark'
 
 export type { ShowroomShortsJobRecord as AdInboxTimelapseJob }
 
@@ -2529,6 +2530,23 @@ export async function normalizeSynthesizedBeforeToShowroom(beforeAssetId: string
       ? beforeMeta.product_name.trim()
       : null
 
+  const watermarkFields = buildOpenShowroomWatermarkDbFields({
+    sourceUrl: typeof beforeRow.cloudinary_url === 'string' ? beforeRow.cloudinary_url : null,
+    thumbnailUrl: typeof beforeRow.thumbnail_url === 'string' ? beforeRow.thumbnail_url : null,
+    siteName: afterSiteName,
+    externalDisplayName:
+      typeof showroomMeta.external_display_name === 'string'
+        ? showroomMeta.external_display_name
+        : null,
+    broadExternalDisplayName:
+      typeof showroomMeta.broad_external_display_name === 'string'
+        ? showroomMeta.broad_external_display_name
+        : null,
+    location: typeof beforeRow.location === 'string' ? beforeRow.location : null,
+    businessType: typeof beforeRow.business_type === 'string' ? beforeRow.business_type : null,
+    createdAt: typeof beforeRow.created_at === 'string' ? beforeRow.created_at : null,
+  })
+
   const { error: updateError } = await supabase
     .from('image_assets')
     .update({
@@ -2540,6 +2558,7 @@ export async function normalizeSynthesizedBeforeToShowroom(beforeAssetId: string
         ? { product_name: afterProductName }
         : {}),
       metadata: showroomMeta,
+      ...watermarkFields,
     })
     .eq('id', id)
 
@@ -2759,7 +2778,7 @@ export async function promoteAdInboxAssetsToShowroom(input: {
 
   const { data: rows, error: fetchError } = await supabase
     .from('image_assets')
-    .select('id, category, metadata, is_consultation')
+    .select('id, category, metadata, is_consultation, cloudinary_url, thumbnail_url, created_at')
     .in('id', assetIds)
 
   if (fetchError) {
@@ -2957,6 +2976,29 @@ export async function promoteAdInboxAssetsToShowroom(input: {
       }
     }
 
+    const cloudinaryUrl =
+      typeof row.cloudinary_url === 'string' && row.cloudinary_url.trim()
+        ? row.cloudinary_url.trim()
+        : null
+    const thumbnailUrl =
+      typeof row.thumbnail_url === 'string' && row.thumbnail_url.trim()
+        ? row.thumbnail_url.trim()
+        : null
+    const watermarkFields = buildOpenShowroomWatermarkDbFields({
+      sourceUrl: cloudinaryUrl,
+      thumbnailUrl,
+      siteName: siteTrim,
+      externalDisplayName:
+        typeof nextMeta.external_display_name === 'string' ? nextMeta.external_display_name : null,
+      broadExternalDisplayName:
+        typeof nextMeta.broad_external_display_name === 'string'
+          ? nextMeta.broad_external_display_name
+          : null,
+      location,
+      businessType,
+      createdAt: typeof row.created_at === 'string' ? row.created_at : null,
+    })
+
     const { error: updateError } = await supabase
       .from('image_assets')
       .update({
@@ -2971,6 +3013,8 @@ export async function promoteAdInboxAssetsToShowroom(input: {
         // category 컬럼은 ad_inbox 유지 — 대기실 필터·계보
         category: AD_INBOX_CATEGORY,
         metadata: nextMeta as Json,
+        // 공개 쇼룸은 ready 워터마크 URL을 씀. skipped면 /api/showroom-image 프록시로 깨질 수 있음
+        ...watermarkFields,
       })
       .eq('id', assetId)
 

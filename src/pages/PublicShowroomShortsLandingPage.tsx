@@ -80,8 +80,13 @@ export default function PublicShowroomShortsLandingPage() {
     if (!params.get('entry')) params.set('entry', 'shorts')
     const attributedJobId = landing?.jobId || jobId
     if (attributedJobId && !params.get('jobId')) params.set('jobId', attributedJobId)
+    // 허브 BA 페이지네이션에서 영상 현장과 같은 카드를 바로 열기
+    const baSiteCandidates = [landing?.shortName, landing?.displayName]
+      .map((value) => (value ?? '').trim())
+      .filter((value) => value && value !== '시공 사례')
+    if (baSiteCandidates[0]) params.set('baSite', baSiteCandidates[0])
     const query = params.toString()
-    return `/public/showroom${query ? `?${query}` : ''}`
+    return `/public/showroom${query ? `?${query}` : ''}#showroom-featured-ba-heading`
   })()
 
   const seoTitle = landing

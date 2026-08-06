@@ -142,12 +142,41 @@ Deno.serve(async (req) => {
           ...item.metadata,
           [CANONICAL_KEY]: nextBlog,
         }
+
+        // 오픈쇼룸 공개 표시명을 canonical_site_name에 연결 (공개 URL ↔ 승인 블로그 매칭)
+        let publicDisplayName: string | null = null
+        const { data: assetRows } = await supabase
+          .from("image_assets")
+          .select("metadata")
+          .eq("site_name", item.siteName)
+          .eq("is_consultation", true)
+          .order("created_at", { ascending: false })
+          .limit(12)
+        for (const row of assetRows ?? []) {
+          const meta =
+            row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+              ? (row.metadata as Record<string, unknown>)
+              : {}
+          const candidate =
+            (typeof meta.public_display_name === "string" && meta.public_display_name.trim()) ||
+            (typeof meta.external_display_name === "string" && meta.external_display_name.trim()) ||
+            (typeof meta.broad_external_display_name === "string" && meta.broad_external_display_name.trim()) ||
+            ""
+          if (candidate && candidate !== item.siteName) {
+            publicDisplayName = candidate
+            break
+          }
+        }
+
+        const upsertRow: Record<string, unknown> = {
+          site_name: item.siteName,
+          metadata: nextMeta,
+          updated_at: nowIso,
+        }
+        if (publicDisplayName) upsertRow.canonical_site_name = publicDisplayName
+
         const { error: upsertError } = await supabase.from("showroom_case_profiles").upsert(
-          {
-            site_name: item.siteName,
-            metadata: nextMeta,
-            updated_at: nowIso,
-          },
+          upsertRow,
           { onConflict: "site_name", ignoreDuplicates: false },
         )
         if (upsertError) {

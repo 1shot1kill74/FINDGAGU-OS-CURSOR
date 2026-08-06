@@ -6,6 +6,7 @@ import PublicShowroomLayout from '@/components/showroom/PublicShowroomLayout'
 import './App.css'
 
 const PublicShowroomPage = lazy(() => import('@/pages/PublicShowroomPage'))
+const PublicShowroomGalleryPage = lazy(() => import('@/pages/PublicShowroomGalleryPage'))
 const PublicShowroomShortsLandingPage = lazy(() => import('@/pages/PublicShowroomShortsLandingPage'))
 const PublicManagedStudyCafeFurnitureGuidePage = lazy(
   () => import('@/pages/PublicManagedStudyCafeFurnitureGuidePage'),
@@ -152,6 +153,7 @@ export default function PublicShowroomApp() {
               path="/public/showroom/guide/managed-study-cafe-furniture"
               element={<PublicManagedStudyCafeFurnitureGuidePage />}
             />
+            <Route path="/public/showroom/gallery" element={<PublicShowroomGalleryPage />} />
             <Route path="/public/showroom" element={<PublicShowroomPage />} />
             <Route path="/contact" element={<ContactPage />} />
           </Route>

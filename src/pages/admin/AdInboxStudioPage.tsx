@@ -109,6 +109,7 @@ import { SHOWROOM_SHORTS_TIMELAPSE_PROMPT } from '@/lib/showroomShortsTimelapseP
 import {
   SHOWROOM_SHORTS_VARIANT_IDS,
   formatShowroomShortsVariantLabel,
+  getShowroomShortsVariantConfig,
   type ShowroomShortsCompositionConfig,
 } from '@/lib/showroomShortsVariants'
 
@@ -486,8 +487,18 @@ export default function AdInboxStudioPage() {
   )
 
   useEffect(() => {
-    setCompositionDraft(activeJob?.composition_config ?? null)
-  }, [activeJob?.id, activeJob?.composition_config])
+    if (!activeJob) {
+      setCompositionDraft(null)
+      return
+    }
+    const siteName =
+      selectedBatch?.shortName?.trim() ||
+      selectedBatch?.label?.trim() ||
+      '이 공간'
+    setCompositionDraft(
+      getShowroomShortsVariantConfig(activeJob.id, siteName, activeJob.composition_config),
+    )
+  }, [activeJob?.id, activeJob?.composition_config, selectedBatch?.shortName, selectedBatch?.label])
 
   /** 임시 입고 사진이 없으면 job에 묶인 쇼룸 BA를 그리드·확대에 사용 */
   const displayAssets = useMemo(() => {
@@ -1365,8 +1376,8 @@ export default function AdInboxStudioPage() {
         const last = result.results?.[result.results.length - 1]?.slotYmd
         toast.success(
           first && last
-            ? `${n}장 예약: ${first} ~ ${last} 매일 11:00`
-            : `${n}장 11시 슬롯에 줄 세워 예약했습니다.`,
+            ? `${n}장 예약: ${first} ~ ${last} 격일 11:00`
+            : `${n}장 격일 11시 슬롯에 줄 세워 예약했습니다.`,
         )
       }
       await refreshWorkProgress()
@@ -1667,7 +1678,7 @@ export default function AdInboxStudioPage() {
               <h2 className="text-base font-semibold text-neutral-900">대기실 · 현장 카드</h2>
               <p className="text-xs text-neutral-500">
                 대기중(사진만) → 작업중(릴스 제작) → 작업완료(합성 끝). 채널 버튼은 업로드 완료 시
-                초록색·게시물 링크. 「11시 줄서기 예약」은 준비 끝난 미예약 카드를 매일 11:00에 하루
+                초록색·게시물 링크. 「11시 줄서기 예약」은 준비 끝난 미예약 카드를 격일 11:00에
                 1장씩 앞으로 줄 세웁니다.
               </p>
             </div>
@@ -1677,7 +1688,7 @@ export default function AdInboxStudioPage() {
                 variant="outline"
                 onClick={() => void handleFillPublishQueue()}
                 disabled={queueFillBusy || loading}
-                title="업로드 준비 끝난 미예약 카드를 앞으로 매일 11:00에 하루 1장씩 예약"
+                title="업로드 준비 끝난 미예약 카드를 앞으로 격일 11:00에 1장씩 예약"
               >
                 {queueFillBusy ? (
                   <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
@@ -2447,36 +2458,19 @@ export default function AdInboxStudioPage() {
                             {compositionDraft ? (
                               <div className="space-y-3 rounded-xl border border-violet-200 bg-violet-50/50 p-3">
                                 <div>
-                                  <p className="text-sm font-semibold text-neutral-900">쇼츠 포맷·오디오 자동화</p>
+                                  <p className="text-sm font-semibold text-neutral-900">쇼츠 포맷·오디오</p>
                                   <p className="mt-0.5 text-xs text-neutral-600">
-                                    저장 후 합성하면 원본은 유지하고 훅 자막·제목 실험 태그·TTS/BGM만 다시 적용합니다.
+                                    영상 포맷은 After 콜드오픈 고정입니다. After → Before 반전 → 타임랩스. TTS 대본·제목만
+                                    조정한 뒤 재합성하세요.
                                   </p>
                                 </div>
                                 <div className="grid gap-2 sm:grid-cols-3">
-                                  <label className="text-xs text-neutral-600">
+                                  <div className="text-xs text-neutral-600">
                                     영상 포맷
-                                    <select
-                                      value={compositionDraft.videoVariant}
-                                      onChange={(event) =>
-                                        setCompositionDraft((current) =>
-                                          current
-                                            ? {
-                                                ...current,
-                                                variantId: event.target.value as typeof current.variantId,
-                                                videoVariant: event.target.value as typeof current.videoVariant,
-                                              }
-                                            : current,
-                                        )
-                                      }
-                                      className="mt-1 h-8 w-full rounded-md border border-neutral-200 bg-white px-2 text-xs text-neutral-800"
-                                    >
-                                      {SHOWROOM_SHORTS_VARIANT_IDS.map((variant) => (
-                                        <option key={variant} value={variant}>
-                                          {formatShowroomShortsVariantLabel(variant)}
-                                        </option>
-                                      ))}
-                                    </select>
-                                  </label>
+                                    <div className="mt-1 flex h-8 items-center rounded-md border border-neutral-200 bg-white px-2 text-xs font-medium text-neutral-800">
+                                      After 콜드오픈
+                                    </div>
+                                  </div>
                                   <label className="text-xs text-neutral-600">
                                     제목 포맷
                                     <select
@@ -2535,6 +2529,9 @@ export default function AdInboxStudioPage() {
                                     />
                                   </label>
                                 ) : null}
+                                <div className="rounded-md border border-violet-100 bg-white px-2.5 py-2 text-[11px] text-neutral-600">
+                                  훅 자막: {compositionDraft.hookLine1} / {compositionDraft.hookLine2}
+                                </div>
                                 <div className="flex justify-end">
                                   <Button
                                     type="button"

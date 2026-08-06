@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from "npm:@supabase/supabase-js@2"
+import { sendShowroomShortsSlackAlert } from "../_shared/showroomShortsSlackAlert.ts"
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -396,11 +397,12 @@ Deno.serve(async (req) => {
     const parsed = parseResponseBody(rawText)
 
     if (!response.ok) {
+      const failMessage = extractMessage(parsed, `외부 webhook 호출 실패 (${response.status})`)
       await supabase
         .from(tables.targets)
         .update({
           publish_status: "failed",
-          preparation_error: extractMessage(parsed, `외부 webhook 호출 실패 (${response.status})`),
+          preparation_error: failMessage,
           updated_at: new Date().toISOString(),
         })
         .eq("id", targetId)
@@ -409,7 +411,7 @@ Deno.serve(async (req) => {
         parentId,
         targetId,
         stage: action === "prepare" ? "publish_prepare_failed" : "publish_launch_failed",
-        message: extractMessage(parsed, `외부 webhook 호출 실패 (${response.status})`),
+        message: failMessage,
         payload: {
           action,
           status: response.status,
@@ -418,9 +420,21 @@ Deno.serve(async (req) => {
         sourceType,
       })
 
+      await sendShowroomShortsSlackAlert({
+        reason: "failed",
+        channel: getString(targetRow.channel),
+        title: getString(targetRow.title) || null,
+        targetId,
+        jobId: parentId,
+        publishStatus: "failed",
+        errorSummary: failMessage,
+        sourceType,
+        action,
+      })
+
       return json({
         ok: false,
-        message: extractMessage(parsed, `외부 webhook 호출 실패 (${response.status})`),
+        message: failMessage,
       }, response.status)
     }
 

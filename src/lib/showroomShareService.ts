@@ -33,10 +33,10 @@ function buildPublicShowroomImageProxyUrl(assetId: string, variant: 'thumb' | 'f
 
 function mapToProtectedPublicShowroomAsset(asset: ShowroomImageAsset): ShowroomImageAsset {
   const isWatermarkReady = asset.public_watermark_status === 'ready'
+  // URL·블로그 매칭용 내부명 유지. 카드 표시는 external_display_name / getBroadPublicLabel 경로.
   const internalSiteName = asset.raw_site_name?.trim() || asset.site_name?.trim() || null
   return {
     ...asset,
-    // 공개 키·표시 모두 내부 현장명 유지 (익스터널/광역화 이름으로 덮지 않음)
     raw_site_name: internalSiteName,
     site_name: internalSiteName,
     cloudinary_url: isWatermarkReady ? asset.cloudinary_url : buildPublicShowroomImageProxyUrl(asset.id, 'full'),

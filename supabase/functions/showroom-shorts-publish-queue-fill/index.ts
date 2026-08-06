@@ -2,7 +2,7 @@
  * showroom-shorts-publish-queue-fill
  *
  * 대기실(ad inbox) 숏츠 중 업로드 준비 끝·미예약 카드를
- * Asia/Seoul 매일 11:00 슬롯에 하루 1장씩 줄 세워 예약한다.
+ * Asia/Seoul 11:00 슬롯에 격일(2일) 1장씩 줄 세워 예약한다.
  *
  * 인증:
  * - 크론: x-shorts-publish-cron-secret = SHOWROOM_SHORTS_PUBLISH_CRON_SECRET
@@ -20,6 +20,8 @@ const CORS = {
 const SCHEDULABLE = new Set(["launch_ready", "approved"])
 const SLOT_HOUR = 11
 const SLOT_MINUTE = 0
+/** 발행 간격(일). 1=매일, 2=격일 */
+const SLOT_INTERVAL_DAYS = 2
 
 type TargetRow = {
   id: string
@@ -93,12 +95,23 @@ function isElevenAmSeoulSlot(iso: string | null | undefined): boolean {
 function firstOpenSlotYmd(occupied: Set<string>, now = new Date()): string {
   const today = seoulYmd(now)
   const todayEleven = new Date(`${today}T11:00:00+09:00`)
-  let cursor = now.getTime() < todayEleven.getTime() ? today : addDaysYmd(today, 1)
-  for (let i = 0; i < 800; i += 1) {
-    if (!occupied.has(cursor)) return cursor
-    cursor = addDaysYmd(cursor, 1)
+  const earliest = now.getTime() < todayEleven.getTime() ? today : addDaysYmd(today, 1)
+
+  const occupiedSorted = [...occupied].filter(Boolean).sort()
+  let cursor =
+    occupiedSorted.length === 0
+      ? earliest
+      : addDaysYmd(occupiedSorted[occupiedSorted.length - 1], SLOT_INTERVAL_DAYS)
+
+  while (cursor < earliest) {
+    cursor = addDaysYmd(cursor, SLOT_INTERVAL_DAYS)
   }
-  throw new Error("빈 11시 슬롯을 찾지 못했습니다.")
+
+  for (let i = 0; i < 400; i += 1) {
+    if (!occupied.has(cursor) && cursor >= earliest) return cursor
+    cursor = addDaysYmd(cursor, SLOT_INTERVAL_DAYS)
+  }
+  throw new Error("빈 11시 격일 슬롯을 찾지 못했습니다.")
 }
 
 Deno.serve(async (req) => {

@@ -21,11 +21,19 @@ export type PublicShowroomShortsLanding = {
 export function parseAdInboxShortNameFromGroupKey(groupKey: string | null | undefined): string | null {
   const key = (groupKey ?? '').trim()
   if (!key) return null
-  // before-after:ad_site:{uuid} 는 RPC에서 ad_inbox_sites.short_name으로 해석. 키 자체는 노출하지 않음.
+  // before-after:ad_site:{uuid} 는 RPC/테이블에서 ad_inbox_sites.short_name으로 해석. 키 자체는 노출하지 않음.
   if (/ad_site:[0-9a-f-]{36}/i.test(key)) return null
   const match = key.match(/^before-after:ad:\d{4}-\d{2}-\d{2}:(.+)$/)
   const name = match?.[1]?.trim()
   return name || null
+}
+
+/** before-after:ad_site:{uuid} → site id. 레거시 키는 null */
+export function parseAdInboxSiteIdFromGroupKey(groupKey: string | null | undefined): string | null {
+  const key = (groupKey ?? '').trim()
+  if (!key) return null
+  const match = key.match(/ad_site:([0-9a-f-]{36})/i)
+  return match?.[1]?.toLowerCase() ?? null
 }
 
 function looksLikeTechnicalGroupKey(value: string | null | undefined): boolean {

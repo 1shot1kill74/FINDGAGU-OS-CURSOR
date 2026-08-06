@@ -18,6 +18,7 @@ const ShareGalleryPage = lazy(() => import('@/pages/ShareGalleryPage'))
 const PublicGalleryView = lazy(() => import('@/pages/PublicGalleryView'))
 const ShareRedirect = lazy(() => import('@/pages/ShareRedirect'))
 const PublicShowroomPage = lazy(() => import('@/pages/PublicShowroomPage'))
+const PublicShowroomGalleryPage = lazy(() => import('@/pages/PublicShowroomGalleryPage'))
 const PublicManagedStudyCafeFurnitureGuidePage = lazy(
   () => import('@/pages/PublicManagedStudyCafeFurnitureGuidePage'),
 )
@@ -197,6 +198,7 @@ function App() {
               path="/public/showroom/guide/managed-study-cafe-furniture"
               element={<PublicManagedStudyCafeFurnitureGuidePage />}
             />
+            <Route path="/public/showroom/gallery" element={<PublicShowroomGalleryPage />} />
             <Route path="/public/showroom" element={<PublicShowroomPage />} />
             <Route path="/public/showroom/original" element={<OriginalShowroomPage mode="public" />} />
             <Route path="/contact" element={<ContactPage />} />

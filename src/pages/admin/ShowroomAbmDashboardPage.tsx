@@ -12,7 +12,10 @@ import {
   type ShowroomAbmTrafficFilter,
 } from '@/lib/showroomAbmTraffic'
 import { stripLeadingSiteNumericCode } from '@/lib/showroomShorts'
-import { parseAdInboxShortNameFromGroupKey } from '@/lib/showroomShortsLanding'
+import {
+  parseAdInboxShortNameFromGroupKey,
+  parseAdInboxSiteIdFromGroupKey,
+} from '@/lib/showroomShortsLanding'
 
 const TRAFFIC_FILTER_OPTIONS: { value: ShowroomAbmTrafficFilter; label: string; description: string }[] = [
   { value: 'production', label: '프로덕션만', description: '운영 도메인만 집계' },
@@ -36,7 +39,7 @@ const CHANNEL_LABELS: Record<string, string> = {
 }
 
 const CHANNEL_COLORS: Record<string, string> = {
-  youtube: '#e11d48',
+  youtube: '#eab308',
   facebook: '#2563eb',
   instagram: '#db2777',
   direct: '#0f766e',
@@ -160,14 +163,82 @@ export default function ShowroomAbmDashboardPage() {
           return
         }
 
+        const siteIds = [
+          ...new Set(
+            (jobs ?? [])
+              .map((job) =>
+                parseAdInboxSiteIdFromGroupKey(
+                  typeof job.before_after_group_key === 'string' ? job.before_after_group_key : null
+                )
+              )
+              .filter((siteId): siteId is string => Boolean(siteId))
+          ),
+        ]
+
+        const siteNameById: Record<string, string> = {}
+        if (siteIds.length > 0) {
+          const { data: sites } = await supabase
+            .from('ad_inbox_sites')
+            .select('id, short_name')
+            .in('id', siteIds)
+
+          if (cancelled) return
+          for (const site of sites ?? []) {
+            const name = String(site.short_name ?? '').trim()
+            if (name) siteNameById[String(site.id).toLowerCase()] = name
+          }
+        }
+
+        const missingJobIds: string[] = []
         const labels: Record<string, string> = {}
         for (const job of jobs ?? []) {
           const id = String(job.id)
-          const shortName = parseAdInboxShortNameFromGroupKey(
+          const groupKey =
             typeof job.before_after_group_key === 'string' ? job.before_after_group_key : null
-          )
-          const displayName = stripLeadingSiteNumericCode(shortName) || shortName
-          labels[id] = displayName || formatJobIdShort(id)
+          const siteId = parseAdInboxSiteIdFromGroupKey(groupKey)
+          const shortName =
+            parseAdInboxShortNameFromGroupKey(groupKey) ||
+            (siteId ? siteNameById[siteId] ?? null : null)
+          const cleaned = shortName
+            ? shortName.replace(/\s+/g, ' ').trim().replace(/^(견적|완료)\s+/u, '').trim()
+            : null
+          const displayName = stripLeadingSiteNumericCode(cleaned) || cleaned
+          if (displayName) {
+            labels[id] = displayName
+          } else {
+            missingJobIds.push(id)
+          }
+        }
+
+        // short_name이 없으면 채널 영상 제목(유튜브 우선)으로 보강
+        const unresolvedIds = [...new Set([...missingJobIds, ...jobIds.filter((id) => !labels[id])])]
+        if (unresolvedIds.length > 0) {
+          const { data: targets } = await supabase
+            .from('showroom_shorts_targets')
+            .select('shorts_job_id, channel, title')
+            .in('shorts_job_id', unresolvedIds)
+
+          if (cancelled) return
+
+          const titleByJob = new Map<string, { title: string; prefer: boolean }>()
+          for (const target of targets ?? []) {
+            const jobId = String(target.shorts_job_id ?? '')
+            const title = String(target.title ?? '').trim()
+            if (!jobId || !title) continue
+            const prefer = String(target.channel ?? '').toLowerCase() === 'youtube'
+            const prev = titleByJob.get(jobId)
+            if (!prev || (prefer && !prev.prefer)) {
+              titleByJob.set(jobId, { title, prefer })
+            }
+          }
+          for (const jobId of unresolvedIds) {
+            const title = titleByJob.get(jobId)?.title
+            if (title) labels[jobId] = title
+          }
+        }
+
+        for (const id of jobIds) {
+          if (!labels[id]) labels[id] = formatJobIdShort(id)
         }
         setJobLabels(labels)
       } catch (error) {

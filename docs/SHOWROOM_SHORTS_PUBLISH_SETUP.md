@@ -39,8 +39,14 @@ npx supabase secrets set \
   SHOWROOM_SHORTS_PUBLISH_WEBHOOK_SECRET="your-showroom-shorts-n8n-secret" \
   SHOWROOM_SHORTS_PUBLISH_MODE="live" \
   SHOWROOM_SHORTS_PUBLISH_CALLBACK_URL="https://sxxnshvidfwuemgbyuqz.supabase.co/functions/v1/showroom-shorts-publish-callback" \
-  SHOWROOM_SHORTS_PUBLISH_CALLBACK_SECRET="your-showroom-shorts-callback-secret"
+  SHOWROOM_SHORTS_PUBLISH_CALLBACK_SECRET="your-showroom-shorts-callback-secret" \
+  SHOWROOM_SHORTS_SLACK_WEBHOOK_URL="https://hooks.slack.com/services/XXX/YYY/ZZZ"
 ```
+
+실패/고임 Slack 알람:
+- `failed` 콜백·디스패치 웹훅 실패 시 Incoming Webhook으로 즉시 알림
+- `publishing`/`preparing`이 20분 이상 고이면 `showroom-shorts-publish-watchdog`가 `failed`로 전환 후 알림
+- 크론 등록: `node scripts/setupShowroomShortsPublishWatchdogCron.mjs --secret=<SHOWROOM_SHORTS_PUBLISH_CRON_SECRET>`
 
 테스트만 먼저 할 때:
 
@@ -61,7 +67,7 @@ npx supabase secrets set \
 4. `launch`
    - 실제 채널 API 호출
    - 성공 시 `externalPostId`, `externalPostUrl` 포함 callback 호출
-   - 실패 시 `status=failed` callback 호출
+   - **실패 시 반드시 `status=failed` callback 호출** (안 하면 DB가 `publishing`에 고이고, 워치독이 20분 후 `failed`+Slack 처리)
 
 ## 3-1. Meta 연동 시 필요한 값
 

@@ -21,14 +21,16 @@ export type ShowroomAbmEventName = Extract<
 
 export type ShowroomAbmConsultationSurface =
   | 'expert_comment'
+  | 'hub_insight'
   | 'case_sticky'
   | 'case_inline'
   | 'gallery_modal'
   | 'gallery_browse_header'
+  | 'gallery_close'
   | 'shorts_landing'
   | 'guide_page'
 
-export type ShowroomAbmHeaderNavTarget = 'before_after' | 'expert_recommend'
+export type ShowroomAbmHeaderNavTarget = 'before_after' | 'expert_recommend' | 'gallery_more'
 
 export type ShowroomAbmGalleryMode = 'site' | 'product' | 'color' | 'beforeAfter'
 

@@ -1,4 +1,8 @@
-import { parseBeforeAfterMeta, parseImageAssetMeta } from '@/lib/imageAssetMeta'
+import {
+  buildBroadExternalDisplayName,
+  parseBeforeAfterMeta,
+  parseImageAssetMeta,
+} from '@/lib/imageAssetMeta'
 
 export interface ShowroomImageAsset {
   id: string
@@ -85,6 +89,11 @@ export function mapPublicShowroomRpcRowToShowroomAsset(r: Record<string, unknown
   const externalDisplayName =
     externalFromMeta
     || (publicSiteName && internalSiteName && publicSiteName !== internalSiteName ? publicSiteName : null)
+    || (publicSiteName || null)
+  const broadExternalDisplayName =
+    meta.broadExternalDisplayName?.trim()
+    || buildBroadExternalDisplayName(externalDisplayName)
+    || null
 
   return {
     before_after_role: beforeAfterRole,
@@ -94,7 +103,7 @@ export function mapPublicShowroomRpcRowToShowroomAsset(r: Record<string, unknown
     canonical_site_name: meta.canonicalSiteName,
     space_display_name: meta.spaceDisplayName,
     external_display_name: externalDisplayName,
-    broad_external_display_name: meta.broadExternalDisplayName,
+    broad_external_display_name: broadExternalDisplayName,
     space_id: meta.spaceId,
     id: String(r.id),
     cloudinary_url: String(r.cloudinary_url ?? ''),

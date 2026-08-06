@@ -26,7 +26,9 @@ import {
   updateEduOutreachDraft,
   type EduOutreachCollectProvider,
 } from '@/lib/eduOutreachService'
-import { toReadableSourceText } from '@/lib/eduOutreachText'
+import { isTitleLikeSummary, toReadableSourceText } from '@/lib/eduOutreachText'
+import { activationLevelLabel } from '@/lib/eduOutreachActivation'
+import { safeExternalHref } from '@/lib/safeHttpUrl'
 import {
   EDU_INDUSTRY_LABELS,
   EDU_STATUS_LABELS,
@@ -36,6 +38,46 @@ import {
 } from '@/lib/eduOutreachTypes'
 
 type TabKey = 'queued' | 'approved' | 'sent' | 'all'
+/** 수집·큐 영역 분리: 블로그 활성 vs 뉴스 트렌드 vs 지역 디렉터리 */
+type LaneKey = 'blog' | 'news' | 'directory'
+
+function leadLane(lead: EduOutreachLeadWithDraft): LaneKey {
+  const intent = (lead.intent || '').trim()
+  const rawHint =
+    typeof lead.signal?.raw?.intent_hint === 'string' ? lead.signal.raw.intent_hint.trim() : ''
+  const hint = rawHint || intent
+  if (
+    hint === 'blog_activation' ||
+    intent === 'blog_activation' ||
+    intent === 'blog_presence' ||
+    typeof lead.score_payload?.activation_level === 'string'
+  ) {
+    return 'blog'
+  }
+  if (hint === 'directory' || intent === 'directory') return 'directory'
+  return 'news'
+}
+
+const LANE_META: Record<
+  LaneKey,
+  { label: string; blurb: string; empty: string }
+> = {
+  blog: {
+    label: '블로그 활성',
+    blurb: '학원·스터디 블로그 업데이트 활성도 + 공간의도 → 아웃리치 타겟',
+    empty: '블로그 활성 리드가 없습니다. 「블로그 활성 수집」을 실행하세요.',
+  },
+  news: {
+    label: '뉴스 트렌드',
+    blurb: '개원·리모델링 등 공개 뉴스 시그널 (트렌드 참고, 아웃리치 주력 아님)',
+    empty: '뉴스 트렌드 리드가 없습니다. 「뉴스 수집」을 실행하세요.',
+  },
+  directory: {
+    label: '지역 디렉터리',
+    blurb: '네이버 지역검색 업체 풀 (전화 저장만, 자동 연락 금지)',
+    empty: '지역 디렉터리 리드가 없습니다. 「지역 수집」을 실행하세요.',
+  },
+}
 
 function formatScore(score: number | null) {
   if (score == null || Number.isNaN(score)) return '-'
@@ -49,9 +91,27 @@ function formatWhen(value: string | null | undefined) {
   return d.toLocaleString('ko-KR')
 }
 
+/** 리스트용 짧은 날짜 (예: 26.07.22) */
+function formatDateShort(value: string | null | undefined) {
+  if (!value) return '-'
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return '-'
+  const yy = String(d.getFullYear()).slice(2)
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${yy}.${mm}.${dd}`
+}
+
+/** 발행일 우선, 없으면 수집일 */
+function leadEventAt(lead: EduOutreachLeadWithDraft) {
+  return lead.signal?.published_at || lead.signal?.first_seen_at || lead.created_at || null
+}
+
 function intentLabel(intent: string | null | undefined) {
   if (!intent) return '-'
   if (intent === 'directory') return '업체 디렉터리(이벤트 아님)'
+  if (intent === 'blog_activation') return '블로그 활성 타겟'
+  if (intent === 'blog_presence') return '블로그 운영(공간의도 약함)'
   if (intent === 'open') return '개원/오픈'
   if (intent === 'relocate') return '이전/확장'
   if (intent === 'renewal') return '리뉴얼/리모델링'
@@ -65,13 +125,23 @@ function intentLabel(intent: string | null | undefined) {
 /** 판단용 원문 블록 — signal 우선, HTML 제거·뉴스 블러브 정규화 */
 function getSourceEvidence(lead: EduOutreachLeadWithDraft) {
   const signal = lead.signal
+  const raw = signal?.raw ?? {}
+  const rawDescription =
+    typeof raw.description === 'string' ? raw.description : typeof raw.clean_body === 'string' ? raw.clean_body : ''
+
+  // body가 제목±매체 가짜 요약이면 raw.description(실제 스니펫)을 우선
+  const bodyCandidate = signal?.body || lead.evidence_quote || ''
+  const preferRaw =
+    rawDescription &&
+    !isTitleLikeSummary(signal?.title || lead.org_name || '', rawDescription) &&
+    isTitleLikeSummary(signal?.title || lead.org_name || '', bodyCandidate)
+
   const readable = toReadableSourceText({
     title: signal?.title || lead.evidence_quote || lead.org_name,
-    body: signal?.body || lead.evidence_quote,
+    body: preferRaw ? rawDescription : bodyCandidate,
   })
   const sourceUrl = signal?.source_url || lead.source_url || ''
   const publishedAt = signal?.published_at || null
-  const raw = signal?.raw ?? {}
   const telephone =
     lead.contact_value ||
     (typeof raw.telephone === 'string' ? raw.telephone : '') ||
@@ -81,11 +151,11 @@ function getSourceEvidence(lead: EduOutreachLeadWithDraft) {
     typeof raw.fetched_article === 'boolean' && raw.fetched_article && signal?.body
       ? signal.body
       : ''
-  const summary = fetchedBody || readable.summary
-  const isFullBody =
-    Boolean(fetchedBody) ||
-    (readable.summary.length > (readable.title.length || 0) + 80 &&
-      !readable.summary.startsWith(readable.title))
+
+  const readableSummary =
+    readable.summary && !isTitleLikeSummary(readable.title, readable.summary) ? readable.summary : ''
+  const summary = fetchedBody || readableSummary
+  const isFullBody = Boolean(fetchedBody)
 
   return {
     title: readable.title,
@@ -94,16 +164,19 @@ function getSourceEvidence(lead: EduOutreachLeadWithDraft) {
     publisher:
       readable.publisher ||
       (typeof raw.site_name === 'string' ? raw.site_name : '') ||
+      (typeof raw.publisher === 'string' ? raw.publisher : '') ||
       '',
     sourceUrl,
     publishedAt,
     telephone,
     raw,
     isFullBody,
+    hasSummary: Boolean(summary),
   }
 }
 
 export default function EduOutreachQueuePage() {
+  const [lane, setLane] = useState<LaneKey>('blog')
   const [tab, setTab] = useState<TabKey>('queued')
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -138,19 +211,45 @@ export default function EduOutreachQueuePage() {
     void load(true)
   }, [load])
 
-  const metrics = useMemo(() => computeEduOutreachMetrics(leads), [leads])
+  const laneLeads = useMemo(() => leads.filter((l) => leadLane(l) === lane), [leads, lane])
+
+  const laneCounts = useMemo(() => {
+    const counts: Record<LaneKey, number> = { blog: 0, news: 0, directory: 0 }
+    for (const lead of leads) {
+      if (lead.status === 'excluded') continue
+      counts[leadLane(lead)] += 1
+    }
+    return counts
+  }, [leads])
+
+  const metrics = useMemo(() => computeEduOutreachMetrics(laneLeads), [laneLeads])
 
   const filtered = useMemo(() => {
-    if (tab === 'queued') return leads.filter((l) => l.status === 'queued' || l.status === 'scored')
-    if (tab === 'approved') return leads.filter((l) => l.status === 'approved')
-    if (tab === 'sent') return leads.filter((l) => l.status === 'sent' || l.status === 'replied' || l.status === 'converted')
-    return leads.filter((l) => l.status !== 'excluded')
-  }, [leads, tab])
+    const base =
+      tab === 'queued'
+        ? laneLeads.filter((l) => l.status === 'queued' || l.status === 'scored')
+        : tab === 'approved'
+          ? laneLeads.filter((l) => l.status === 'approved')
+          : tab === 'sent'
+            ? laneLeads.filter((l) => l.status === 'sent' || l.status === 'replied' || l.status === 'converted')
+            : laneLeads.filter((l) => l.status !== 'excluded')
+
+    return [...base].sort((a, b) => {
+      const ta = new Date(leadEventAt(a) || 0).getTime()
+      const tb = new Date(leadEventAt(b) || 0).getTime()
+      if (tb !== ta) return tb - ta
+      return (b.fit_score ?? 0) - (a.fit_score ?? 0)
+    })
+  }, [laneLeads, tab])
 
   const selected = useMemo(
     () => filtered.find((l) => l.id === selectedId) ?? filtered[0] ?? null,
     [filtered, selectedId],
   )
+
+  useEffect(() => {
+    setSelectedId(null)
+  }, [lane])
 
   useEffect(() => {
     setDraftBody(selected?.draft?.body ?? '')
@@ -161,10 +260,20 @@ export default function EduOutreachQueuePage() {
     try {
       const result = await collectEduOutreachSignals(provider)
       const label =
-        provider === 'naver_news' ? '네이버 뉴스' : provider === 'naver_local' ? '네이버 지역' : 'Google News'
+        provider === 'naver_blog'
+          ? '블로그 활성'
+          : provider === 'naver_news'
+            ? '네이버 뉴스'
+            : provider === 'naver_local'
+              ? '네이버 지역'
+              : 'Google News'
       toast.success(
         `${label} ${result.itemCount}건 · 신규 ${result.leadsNew} · 점수화 ${result.leadsScored}`,
       )
+      if (provider === 'naver_blog') setLane('blog')
+      else if (provider === 'naver_local') setLane('directory')
+      else setLane('news')
+      setTab('queued')
       await load()
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '수집 실패')
@@ -184,6 +293,7 @@ export default function EduOutreachQueuePage() {
     try {
       const article = await fetchEduOutreachArticleBody({
         url,
+        title: selected.signal?.title || selected.org_name || selected.evidence_quote,
         signalId: selected.signal_id,
         persist: true,
       })
@@ -297,10 +407,8 @@ export default function EduOutreachQueuePage() {
               </Button>
             </Link>
             <div>
-              <h1 className="text-xl font-semibold text-slate-900">교육가구 아웃리치 승인 큐</h1>
-              <p className="mt-1 text-sm text-slate-500">
-                공개 시그널 → 점수 → 사람 승인 → 수동 발송 로그 · 자동 DM/메일 금지
-              </p>
+              <h1 className="text-xl font-semibold text-slate-900">교육가구 아웃리치</h1>
+              <p className="mt-1 text-sm text-slate-500">{LANE_META[lane].blurb}</p>
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -308,17 +416,50 @@ export default function EduOutreachQueuePage() {
               <RefreshCw className={`h-4 w-4 ${busy ? 'animate-spin' : ''}`} />
               새로고침
             </Button>
-            <Button type="button" disabled={busy} onClick={() => void onCollect('naver_news')} className="gap-1.5">
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-              네이버 뉴스
-            </Button>
-            <Button type="button" variant="secondary" disabled={busy} onClick={() => void onCollect('naver_local')} className="gap-1.5">
-              네이버 지역(학원/스터디)
-            </Button>
-            <Button type="button" variant="outline" disabled={busy} onClick={() => void onCollect('google_news')} className="gap-1.5">
-              Google 보조
-            </Button>
+            {lane === 'blog' ? (
+              <Button type="button" disabled={busy} onClick={() => void onCollect('naver_blog')} className="gap-1.5">
+                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                블로그 활성 수집
+              </Button>
+            ) : null}
+            {lane === 'news' ? (
+              <>
+                <Button type="button" disabled={busy} onClick={() => void onCollect('naver_news')} className="gap-1.5">
+                  {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                  뉴스 수집
+                </Button>
+                <Button type="button" variant="outline" disabled={busy} onClick={() => void onCollect('google_news')}>
+                  Google 보조
+                </Button>
+              </>
+            ) : null}
+            {lane === 'directory' ? (
+              <Button type="button" disabled={busy} onClick={() => void onCollect('naver_local')} className="gap-1.5">
+                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                지역 수집
+              </Button>
+            ) : null}
           </div>
+        </div>
+
+        <div className="mb-4 flex flex-wrap gap-2">
+          {(['blog', 'news', 'directory'] as const).map((key) => (
+            <Button
+              key={key}
+              type="button"
+              size="sm"
+              variant={lane === key ? 'default' : 'outline'}
+              onClick={() => {
+                setLane(key)
+                setTab('queued')
+              }}
+            >
+              {LANE_META[key].label}
+              <span className={`ml-1.5 tabular-nums ${lane === key ? 'text-white/80' : 'text-slate-400'}`}>
+                {laneCounts[key]}
+              </span>
+            </Button>
+          ))}
         </div>
 
         <div className="mb-6 grid gap-3 sm:grid-cols-4">
@@ -350,6 +491,7 @@ export default function EduOutreachQueuePage() {
           </div>
         </div>
 
+        {lane === 'news' ? (
         <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-4">
           <h2 className="text-sm font-semibold text-slate-900">공식 공고 수동 등록 (나라장터·학교·군 시설)</h2>
           <p className="mt-1 text-xs text-slate-500">개인 휴대폰 난사 금지. 공개 URL만. 군부대는 official channel only.</p>
@@ -381,6 +523,7 @@ export default function EduOutreachQueuePage() {
             </Button>
           </div>
         </div>
+        ) : null}
 
         <div className="mb-3 flex flex-wrap gap-2">
           {(
@@ -412,10 +555,17 @@ export default function EduOutreachQueuePage() {
           <div className="grid gap-4 lg:grid-cols-[340px_1fr]">
             <div className="max-h-[70vh] overflow-auto rounded-2xl border border-slate-200 bg-white">
               {filtered.length === 0 ? (
-                <p className="p-4 text-sm text-slate-500">이 탭에 리드가 없습니다. 먼저 수집하거나 공고를 등록하세요.</p>
+                <p className="p-4 text-sm text-slate-500">{LANE_META[lane].empty}</p>
               ) : (
                 filtered.map((lead) => {
                   const evidence = getSourceEvidence(lead)
+                  const eventAt = leadEventAt(lead)
+                  const activationLevel =
+                    typeof lead.score_payload?.activation_level === 'string'
+                      ? lead.score_payload.activation_level
+                      : typeof evidence.raw.activation_level === 'string'
+                        ? evidence.raw.activation_level
+                        : null
                   return (
                   <button
                     key={lead.id}
@@ -429,11 +579,19 @@ export default function EduOutreachQueuePage() {
                       <span className="text-sm font-medium text-slate-900 line-clamp-1">
                         {lead.org_name || '미상'}
                       </span>
-                      <span className="text-xs font-semibold text-slate-700">{formatScore(lead.fit_score)}</span>
+                      <span className="shrink-0 text-xs font-semibold tabular-nums text-slate-700">
+                        {formatDateShort(eventAt)}
+                      </span>
                     </div>
                     <p className="mt-1 text-xs text-slate-500">
                       {EDU_INDUSTRY_LABELS[lead.industry]} · {intentLabel(lead.intent)} · {lead.region || '미상'}
+                      <span className="text-slate-400"> · fit {formatScore(lead.fit_score)}</span>
                     </p>
+                    {activationLevel ? (
+                      <p className="mt-0.5 text-[11px] font-medium text-amber-800">
+                        {activationLevelLabel(activationLevel)}
+                      </p>
+                    ) : null}
                     <p className="mt-1 text-xs leading-5 text-slate-600 line-clamp-2">
                       {evidence.title || evidence.summary}
                     </p>
@@ -466,9 +624,9 @@ export default function EduOutreachQueuePage() {
                       </p>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      {evidence.sourceUrl ? (
+                      {safeExternalHref(evidence.sourceUrl) ? (
                         <a
-                          href={evidence.sourceUrl}
+                          href={safeExternalHref(evidence.sourceUrl)}
                           target="_blank"
                           rel="noreferrer"
                           className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800"
@@ -476,7 +634,7 @@ export default function EduOutreachQueuePage() {
                           원문보기 <ExternalLink className="h-3.5 w-3.5" />
                         </a>
                       ) : null}
-                      {evidence.sourceUrl ? (
+                      {safeExternalHref(evidence.sourceUrl) ? (
                         <Button
                           type="button"
                           variant="outline"
@@ -510,15 +668,20 @@ export default function EduOutreachQueuePage() {
                       <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
                         {articleBodyByLead[selected.id] || evidence.isFullBody
                           ? '원문 본문'
-                          : 'RSS 짧은 요약 (본문 아님)'}
+                          : evidence.hasSummary
+                            ? '뉴스 짧은 요약 (본문 아님)'
+                            : '요약 없음'}
                       </p>
                       <p className="mt-1 max-h-72 overflow-auto whitespace-pre-wrap text-sm leading-6 text-slate-800">
-                        {articleBodyByLead[selected.id] || evidence.summary}
+                        {articleBodyByLead[selected.id] ||
+                          evidence.summary ||
+                          '짧은 요약이 없습니다. Google News RSS는 제목만 제공하므로, 「본문 불러오기」로 원문을 추출하거나 네이버 뉴스로 다시 수집하세요.'}
                       </p>
                       {!articleBodyByLead[selected.id] && !evidence.isFullBody ? (
                         <p className="mt-2 text-xs text-amber-800">
-                          뉴스 API는 제목·짧은 요약만 줍니다. 「본문 불러오기」로 원문 페이지 본문을 추출하거나,
-                          「원문보기」로 직접 확인하세요.
+                          {evidence.hasSummary
+                            ? '뉴스 API는 제목·짧은 요약만 줍니다. 「본문 불러오기」로 원문 페이지 본문을 추출하거나, 「원문보기」로 직접 확인하세요.'
+                            : 'Google News는 RSS에 본문 요약이 없습니다. 네이버 뉴스 수집을 쓰면 짧은 요약·원문 링크가 채워집니다.'}
                         </p>
                       ) : null}
                     </div>
@@ -534,6 +697,15 @@ export default function EduOutreachQueuePage() {
                     <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">AI/규칙 해석 (참고)</p>
                     <p className="mt-1"><span className="text-slate-500">의도</span> {intentLabel(selected.intent)}</p>
                     <p className="mt-1"><span className="text-slate-500">점수 근거</span> {selected.why || '-'}</p>
+                    {typeof selected.score_payload?.activation_level === 'string' ? (
+                      <p className="mt-1">
+                        <span className="text-slate-500">블로그 활성</span>{' '}
+                        {activationLevelLabel(String(selected.score_payload.activation_level))}
+                        {typeof selected.score_payload.days_since_last_post === 'number'
+                          ? ` · ${selected.score_payload.days_since_last_post}일 전`
+                          : ''}
+                      </p>
+                    ) : null}
                     <p className="mt-1"><span className="text-slate-500">증거 인용</span> {selected.evidence_quote || '-'}</p>
                     <p className="mt-1"><span className="text-slate-500">제안 앵글</span> {selected.outreach_angle || '-'}</p>
                   </div>
@@ -548,9 +720,9 @@ export default function EduOutreachQueuePage() {
                       value={draftBody}
                       onChange={(e) => setDraftBody(e.target.value)}
                     />
-                    {selected.cta_url ? (
+                    {safeExternalHref(selected.cta_url) ? (
                       <a
-                        href={selected.cta_url}
+                        href={safeExternalHref(selected.cta_url)}
                         target="_blank"
                         rel="noreferrer"
                         className="mt-2 inline-flex items-center gap-1 text-xs text-slate-600 underline"

@@ -232,10 +232,11 @@ function getCanonicalSiteName(image: ShowroomImageAsset): string | null {
   )
 }
 
-/** 통일 제목: 10초 만에 보는 {입구이름(숫자 제외)} 대변신 */
+/** 레거시 통일 제목 → 로테 풀 기반으로 교체 (`10초 만에…대변신` 폐기). */
 export function buildShowroomShortsUnifiedTitle(siteName: string | null | undefined): string {
   const name = stripLeadingSiteNumericCode(siteName) || '시공 사례'
-  return `10초 만에 보는 ${name} 대변신`
+  const config = getShowroomShortsVariantConfig(name, name)
+  return buildShowroomShortsVariantTitle(config, name)
 }
 
 function normalizeComparableText(value: string | null | undefined): string | null {
@@ -410,10 +411,10 @@ export async function createShowroomShortsJob(payload: {
   const now = new Date().toISOString()
   const groupKeyOverride = payload.beforeAfterGroupKey?.trim() || null
   const emptyRoom = payload.timelapseMode === 'empty_room'
-  const variantSiteName = draft.title
-    .replace(/^10초 만에 보는\s*/u, '')
-    .replace(/\s*대변신$/u, '')
-    .trim() || '이 공간'
+  const variantSiteName =
+    stripLeadingSiteNumericCode(
+      getCanonicalSiteName(selection.afterImage) || getCanonicalSiteName(selection.beforeImage),
+    ) || '이 공간'
   const variantSeed = `${groupKeyOverride || selection.groupKey}:${selection.beforeImage.id}:${selection.afterImage.id}`
   const compositionConfig = getShowroomShortsVariantConfig(variantSeed, variantSiteName)
   const variantTitle = buildShowroomShortsVariantTitle(compositionConfig, variantSiteName)
@@ -927,6 +928,7 @@ export async function updateShowroomShortsCompositionConfig(
       updated_at: new Date().toISOString(),
     })
     .eq('shorts_job_id', jobId)
+    .neq('publish_status', 'published')
 
   if (targetsError) throw new Error(targetsError.message)
 }
@@ -1151,6 +1153,47 @@ export async function cancelShowroomShortsTargetsSchedule(targetIds: string[]): 
   return (data ?? []).length
 }
 
+export type ShowroomShortsRecompositionSafety = {
+  scheduledTargetIds: string[]
+  reprepareTargetIds: string[]
+  publishedTargetCount: number
+  blockingTargetCount: number
+}
+
+/**
+ * Kling 원본은 건드리지 않고 Railway 재합성 전에 미발행 타깃을 안전한 상태로 맞춘다.
+ * 예약 건은 해제해 새 최종 MP4 기준으로 업로드 준비가 다시 만들어지게 한다.
+ */
+export async function prepareShowroomShortsJobForRecomposition(
+  job: Pick<ShowroomShortsJobRecord, 'id' | 'targets'>,
+): Promise<ShowroomShortsRecompositionSafety> {
+  const targets = job.targets ?? []
+  const blockingTargetCount = targets.filter((target) =>
+    ['preparing', 'publishing'].includes(target.publish_status),
+  ).length
+  if (blockingTargetCount > 0) {
+    throw new Error('업로드 준비 또는 발행 중인 채널이 있습니다. 완료된 뒤 다시 합성하세요.')
+  }
+
+  const scheduledTargetIds = targets
+    .filter((target) => target.publish_status === 'scheduled')
+    .map((target) => target.id)
+  if (scheduledTargetIds.length > 0) {
+    await cancelShowroomShortsTargetsSchedule(scheduledTargetIds)
+  }
+
+  const reprepareTargetIds = targets
+    .filter((target) => target.publish_status !== 'published')
+    .map((target) => target.id)
+
+  return {
+    scheduledTargetIds,
+    reprepareTargetIds,
+    publishedTargetCount: targets.filter((target) => target.publish_status === 'published').length,
+    blockingTargetCount,
+  }
+}
+
 export type FillAdInboxPublishQueueResult = {
   ok: boolean
   message?: string
@@ -1166,7 +1209,7 @@ export type FillAdInboxPublishQueueResult = {
 }
 
 /**
- * 대기실 미예약(launch_ready/approved) 카드를 Asia/Seoul 11:00 슬롯에 하루 1장씩 줄 세움.
+ * 대기실 미예약(launch_ready/approved) 카드를 Asia/Seoul 11:00 슬롯에 격일 1장씩 줄 세움.
  */
 export async function fillAdInboxPublishQueue(): Promise<FillAdInboxPublishQueueResult> {
   const { data, error } = await supabase.functions.invoke<FillAdInboxPublishQueueResult>(
@@ -1648,44 +1691,4 @@ export async function replaceShowroomShortsJobImage(
       after_asset_id: selection.afterImage.id,
     },
   })
-}
-export type ShowroomShortsRecompositionSafety = {
-  scheduledTargetIds: string[]
-  reprepareTargetIds: string[]
-  publishedTargetCount: number
-  blockingTargetCount: number
-}
-
-/**
- * Kling 원본은 건드리지 않고 Railway 재합성 전에 미발행 타깃을 안전한 상태로 맞춘다.
- * 예약 건은 해제해 새 최종 MP4 기준으로 업로드 준비가 다시 만들어지게 한다.
- */
-export async function prepareShowroomShortsJobForRecomposition(
-  job: Pick<ShowroomShortsJobRecord, 'id' | 'targets'>,
-): Promise<ShowroomShortsRecompositionSafety> {
-  const targets = job.targets ?? []
-  const blockingTargetCount = targets.filter((target) =>
-    ['preparing', 'publishing'].includes(target.publish_status),
-  ).length
-  if (blockingTargetCount > 0) {
-    throw new Error('업로드 준비 또는 발행 중인 채널이 있습니다. 완료된 뒤 다시 합성하세요.')
-  }
-
-  const scheduledTargetIds = targets
-    .filter((target) => target.publish_status === 'scheduled')
-    .map((target) => target.id)
-  if (scheduledTargetIds.length > 0) {
-    await cancelShowroomShortsTargetsSchedule(scheduledTargetIds)
-  }
-
-  const reprepareTargetIds = targets
-    .filter((target) => target.publish_status !== 'published')
-    .map((target) => target.id)
-
-  return {
-    scheduledTargetIds,
-    reprepareTargetIds,
-    publishedTargetCount: targets.filter((target) => target.publish_status === 'published').length,
-    blockingTargetCount,
-  }
 }

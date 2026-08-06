@@ -5,6 +5,8 @@ import {
   compareShowroomProductSeriesNames,
   CONCERN_CARDS,
   CONCERN_FEATURED_BEFORE_AFTER_SITES,
+  HUB_FEATURED_BA_INDUSTRY_BLOCKS,
+  HUB_FEATURED_BA_MAX_PER_INDUSTRY,
   INDUSTRY_PREFERRED_ORDER,
 } from '@/pages/showroom/showroomPageConstants'
 import type { ColorGroup, ProductGroup, SiteGroup } from '@/pages/showroom/showroomPageTypes'
@@ -462,14 +464,20 @@ export function collectUniqueLabels(values: Array<string | null | undefined>): s
   return result
 }
 
+/**
+ * 공개 쇼룸 카드/모달 표시명.
+ * external(월코드·지역·업종·끝4자리)을 우선하고, 없을 때만 내부 현장명으로 fallback.
+ * URL·블로그 매칭 키(siteName/raw)와 표시명을 섞지 않는다.
+ */
 export function getBroadPublicLabel(siteName: string | null | undefined, externalDisplayName?: string | null): string {
-  const normalizedSiteName = siteName?.trim() ?? ''
-  if (normalizedSiteName) return normalizedSiteName
   const external = externalDisplayName?.trim() ?? ''
   const broadExternal = broadenPublicDisplayName(external)
   if (broadExternal) return broadExternal
   if (external) return external
-  return ''
+
+  const normalizedSiteName = siteName?.trim() ?? ''
+  if (!normalizedSiteName) return ''
+  return broadenPublicDisplayName(normalizedSiteName) ?? normalizedSiteName
 }
 
 export function getGroupPublicLabel(group: Pick<SiteGroup, 'siteName' | 'externalDisplayName'>): string {
@@ -478,14 +486,18 @@ export function getGroupPublicLabel(group: Pick<SiteGroup, 'siteName' | 'externa
 
 export function getPublicLabelsFromImages(images: ShowroomImageAsset[]): string[] {
   return collectUniqueLabels(
-    images.map((image) => getBroadPublicLabel(
-      image.canonical_site_name?.trim()
-      || image.raw_site_name?.trim()
-      || image.space_display_name?.trim()
-      || image.site_name?.trim()
-      || null,
-      image.external_display_name
-    ))
+    images.map((image) =>
+      getBroadPublicLabel(
+        image.canonical_site_name?.trim()
+          || image.raw_site_name?.trim()
+          || image.space_display_name?.trim()
+          || image.site_name?.trim()
+          || null,
+        image.broad_external_display_name?.trim()
+          || image.external_display_name?.trim()
+          || null,
+      ),
+    ),
   )
 }
 
@@ -670,4 +682,77 @@ export function resolveConcernBeforeAfterGroups(
   }
 
   return groups.filter((group) => groupMatchesConcernIndustryFilter(group, industryFilter))
+}
+
+export type HubFeaturedBeforeAfterSection = {
+  industry: string
+  title: string
+  blurb: string
+  groups: SiteGroup[]
+}
+
+/**
+ * 허브 전면용 업종별 BA 전체 목록.
+ * featuredKeys 매칭 순서를 앞에 두고, 같은 업종 나머지 완성 쌍을 이어 붙인다.
+ * UI에서는 HUB_FEATURED_BA_MAX_PER_INDUSTRY 단위로 페이지네이션한다.
+ */
+export function resolveHubFeaturedBeforeAfterSections(
+  groups: SiteGroup[],
+): HubFeaturedBeforeAfterSection[] {
+  const usedSiteNames = new Set<string>()
+
+  return HUB_FEATURED_BA_INDUSTRY_BLOCKS.map((block) => {
+    const curated: SiteGroup[] = []
+    for (const featuredKey of block.featuredKeys) {
+      const match = groups.find(
+        (group) =>
+          !usedSiteNames.has(group.siteName) &&
+          group.hasBeforeAfter &&
+          groupMatchesConcernFeaturedSite(group, featuredKey) &&
+          groupMatchesConcernIndustryFilter(group, block.industry),
+      )
+      if (!match) continue
+      curated.push(match)
+      usedSiteNames.add(match.siteName)
+    }
+
+    const rest = groups.filter(
+      (group) =>
+        !usedSiteNames.has(group.siteName) &&
+        group.hasBeforeAfter &&
+        groupMatchesConcernIndustryFilter(group, block.industry),
+    )
+    for (const group of rest) {
+      curated.push(group)
+      usedSiteNames.add(group.siteName)
+    }
+
+    return {
+      industry: block.industry,
+      title: block.title,
+      blurb: block.blurb,
+      groups: curated,
+    }
+  }).filter((section) => section.groups.length > 0)
+}
+
+/** SNS·숏츠 deep link(baSite) → 허브 업종 블록의 페이지 위치 */
+export function findHubBeforeAfterPageForSiteKey(
+  sections: HubFeaturedBeforeAfterSection[],
+  siteKey: string,
+  pageSize: number = HUB_FEATURED_BA_MAX_PER_INDUSTRY,
+): { industry: string; page: number; siteName: string } | null {
+  const needle = siteKey.trim()
+  if (!needle || pageSize < 1) return null
+
+  for (const section of sections) {
+    const index = section.groups.findIndex((group) => groupMatchesConcernFeaturedSite(group, needle))
+    if (index < 0) continue
+    return {
+      industry: section.industry,
+      page: Math.floor(index / pageSize) + 1,
+      siteName: section.groups[index].siteName,
+    }
+  }
+  return null
 }

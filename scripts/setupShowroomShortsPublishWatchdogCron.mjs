@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 /**
- * 대기실 11시 줄서기 예약 크론 (매일 02:10 Asia/Seoul ≈ UTC 17:10 전날)
- * — 미예약 launch_ready 카드를 앞으로 11:00 슬롯에 격일 1장씩 채움
+ * 쇼츠 발행 고임(publishing/preparing) 워치독 크론 — 5분마다
  *
  * 사용:
- *   node scripts/setupShowroomShortsPublishQueueFillCron.mjs
- *   node scripts/setupShowroomShortsPublishQueueFillCron.mjs --secret=existing_secret
+ *   node scripts/setupShowroomShortsPublishWatchdogCron.mjs
+ *   node scripts/setupShowroomShortsPublishWatchdogCron.mjs --secret=existing_secret
  */
 import { execSync } from 'node:child_process'
 import { readFileSync, existsSync, writeFileSync, unlinkSync } from 'node:fs'
@@ -13,9 +12,9 @@ import { resolve } from 'node:path'
 
 const PROJECT_REF = 'sxxnshvidfwuemgbyuqz'
 const PROJECT_URL = `https://${PROJECT_REF}.supabase.co`
-const CRON_JOB_NAME = 'showroom-shorts-publish-queue-fill'
-/** 매일 UTC 17:10 = KST 02:10 — 새 카드가 쌓인 뒤 다음 날 11시 줄 보강 */
-const CRON_EXPR = '10 17 * * *'
+const CRON_JOB_NAME = 'showroom-shorts-publish-watchdog'
+/** 매 5분 */
+const CRON_EXPR = '*/5 * * * *'
 
 function loadEnvFile() {
   const envPath = resolve(process.cwd(), '.env')
@@ -64,7 +63,7 @@ function main() {
   if (!cronSecret) {
     console.error(
       'SHOWROOM_SHORTS_PUBLISH_CRON_SECRET 가 없습니다. 기존 발행 크론과 맞추려면:\n' +
-        '  node scripts/setupShowroomShortsPublishQueueFillCron.mjs --secret=<기존시크릿>',
+        '  node scripts/setupShowroomShortsPublishWatchdogCron.mjs --secret=<기존시크릿>',
     )
     process.exit(1)
   }
@@ -85,7 +84,7 @@ select cron.schedule(
   '${CRON_EXPR}',
   $$
   select net.http_post(
-    url := '${PROJECT_URL}/functions/v1/showroom-shorts-publish-queue-fill',
+    url := '${PROJECT_URL}/functions/v1/showroom-shorts-publish-watchdog',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
       'Authorization', 'Bearer ${sqlEscape(serviceRoleKey)}',
@@ -98,10 +97,10 @@ select cron.schedule(
 );
 `
 
-  const sqlPath = resolve(process.cwd(), '.tmp_shorts_publish_queue_fill_cron.sql')
+  const sqlPath = resolve(process.cwd(), '.tmp_shorts_publish_watchdog_cron.sql')
   writeFileSync(sqlPath, scheduleSql)
 
-  console.log('pg_cron 스케줄 등록 (매일 UTC 17:10 = KST 02:10)…')
+  console.log('pg_cron 스케줄 등록 (매 5분)…')
   execSync(`npx supabase@latest db query --linked --file ${sqlPath}`, {
     stdio: 'inherit',
     cwd: process.cwd(),
@@ -109,11 +108,11 @@ select cron.schedule(
 
   unlinkSync(sqlPath)
 
-  console.log('✓ 줄서기 예약 크론 등록 완료')
-  console.log(`  - 스케줄: ${CRON_EXPR} (UTC) → KST 매일 02:10`)
-  console.log(`  - 대상: ${PROJECT_URL}/functions/v1/showroom-shorts-publish-queue-fill`)
+  console.log('✓ 워치독 크론 등록 완료')
+  console.log(`  - 스케줄: ${CRON_EXPR} (every 5 minutes)`)
+  console.log(`  - 대상: ${PROJECT_URL}/functions/v1/showroom-shorts-publish-watchdog`)
   console.log(
-    '  - Edge 배포: npx supabase functions deploy showroom-shorts-publish-queue-fill --project-ref sxxnshvidfwuemgbyuqz',
+    '  - Edge 배포: npx supabase functions deploy showroom-shorts-publish-watchdog --project-ref sxxnshvidfwuemgbyuqz',
   )
   console.log(`  - 시크릿(재사용 시): --secret=${cronSecret}`)
 }

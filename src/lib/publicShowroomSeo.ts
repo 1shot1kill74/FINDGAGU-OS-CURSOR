@@ -40,10 +40,15 @@ export const PUBLIC_SHOWROOM_COMPANY = {
 } as const
 
 export const PUBLIC_SHOWROOM_HUB_PATH = '/public/showroom'
+export const PUBLIC_SHOWROOM_GALLERY_PATH = '/public/showroom/gallery'
 export const PUBLIC_SHOWROOM_HUB_TITLE =
   '파인드가구 온라인 쇼룸 — 관리형 스터디카페·학원·아파트 공간 사례'
 export const PUBLIC_SHOWROOM_HUB_DESCRIPTION =
   '관리형 스터디카페·관리형 독서실·학원 자습실·아파트 커뮤니티 공간의 Before/After 시공 사례를 모은 파인드가구 온라인 쇼룸입니다. 맞춤 가구·배치 컨설팅 상담을 요청하세요.'
+export const PUBLIC_SHOWROOM_GALLERY_TITLE =
+  '시공사례 더보기 — 파인드가구 온라인 쇼룸'
+export const PUBLIC_SHOWROOM_GALLERY_DESCRIPTION =
+  '업종·제품·색상별로 파인드가구 시공 사례 사진을 더 둘러보세요. 관리형 스터디카페·학원·학교·아파트 커뮤니티 현장 사진을 확인할 수 있습니다.'
 
 /** 공개 공유 기본 OG (1200×630, `public/og-default.jpg`) */
 export const PUBLIC_SHOWROOM_DEFAULT_OG_PATH = '/og-default.jpg'
