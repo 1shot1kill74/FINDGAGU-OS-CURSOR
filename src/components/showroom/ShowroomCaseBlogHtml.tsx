@@ -133,10 +133,15 @@ export function ShowroomCaseBlogHtml({ html, className }: ShowroomCaseBlogHtmlPr
       <div
         ref={bodyRef}
         className={cn(
-          'showroom-canonical-blog-public max-w-none text-sm leading-relaxed',
+          'showroom-canonical-blog-public max-w-none text-sm leading-relaxed text-neutral-700',
+          '[&_h1]:mt-2 [&_h1]:mb-4 [&_h1]:text-xl [&_h1]:font-bold [&_h1]:tracking-tight [&_h1]:text-neutral-900',
+          '[&_h2]:mt-8 [&_h2]:mb-3 [&_h2]:text-base [&_h2]:font-bold [&_h2]:text-neutral-900 [&_h2:first-child]:mt-0',
+          '[&_h3]:mt-6 [&_h3]:mb-2 [&_h3]:text-sm [&_h3]:font-bold [&_h3]:text-neutral-900',
+          '[&_h4]:mt-5 [&_h4]:mb-2 [&_h4]:text-sm [&_h4]:font-semibold [&_h4]:text-neutral-900',
+          '[&_p]:mb-4 [&_p]:leading-[1.75] [&_p]:text-neutral-700',
           '[&_img]:max-h-96 [&_img]:w-full [&_img]:cursor-zoom-in [&_img]:rounded-xl [&_img]:object-cover',
           '[&_img]:outline-none [&_img]:ring-offset-2 focus-visible:[&_img]:ring-2 focus-visible:[&_img]:ring-emerald-500',
-          '[&_figure]:relative [&_figure]:overflow-visible [&_p]:mb-4',
+          '[&_figure]:relative [&_figure]:my-6 [&_figure]:overflow-visible',
           className,
         )}
         role="presentation"

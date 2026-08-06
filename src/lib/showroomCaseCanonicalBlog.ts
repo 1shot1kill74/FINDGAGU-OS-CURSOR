@@ -610,6 +610,40 @@ type ArticleRenderState = {
   imageIndex: number
 }
 
+const CANONICAL_BLOG_HEADING_CLASS: Record<number, string> = {
+  1: 'mt-2 mb-4 text-xl font-bold tracking-tight text-neutral-900',
+  2: 'mt-8 mb-3 text-base font-bold text-neutral-900',
+  3: 'mt-6 mb-2 text-sm font-bold text-neutral-900',
+  4: 'mt-5 mb-2 text-sm font-semibold text-neutral-900',
+  5: 'mt-4 mb-2 text-sm font-semibold text-neutral-800',
+  6: 'mt-4 mb-2 text-sm font-semibold text-neutral-800',
+}
+
+function renderCanonicalBlogHeadingHtml(level: number, text: string): string {
+  const safeLevel = Math.min(6, Math.max(1, level))
+  const tag = `h${safeLevel}`
+  const className = CANONICAL_BLOG_HEADING_CLASS[safeLevel] ?? CANONICAL_BLOG_HEADING_CLASS[2]
+  return `<${tag} class="${className}">${escapeHtmlForCanonicalBlog(text)}</${tag}>`
+}
+
+function renderCanonicalBlogParagraphHtml(text: string): string {
+  return `<p class="mb-4 leading-relaxed text-neutral-700">${escapeHtmlForCanonicalBlog(text).replace(/\n/g, '<br />')}</p>`
+}
+
+/** 마크다운 텍스트 블록 → 제목(h1–h6) 또는 본문 문단. */
+function renderMarkdownTextBlockHtml(text: string): string {
+  const t = text.trim()
+  if (!t) return ''
+  const lines = t.split('\n')
+  const headingMatch = lines[0].match(/^(#{1,6})\s+(.+)$/)
+  if (headingMatch) {
+    const headingHtml = renderCanonicalBlogHeadingHtml(headingMatch[1].length, headingMatch[2].trim())
+    const rest = lines.slice(1).join('\n').trim()
+    return rest ? `${headingHtml}${renderCanonicalBlogParagraphHtml(rest)}` : headingHtml
+  }
+  return renderCanonicalBlogParagraphHtml(t)
+}
+
 function renderMarkdownBlockHtml(block: string, state: ArticleRenderState): string {
   const trimmed = block.trim()
   if (!trimmed) return ''
@@ -619,7 +653,7 @@ function renderMarkdownBlockHtml(block: string, state: ArticleRenderState): stri
   const flushText = () => {
     const t = textBuf.trim()
     if (!t) return
-    pieces.push(`<p class="mb-4 leading-relaxed text-neutral-800">${escapeHtmlForCanonicalBlog(t).replace(/\n/g, '<br />')}</p>`)
+    pieces.push(renderMarkdownTextBlockHtml(t))
     textBuf = ''
   }
   for (const ch of chunks) {
@@ -665,7 +699,7 @@ export function plainMarkdownToSafeArticleHtml(markdown: string): string {
   const blocks = t.split(/\n\n+/).filter(Boolean)
   const state: ArticleRenderState = { beforeLabeled: false, afterLabeled: false, imageIndex: 0 }
   const inner = blocks.map((b) => renderMarkdownBlockHtml(b, state)).join('')
-  return `<article class="showroom-canonical-blog space-y-1 max-w-none">${inner}</article>`
+  return `<article class="showroom-canonical-blog max-w-none">${inner}</article>`
 }
 
 const OPEN_SHOWROOM_TEASER_MAX = 360
