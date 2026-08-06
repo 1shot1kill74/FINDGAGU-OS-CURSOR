@@ -108,9 +108,9 @@ export function resolveShowroomStoryCta(concern: string | null | undefined): {
 export function buildShowroomStoryBackHref(concern: string | null | undefined): string {
   const validConcern = resolveShowroomConcernTag(concern)
   if (!validConcern) {
-    return '/public/showroom#showroom-concern-heading'
+    return '/public/showroom'
   }
-  return `/public/showroom?${new URLSearchParams({ concern: validConcern }).toString()}#showroom-concern-heading`
+  return `/public/showroom?${new URLSearchParams({ concern: validConcern }).toString()}`
 }
 
 export function appendShowroomConcernQuery(path: string, concern: string | null | undefined): string {

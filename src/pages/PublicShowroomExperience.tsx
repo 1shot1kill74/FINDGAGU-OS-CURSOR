@@ -29,7 +29,6 @@ import ShowroomAeoGuideTeaser from '@/components/showroom/ShowroomAeoGuideTeaser
 import { ShowroomBeforeAfterTapPreview } from '@/components/showroom/ShowroomBeforeAfterTapPreview'
 
 import {
-  CONCERN_CARDS,
   formatShowroomProductSeriesOptionLabel,
   getShowroomProductSeriesDescription,
   compareShowroomProductSeriesNames,
@@ -37,7 +36,6 @@ import {
   INDUSTRY_PAGE_SIZE,
   INDUSTRY_PREFERRED_ORDER,
   SWIPE_THRESHOLD_PX,
-  toHubOperatingInsightLine,
 } from '@/pages/showroom/showroomPageConstants'
 import { ShowroomLightboxSlide } from '@/pages/showroom/ShowroomLightboxSlide'
 import {
@@ -50,7 +48,6 @@ import {
   buildSiteGroups,
   collectUniqueLabels,
   getBroadPublicLabel,
-  getConcernIndustryDisplayLabel,
   getConcernIndustryFilter,
   getGroupPublicLabel,
   getPreferredExternalDisplayName,
@@ -233,17 +230,6 @@ export default function PublicShowroomExperience({
   const setSearchQueryAndUrl = (value: string) => {
     setSearchQuery(value)
     updateShowroomParams({ q: value })
-  }
-
-  const setConcernTagAndUrl = (value: string | null) => {
-    setSelectedConcernTag(value)
-    updateShowroomParams({ concern: value })
-    if (mode === 'public' && value) {
-      trackShowroomAbmEvent({
-        eventName: 'abm_concern_select',
-        concern: value,
-      })
-    }
   }
 
   const loadShowroomData = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
@@ -857,12 +843,11 @@ export default function PublicShowroomExperience({
     if (!isHub) return
     if (loading) return
     const hash = location.hash.replace(/^#/, '')
-    if (hash !== 'showroom-featured-ba-heading' && hash !== 'showroom-concern-heading' && hash !== 'showroom-concern-result-anchor') {
+    if (hash !== 'showroom-featured-ba-heading') {
       return
     }
-    const targetId = hash === 'showroom-concern-result-anchor' ? 'showroom-concern-heading' : hash
     const t = window.setTimeout(() => {
-      scrollToSectionWithOffset(targetId)
+      scrollToSectionWithOffset(hash)
     }, 280)
     return () => window.clearTimeout(t)
   }, [isHub, location.hash, loading, scrollToSectionWithOffset])
@@ -1807,66 +1792,7 @@ export default function PublicShowroomExperience({
         </section>
         )}
 
-        {/* 허브 클로징: 가벼운 운영 인사이트 + 상담 푸시 (추천 탐색 UI 아님) */}
-        {isHub && (
-        <>
-        <section
-          id="showroom-concern-heading"
-          className="mb-8 scroll-mt-28 rounded-2xl border border-neutral-200 bg-white p-5 md:p-6 md:scroll-mt-32"
-          aria-labelledby="showroom-insight-title"
-        >
-          <h2 id="showroom-insight-title" className="text-lg font-semibold text-neutral-900">
-            현장에서 보는 차이
-          </h2>
-          <p className="mt-1 text-sm text-neutral-600">
-            사진으로도 확신이 안 설 때, 운영에서 갈리는 포인트입니다.
-          </p>
-          <ul className="mt-4 space-y-2.5">
-            {CONCERN_CARDS.map((card) => {
-              const isSelected = selectedConcernTag === card.tag
-              return (
-                <li key={card.tag}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setConcernTagAndUrl(isSelected ? null : card.tag)
-                    }}
-                    className={cn(
-                      'flex w-full items-start gap-3 rounded-xl border px-3.5 py-3 text-left transition',
-                      isSelected
-                        ? 'border-[#5f7058]/40 bg-[#f4f7f1]'
-                        : 'border-neutral-200 bg-neutral-50/80 hover:border-neutral-300 hover:bg-white',
-                    )}
-                  >
-                    <span className="mt-0.5 shrink-0 rounded-md bg-white px-2 py-1 text-[11px] font-semibold text-neutral-600 ring-1 ring-neutral-200">
-                      {card.industryFilter === '관리형전환' ? '관리형전환' : getConcernIndustryDisplayLabel(card.industryFilter)}
-                    </span>
-                    <span className="min-w-0 text-sm leading-relaxed text-neutral-700">
-                      {toHubOperatingInsightLine(card.message)}
-                    </span>
-                  </button>
-                </li>
-              )
-            })}
-          </ul>
-          <div className="mt-5 flex flex-col gap-3 border-t border-neutral-100 pt-5 sm:flex-row sm:items-center">
-            <ShowroomExpertConsultationButton concern={selectedConcernTag} surface="hub_insight">
-              우리 공간 맞춤 상담하기
-            </ShowroomExpertConsultationButton>
-            <button
-              type="button"
-              onClick={goToGalleryPage}
-              className="inline-flex items-center justify-center rounded-xl border border-neutral-300 bg-white px-4 py-3 text-sm font-semibold text-neutral-700 transition hover:bg-neutral-50"
-            >
-              시공사례 더 둘러보기
-            </button>
-          </div>
-        </section>
-        <div id="showroom-concern-result-anchor" className="h-px scroll-mt-28 md:scroll-mt-32" aria-hidden />
-
-        <ShowroomAeoGuideTeaser />
-        </>
-        )}
+        {isHub && <ShowroomAeoGuideTeaser />}
 
       </main>
 
