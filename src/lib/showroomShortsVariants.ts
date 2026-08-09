@@ -127,7 +127,8 @@ export function getShowroomShortsVariantConfig(
     variantId,
     titleVariant,
     videoVariant: variantId,
-    audioVariant: override?.audioVariant === 'bgm_only' ? 'bgm_only' : 'tts_hook_bgm',
+    // TTS 훅은 대기실 BA 숏츠에 맞지 않아 비활성. BGM만 사용.
+    audioVariant: 'bgm_only',
     openingMode: 'after_reveal',
     openingSeconds: Number.isFinite(override?.openingSeconds)
       ? Math.max(0.5, Math.min(Number(override?.openingSeconds), 1.5))

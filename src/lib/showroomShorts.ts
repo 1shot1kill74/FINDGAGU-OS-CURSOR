@@ -436,7 +436,7 @@ export async function createShowroomShortsJob(payload: {
       source_aspect_ratio: '16:9',
       final_aspect_ratio: '9:16',
       duration_seconds: emptyRoom ? 11 : 10,
-      // Kling 원본은 무음이지만 Railway가 BGM/TTS를 합성하므로 최종은 유음으로 기록한다.
+      // Kling 원본은 무음이지만 Railway가 BGM을 합성하므로 최종은 유음으로 기록한다.
       is_muted: false,
       composition_config: compositionConfig,
       created_by: createdBy,
@@ -905,6 +905,7 @@ export async function updateShowroomShortsCompositionConfig(
   })
   const normalizedConfig: ShowroomShortsCompositionConfig = {
     ...config,
+    audioVariant: 'bgm_only',
     titleTemplate: titleConfig.titleTemplate,
   }
 

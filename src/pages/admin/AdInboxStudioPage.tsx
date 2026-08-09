@@ -1139,6 +1139,12 @@ export default function AdInboxStudioPage() {
     }
     setActingJob(true)
     try {
+      if (compositionDraft) {
+        await updateShowroomShortsCompositionConfig(activeJob.id, {
+          ...compositionDraft,
+          audioVariant: 'bgm_only',
+        })
+      }
       const safety = await prepareShowroomShortsJobForRecomposition(activeJob)
       await requestShowroomShortsComposition(activeJob.id)
       const fresh = await getAdInboxTimelapseJob(activeJob.id)
@@ -1161,12 +1167,15 @@ export default function AdInboxStudioPage() {
     if (!activeJob || !compositionDraft) return
     setActingJob(true)
     try {
-      await updateShowroomShortsCompositionConfig(activeJob.id, compositionDraft)
+      await updateShowroomShortsCompositionConfig(activeJob.id, {
+        ...compositionDraft,
+        audioVariant: 'bgm_only',
+      })
       const fresh = await getAdInboxTimelapseJob(activeJob.id)
       if (fresh) {
         setJobs((prev) => [fresh, ...prev.filter((job) => job.id !== fresh.id)])
       }
-      toast.success('포맷·오디오 설정을 저장했습니다. 「합성·업로드준비」를 누르면 이 설정으로 다시 만듭니다.')
+      toast.success('포맷 설정을 저장했습니다. 「합성·업로드준비」를 누르면 이 설정으로 다시 만듭니다.')
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '포맷 설정 저장 실패')
     } finally {
@@ -2458,13 +2467,13 @@ export default function AdInboxStudioPage() {
                             {compositionDraft ? (
                               <div className="space-y-3 rounded-xl border border-violet-200 bg-violet-50/50 p-3">
                                 <div>
-                                  <p className="text-sm font-semibold text-neutral-900">쇼츠 포맷·오디오</p>
+                                  <p className="text-sm font-semibold text-neutral-900">쇼츠 포맷</p>
                                   <p className="mt-0.5 text-xs text-neutral-600">
-                                    영상 포맷은 After 콜드오픈 고정입니다. After → Before 반전 → 타임랩스. TTS 대본·제목만
-                                    조정한 뒤 재합성하세요.
+                                    영상 포맷은 After 콜드오픈 고정입니다. After → Before 반전 → 타임랩스. 오디오는 BGM만
+                                    사용합니다.
                                   </p>
                                 </div>
-                                <div className="grid gap-2 sm:grid-cols-3">
+                                <div className="grid gap-2 sm:grid-cols-2">
                                   <div className="text-xs text-neutral-600">
                                     영상 포맷
                                     <div className="mt-1 flex h-8 items-center rounded-md border border-neutral-200 bg-white px-2 text-xs font-medium text-neutral-800">
@@ -2494,43 +2503,9 @@ export default function AdInboxStudioPage() {
                                       ))}
                                     </select>
                                   </label>
-                                  <label className="text-xs text-neutral-600">
-                                    오디오
-                                    <select
-                                      value={compositionDraft.audioVariant}
-                                      onChange={(event) =>
-                                        setCompositionDraft((current) =>
-                                          current
-                                            ? {
-                                                ...current,
-                                                audioVariant: event.target.value as typeof current.audioVariant,
-                                              }
-                                            : current,
-                                        )
-                                      }
-                                      className="mt-1 h-8 w-full rounded-md border border-neutral-200 bg-white px-2 text-xs text-neutral-800"
-                                    >
-                                      <option value="tts_hook_bgm">TTS 훅 + BGM</option>
-                                      <option value="bgm_only">BGM만</option>
-                                    </select>
-                                  </label>
                                 </div>
-                                {compositionDraft.audioVariant === 'tts_hook_bgm' ? (
-                                  <label className="block text-xs text-neutral-600">
-                                    TTS 훅 대본
-                                    <Input
-                                      value={compositionDraft.ttsScript}
-                                      onChange={(event) =>
-                                        setCompositionDraft((current) =>
-                                          current ? { ...current, ttsScript: event.target.value.slice(0, 100) } : current,
-                                        )
-                                      }
-                                      className="mt-1 h-8 bg-white text-xs"
-                                    />
-                                  </label>
-                                ) : null}
                                 <div className="rounded-md border border-violet-100 bg-white px-2.5 py-2 text-[11px] text-neutral-600">
-                                  훅 자막: {compositionDraft.hookLine1} / {compositionDraft.hookLine2}
+                                  훅 자막: {compositionDraft.hookLine1} / {compositionDraft.hookLine2} · 오디오: BGM만
                                 </div>
                                 <div className="flex justify-end">
                                   <Button
