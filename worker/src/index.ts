@@ -80,11 +80,50 @@ const VIDEO_Y = 290
 const DEFAULT_DURATION_SECONDS = 10
 const AFTER_HOLD_SECONDS = 2
 const WORKER_TOKEN = process.env.SHOWROOM_SHORTS_WORKER_TOKEN?.trim() || ''
+const BUNDLED_BGM_DIR = '/app/assets/bgm'
 const DEFAULT_BUNDLED_BGM_PATH =
-  '/app/assets/bgm/bright-lines-new-light-sample-b-24-34.mp3'
+  `${BUNDLED_BGM_DIR}/bright-lines-new-light-sample-b-24-34.mp3`
 const DEFAULT_BGM_URL =
   'https://findgagu-os-cursor.vercel.app/assets/bgm/bright-lines-new-light-sample-b-24-34.mp3'
-const BGM_SOURCE = process.env.SHOWROOM_SHORTS_BGM_URL?.trim() || DEFAULT_BUNDLED_BGM_PATH
+/** env override가 있으면 풀을 무시하고 단일 URL만 쓴다(기존 동작 유지). */
+const BGM_URL_OVERRIDE = process.env.SHOWROOM_SHORTS_BGM_URL?.trim() || ''
+const BGM_SOURCE = BGM_URL_OVERRIDE || DEFAULT_BUNDLED_BGM_PATH
+
+/**
+ * BGM 풀 — 단일 트랙 반복은 플랫폼 오디오 핑거프린트에 템플릿 신호로 잡힌다.
+ * job id 해시로 결정적으로 골라 같은 잡 재합성은 같은 곡이 나온다.
+ * 구조: 앞 5초 절제된 비트 → 5초부터 템포 리프트 (Before→After 호흡).
+ */
+const BGM_POOL_FILES = [
+  'lyria-01-bright-acoustic.mp3',
+  'lyria-02-soft-piano.mp3',
+  'lyria-03-rhodes-soul.mp3',
+  'lyria-04-warm-house.mp3',
+  'lyria-05-ambient-pads.mp3',
+  'lyria-06-handpan-pulse.mp3',
+  'lyria-07-delay-electric.mp3',
+  'lyria-08-analog-synth.mp3',
+  'lyria-09-mallet-hope.mp3',
+  'lyria-10-nylon-bossa.mp3',
+  'bright-lines-new-light-sample-b-24-34.mp3',
+] as const
+
+function hashBgmSeed(seed: string): number {
+  let hash = 2166136261
+  const value = seed.trim() || 'showroom-shorts'
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i)
+    hash = Math.imul(hash, 16777619)
+  }
+  return Math.abs(hash)
+}
+
+/** env override > job seed 해시 풀 선택. resolveBgmToFile이 실패하면 기본 트랙으로 폴백한다. */
+function bgmSourceForJob(seed: string): string {
+  if (BGM_URL_OVERRIDE) return BGM_URL_OVERRIDE
+  const file = BGM_POOL_FILES[hashBgmSeed(seed) % BGM_POOL_FILES.length]
+  return `${BUNDLED_BGM_DIR}/${file}`
+}
 const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY?.trim() || ''
 const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID?.trim() || ''
 const ELEVENLABS_MODEL_ID = process.env.ELEVENLABS_MODEL_ID?.trim() || 'eleven_multilingual_v2'
@@ -866,7 +905,7 @@ async function processComposeJob(jobId: string) {
     console.log(`[showroom-shorts-worker] downloading source job=${jobId}`)
     await downloadToFile(job.source_video_url, inputVideoPath)
     console.log(`[showroom-shorts-worker] source ready job=${jobId} path=${inputVideoPath}`)
-    const bgmPath = BGM_SOURCE ? await resolveBgmToFile(BGM_SOURCE, bgmAudioPath) : null
+    const bgmPath = await resolveBgmToFile(bgmSourceForJob(jobId), bgmAudioPath)
     console.log(`[showroom-shorts-worker] bgm ready job=${jobId} path=${bgmPath ?? 'none'}`)
     const durationSeconds = await getVideoDurationSeconds(inputVideoPath, job.duration_seconds ?? DEFAULT_DURATION_SECONDS)
     console.log(`[showroom-shorts-worker] duration job=${jobId} seconds=${durationSeconds}`)
@@ -1045,7 +1084,7 @@ async function processBasicShortsDraft(draftId: string) {
 
     const bgmAudioPath = path.join(tempDir, 'bgm-audio')
     const outputVideoPath = path.join(tempDir, 'basic-shorts-final.mp4')
-    const bgmPath = BGM_SOURCE ? await resolveBgmToFile(BGM_SOURCE, bgmAudioPath) : null
+    const bgmPath = await resolveBgmToFile(bgmSourceForJob(draftId), bgmAudioPath)
     const durationSeconds = Math.max(draft.duration_seconds ?? DEFAULT_DURATION_SECONDS, 8)
     const productChip =
       orderedImages.map((asset) => asset.product_name?.trim()).find((value): value is string => Boolean(value)) ?? '제품 구성'
@@ -1279,7 +1318,7 @@ async function renderAfterBeforeTimelapseTest(
       hookLine1,
       hookLine2,
     })
-    const bgmPath = BGM_SOURCE ? await resolveBgmToFile(BGM_SOURCE, bgmAudioPath) : null
+    const bgmPath = await resolveBgmToFile(bgmSourceForJob(job.id), bgmAudioPath)
     const ttsResult = await generateElevenLabsTts(ttsScript, ttsAudioPath)
 
     await runFfmpegAfterBeforeTimelapse({

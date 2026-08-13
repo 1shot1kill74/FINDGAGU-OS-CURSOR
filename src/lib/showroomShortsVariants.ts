@@ -24,6 +24,20 @@ export const SHOWROOM_SHORTS_TITLE_TEMPLATES = [
   '설계 전후가 한눈에 | {site}',
 ] as const
 
+/**
+ * After 콜드오픈용 훅 로테 풀.
+ * 고정 훅(`원래 이 공간이/이랬다구요?`)은 제목 풀과 같은 이유(양산·템플릿 신호)로 회전한다.
+ * 오버레이 OCR에 같은 문장이 반복 노출되지 않게 seed 해시로 고른다. 2줄 고정.
+ */
+export const SHOWROOM_SHORTS_HOOK_POOL: ReadonlyArray<readonly [string, string]> = [
+  ['원래 이 공간이', '이랬다구요?'],
+  ['이게 같은 공간이', '맞을까요?'],
+  ['처음엔 이런', '모습이었습니다'],
+  ['바뀌기 전 모습,', '상상되세요?'],
+  ['이 공간의 시작은', '이랬습니다'],
+  ['전과 후, 차이가', '보이시나요?'],
+] as const
+
 export type ShowroomShortsCompositionConfig = {
   variantId: ShowroomShortsVariantId
   titleVariant: ShowroomShortsVariantId
@@ -109,6 +123,12 @@ export function pickShowroomShortsTitleTemplate(seed: string): string {
   return templates[index] ?? templates[0]
 }
 
+/** seed 기준 훅 2줄. 제목과 다른 salt를 써서 제목-훅 조합이 함께 굳지 않게 한다. */
+export function pickShowroomShortsHookLines(seed: string): readonly [string, string] {
+  const index = hashSeed(`hook:${seed || 'default'}`) % SHOWROOM_SHORTS_HOOK_POOL.length
+  return SHOWROOM_SHORTS_HOOK_POOL[index] ?? SHOWROOM_SHORTS_HOOK_POOL[0]
+}
+
 export function getShowroomShortsVariantConfig(
   seed: string,
   siteName: string,
@@ -118,6 +138,7 @@ export function getShowroomShortsVariantConfig(
   const variantId = SHOWROOM_SHORTS_DEFAULT_VARIANT_ID
   const copy = VARIANT_COPY[variantId]
   const normalizedSite = compactSiteName(siteName)
+  const [pooledHook1, pooledHook2] = pickShowroomShortsHookLines(seed)
   const titleVariant =
     override?.titleVariant && SHOWROOM_SHORTS_VARIANT_IDS.includes(override.titleVariant)
       ? override.titleVariant
@@ -139,8 +160,8 @@ export function getShowroomShortsVariantConfig(
     afterHoldSeconds: Number.isFinite(override?.afterHoldSeconds)
       ? Math.max(0.8, Math.min(Number(override?.afterHoldSeconds), 2.5))
       : copy.afterHoldSeconds,
-    hookLine1: override?.hookLine1?.trim() || copy.hookLine1,
-    hookLine2: override?.hookLine2?.trim() || copy.hookLine2,
+    hookLine1: override?.hookLine1?.trim() || pooledHook1,
+    hookLine2: override?.hookLine2?.trim() || pooledHook2,
     ttsScript: (override?.ttsScript?.trim() || copy.ttsScript)
       .replace(/\{site\}/gu, normalizedSite)
       .slice(0, 100),
