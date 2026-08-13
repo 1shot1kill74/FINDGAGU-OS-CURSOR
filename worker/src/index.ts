@@ -103,7 +103,7 @@ const BGM_SOURCE = BGM_URL_OVERRIDE || DEFAULT_BUNDLED_BGM_PATH
 /**
  * BGM 풀 — 단일 트랙 반복은 플랫폼 오디오 핑거프린트에 템플릿 신호로 잡힌다.
  * job id 해시로 결정적으로 골라 같은 잡 재합성은 같은 곡이 나온다.
- * 구조: 앞 5초 절제된 비트 → 5초부터 템포 리프트 (Before→After 호흡).
+ * 구조: 앞 2초 절제 → 2초부터 템포 리프트. 파일은 20초라 14초 영상에서 루프가 안 돈다.
  */
 const BGM_POOL_FILES = [
   'lyria-01-bright-acoustic.mp3',
