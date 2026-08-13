@@ -107,7 +107,9 @@ import {
 } from '@/lib/showroomShorts'
 import { SHOWROOM_SHORTS_TIMELAPSE_PROMPT } from '@/lib/showroomShortsTimelapsePrompt'
 import {
-  SHOWROOM_SHORTS_VARIANT_IDS,
+  SHOWROOM_SHORTS_HOOK_POOL,
+  SHOWROOM_SHORTS_TITLE_TEMPLATES,
+  buildShowroomShortsVariantTitle,
   formatShowroomShortsVariantLabel,
   getShowroomShortsVariantConfig,
   type ShowroomShortsCompositionConfig,
@@ -118,6 +120,23 @@ function getChannelLabel(channel: string) {
   if (channel === 'facebook') return 'Facebook'
   if (channel === 'instagram') return 'Instagram'
   return channel
+}
+
+function titleTemplateOptions(current: string) {
+  const pooled = SHOWROOM_SHORTS_TITLE_TEMPLATES as readonly string[]
+  return pooled.includes(current) ? pooled : [current, ...pooled]
+}
+
+function hookLineOptions(hookLine1: string, hookLine2: string) {
+  const current: readonly [string, string] = [hookLine1, hookLine2]
+  const inPool = SHOWROOM_SHORTS_HOOK_POOL.some(
+    ([line1, line2]) => line1 === hookLine1 && line2 === hookLine2,
+  )
+  return inPool ? SHOWROOM_SHORTS_HOOK_POOL : [current, ...SHOWROOM_SHORTS_HOOK_POOL]
+}
+
+function hookOptionValue(line1: string, line2: string) {
+  return `${line1}\n${line2}`
 }
 
 function orderTargets(targets: ShowroomShortsTargetRecord[] | undefined) {
@@ -2469,43 +2488,64 @@ export default function AdInboxStudioPage() {
                                 <div>
                                   <p className="text-sm font-semibold text-neutral-900">쇼츠 포맷</p>
                                   <p className="mt-0.5 text-xs text-neutral-600">
-                                    영상 포맷은 After 콜드오픈 고정입니다. After → Before 반전 → 타임랩스. 오디오는 BGM만
-                                    사용합니다.
+                                    영상은 After 콜드오픈 고정. 제목·훅은 스팸 회피용 로테 풀에서 고르고, BGM은 잡마다
+                                    11곡 중 자동입니다.
                                   </p>
                                 </div>
-                                <div className="grid gap-2 sm:grid-cols-2">
-                                  <div className="text-xs text-neutral-600">
-                                    영상 포맷
-                                    <div className="mt-1 flex h-8 items-center rounded-md border border-neutral-200 bg-white px-2 text-xs font-medium text-neutral-800">
-                                      After 콜드오픈
-                                    </div>
+                                <div className="text-xs text-neutral-600">
+                                  영상 포맷
+                                  <div className="mt-1 flex h-8 items-center rounded-md border border-neutral-200 bg-white px-2 text-xs font-medium text-neutral-800">
+                                    After 콜드오픈 · After → Before 반전 → 타임랩스
                                   </div>
-                                  <label className="text-xs text-neutral-600">
-                                    제목 포맷
-                                    <select
-                                      value={compositionDraft.titleVariant}
-                                      onChange={(event) =>
-                                        setCompositionDraft((current) =>
-                                          current
-                                            ? {
-                                                ...current,
-                                                titleVariant: event.target.value as typeof current.titleVariant,
-                                              }
-                                            : current,
-                                        )
-                                      }
-                                      className="mt-1 h-8 w-full rounded-md border border-neutral-200 bg-white px-2 text-xs text-neutral-800"
-                                    >
-                                      {SHOWROOM_SHORTS_VARIANT_IDS.map((variant) => (
-                                        <option key={variant} value={variant}>
-                                          {formatShowroomShortsVariantLabel(variant)}
-                                        </option>
-                                      ))}
-                                    </select>
-                                  </label>
                                 </div>
+                                <label className="block text-xs text-neutral-600">
+                                  제목 (6종 로테)
+                                  <select
+                                    value={compositionDraft.titleTemplate}
+                                    onChange={(event) =>
+                                      setCompositionDraft((current) =>
+                                        current
+                                          ? { ...current, titleTemplate: event.target.value }
+                                          : current,
+                                      )
+                                    }
+                                    className="mt-1 h-8 w-full rounded-md border border-neutral-200 bg-white px-2 text-xs text-neutral-800"
+                                  >
+                                    {titleTemplateOptions(compositionDraft.titleTemplate).map((template) => (
+                                      <option key={template} value={template}>
+                                        {buildShowroomShortsVariantTitle(
+                                          { ...compositionDraft, titleTemplate: template },
+                                          selectedBatch?.shortName?.trim() ||
+                                            selectedBatch?.label?.trim() ||
+                                            '이 공간',
+                                        )}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <label className="block text-xs text-neutral-600">
+                                  훅 자막 (6종 로테)
+                                  <select
+                                    value={hookOptionValue(compositionDraft.hookLine1, compositionDraft.hookLine2)}
+                                    onChange={(event) => {
+                                      const [hookLine1 = '', hookLine2 = ''] = event.target.value.split('\n')
+                                      setCompositionDraft((current) =>
+                                        current ? { ...current, hookLine1, hookLine2 } : current,
+                                      )
+                                    }}
+                                    className="mt-1 h-8 w-full rounded-md border border-neutral-200 bg-white px-2 text-xs text-neutral-800"
+                                  >
+                                    {hookLineOptions(compositionDraft.hookLine1, compositionDraft.hookLine2).map(
+                                      ([line1, line2]) => (
+                                        <option key={`${line1}/${line2}`} value={hookOptionValue(line1, line2)}>
+                                          {line1} / {line2}
+                                        </option>
+                                      ),
+                                    )}
+                                  </select>
+                                </label>
                                 <div className="rounded-md border border-violet-100 bg-white px-2.5 py-2 text-[11px] text-neutral-600">
-                                  훅 자막: {compositionDraft.hookLine1} / {compositionDraft.hookLine2} · 오디오: BGM만
+                                  오디오: BGM만 · 이 잡은 11곡 풀에서 자동 배정 (재합성해도 같은 곡)
                                 </div>
                                 <div className="flex justify-end">
                                   <Button
