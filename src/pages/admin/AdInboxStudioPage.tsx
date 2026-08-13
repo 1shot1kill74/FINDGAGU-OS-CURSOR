@@ -110,6 +110,8 @@ import {
   SHOWROOM_SHORTS_HOOK_POOL,
   SHOWROOM_SHORTS_TITLE_TEMPLATES,
   buildShowroomShortsVariantTitle,
+  formatShowroomShortsBgmLabel,
+  formatShowroomShortsFrameModeLabel,
   formatShowroomShortsVariantLabel,
   getShowroomShortsVariantConfig,
   type ShowroomShortsCompositionConfig,
@@ -137,6 +139,11 @@ function hookLineOptions(hookLine1: string, hookLine2: string) {
 
 function hookOptionValue(line1: string, line2: string) {
   return `${line1}\n${line2}`
+}
+
+/** ffmpeg drawtext 색(0xRRGGBB)을 CSS 색으로 바꿔 스와치에 쓴다. */
+function overlayCssColor(value: string) {
+  return /^0x[0-9a-f]{6}$/iu.test(value) ? `#${value.slice(2)}` : '#ffd54a'
 }
 
 function orderTargets(targets: ShowroomShortsTargetRecord[] | undefined) {
@@ -2488,12 +2495,12 @@ export default function AdInboxStudioPage() {
                                 <div>
                                   <p className="text-sm font-semibold text-neutral-900">쇼츠 포맷</p>
                                   <p className="mt-0.5 text-xs text-neutral-600">
-                                    영상은 After 콜드오픈 고정. 제목·훅은 스팸 회피용 로테 풀에서 고르고, BGM은 잡마다
-                                    11곡 중 자동입니다.
+                                    컷 순서는 After 콜드오픈 고정. 제목·훅은 직접 고르고, 화면·자막·색·BGM은 현장 시드로
+                                    자동 회전합니다.
                                   </p>
                                 </div>
                                 <div className="text-xs text-neutral-600">
-                                  영상 포맷
+                                  컷 순서
                                   <div className="mt-1 flex h-8 items-center rounded-md border border-neutral-200 bg-white px-2 text-xs font-medium text-neutral-800">
                                     After 콜드오픈 · After → Before 반전 → 타임랩스
                                   </div>
@@ -2544,8 +2551,30 @@ export default function AdInboxStudioPage() {
                                     )}
                                   </select>
                                 </label>
-                                <div className="rounded-md border border-violet-100 bg-white px-2.5 py-2 text-[11px] text-neutral-600">
-                                  오디오: BGM만 · 이 잡은 11곡 풀에서 자동 배정 (재합성해도 같은 곡)
+                                <div className="space-y-1.5 rounded-md border border-violet-100 bg-white px-2.5 py-2 text-[11px] text-neutral-600">
+                                  <p className="font-medium text-neutral-700">
+                                    자동 회전 (재합성해도 같은 조합)
+                                  </p>
+                                  <p>화면 · {formatShowroomShortsFrameModeLabel(compositionDraft.frameMode)}</p>
+                                  <p>보조 자막 · {compositionDraft.subLine}</p>
+                                  <p>CTA 자막 · {compositionDraft.ctaLine}</p>
+                                  <p className="flex items-center gap-1.5">
+                                    <span>오버레이 색 ·</span>
+                                    <span
+                                      className="inline-block h-3 w-3 rounded-sm ring-1 ring-neutral-300"
+                                      style={{ backgroundColor: overlayCssColor(compositionDraft.hookColor) }}
+                                    />
+                                    <span
+                                      className="inline-block h-3 w-3 rounded-sm ring-1 ring-neutral-300"
+                                      style={{ backgroundColor: overlayCssColor(compositionDraft.ctaColor) }}
+                                    />
+                                    <span>자막 위치 {compositionDraft.textYShift >= 0 ? '+' : ''}
+                                      {compositionDraft.textYShift}px
+                                    </span>
+                                  </p>
+                                  <p>
+                                    BGM · {formatShowroomShortsBgmLabel(compositionDraft.bgmTrack)} (11곡 풀)
+                                  </p>
                                 </div>
                                 <div className="flex justify-end">
                                   <Button
