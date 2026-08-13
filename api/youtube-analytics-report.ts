@@ -435,8 +435,8 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
     const { data, error } = await supabase
       .from('youtube_shorts_analytics')
       .select('*')
-      .order('synced_at', { ascending: false })
-      .order('views', { ascending: false })
+      .order('published_at', { ascending: false, nullsFirst: false })
+      .order('lifetime_views', { ascending: false })
       .limit(limit)
 
     if (error) throw new Error(error.message)
@@ -444,8 +444,12 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
     const rows = (data ?? []).map((row) => {
       const views = Number(row.views ?? 0)
       const engaged = Number(row.engaged_views ?? 0)
+      const lifetimeViews = Number(row.lifetime_views ?? 0)
       return {
         ...row,
+        views,
+        lifetime_views: Math.max(lifetimeViews, views),
+        engaged_views: engaged,
         engaged_pct: views > 0 ? Math.round((1000 * engaged) / views) / 10 : null,
       }
     })
@@ -458,7 +462,7 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
       channelTitle: oauth?.channel_title ?? null,
       lastSyncAt: oauth?.last_sync_at ?? null,
       lastSyncError: oauth?.last_sync_error ?? null,
-      note: '시청함 vs 넘김은 Studio 전용. engaged_pct(engagedViews/views)를 대리지표로 사용.',
+      note: 'views=최근 90일, lifetime_views=업로드 이후 누적. 시청함 vs 넘김은 Studio 전용.',
       rows,
     })
   } catch (error) {

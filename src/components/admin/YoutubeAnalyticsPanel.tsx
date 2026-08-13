@@ -58,7 +58,13 @@ export default function YoutubeAnalyticsPanel({
       setYtStatus(status)
       if (status.connected || status.status === 'needs_reconnect') {
         const report = await fetchYoutubeAnalyticsReport(reportLimit)
-        setYtRows(report.rows ?? [])
+        const rows = [...(report.rows ?? [])].sort((a, b) => {
+          const aTime = a.published_at ? new Date(a.published_at).getTime() : 0
+          const bTime = b.published_at ? new Date(b.published_at).getTime() : 0
+          if (bTime !== aTime) return bTime - aTime
+          return (Number(b.lifetime_views) || 0) - (Number(a.lifetime_views) || 0)
+        })
+        setYtRows(rows)
       } else {
         setYtRows([])
       }
@@ -123,7 +129,8 @@ export default function YoutubeAnalyticsPanel({
         <div className="space-y-1">
           <p className="text-sm font-medium text-foreground">유튜브 애널리틱스</p>
           <p className="text-xs text-muted-foreground">
-            시청함 vs 넘김은 Studio 전용입니다. API는 engagedViews/views·평균시청%로 훅·이탈을 봅니다.
+            3달은 최근 90일, 평생은 업로드 이후 누적입니다. 시청함 vs 넘김은 Studio 전용 —
+            API는 engagedViews/views·평균시청%로 훅·이탈을 봅니다.
           </p>
           {ytLoading ? (
             <p className="text-xs text-muted-foreground">상태 확인 중…</p>
@@ -182,14 +189,27 @@ export default function YoutubeAnalyticsPanel({
               <tr>
                 <th className="px-3 py-2 font-medium">영상</th>
                 <th className="px-3 py-2 font-medium whitespace-nowrap">업로드</th>
-                <th className="px-3 py-2 font-medium text-right">조회</th>
+                <th className="px-3 py-2 font-medium text-right whitespace-nowrap" title="YouTube Analytics 최근 90일">
+                  3달
+                </th>
+                <th className="px-3 py-2 font-medium text-right whitespace-nowrap" title="업로드 이후 누적 조회">
+                  평생
+                </th>
+                <th className="px-3 py-2 font-medium text-right whitespace-nowrap" title="3달 조회 / 평생 조회">
+                  3달 비중
+                </th>
                 <th className="px-3 py-2 font-medium text-right">Engaged</th>
                 <th className="px-3 py-2 font-medium text-right">Engaged%</th>
                 <th className="px-3 py-2 font-medium text-right">평균시청%</th>
               </tr>
             </thead>
             <tbody>
-              {ytRows.map((row) => (
+              {ytRows.map((row) => {
+                const views90 = Number(row.views) || 0
+                const lifetime = Math.max(Number(row.lifetime_views) || 0, views90)
+                const recentShare =
+                  lifetime > 0 ? Math.round((1000 * views90) / lifetime) / 10 : null
+                return (
                 <tr key={row.video_id} className="border-t border-border">
                   <td className="px-3 py-2">
                     <a
@@ -208,7 +228,13 @@ export default function YoutubeAnalyticsPanel({
                     {formatUploadDate(row.published_at)}
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums">
-                    {Number(row.views).toLocaleString()}
+                    {views90.toLocaleString()}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums">
+                    {lifetime.toLocaleString()}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                    {recentShare == null ? '—' : `${recentShare}%`}
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums">
                     {Number(row.engaged_views).toLocaleString()}
@@ -222,7 +248,8 @@ export default function YoutubeAnalyticsPanel({
                       : `${Math.round(Number(row.avg_view_percentage) * 10) / 10}%`}
                   </td>
                 </tr>
-              ))}
+                )
+              })}
             </tbody>
           </table>
         </div>

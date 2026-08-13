@@ -419,6 +419,7 @@ type MetricRow = {
   title: string | null
   published_at: string | null
   views: number
+  lifetime_views: number
   engaged_views: number
   avg_view_percentage: number | null
   avg_view_duration_sec: number | null
@@ -444,10 +445,11 @@ function numAt(row: unknown[], idx: number): number {
 async function fetchVideoSnippets(accessToken: string, videoIds: string[]) {
   const titles = new Map<string, string>()
   const publishedAt = new Map<string, string>()
+  const viewCounts = new Map<string, number>()
   for (let i = 0; i < videoIds.length; i += 50) {
     const chunk = videoIds.slice(i, i + 50)
     const url = new URL('https://www.googleapis.com/youtube/v3/videos')
-    url.searchParams.set('part', 'snippet')
+    url.searchParams.set('part', 'snippet,statistics')
     url.searchParams.set('id', chunk.join(','))
     const res = await fetch(url.toString(), {
       headers: { Authorization: `Bearer ${accessToken}` },
@@ -456,6 +458,7 @@ async function fetchVideoSnippets(accessToken: string, videoIds: string[]) {
       items?: Array<{
         id?: string
         snippet?: { title?: string; publishedAt?: string }
+        statistics?: { viewCount?: string }
       }>
     }
     if (!res.ok) continue
@@ -463,9 +466,14 @@ async function fetchVideoSnippets(accessToken: string, videoIds: string[]) {
       if (!item.id) continue
       if (item.snippet?.title) titles.set(item.id, item.snippet.title)
       if (item.snippet?.publishedAt) publishedAt.set(item.id, item.snippet.publishedAt)
+      const rawViews = item.statistics?.viewCount
+      if (rawViews != null && rawViews !== '') {
+        const n = Number(rawViews)
+        if (Number.isFinite(n) && n >= 0) viewCounts.set(item.id, n)
+      }
     }
   }
-  return { titles, publishedAt }
+  return { titles, publishedAt, viewCounts }
 }
 
 async function queryAnalyticsByVideo(input: {
@@ -639,6 +647,8 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
 
     // Analytics filters allow limited video list; chunk by 20
     const metrics: Awaited<ReturnType<typeof queryAnalyticsByVideo>> = []
+    const lifetimeMetrics: Awaited<ReturnType<typeof queryAnalyticsByVideo>> = []
+    const lifetimeStart = '2020-01-01'
     for (let i = 0; i < videoIds.length; i += 20) {
       const chunk = videoIds.slice(i, i + 20)
       const part = await queryAnalyticsByVideo({
@@ -649,17 +659,30 @@ export default async function handler(req: RequestLike, res: ResponseLike) {
         endDate: periodEnd,
       })
       metrics.push(...part)
+      const lifetimePart = await queryAnalyticsByVideo({
+        accessToken,
+        channelId,
+        videoIds: chunk,
+        startDate: lifetimeStart,
+        endDate: periodEnd,
+      })
+      lifetimeMetrics.push(...lifetimePart)
     }
 
     const byId = new Map(metrics.map((m) => [m.videoId, m]))
+    const lifetimeById = new Map(lifetimeMetrics.map((m) => [m.videoId, m]))
     const syncedAt = new Date().toISOString()
     const upserts: MetricRow[] = videoIds.map((videoId) => {
       const m = byId.get(videoId)
+      const views90 = m?.views ?? 0
+      const analyticsLifetime = lifetimeById.get(videoId)?.views ?? 0
+      const publicLifetime = snippets.viewCounts.get(videoId) ?? 0
       return {
         video_id: videoId,
         title: titleById.get(videoId) ?? null,
         published_at: publishedAtById.get(videoId) ?? null,
-        views: m?.views ?? 0,
+        views: views90,
+        lifetime_views: Math.max(analyticsLifetime, publicLifetime, views90),
         engaged_views: m?.engagedViews ?? 0,
         avg_view_percentage: m?.avgViewPercentage ?? null,
         avg_view_duration_sec: m?.avgViewDurationSec ?? null,

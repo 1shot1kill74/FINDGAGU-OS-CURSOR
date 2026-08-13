@@ -17,6 +17,7 @@ export type YoutubeShortsAnalyticsRow = {
   title: string | null
   published_at: string | null
   views: number
+  lifetime_views: number
   engaged_views: number
   engaged_pct: number | null
   avg_view_percentage: number | null
@@ -84,19 +85,23 @@ export function formatCompactCount(value: number): string {
   return String(n)
 }
 
-export function formatYoutubeMetricsChip(row: Pick<YoutubeShortsAnalyticsRow, 'views' | 'engaged_pct' | 'avg_view_percentage'>): {
+export function formatYoutubeMetricsChip(
+  row: Pick<YoutubeShortsAnalyticsRow, 'views' | 'lifetime_views' | 'engaged_pct' | 'avg_view_percentage'>,
+): {
   label: string
   title: string
 } {
   const views = formatCompactCount(row.views)
+  const lifetime = formatCompactCount(row.lifetime_views ?? row.views)
   const engaged = row.engaged_pct == null ? '—' : `${row.engaged_pct}%`
   const avg =
     row.avg_view_percentage == null
       ? '—'
       : `${Math.round(Number(row.avg_view_percentage) * 10) / 10}%`
+  const lifetimeNum = Number(row.lifetime_views ?? row.views)
   return {
     label: `${views} · ${engaged}`,
-    title: `조회 ${Number(row.views).toLocaleString()} · Engaged ${engaged} · 평균시청 ${avg}`,
+    title: `3달 ${Number(row.views).toLocaleString()} · 평생 ${lifetimeNum.toLocaleString()} (${lifetime}) · Engaged ${engaged} · 평균시청 ${avg}`,
   }
 }
 
@@ -171,18 +176,20 @@ export async function fetchYoutubeShortsAnalyticsByVideoIds(
     const { data, error } = await supabase
       .from('youtube_shorts_analytics')
       .select(
-        'video_id, title, published_at, views, engaged_views, avg_view_percentage, avg_view_duration_sec, likes, comments, shares, period_start, period_end, synced_at',
+        'video_id, title, published_at, views, lifetime_views, engaged_views, avg_view_percentage, avg_view_duration_sec, likes, comments, shares, period_start, period_end, synced_at',
       )
       .in('video_id', chunk)
     if (error) throw new Error(error.message)
     for (const row of data ?? []) {
       const views = Number(row.views ?? 0)
+      const lifetimeViews = Number(row.lifetime_views ?? 0)
       const engaged = Number(row.engaged_views ?? 0)
       map.set(row.video_id, {
         video_id: row.video_id,
         title: row.title ?? null,
         published_at: row.published_at ?? null,
         views,
+        lifetime_views: Math.max(lifetimeViews, views),
         engaged_views: engaged,
         engaged_pct: views > 0 ? Math.round((1000 * engaged) / views) / 10 : null,
         avg_view_percentage:
