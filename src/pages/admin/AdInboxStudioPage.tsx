@@ -2556,6 +2556,9 @@ export default function AdInboxStudioPage() {
                                     자동 회전 (재합성해도 같은 조합)
                                   </p>
                                   <p>화면 · {formatShowroomShortsFrameModeLabel(compositionDraft.frameMode)}</p>
+                                  <p>
+                                    현장명 자막 · {compositionDraft.siteLine || '(현장명 없음 — 미표시)'}
+                                  </p>
                                   <p>보조 자막 · {compositionDraft.subLine}</p>
                                   <p>CTA 자막 · {compositionDraft.ctaLine}</p>
                                   <p className="flex items-center gap-1.5">

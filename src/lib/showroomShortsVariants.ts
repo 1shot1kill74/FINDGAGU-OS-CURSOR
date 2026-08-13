@@ -125,6 +125,8 @@ export type ShowroomShortsCompositionConfig = {
   hookLine2: string
   subLine: string
   ctaLine: string
+  /** 영상 위 밴드에 전 구간 노출하는 현장명. 월 코드·견적번호까지 포함한다. */
+  siteLine: string
   hookColor: string
   ctaColor: string
   textYShift: number
@@ -145,16 +147,56 @@ const BASE_COPY = {
   bgmVolume: 0.22,
 } as const
 
+/** 밴드 폭(720px) 기준 한 줄 상한. 넘으면 장소명만 줄이고 견적번호는 남긴다. */
+const ON_SCREEN_SITE_MAX_LENGTH = 28
+/** 입고 이름 앞에 붙는 내부 상태 토큰. `A/S`는 슬래시 분리보다 먼저 떼야 한다. */
+const SITE_NAME_STATUS_PREFIX = /^(?:(?:완료|견적|A\/S)[\s_]+)+/iu
+
 /**
- * 숏츠 공개 제목용 현장명.
- * `완료`·`견적`은 내부 상태라 앞에서 반복 제거하고, 월 코드(2508)는 남긴다.
- * 예: `완료 견적 2508 래미안 안양가트리아 6449` → `2508 래미안 안양가트리아 6449`
+ * 숏츠 노출용 현장명. 제목·자막이 같은 이름을 쓰도록 한 곳에서 정리한다.
+ * 월 코드(2508)와 끝 견적번호(6449)는 검색 키라 남기고, 내부 상태·상담 메모만 걷어낸다.
+ * 예: `견적 2509 부천 /채널톡 나비933 / 7311` → `2509 부천 7311`
+ * 정리 결과가 없으면 빈 문자열. 표시 기본값은 호출부가 정한다.
  */
+export function normalizeShowroomShortsSiteName(siteName: string | null | undefined): string {
+  const normalized = (siteName ?? '').replace(/_/gu, ' ').replace(/\s+/gu, ' ').trim()
+  if (!normalized) return ''
+  const segments = normalized
+    .replace(SITE_NAME_STATUS_PREFIX, '')
+    .split('/')
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+  const [head, ...rest] = segments
+  if (!head || head === '이 공간') return ''
+
+  // 슬래시 뒤는 채널톡 상담 메모 같은 내부 기록이라 버리고, 거기 있는 견적번호만 건진다.
+  const tailNumber = rest
+    .flatMap((segment) => segment.split(' '))
+    .filter((token) => /^\d{3,}$/u.test(token))
+    .pop()
+  return tailNumber && !new RegExp(`(?:^|\\s)${tailNumber}$`, 'u').test(head)
+    ? `${head} ${tailNumber}`
+    : head
+}
+
+/** 유튜브·인스타 제목과 TTS 대본용 현장명. 길이 제한은 제목 템플릿이 따로 자른다. */
 export function toPublicShowroomShortsSiteName(siteName: string | null | undefined): string {
-  const normalized = (siteName ?? '').replace(/\s+/gu, ' ').trim()
-  if (!normalized) return '이 공간'
-  const stripped = normalized.replace(/^(?:(?:완료|견적)[\s_]+)+/u, '').trim()
-  return stripped || '이 공간'
+  return normalizeShowroomShortsSiteName(siteName) || '이 공간'
+}
+
+/**
+ * 영상 자막용 현장명. 밴드 한 줄에 들어가도록 장소명만 줄이고 견적번호는 무조건 살린다.
+ * 현장명이 없으면 빈 문자열이라 워커가 자막을 아예 그리지 않는다.
+ */
+export function toOnScreenShowroomShortsSiteName(siteName: string | null | undefined): string {
+  const normalized = normalizeShowroomShortsSiteName(siteName)
+  if (!normalized || normalized.length <= ON_SCREEN_SITE_MAX_LENGTH) return normalized
+
+  const estimateNo = /\s(\d{3,})$/u.exec(normalized)?.[1] ?? ''
+  if (!estimateNo) return `${normalized.slice(0, ON_SCREEN_SITE_MAX_LENGTH - 1)}…`
+  const nameOnly = normalized.slice(0, normalized.length - estimateNo.length - 1).trim()
+  const nameBudget = ON_SCREEN_SITE_MAX_LENGTH - estimateNo.length - 2
+  return `${nameOnly.slice(0, Math.max(1, nameBudget))}… ${estimateNo}`
 }
 
 /**
@@ -251,6 +293,7 @@ export function getShowroomShortsVariantConfig(
     hookLine2: override?.hookLine2?.trim() || pooledHook2,
     subLine: override?.subLine?.trim() || pickShowroomShortsSubLine(seed),
     ctaLine: override?.ctaLine?.trim() || pickShowroomShortsCtaLine(seed),
+    siteLine: toOnScreenShowroomShortsSiteName(override?.siteLine || normalizedSite),
     hookColor: normalizeOverlayColor(override?.hookColor, overlay.hookColor),
     ctaColor: normalizeOverlayColor(override?.ctaColor, overlay.ctaColor),
     textYShift: Number.isFinite(override?.textYShift)

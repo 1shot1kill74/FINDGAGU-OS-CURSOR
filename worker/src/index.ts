@@ -4,6 +4,15 @@ import { existsSync, promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
+import {
+  BAND_TOP,
+  BAND_VIDEO_SIZE,
+  OUTPUT_HEIGHT,
+  OUTPUT_WIDTH,
+  buildAfterBeforeOverlaySteps,
+  toOnScreenSiteLine,
+  type AfterBeforeTextKey,
+} from './afterBeforeOverlay.js'
 
 type JsonRecord = Record<string, unknown>
 
@@ -16,6 +25,7 @@ type ShowroomShortsJobRow = {
   final_video_url: string | null
   before_asset_url?: string | null
   after_asset_url?: string | null
+  after_asset_id?: string | null
   duration_seconds: number | null
   composition_config?: {
     audioVariant?: 'tts_hook_bgm' | 'bgm_only'
@@ -26,6 +36,7 @@ type ShowroomShortsJobRow = {
     hookLine2?: string
     subLine?: string
     ctaLine?: string
+    siteLine?: string
     hookColor?: string
     ctaColor?: string
     textYShift?: number
@@ -79,15 +90,9 @@ app.use(express.json({ limit: '1mb' }))
 
 const PORT = Number(process.env.PORT || 8080)
 const VIDEO_BUCKET = 'showroom-shorts-videos'
-const OUTPUT_WIDTH = 720
-const OUTPUT_HEIGHT = 1280
 const VIDEO_WIDTH = 720
 const VIDEO_HEIGHT = 700
 const VIDEO_Y = 290
-/** message_bands: 영상을 정사각으로 두고 남는 위·아래를 검정 밴드로 쓴다. */
-const BAND_VIDEO_SIZE = 720
-const BAND_TOP = Math.floor((OUTPUT_HEIGHT - BAND_VIDEO_SIZE) / 2)
-const BAND_BOTTOM_Y = BAND_TOP + BAND_VIDEO_SIZE
 const DEFAULT_DURATION_SECONDS = 10
 const AFTER_HOLD_SECONDS = 2
 const WORKER_TOKEN = process.env.SHOWROOM_SHORTS_WORKER_TOKEN?.trim() || ''
@@ -976,11 +981,14 @@ async function processComposeJob(jobId: string) {
         downloadToFile(job.before_asset_url!, beforePath),
         downloadToFile(job.after_asset_url!, afterPath),
       ])
+      const siteLine = await resolveComposeSiteLine(job)
+      console.log(`[showroom-shorts-worker] site line job=${jobId} value=${siteLine || '(none)'}`)
       const afterBeforeText = await writeAfterBeforeTextAssets(tempDir, {
         hookLine1: compositionConfig?.hookLine1?.trim() || '원래 이 공간이',
         hookLine2: compositionConfig?.hookLine2?.trim() || '이랬다구요?',
         subLine: compositionConfig?.subLine,
         ctaLine: compositionConfig?.ctaLine,
+        siteLine,
       })
       await runFfmpegAfterBeforeTimelapse({
         sourcePath: inputVideoPath,
@@ -989,6 +997,7 @@ async function processComposeJob(jobId: string) {
         outputPath: outputVideoPath,
         sourceDuration: durationSeconds,
         textPaths: afterBeforeText,
+        siteLine,
         bgmPath,
         ttsPath: ttsResult.path,
         bgmVolume: compositionConfig?.bgmVolume,
@@ -1299,7 +1308,7 @@ async function getJob(jobId: string) {
   const { data, error } = await supabase
     .from('showroom_shorts_jobs')
     .select(
-      'id, status, source_video_url, final_video_url, before_asset_url, after_asset_url, duration_seconds, composition_config, updated_at',
+      'id, status, source_video_url, final_video_url, before_asset_url, after_asset_url, after_asset_id, duration_seconds, composition_config, updated_at',
     )
     .eq('id', jobId)
     .maybeSingle<ShowroomShortsJobRow>()
@@ -1309,6 +1318,28 @@ async function getJob(jobId: string) {
   }
 
   return data ?? null
+}
+
+/**
+ * 자막용 현장명. config 스냅샷이 우선이고, 옛 잡은 After 사진의 `site_name`으로 채운다.
+ * 조회가 실패해도 합성은 계속 진행한다.
+ */
+async function resolveComposeSiteLine(job: ShowroomShortsJobRow): Promise<string> {
+  const fromConfig = toOnScreenSiteLine(job.composition_config?.siteLine)
+  if (fromConfig) return fromConfig
+
+  const afterAssetId = job.after_asset_id?.trim()
+  if (!afterAssetId) return ''
+  const { data, error } = await supabase
+    .from('image_assets')
+    .select('site_name')
+    .eq('id', afterAssetId)
+    .maybeSingle<{ site_name: string | null }>()
+  if (error) {
+    console.warn(`[showroom-shorts-worker] site_name lookup failed job=${job.id} ${error.message}`)
+    return ''
+  }
+  return toOnScreenSiteLine(data?.site_name)
 }
 
 type VariantTestVideo = {
@@ -1360,11 +1391,13 @@ async function renderAfterBeforeTimelapseTest(
       job.composition_config?.ttsScript?.trim() ||
       '원래 이 공간이 이랬다구요? 일산관리형 공간이 10초 뒤 이렇게 바뀝니다.'
 
+    const siteLine = await resolveComposeSiteLine(job)
     const textPaths = await writeAfterBeforeTextAssets(tempDir, {
       hookLine1,
       hookLine2,
       subLine: job.composition_config?.subLine,
       ctaLine: job.composition_config?.ctaLine,
+      siteLine,
     })
     const bgmPath = await resolveBgmToFile(
       bgmSourceForJob(job.id, job.composition_config?.bgmTrack),
@@ -1379,6 +1412,7 @@ async function renderAfterBeforeTimelapseTest(
       outputPath,
       sourceDuration,
       textPaths,
+      siteLine,
       bgmPath,
       ttsPath: ttsResult.path,
       bgmVolume: job.composition_config?.bgmVolume,
@@ -1422,7 +1456,13 @@ async function renderAfterBeforeTimelapseTest(
 
 async function writeAfterBeforeTextAssets(
   tempDir: string,
-  input: { hookLine1: string; hookLine2: string; subLine?: string | null; ctaLine?: string | null },
+  input: {
+    hookLine1: string
+    hookLine2: string
+    subLine?: string | null
+    ctaLine?: string | null
+    siteLine?: string | null
+  },
 ) {
   const assets = {
     hookLine1: input.hookLine1,
@@ -1431,6 +1471,8 @@ async function writeAfterBeforeTextAssets(
     beforeBadge: 'BEFORE',
     storyLine: input.subLine?.trim() || '이렇게 바뀌는 과정입니다',
     ctaLine: input.ctaLine?.trim() || '파인드가구 온라인 쇼룸',
+    // 빈 문자열이면 drawtext가 아무것도 그리지 않으므로 현장명이 없는 잡도 그대로 통과한다.
+    siteLine: toOnScreenSiteLine(input.siteLine),
   }
   const entries = await Promise.all(
     Object.entries(assets).map(async ([key, value]) => {
@@ -2028,76 +2070,14 @@ async function runFfmpegCompose(input: {
   await runCommand('ffmpeg', args)
 }
 
-/**
- * 프레임 모드별 자막 레이어.
- * full_bleed는 사진 위에 반투명 박스를 깔고 얹는다.
- * message_bands는 위 밴드에 훅·보조 자막, 아래 밴드에 CTA를 넣어 사진을 가리지 않는다.
- * 배지(BEFORE/AFTER)는 두 모드 모두 영상 영역 좌상단에 붙고 yShift를 받지 않는다.
- */
-function buildAfterBeforeOverlaySteps(input: {
-  bandMode: boolean
-  hookColor: string
-  ctaColor: string
-  yShift: number
-  escape: (value: string) => string
-  textPaths: Record<
-    'hookLine1' | 'hookLine2' | 'afterBadge' | 'beforeBadge' | 'storyLine' | 'ctaLine',
-    string
-  >
-  afterOpenEnable: string
-  beforeEnable: string
-  hookEnable: string
-  storyEnable: string
-  holdEnable: string
-}): string[] {
-  const { bandMode, hookColor, ctaColor, yShift, escape, textPaths } = input
-  const bold = escape(BOLD_FONT_FILE)
-  const body = escape(BODY_FONT_FILE)
-  // 훅·CTA만 브랜드 폰트. 배지·보조 자막은 가독성 우선으로 Noto 유지.
-  const hookFont = escape(HOOK_FONT_FILE)
-  const badgeBoxY = bandMode ? BAND_TOP + 16 : 48
-  const badgeTextY = bandMode ? BAND_TOP + 28 : 60
-  const hook1Y = (bandMode ? 76 : 1010) + yShift
-  const hook2Y = (bandMode ? 122 : 1070) + yShift
-  const storyY = (bandMode ? 180 : 1188) + yShift
-  const ctaY = (bandMode ? BAND_BOTTOM_Y + 123 : 1100) + yShift
-  const hookFontSize = bandMode ? 42 : 46
-  const storyFontSize = bandMode ? 24 : 28
-  const ctaFontSize = bandMode ? 34 : 30
-
-  const steps: string[] = [
-    `[story]drawbox=x=28:y=${badgeBoxY}:w=168:h=54:color=black@0.72:t=fill:enable='${input.afterOpenEnable}'[s1]`,
-    `[s1]drawtext=fontfile='${bold}':textfile='${escape(textPaths.afterBadge)}':fontcolor=${hookColor}:fontsize=28:x=64:y=${badgeTextY}:enable='${input.afterOpenEnable}'[s2]`,
-    `[s2]drawbox=x=28:y=${badgeBoxY}:w=188:h=54:color=black@0.72:t=fill:enable='${input.beforeEnable}'[s3]`,
-    `[s3]drawtext=fontfile='${bold}':textfile='${escape(textPaths.beforeBadge)}':fontcolor=white:fontsize=28:x=58:y=${badgeTextY}:enable='${input.beforeEnable}'[s4]`,
-  ]
-
-  // 밴드 모드는 밴드 자체가 검정이라 훅 배경 박스가 필요없다.
-  steps.push(
-    bandMode
-      ? `[s4]null[s5]`
-      : `[s4]drawbox=x=40:y=${980 + yShift}:w=640:h=170:color=black@0.55:t=fill:enable='${input.hookEnable}'[s5]`,
-  )
-
-  steps.push(
-    `[s5]drawtext=fontfile='${hookFont}':textfile='${escape(textPaths.hookLine1)}':fontcolor=${hookColor}:fontsize=${hookFontSize}:borderw=1.2:bordercolor=black@0.25:shadowcolor=black@0.55:shadowx=0:shadowy=3:x=(w-text_w)/2:y=${hook1Y}:enable='${input.hookEnable}'[s6]`,
-    `[s6]drawtext=fontfile='${hookFont}':textfile='${escape(textPaths.hookLine2)}':fontcolor=${hookColor}:fontsize=${hookFontSize}:borderw=1.2:bordercolor=black@0.25:shadowcolor=black@0.55:shadowx=0:shadowy=3:x=(w-text_w)/2:y=${hook2Y}:enable='${input.hookEnable}'[s7]`,
-    `[s7]drawtext=fontfile='${body}':textfile='${escape(textPaths.storyLine)}':fontcolor=white:fontsize=${storyFontSize}:borderw=1:bordercolor=black@0.2:x=(w-text_w)/2:y=${storyY}:enable='${input.storyEnable}'[s8]`,
-    `[s8]drawbox=x=28:y=${badgeBoxY}:w=168:h=54:color=black@0.72:t=fill:enable='${input.holdEnable}'[s9]`,
-    `[s9]drawtext=fontfile='${bold}':textfile='${escape(textPaths.afterBadge)}':fontcolor=${hookColor}:fontsize=28:x=64:y=${badgeTextY}:enable='${input.holdEnable}'[s10]`,
-    `[s10]drawtext=fontfile='${hookFont}':textfile='${escape(textPaths.ctaLine)}':fontcolor=${ctaColor}:fontsize=${ctaFontSize}:borderw=1:bordercolor=black@0.2:x=(w-text_w)/2:y=${ctaY}:enable='${input.holdEnable}'[vout]`,
-  )
-
-  return steps
-}
-
 async function runFfmpegAfterBeforeTimelapse(input: {
   sourcePath: string
   beforePath: string
   afterPath: string
   outputPath: string
   sourceDuration: number
-  textPaths: Record<'hookLine1' | 'hookLine2' | 'afterBadge' | 'beforeBadge' | 'storyLine' | 'ctaLine', string>
+  textPaths: Record<AfterBeforeTextKey, string>
+  siteLine?: string | null
   bgmPath: string | null
   ttsPath: string | null
   bgmVolume?: number
@@ -2158,7 +2138,9 @@ async function runFfmpegAfterBeforeTimelapse(input: {
       ctaColor,
       yShift,
       escape,
+      fonts: { body: BODY_FONT_FILE, bold: BOLD_FONT_FILE, hook: HOOK_FONT_FILE },
       textPaths: input.textPaths,
+      hasSiteLine: Boolean(toOnScreenSiteLine(input.siteLine)),
       afterOpenEnable,
       beforeEnable,
       hookEnable,

@@ -1,5 +1,11 @@
 import { supabase } from '@/lib/supabase'
 import { stripLeadingSiteNumericCode } from '@/lib/showroomShorts'
+import { normalizeShowroomShortsSiteName } from '@/lib/showroomShortsVariants'
+
+/** 랜딩 표시명은 공개 화면이라 내부 상태·상담 메모를 걷어낸 뒤 앞 숫자 코드까지 뗀다. */
+function toLandingDisplayName(value: string | null | undefined): string | null {
+  return stripLeadingSiteNumericCode(normalizeShowroomShortsSiteName(value))
+}
 
 export type PublicShowroomShortsGalleryItem = {
   id: string
@@ -183,7 +189,7 @@ export async function fetchPublicShowroomShortsLanding(
   return mapLandingRow({
     job_id: job.id,
     short_name: shortName,
-    display_name: stripLeadingSiteNumericCode(shortName) || '시공 사례',
+    display_name: toLandingDisplayName(shortName) || '시공 사례',
     before_asset_url: beforeUrl,
     after_asset_url: afterUrl,
     final_video_url: job.final_video_url,
@@ -202,8 +208,8 @@ function mapLandingRow(row: Record<string, unknown>): PublicShowroomShortsLandin
   const shortName =
     (!looksLikeTechnicalGroupKey(rawShort) && rawShort) || '시공 사례'
   const displayName =
-    (!looksLikeTechnicalGroupKey(rawDisplay) && rawDisplay)
-    || stripLeadingSiteNumericCode(shortName)
+    (!looksLikeTechnicalGroupKey(rawDisplay) && toLandingDisplayName(rawDisplay))
+    || toLandingDisplayName(shortName)
     || shortName
 
   const gallery = parseGallery(row.gallery)

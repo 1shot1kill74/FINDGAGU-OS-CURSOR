@@ -6,6 +6,7 @@ import {
   buildShowroomShortsVariantTitle,
   getShowroomShortsVariantConfig,
   isShowroomShortsVariantId,
+  normalizeShowroomShortsSiteName,
   toPublicShowroomShortsSiteName,
   type ShowroomShortsCompositionConfig,
   type ShowroomShortsVariantId,
@@ -361,14 +362,15 @@ export function buildShowroomShortsDraft(images: ShowroomImageAsset[]) {
     throw new Error(selection.message)
   }
 
-  // 제목용 OOOO: 입고 입구 이름(site_name)에서 앞 숫자 코드만 제거
+  // 제목용 OOOO: 내부 상태·상담 메모를 걷어낸 뒤 앞 숫자 코드까지 제거해 문장에 넣는다.
   const entranceName =
     getCanonicalSiteName(selection.afterImage) ||
     getCanonicalSiteName(selection.beforeImage) ||
     trimOrNull(selection.afterImage.external_display_name) ||
     trimOrNull(selection.beforeImage.external_display_name) ||
     '시공 사례'
-  const openShowroomTitle = stripLeadingSiteNumericCode(entranceName) || '시공 사례'
+  const openShowroomTitle =
+    stripLeadingSiteNumericCode(normalizeShowroomShortsSiteName(entranceName)) || '시공 사례'
 
   const firstCommentBody = `${openShowroomTitle}처럼 공간 구성이 필요하신가요? 파인드가구 쇼룸에서 더 많은 사례를 확인하세요.`
 
@@ -907,6 +909,7 @@ export async function updateShowroomShortsCompositionConfig(
     ...config,
     audioVariant: 'bgm_only',
     titleTemplate: titleConfig.titleTemplate,
+    siteLine: titleConfig.siteLine,
   }
 
   const { error: jobError } = await supabase
