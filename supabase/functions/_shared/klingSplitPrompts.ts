@@ -6,8 +6,24 @@ export const KLING_EMPTY_INSTALL_SECONDS = 8
 /** job.prompt_text 앞에 넣어 empty_room 모드를 표시 (마이그레이션 없이) */
 export const EMPTY_ROOM_TIMELAPSE_MARKER = '[empty_room_v1]'
 
-/** API `negative_prompt` 전용 — 비상구/워터마크/모프 억제 */
+/**
+ * 작업자 인상. 파인드가구는 국내 현장만 시공해서 외국인 크루가 잡히면 영상이 겉돈다.
+ * Kling은 국적을 얼굴·복장 묘사로 잡으므로 둘 다 적고, negative로 한 번 더 막는다.
+ */
+export const SHOWROOM_SHORTS_KOREAN_CREW_LINE =
+  'Crew: 2-3 Korean installers — Korean East Asian men in their 30s-40s, black hair, clean-shaven — '
+  + 'wearing dark navy or gray Korean-style work uniform with a company work vest, cotton work gloves, '
+  + 'and safety shoes. This is a domestic South Korean interior site.'
+
+/** API `negative_prompt` 전용 — 비상구/워터마크/모프/외국인 크루 억제 */
 export const SHOWROOM_SHORTS_COMMON_NEGATIVE_PROMPT = [
+  'non-Asian workers',
+  'Western crew',
+  'European construction crew',
+  'Caucasian faces',
+  'blonde hair',
+  'blue eyes',
+  'foreign-language text on uniform',
   'exit sign',
   'emergency exit',
   'emergency exit icon',
@@ -85,6 +101,8 @@ export const SHOWROOM_SHORTS_DEMOLISH_PROMPT = `Create a realistic 5-second reno
 
 Managed study cafe / learning space. Fixed wide camera matching the photo. Photoreal indoor light.
 
+${SHOWROOM_SHORTS_KOREAN_CREW_LINE}
+
 Show ONLY demolition with workers visible the whole time:
 1) before space with old desks/partitions
 2) workers enter with tools
@@ -104,6 +122,8 @@ export const SHOWROOM_SHORTS_INSTALL_PROMPT = `Create a realistic 5-second renov
 START image = cleared empty room (last frame after demolition). END image = finished AFTER. Never start from AFTER.
 
 Managed study cafe. Fixed wide camera matching the photos. Photoreal indoor light.
+
+${SHOWROOM_SHORTS_KOREAN_CREW_LINE}
 
 Show ONLY installation with workers visible the whole time:
 1) cleared empty room (same camera as start image)
@@ -146,6 +166,8 @@ export const SHOWROOM_SHORTS_EMPTY_INSTALL_PROMPT = `Create a realistic 8-second
 START image = already-empty room (last frame after framing settle). END image = finished AFTER. Never start from AFTER.
 
 Managed study cafe. Fixed wide camera matching the photos. Photoreal indoor light.
+
+${SHOWROOM_SHORTS_KOREAN_CREW_LINE}
 
 Show ONLY installation with workers visible the whole time:
 1) empty cleared room (same camera as start image)
