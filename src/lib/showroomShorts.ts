@@ -6,6 +6,7 @@ import {
   buildShowroomShortsVariantTitle,
   getShowroomShortsVariantConfig,
   isShowroomShortsVariantId,
+  toPublicShowroomShortsSiteName,
   type ShowroomShortsCompositionConfig,
   type ShowroomShortsVariantId,
 } from '@/lib/showroomShortsVariants'
@@ -213,7 +214,7 @@ function asJsonRecord(value: unknown): Record<string, unknown> | null {
 function stripShowroomStagePrefix(value: string | null | undefined): string | null {
   const normalized = trimOrNull(value)?.replace(/\s+/g, ' ').trim()
   if (!normalized) return null
-  const stripped = normalized.replace(/^(견적|완료)\s+/u, '').trim()
+  const stripped = normalized.replace(/^(?:(?:완료|견적)[\s_]+)+/u, '').trim()
   return stripped || normalized
 }
 
@@ -234,7 +235,7 @@ function getCanonicalSiteName(image: ShowroomImageAsset): string | null {
 
 /** 레거시 통일 제목 → 로테 풀 기반으로 교체 (`10초 만에…대변신` 폐기). */
 export function buildShowroomShortsUnifiedTitle(siteName: string | null | undefined): string {
-  const name = stripLeadingSiteNumericCode(siteName) || '시공 사례'
+  const name = toPublicShowroomShortsSiteName(siteName)
   const config = getShowroomShortsVariantConfig(name, name)
   return buildShowroomShortsVariantTitle(config, name)
 }
@@ -411,10 +412,9 @@ export async function createShowroomShortsJob(payload: {
   const now = new Date().toISOString()
   const groupKeyOverride = payload.beforeAfterGroupKey?.trim() || null
   const emptyRoom = payload.timelapseMode === 'empty_room'
-  const variantSiteName =
-    stripLeadingSiteNumericCode(
-      getCanonicalSiteName(selection.afterImage) || getCanonicalSiteName(selection.beforeImage),
-    ) || '이 공간'
+  const variantSiteName = toPublicShowroomShortsSiteName(
+    getCanonicalSiteName(selection.afterImage) || getCanonicalSiteName(selection.beforeImage),
+  )
   const variantSeed = `${groupKeyOverride || selection.groupKey}:${selection.beforeImage.id}:${selection.afterImage.id}`
   const compositionConfig = getShowroomShortsVariantConfig(variantSeed, variantSiteName)
   const variantTitle = buildShowroomShortsVariantTitle(compositionConfig, variantSiteName)

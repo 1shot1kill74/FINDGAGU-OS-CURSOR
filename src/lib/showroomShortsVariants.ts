@@ -145,8 +145,16 @@ const BASE_COPY = {
   bgmVolume: 0.22,
 } as const
 
-function compactSiteName(siteName: string) {
-  return siteName.replace(/^\d{2,6}\s*/u, '').trim() || '이 공간'
+/**
+ * 숏츠 공개 제목용 현장명.
+ * `완료`·`견적`은 내부 상태라 앞에서 반복 제거하고, 월 코드(2508)는 남긴다.
+ * 예: `완료 견적 2508 래미안 안양가트리아 6449` → `2508 래미안 안양가트리아 6449`
+ */
+export function toPublicShowroomShortsSiteName(siteName: string | null | undefined): string {
+  const normalized = (siteName ?? '').replace(/\s+/gu, ' ').trim()
+  if (!normalized) return '이 공간'
+  const stripped = normalized.replace(/^(?:(?:완료|견적)[\s_]+)+/u, '').trim()
+  return stripped || '이 공간'
 }
 
 /**
@@ -218,7 +226,7 @@ export function getShowroomShortsVariantConfig(
   siteName: string,
   override?: Partial<ShowroomShortsCompositionConfig> | null,
 ): ShowroomShortsCompositionConfig {
-  const normalizedSite = compactSiteName(siteName)
+  const normalizedSite = toPublicShowroomShortsSiteName(siteName)
   const [pooledHook1, pooledHook2] = pickShowroomShortsHookLines(seed)
   const overlay = pickShowroomShortsOverlayVariant(seed)
 
@@ -264,7 +272,7 @@ export function buildShowroomShortsVariantTitle(
   config: ShowroomShortsCompositionConfig,
   siteName: string,
 ) {
-  return config.titleTemplate.replace(/\{site\}/gu, compactSiteName(siteName)).slice(0, 95)
+  return config.titleTemplate.replace(/\{site\}/gu, toPublicShowroomShortsSiteName(siteName)).slice(0, 95)
 }
 
 export function isShowroomShortsVariantId(value: unknown): value is ShowroomShortsVariantId {
