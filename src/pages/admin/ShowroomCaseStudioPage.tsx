@@ -68,6 +68,7 @@ import {
   mapPool,
   type BlogQueueFilter,
 } from '@/pages/admin/showroomCaseStudio/showroomCaseStudioQueue'
+import { NaverPackageImageTray } from '@/pages/admin/showroomCaseStudio/NaverPackageImageTray'
 
 function caseStudioIndustryChipClass(selected: boolean): string {
   return selected
@@ -934,7 +935,7 @@ export default function ShowroomCaseStudioPage() {
                   <span className="text-slate-400"> · </span>
                 </>
               ) : null}
-              본문·해시태그·사진을 한 번에 챙겨서 네이버 에디터에 붙여 넣기만 하면 끝입니다. 본문 끝에는 자가 사이트 사례 페이지로의 백링크가 자동 포함됩니다.
+              본문·해시태그·사진을 한 번에 챙깁니다. 사진은 아래 썸네일을 네이버 에디터의 [이미지 N] 자리로 끌어다 놓거나 복사해 붙여넣으면 됩니다. 본문 끝에는 자가 사이트 사례 페이지 백링크가 들어갑니다.
             </p>
           </DialogHeader>
           {naverPackageState ? (
@@ -1007,27 +1008,7 @@ export default function ShowroomCaseStudioPage() {
                 </section>
 
                 <section className="mb-5 rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">이미지 (zip에 같은 순서로 들어갑니다)</p>
-                  <ul className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
-                    {naverPackageState.pkg.images.map((img) => (
-                      <li key={`${img.index}-${img.url}`} className="overflow-hidden rounded-xl border border-slate-100 bg-slate-50">
-                        <div className="relative aspect-[4/3] bg-slate-200">
-                          <img src={img.url} alt={img.alt} className="h-full w-full object-cover" loading="lazy" />
-                          <span
-                            className={`absolute left-2 top-2 rounded-full px-2 py-0.5 text-[10px] font-semibold text-white ${
-                              img.label === 'before' ? 'bg-slate-900/80' : img.label === 'after' ? 'bg-emerald-700/85' : 'bg-slate-700/80'
-                            }`}
-                          >
-                            {img.label === 'before' ? `Before · [이미지 ${img.index}]` : img.label === 'after' ? `After · [이미지 ${img.index}]` : `[이미지 ${img.index}]`}
-                          </span>
-                        </div>
-                        <p className="px-2 py-1.5 text-[11px] text-slate-600">{img.filename}</p>
-                      </li>
-                    ))}
-                  </ul>
-                  {naverPackageState.pkg.images.length === 0 ? (
-                    <p className="mt-2 text-xs text-slate-500">정본에 이미지가 없습니다. 이미지 없이 본문만 발행하거나, 정본을 다시 만들어주세요.</p>
-                  ) : null}
+                  <NaverPackageImageTray images={naverPackageState.pkg.images} />
                 </section>
               </div>
 

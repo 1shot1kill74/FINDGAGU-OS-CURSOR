@@ -13,7 +13,8 @@
  * - 본문 안의 이미지 위치는 마크다운/HTML 어디에서도 똑같이 `[이미지 N]` 으로 보여서
  *   사람이 그 자리에 같은 번호 사진을 끼워 넣기만 하면 된다.
  * - 패키지 사진은 본문 `![alt](url)` 만 포함. 정본 images[] 잔여 컷은 넣지 않는다.
- * - 본문 끝에는 자가 사이트 사례 페이지 링크(=백링크)를 항상 포함한다.
+ * - 본문은 홈페이지 정본 `bodyMarkdown` 그대로. 인용 박스·FAQ·이중 제목·견적명 푸터를 덧붙이지 않는다.
+ * - 본문 끝에는 자가 사이트 사례 페이지 링크(=백링크)만 추가한다.
  *
  * 구글 SEO와의 분업
  * - 구글: 자가 사이트가 정본. 캐노니컬은 자가 사이트.
@@ -27,7 +28,11 @@ import type {
 } from '@/lib/showroomCaseCanonicalBlog'
 import { buildPublicShowroomCasePath } from '@/lib/showroomCaseSlug'
 
-const FOOTER_HEADER = '✦ 자세한 비포·애프터와 추가 사진은 원본에서 확인할 수 있어요.'
+const FOOTER_LINK_LABEL = '원본 보러 가기'
+const BODY_STYLE =
+  "font-family:'마루부리','Nanum MaruBuri',MaruBuri,sans-serif;font-size:16px;line-height:1.8;text-align:left;"
+const HEADING_STYLE =
+  "font-family:'마루부리','Nanum MaruBuri',MaruBuri,sans-serif;font-size:20px;line-height:1.8;text-align:left;font-weight:700;"
 
 export type NaverPackageImageItem = {
   /** 사람이 인식하는 1-base 번호. 본문의 `[이미지 N]` 과 일치한다. */
@@ -70,8 +75,6 @@ export type BuildNaverPackageInput = {
   problemLabel?: string | null
   solutionLabel?: string | null
 }
-
-const KOREAN_PUNCT = /[\s,.!?;:()[\]{}'"`~·…—\-]+/g
 
 function safeFilenamePiece(value: string): string {
   return value
@@ -131,17 +134,20 @@ function normalizeBlogMarkdownToNaverShape(
   const seenUrls = new Set<string>()
 
   const replaced = src.replace(
-    /!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g,
+    /!\[([^\]]*)\]\((https?:\/\/\S+)(?:\s+"[^"]*")?\)/g,
     (_full, alt: string, url: string) => {
-      const cleanUrl = String(url || '').trim()
+      const rawUrl = String(url || '').trim()
       const cleanAlt = String(alt || '').trim()
-      if (!cleanUrl) return ''
+      if (!rawUrl) return ''
+      const fromCanonical =
+        postImages.find((img) => img.url === rawUrl) ||
+        postImages.find((img) => img.url.startsWith(rawUrl) || rawUrl.startsWith(img.url.split('?')[0]))
+      const cleanUrl = fromCanonical?.url || rawUrl
       if (seenUrls.has(cleanUrl)) {
         const idx = orderedImages.findIndex((img) => img.url === cleanUrl) + 1
         return `\n\n[[IMG:${idx}]]\n\n`
       }
       seenUrls.add(cleanUrl)
-      const fromCanonical = postImages.find((img) => img.url === cleanUrl)
       const block: ShowroomCaseCanonicalBlogImageBlock = fromCanonical
         ? { ...fromCanonical, alt: fromCanonical.alt || cleanAlt }
         : {
@@ -176,189 +182,85 @@ function buildImageItems(images: ShowroomCaseCanonicalBlogImageBlock[]): NaverPa
   })
 }
 
-function buildHashtagPool(input: BuildNaverPackageInput): string[] {
-  const post = input.post
-  const seo = post.seo
-  const seedWords: string[] = []
-
-  for (const k of seo.keywords ?? []) {
-    if (k && k.trim()) seedWords.push(k.trim())
-  }
-  if (input.industryLabel) seedWords.push(input.industryLabel.trim())
-  if (input.problemLabel) seedWords.push(input.problemLabel.trim())
-  if (input.solutionLabel) seedWords.push(input.solutionLabel.trim())
-
-  const titleTokens = (seo.title || post.title || '')
-    .split(KOREAN_PUNCT)
-    .map((t) => t.trim())
-    .filter((t) => t.length >= 2 && t.length <= 12)
-  for (const tok of titleTokens) seedWords.push(tok)
-
-  const baseTags = ['파인드가구', '온라인쇼룸', '시공사례', '비포애프터', '리모델링', '인테리어']
-  for (const t of baseTags) seedWords.push(t)
-
+function buildHashtagPool(post: ShowroomCaseCanonicalBlogPost): string[] {
   const seen = new Set<string>()
   const result: string[] = []
-  for (const w of seedWords) {
-    const compact = w.replace(/\s+/g, '')
-    if (!compact) continue
-    if (compact.length > 18) continue
+  const seeds = [...(post.seo.keywords ?? []), '파인드가구', '시공사례']
+  for (const raw of seeds) {
+    const compact = String(raw || '').replace(/\s+/g, '').trim()
+    if (!compact || compact.length > 18) continue
     const key = compact.toLowerCase()
     if (seen.has(key)) continue
     seen.add(key)
     result.push(`#${compact}`)
-    if (result.length >= 18) break
+    if (result.length >= 10) break
   }
   return result
 }
 
-function buildTitleCandidates(input: BuildNaverPackageInput): string[] {
-  const { post, displayLabel } = input
-  const baseTitle = (post.seo.title || post.title || displayLabel || '시공 사례').trim()
-  const label = (displayLabel || post.siteName || '').trim()
-  const industry = (input.industryLabel || '').trim()
-  const summary = (post.structured?.featuredAnswer || post.seo.seoDescription || '').trim()
-
-  const candidates = new Set<string>()
-  candidates.add(baseTitle)
-  if (label && !baseTitle.includes(label)) candidates.add(`${label} | ${baseTitle}`)
-  if (industry) candidates.add(`${industry} 비포·애프터 | ${baseTitle}`)
-  if (summary) {
-    const oneLine = summary.split(/[.!?\n]/)[0].trim()
-    if (oneLine && oneLine.length <= 50) {
-      candidates.add(`${baseTitle} — ${oneLine}`)
-    }
-  }
-  candidates.add(`${baseTitle} (현장 리포트)`)
-
-  return Array.from(candidates)
-    .map((t) => t.replace(/\s+/g, ' ').trim())
-    .filter((t) => t.length > 0 && t.length <= 60)
-    .slice(0, 5)
-}
-
 function buildPublishingChecklist(): string[] {
   return [
-    '제목 1개를 골라 네이버 에디터 제목란에 붙여 넣는다.',
-    '본문을 그대로 붙여 넣는다 (HTML 또는 텍스트 모드 어느 쪽이든 가능).',
-    '본문 안의 [이미지 1], [이미지 2] … 자리에 같은 번호 사진을 업로드한다.',
-    '대표 이미지는 보통 [이미지 1] (대표 비포) 또는 [이미지 2] (대표 애프터) 를 사용한다.',
-    '본문 마지막의 "원본 보러 가기" 링크가 자가 사이트 사례 페이지로 잘 걸렸는지 확인한다.',
-    '추천 해시태그에서 6~10개를 골라 추가한다.',
+    '제목은 홈페이지 SEO 제목 그대로 쓴다.',
+    '본문은 홈페이지 정본 그대로 붙인다. FAQ·인용 박스·견적명을 덧붙이지 않는다.',
+    '본문 안의 [이미지 1], [이미지 2] … 자리에 같은 번호 사진을 끌어다 놓거나 복사해 붙여넣는다.',
+    '맨 끝 원본 보기 링크가 공개 쇼룸 사람 슬러그로 열리는지 확인한다.',
     '카테고리/공개범위/검색노출 옵션을 평소 운영 정책대로 설정한다.',
   ]
 }
 
 /**
- * 네이버 친화 본문 마크다운을 만든다.
- * - 단락은 짧게(가능하면 2~3문장) 유지.
- * - 이미지는 본문에서 따로 꺼내 `[이미지 N]` 마커로 표시.
- * - 끝에 핵심 요약 / FAQ / 자가 사이트 링크 풋터를 붙인다.
+ * 홈페이지 정본 본문을 그대로 옮긴다.
+ * - 이미지만 `[이미지 N]` 마커로 바꾼다.
+ * - 끝에 공개 쇼룸 링크만 붙인다.
  */
 function buildNaverMarkdown(
   normalizedMarkdown: string,
-  post: ShowroomCaseCanonicalBlogPost,
   canonicalUrl: string,
-  displayLabel: string,
 ): string {
-  const lines: string[] = []
-  const title = post.seo.title || post.title || displayLabel
-  lines.push(`# ${title}`)
-  lines.push('')
-
-  const featured = post.structured?.featuredAnswer?.trim()
-  if (featured) {
-    lines.push(`> ${featured}`)
-    lines.push('')
-  }
-
   const body = normalizedMarkdown
     .replace(/\[\[IMG:(\d+)\]\]/g, (_m, n) => `\n[이미지 ${n}]\n`)
     .replace(/\n{3,}/g, '\n\n')
     .trim()
+  const lines: string[] = []
   if (body) {
     lines.push(body)
     lines.push('')
   }
-
-  const faqs = (post.structured?.faqItems ?? []).filter((q) => q.question.trim() && q.answer.trim())
-  if (faqs.length > 0) {
-    lines.push('')
-    lines.push('## 자주 묻는 질문')
-    for (const qa of faqs) {
-      lines.push(`**Q. ${qa.question.trim()}**`)
-      lines.push(`A. ${qa.answer.trim()}`)
-      lines.push('')
-    }
-  }
-
-  lines.push('---')
-  lines.push(FOOTER_HEADER)
-  lines.push(`👉 [${displayLabel} — 원본 보러 가기](${canonicalUrl})`)
-  lines.push('')
-
+  lines.push(`[${FOOTER_LINK_LABEL}](${canonicalUrl})`)
   return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim()
 }
 
 function buildNaverHtml(
   normalizedMarkdown: string,
-  post: ShowroomCaseCanonicalBlogPost,
   canonicalUrl: string,
-  displayLabel: string,
 ): string {
-  const title = escapeHtml(post.seo.title || post.title || displayLabel)
   const out: string[] = []
-  out.push(`<h1>${title}</h1>`)
-
-  const featured = post.structured?.featuredAnswer?.trim()
-  if (featured) {
-    out.push(
-      `<blockquote style="border-left:3px solid #10b981;background:#ecfdf5;padding:12px 16px;margin:16px 0;color:#064e3b;">${escapeHtml(featured)}</blockquote>`,
-    )
-  }
-
   const blocks = normalizedMarkdown.split(/\n{2,}/).map((b) => b.trim()).filter(Boolean)
   for (const block of blocks) {
     const imgMatch = block.match(/^\[\[IMG:(\d+)\]\]$/)
     if (imgMatch) {
-      const n = imgMatch[1]
-      out.push(
-        `<p style="margin:18px 0;color:#475569;font-weight:600;">[이미지 ${n}]</p>`,
-      )
+      out.push(`<p style="${BODY_STYLE}">[이미지 ${imgMatch[1]}]</p>`)
       continue
     }
     if (/^#{1,6}\s/.test(block)) {
-      const level = (block.match(/^#+/)?.[0].length ?? 1)
-      const safeLevel = Math.min(Math.max(level, 2), 4)
+      const level = block.match(/^#+/)?.[0].length ?? 1
+      const safeLevel = Math.min(Math.max(level, 2), 3)
       const text = block.replace(/^#+\s+/, '').trim()
-      out.push(`<h${safeLevel}>${escapeHtml(text)}</h${safeLevel}>`)
+      out.push(`<h${safeLevel} style="${HEADING_STYLE}">${escapeHtml(text)}</h${safeLevel}>`)
       continue
     }
     if (/^>\s/.test(block)) {
       const text = block.replace(/^>\s?/, '').trim()
-      out.push(`<blockquote>${escapeHtml(text)}</blockquote>`)
+      out.push(`<blockquote style="${BODY_STYLE}">${escapeHtml(text)}</blockquote>`)
       continue
     }
     const safe = escapeHtml(block).replace(/\n/g, '<br />')
-    out.push(`<p>${safe}</p>`)
+    out.push(`<p style="${BODY_STYLE}">${safe}</p>`)
   }
 
-  const faqs = (post.structured?.faqItems ?? []).filter((q) => q.question.trim() && q.answer.trim())
-  if (faqs.length > 0) {
-    out.push('<p><br /></p>')
-    out.push('<h2>자주 묻는 질문</h2>')
-    for (const qa of faqs) {
-      out.push(`<p><strong>Q. ${escapeHtml(qa.question.trim())}</strong></p>`)
-      out.push(`<p>A. ${escapeHtml(qa.answer.trim())}</p>`)
-    }
-  }
-
-  out.push('<hr />')
-  out.push(`<p>${escapeHtml(FOOTER_HEADER)}</p>`)
   out.push(
-    `<p>👉 <a href="${escapeHtml(canonicalUrl)}" rel="noopener noreferrer" target="_blank">${escapeHtml(displayLabel)} — 원본 보러 가기</a></p>`,
+    `<p style="${BODY_STYLE}"><a href="${escapeHtml(canonicalUrl)}" rel="noopener noreferrer" target="_blank">${escapeHtml(FOOTER_LINK_LABEL)}</a></p>`,
   )
-
   return out.join('\n')
 }
 
@@ -394,10 +296,10 @@ export function buildNaverBlogPackage(input: BuildNaverPackageInput): NaverBlogP
 
   const images = buildImageItems(orderedImages)
 
-  const bodyMarkdown = buildNaverMarkdown(normalizedMarkdown, post, canonicalSourceUrl, displayLabel)
-  const bodyHtml = buildNaverHtml(normalizedMarkdown, post, canonicalSourceUrl, displayLabel)
-  const titleCandidates = buildTitleCandidates(input)
-  const hashtags = buildHashtagPool(input)
+  const bodyMarkdown = buildNaverMarkdown(normalizedMarkdown, canonicalSourceUrl)
+  const bodyHtml = buildNaverHtml(normalizedMarkdown, canonicalSourceUrl)
+  const titleCandidates = [((post.seo.title || post.title || displayLabel).trim())].filter(Boolean)
+  const hashtags = buildHashtagPool(post)
   const publishingChecklist = buildPublishingChecklist()
 
   return {
@@ -438,13 +340,8 @@ export async function downloadNaverPackageAsZip(
   let downloaded = 0
   for (const img of pkg.images) {
     try {
-      const res = await fetch(img.url, { mode: 'cors' })
-      if (!res.ok) {
-        skipped.push(img.filename)
-        continue
-      }
-      const blob = await res.blob()
-      zip.file(`images/${img.filename}`, blob)
+      const file = await fetchNaverPackageImageFile(img)
+      zip.file(`images/${img.filename}`, file)
       downloaded += 1
     } catch {
       skipped.push(img.filename)
@@ -462,4 +359,59 @@ export async function downloadNaverPackageAsZip(
   setTimeout(() => URL.revokeObjectURL(url), 30_000)
 
   return { totalImages: pkg.images.length, downloaded, skipped }
+}
+
+function mimeFromFilename(filename: string): string {
+  const ext = filename.split('.').pop()?.toLowerCase()
+  if (ext === 'png') return 'image/png'
+  if (ext === 'webp') return 'image/webp'
+  if (ext === 'gif') return 'image/gif'
+  return 'image/jpeg'
+}
+
+/** 패키지 사진을 File로 받아 드래그·클립보드·zip에 같이 쓴다. */
+export async function fetchNaverPackageImageFile(img: NaverPackageImageItem): Promise<File> {
+  const res = await fetch(img.url, { mode: 'cors' })
+  if (!res.ok) {
+    throw new Error(`이미지 ${img.index} 다운로드 실패 (${res.status})`)
+  }
+  const blob = await res.blob()
+  const type = blob.type.startsWith('image/') ? blob.type : mimeFromFilename(img.filename)
+  return new File([blob], img.filename, { type })
+}
+
+async function convertImageBlobToPng(blob: Blob): Promise<Blob> {
+  if (blob.type === 'image/png') return blob
+  const bitmap = await createImageBitmap(blob)
+  const canvas = document.createElement('canvas')
+  canvas.width = bitmap.width
+  canvas.height = bitmap.height
+  const ctx = canvas.getContext('2d')
+  if (!ctx) {
+    bitmap.close()
+    throw new Error('이미지를 PNG로 바꿀 수 없습니다.')
+  }
+  ctx.drawImage(bitmap, 0, 0)
+  bitmap.close()
+  return await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((out) => (out ? resolve(out) : reject(new Error('PNG 변환 실패'))), 'image/png')
+  })
+}
+
+/** 네이버 에디터 붙여넣기용. 브라우저는 PNG 복사가 가장 안정적이다. */
+export async function copyNaverPackageImageToClipboard(file: File): Promise<void> {
+  if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') {
+    throw new Error('이 브라우저는 이미지 복사를 지원하지 않습니다.')
+  }
+  const pngBlob = await convertImageBlobToPng(file)
+  await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngBlob })])
+}
+
+/**
+ * 네이버 에디터가 파일 드롭으로 받도록 File만 넣는다.
+ * URL을 같이 넣으면 원격 주소만 삽입되고 업로드가 안 될 수 있다.
+ */
+export function attachNaverPackageImageDragData(dataTransfer: DataTransfer, file: File): void {
+  dataTransfer.effectAllowed = 'copy'
+  dataTransfer.items.add(file)
 }
