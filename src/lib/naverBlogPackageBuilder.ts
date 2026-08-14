@@ -43,6 +43,8 @@ export type NaverPackageImageItem = {
   url: string
   /** 이미지 alt — 캡션/접근성 보조용 */
   alt: string
+  /** 네이버 사진 설명칸에 넣을 한 줄 */
+  caption: string
   /** 비포/애프터/일반 라벨 (본문 내 캡션에 사용) */
   label: 'before' | 'after' | 'plain'
 }
@@ -58,6 +60,8 @@ export type NaverBlogPackage = {
   hashtags: string[]
   /** 다운로드용 이미지 목록 */
   images: NaverPackageImageItem[]
+  /** 사진 캡션 정리표 — 한 줄에 `[이미지 N]` + 캡션 */
+  captionTableText: string
   /** 발행 체크리스트 — 다이얼로그 우측에 표시 */
   publishingChecklist: string[]
   /** 본문 끝에 들어가는 자가 사이트 사례 페이지 절대 URL */
@@ -164,10 +168,62 @@ function normalizeBlogMarkdownToNaverShape(
   return { normalizedMarkdown: compacted, orderedImages }
 }
 
-function buildImageItems(images: ShowroomCaseCanonicalBlogImageBlock[]): NaverPackageImageItem[] {
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function stripCaptionNoise(text: string, siteName: string): string {
+  let s = String(text || '')
+  for (const part of siteName.split(/[\s_/·]+/).filter((piece) => piece.length >= 2)) {
+    s = s.replace(new RegExp(escapeRegExp(part), 'g'), ' ')
+  }
+  s = s.replace(/견적/g, ' ')
+  s = s.replace(/\b\d{4}\b/g, ' ')
+  s = s.replace(/비포|애프터|before|after/gi, ' ')
+  s = s.replace(/[·|,/_]+/g, ' ')
+  s = s.replace(/\s+/g, ' ').trim()
+  if (/^(현장|사진)$/.test(s)) return ''
+  return s
+}
+
+function buildNaverImageCaption(
+  img: ShowroomCaseCanonicalBlogImageBlock,
+  label: 'before' | 'after' | 'plain',
+  siteName: string,
+): string {
+  const stored = String(img.caption || '').trim()
+  if (stored && stored.length >= 4 && !/^(비포|애프터|before|after)$/i.test(stored)) {
+    return stored
+  }
+  const product = String(img.productName || '').replace(/\s+/g, '').trim()
+  const leftover = stripCaptionNoise(img.alt, siteName)
+  if (label === 'before') {
+    if (leftover) return `비포 — ${leftover}`
+    return '비포 — 가구 설치 전 현장'
+  }
+  if (label === 'after') {
+    if (product && leftover && !leftover.includes(product)) return `애프터 — ${product} ${leftover}`
+    if (product) return `애프터 — ${product}`
+    if (leftover) return `애프터 — ${leftover}`
+    return '애프터 — 설치 후 현장'
+  }
+  return product || leftover || '현장 사진'
+}
+
+export function formatNaverCaptionTable(images: NaverPackageImageItem[]): string {
+  return images.map((img) => `[이미지 ${img.index}] ${img.caption}`).join('\n')
+}
+
+function buildImageItems(
+  images: ShowroomCaseCanonicalBlogImageBlock[],
+  siteName: string,
+): NaverPackageImageItem[] {
   return images.map((img, i) => {
     const index = i + 1
-    const label = detectImageLabel(img.alt)
+    const label =
+      img.beforeAfter === 'before' || img.beforeAfter === 'after'
+        ? img.beforeAfter
+        : detectImageLabel(img.alt)
     const ext = inferImageExtension(img.url)
     const labelKor = label === 'before' ? '비포' : label === 'after' ? '애프터' : '현장'
     const altPiece = safeFilenamePiece(img.alt) || '사진'
@@ -177,6 +233,7 @@ function buildImageItems(images: ShowroomCaseCanonicalBlogImageBlock[]): NaverPa
       filename: `${num}_${labelKor}_${altPiece}.${ext}`,
       url: img.url,
       alt: img.alt,
+      caption: buildNaverImageCaption(img, label, siteName),
       label,
     }
   })
@@ -302,6 +359,7 @@ function buildPublishingChecklist(): string[] {
     '본문은 홈페이지 정본 그대로 붙인다. FAQ·인용 박스·견적명을 덧붙이지 않는다.',
     '본문 안의 [이미지 1], [이미지 2] … 자리에 같은 번호 사진을 끌어다 놓거나 복사해 붙여넣는다.',
     '맨 끝 원본 보기 링크가 공개 쇼룸 사람 슬러그로 열리는지 확인한다.',
+    '사진 설명은 캡션 정리표에서 복사해 같은 번호 사진에 붙인다.',
     '해시태그는 브랜드·시공사례·제품명·업종리뉴얼 정도만 붙인다. 30개·100자를 넘기지 않는다.',
     '카테고리/공개범위/검색노출 옵션을 평소 운영 정책대로 설정한다.',
   ]
@@ -393,7 +451,8 @@ export function buildNaverBlogPackage(input: BuildNaverPackageInput): NaverBlogP
     post.images ?? [],
   )
 
-  const images = buildImageItems(orderedImages)
+  const images = buildImageItems(orderedImages, post.siteName || displayLabel)
+  const captionTableText = formatNaverCaptionTable(images)
 
   const bodyMarkdown = buildNaverMarkdown(normalizedMarkdown, canonicalSourceUrl)
   const bodyHtml = buildNaverHtml(normalizedMarkdown, canonicalSourceUrl)
@@ -407,6 +466,7 @@ export function buildNaverBlogPackage(input: BuildNaverPackageInput): NaverBlogP
     titleCandidates,
     hashtags,
     images,
+    captionTableText,
     publishingChecklist,
     canonicalSourceUrl,
   }
@@ -417,7 +477,7 @@ export function buildNaverBlogPackage(input: BuildNaverPackageInput): NaverBlogP
  * 호출부 예: `await downloadNaverPackageAsZip(pkg, 'naver_2505_경기권_6888.zip')`
  *
  * 같은 zip에 본문도 함께 넣어서 운영자가 한 번에 보관하기 좋게 한다.
- *   - body.html / body.md / hashtags.txt / titles.txt / checklist.txt / source.url
+ *   - body.html / body.md / hashtags.txt / titles.txt / captions.txt / checklist.txt / source.url
  *
  * 일부 이미지가 CORS 등으로 실패하면, 그 이미지는 건너뛰고 진행 (UI에 결과 카운트만 노출).
  */
@@ -432,6 +492,7 @@ export async function downloadNaverPackageAsZip(
   zip.file('body.md', pkg.bodyMarkdown)
   zip.file('titles.txt', pkg.titleCandidates.join('\n'))
   zip.file('hashtags.txt', pkg.hashtags.join(' '))
+  zip.file('captions.txt', pkg.captionTableText)
   zip.file('checklist.txt', pkg.publishingChecklist.map((line, i) => `${i + 1}. ${line}`).join('\n'))
   zip.file('source.url', `[InternetShortcut]\nURL=${pkg.canonicalSourceUrl}\n`)
 

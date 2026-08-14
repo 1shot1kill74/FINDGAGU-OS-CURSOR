@@ -68,6 +68,7 @@ import {
   mapPool,
   type BlogQueueFilter,
 } from '@/pages/admin/showroomCaseStudio/showroomCaseStudioQueue'
+import { NaverPackageCaptionTable } from '@/pages/admin/showroomCaseStudio/NaverPackageCaptionTable'
 import { NaverPackageImageTray } from '@/pages/admin/showroomCaseStudio/NaverPackageImageTray'
 
 function caseStudioIndustryChipClass(selected: boolean): string {
@@ -972,6 +973,16 @@ export default function ShowroomCaseStudioPage() {
                   <Button
                     type="button"
                     size="sm"
+                    variant="outline"
+                    className="gap-1.5"
+                    disabled={naverPackageState.pkg.images.length === 0}
+                    onClick={() => void copyToClipboardSafely(naverPackageState.pkg.captionTableText, '사진 캡션 정리표')}
+                  >
+                    <Copy className="h-4 w-4" /> 캡션 복사
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
                     className="gap-1.5"
                     disabled={naverZipDownloading}
                     onClick={() => void handleDownloadNaverZip()}
@@ -1010,6 +1021,16 @@ export default function ShowroomCaseStudioPage() {
                 <section className="mb-5 rounded-2xl border border-slate-200 bg-white px-4 py-3">
                   <NaverPackageImageTray images={naverPackageState.pkg.images} />
                 </section>
+
+                {naverPackageState.pkg.images.length > 0 ? (
+                  <section className="mb-5 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                    <NaverPackageCaptionTable
+                      images={naverPackageState.pkg.images}
+                      tableText={naverPackageState.pkg.captionTableText}
+                      onCopy={(text, label) => void copyToClipboardSafely(text, label)}
+                    />
+                  </section>
+                ) : null}
               </div>
 
               <aside className="border-t border-slate-200 bg-slate-50 px-5 py-5 text-xs text-slate-700 md:max-h-full md:overflow-y-auto md:border-l md:border-t-0">

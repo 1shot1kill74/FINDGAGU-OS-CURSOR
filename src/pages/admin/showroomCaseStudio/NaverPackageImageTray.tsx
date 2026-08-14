@@ -164,9 +164,14 @@ export function NaverPackageImageTray({ images }: { images: NaverPackageImageIte
                 ) : null}
               </div>
               <div className="flex items-start justify-between gap-2 px-2 py-1.5">
-                <p className="min-w-0 truncate text-[11px] text-slate-600" title={img.filename}>
-                  {img.filename}
-                </p>
+                <div className="min-w-0">
+                  <p className="truncate text-[11px] text-slate-800" title={img.caption}>
+                    {img.caption}
+                  </p>
+                  <p className="mt-0.5 truncate text-[10px] text-slate-500" title={img.filename}>
+                    {img.filename}
+                  </p>
+                </div>
                 <Button
                   type="button"
                   size="sm"
