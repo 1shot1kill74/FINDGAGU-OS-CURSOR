@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   CalendarClock,
   Columns2,
+  Download,
   Eraser,
   ExternalLink,
   FolderInput,
@@ -105,6 +106,7 @@ import {
   updateShowroomShortsTargetPreparation,
   type ShowroomShortsTargetRecord,
 } from '@/lib/showroomShorts'
+import { downloadShowroomShortsFinalAsMp4 } from '@/lib/showroomShortsComposer'
 import { SHOWROOM_SHORTS_TIMELAPSE_PROMPT } from '@/lib/showroomShortsTimelapsePrompt'
 import {
   SHOWROOM_SHORTS_HOOK_POOL,
@@ -371,6 +373,7 @@ export default function AdInboxStudioPage() {
   const [activeJobId, setActiveJobId] = useState<string | null>(null)
   const [jobsLoading, setJobsLoading] = useState(false)
   const [actingJob, setActingJob] = useState(false)
+  const [downloadingMp4, setDownloadingMp4] = useState(false)
   const [workProgressByKey, setWorkProgressByKey] = useState<Record<string, AdInboxBatchWorkState>>({})
   /** 현장 카드별 발행예정 datetime-local 초안 */
   const [scheduleDraftByKey, setScheduleDraftByKey] = useState<Record<string, string>>({})
@@ -1186,6 +1189,26 @@ export default function AdInboxStudioPage() {
       toast.error(error instanceof Error ? error.message : '합성 요청 실패')
     } finally {
       setActingJob(false)
+    }
+  }
+
+  const handleDownloadClipMp4 = async () => {
+    const url = activeJob?.final_video_url || activeJob?.source_video_url
+    if (!activeJob || !url) {
+      toast.error('받을 영상이 없습니다. 합성이 끝난 뒤 다시 눌러 주세요.')
+      return
+    }
+    const site =
+      selectedBatch?.shortName?.trim() || selectedBatch?.label?.trim() || 'findgagu'
+    const kind = activeJob.final_video_url ? 'clip' : 'source'
+    setDownloadingMp4(true)
+    try {
+      await downloadShowroomShortsFinalAsMp4(url, `${site}-${kind}`)
+      toast.success('클립 업로드용 MP4를 받았습니다. clipcreators.naver.com에서 올리면 됩니다.')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '영상 다운로드에 실패했습니다.')
+    } finally {
+      setDownloadingMp4(false)
     }
   }
 
@@ -2479,7 +2502,22 @@ export default function AdInboxStudioPage() {
 
                             {activeJob.final_video_url ? (
                               <div>
-                                <p className="mb-2 text-xs font-medium text-neutral-700">최종(합성) 영상</p>
+                                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                                  <p className="text-xs font-medium text-neutral-700">최종(합성) 영상</p>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    disabled={downloadingMp4}
+                                    onClick={() => void handleDownloadClipMp4()}
+                                  >
+                                    {downloadingMp4 ? (
+                                      <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                                    ) : (
+                                      <Download className="mr-1.5 h-3.5 w-3.5" />
+                                    )}
+                                    클립용 MP4 받기
+                                  </Button>
+                                </div>
                                 <video
                                   key={activeJob.final_video_url}
                                   src={activeJob.final_video_url}
@@ -2487,6 +2525,18 @@ export default function AdInboxStudioPage() {
                                   playsInline
                                   className="max-h-[420px] w-full rounded-xl bg-black"
                                 />
+                                <p className="mt-1.5 text-[11px] text-neutral-500">
+                                  받은 파일을{' '}
+                                  <a
+                                    href="https://clipcreators.naver.com"
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="font-medium text-neutral-700 underline underline-offset-2"
+                                  >
+                                    clipcreators.naver.com
+                                  </a>
+                                  에 올리면 됩니다.
+                                </p>
                               </div>
                             ) : null}
 
@@ -2640,6 +2690,22 @@ export default function AdInboxStudioPage() {
                                   </a>
                                 </Button>
                               ) : null}
+                              {activeJob.final_video_url || activeJob.source_video_url ? (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant={activeJob.final_video_url ? 'default' : 'outline'}
+                                  disabled={downloadingMp4}
+                                  onClick={() => void handleDownloadClipMp4()}
+                                >
+                                  {downloadingMp4 ? (
+                                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                                  ) : (
+                                    <Download className="mr-1.5 h-3.5 w-3.5" />
+                                  )}
+                                  {activeJob.final_video_url ? '클립용 MP4 받기' : '원본 MP4 받기'}
+                                </Button>
+                              ) : null}
                             </div>
 
                             {activeJob.final_video_url ? (
@@ -2657,17 +2723,32 @@ export default function AdInboxStudioPage() {
                                       )로 쇼룸+UTM이 붙습니다.
                                     </p>
                                   </div>
-                                  {orderedTargets.length < SHOWROOM_SHORTS_CHANNELS.length ? (
+                                  <div className="flex flex-wrap gap-2">
                                     <Button
                                       type="button"
                                       size="sm"
-                                      variant="secondary"
-                                      disabled={actingJob}
-                                      onClick={() => void handleEnsureTripleTargets()}
+                                      disabled={downloadingMp4}
+                                      onClick={() => void handleDownloadClipMp4()}
                                     >
-                                      3채널 타깃 맞추기
+                                      {downloadingMp4 ? (
+                                        <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                                      ) : (
+                                        <Download className="mr-1.5 h-3.5 w-3.5" />
+                                      )}
+                                      클립용 MP4 받기
                                     </Button>
-                                  ) : null}
+                                    {orderedTargets.length < SHOWROOM_SHORTS_CHANNELS.length ? (
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="secondary"
+                                        disabled={actingJob}
+                                        onClick={() => void handleEnsureTripleTargets()}
+                                      >
+                                        3채널 타깃 맞추기
+                                      </Button>
+                                    ) : null}
+                                  </div>
                                 </div>
                                 {orderedTargets.length === 0 ? (
                                   <p className="text-xs text-amber-700">
