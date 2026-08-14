@@ -1,6 +1,7 @@
 import type { CaseDraftState } from '@/pages/admin/showroomCaseStudio/showroomCaseStudioTypes'
 
 export type BlogQueueFilter = 'all' | 'missing' | 'draft' | 'approved'
+export type NaverQueueFilter = 'all' | 'pending' | 'done'
 
 export type BlogQueueStatus = Exclude<BlogQueueFilter, 'all'>
 
@@ -12,6 +13,16 @@ export const BLOG_QUEUE_FILTERS: Array<{ id: BlogQueueFilter; label: string }> =
   { id: 'draft', label: '초안' },
   { id: 'approved', label: '공개' },
 ]
+
+export const NAVER_QUEUE_FILTERS: Array<{ id: NaverQueueFilter; label: string }> = [
+  { id: 'all', label: '네이버 전체' },
+  { id: 'pending', label: '네이버 대기' },
+  { id: 'done', label: '네이버 완료' },
+]
+
+export function getNaverQueueStatus(row: CaseDraftState): Exclude<NaverQueueFilter, 'all'> {
+  return row.naverBlogPackage.done ? 'done' : 'pending'
+}
 
 export function getBlogQueueStatus(row: CaseDraftState): BlogQueueStatus {
   const status = row.canonicalBlogPost?.status

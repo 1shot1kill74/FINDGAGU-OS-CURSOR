@@ -36,6 +36,8 @@ export type ShowroomCaseProfileDraft = {
   cardNewsGeneration: ShowroomCaseGenerationState
   blogGeneration: ShowroomCaseGenerationState
   cardNewsPublication: ShowroomCaseCardNewsPublication
+  /** 네이버 패키지를 에디터에 넣고 임시저장까지 끝낸 수기 체크 */
+  naverBlogPackage: ShowroomCaseNaverBlogPackageState
   /** Google/네이버/내부 쇼룸 공통 블로그 정본. 미저장 시 `null`. */
   canonicalBlogPost: ShowroomCaseCanonicalBlogPost | null
   /** 이전/잘못된 공개 표시명 — URL·조회 호환용 */
@@ -47,6 +49,32 @@ export type ShowroomCaseCardNewsPublication = {
   publishedAt: string | null
   slug: string | null
   siteKey: string | null
+}
+
+export type ShowroomCaseNaverBlogPackageState = {
+  done: boolean
+  doneAt: string | null
+}
+
+const NAVER_BLOG_PACKAGE_METADATA_KEY = 'naver_blog_package'
+
+function createEmptyNaverBlogPackageState(): ShowroomCaseNaverBlogPackageState {
+  return { done: false, doneAt: null }
+}
+
+function parseNaverBlogPackageMeta(metadata: unknown): ShowroomCaseNaverBlogPackageState {
+  const raw = metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+    ? metadata as Record<string, unknown>
+    : {}
+  const stored = raw[NAVER_BLOG_PACKAGE_METADATA_KEY]
+  if (!stored || typeof stored !== 'object' || Array.isArray(stored)) {
+    return createEmptyNaverBlogPackageState()
+  }
+  const record = stored as Record<string, unknown>
+  return {
+    done: record.done === true,
+    doneAt: typeof record.done_at === 'string' && record.done_at.trim() ? record.done_at.trim() : null,
+  }
 }
 
 export type ShowroomCaseConsultationCardDraftSlide = {
@@ -319,6 +347,7 @@ function mapShowroomCaseProfileRows(
       cardNewsGeneration: generation.cardNewsGeneration,
       blogGeneration: generation.blogGeneration,
       cardNewsPublication: publication,
+      naverBlogPackage: parseNaverBlogPackageMeta(row.metadata),
       canonicalBlogPost,
       legacyPublicDisplayNames,
     }]
@@ -633,6 +662,40 @@ export async function saveShowroomCaseConsultationCardDraft(input: {
     }, { onConflict: 'site_name', ignoreDuplicates: false })
 
   return { error: error ?? null }
+}
+
+export async function saveShowroomCaseNaverBlogPackageState(input: {
+  siteName: string
+  done: boolean
+}): Promise<{ error: Error | null; state: ShowroomCaseNaverBlogPackageState | null }> {
+  const siteName = input.siteName.trim()
+  if (!siteName) {
+    return { error: new Error('현장명이 비어 있어 네이버 작업 상태를 저장할 수 없습니다.'), state: null }
+  }
+
+  const existingMeta = await readExistingMetadata(siteName)
+  const now = new Date().toISOString()
+  const nextState = {
+    done: input.done,
+    done_at: input.done ? now : null,
+  }
+  const nextMeta = {
+    ...existingMeta,
+    [NAVER_BLOG_PACKAGE_METADATA_KEY]: nextState,
+  }
+
+  const { error } = await (supabase as any)
+    .from('showroom_case_profiles')
+    .upsert({
+      site_name: siteName,
+      metadata: nextMeta,
+      updated_at: now,
+    }, { onConflict: 'site_name', ignoreDuplicates: false })
+
+  return {
+    error: error ?? null,
+    state: error ? null : { done: nextState.done, doneAt: nextState.done_at },
+  }
 }
 
 export async function saveShowroomCaseCardNewsPublication(input: {

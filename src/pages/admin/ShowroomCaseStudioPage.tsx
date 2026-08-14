@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { Copy, Download, Eye, Hash, Loader2, Send, Sparkles } from 'lucide-react'
+import { Check, Copy, Download, Eye, Hash, Loader2, Send, Sparkles } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -41,6 +41,7 @@ import {
   fetchShowroomCaseProfileDrafts,
   saveShowroomCaseCanonicalBlogPost,
   saveShowroomCaseGenerationState,
+  saveShowroomCaseNaverBlogPackageState,
   saveShowroomCaseProfileDraft,
 } from '@/lib/showroomCaseProfileService'
 import { supabase } from '@/lib/supabase'
@@ -64,9 +65,12 @@ import { getPrimaryIndustryLabel } from '@/pages/showroom/showroomPageGrouping'
 import {
   BLOG_BATCH_MAX,
   BLOG_QUEUE_FILTERS,
+  NAVER_QUEUE_FILTERS,
   getBlogQueueStatus,
+  getNaverQueueStatus,
   mapPool,
   type BlogQueueFilter,
+  type NaverQueueFilter,
 } from '@/pages/admin/showroomCaseStudio/showroomCaseStudioQueue'
 import { NaverPackageCaptionTable } from '@/pages/admin/showroomCaseStudio/NaverPackageCaptionTable'
 import { NaverPackageImageTray } from '@/pages/admin/showroomCaseStudio/NaverPackageImageTray'
@@ -88,6 +92,8 @@ export default function ShowroomCaseStudioPage() {
   /** null = 전체. 케이스 카드 목록 업종 필터 */
   const [industryFilter, setIndustryFilter] = useState<string | null>(null)
   const [blogQueueFilter, setBlogQueueFilter] = useState<BlogQueueFilter>('all')
+  const [naverQueueFilter, setNaverQueueFilter] = useState<NaverQueueFilter>('all')
+  const [naverMarkingSite, setNaverMarkingSite] = useState<string | null>(null)
   const [selectedSiteNames, setSelectedSiteNames] = useState<string[]>([])
   const [batchBusy, setBatchBusy] = useState<null | 'brief' | 'blog'>(null)
   const [blogViewer, setBlogViewer] = useState<{ displayLabel: string; post: ShowroomCaseCanonicalBlogPost; html: string } | null>(null)
@@ -245,6 +251,7 @@ export default function ShowroomCaseStudioPage() {
               slug: null,
               siteKey: group.siteName,
             },
+            naverBlogPackage: saved?.naverBlogPackage ?? { done: false, doneAt: null },
             canonicalBlogPost: saved?.canonicalBlogPost ?? null,
           }
           if (
@@ -691,6 +698,26 @@ export default function ShowroomCaseStudioPage() {
     }
   }
 
+  async function handleMarkNaverPackage(row: CaseDraftState, done: boolean) {
+    setNaverMarkingSite(row.siteName)
+    try {
+      const { error, state } = await saveShowroomCaseNaverBlogPackageState({
+        siteName: row.siteName,
+        done,
+      })
+      if (error) throw error
+      if (!state) throw new Error('네이버 작업 상태를 저장하지 못했습니다.')
+      setRows((prev) =>
+        prev.map((item) => (item.siteName === row.siteName ? { ...item, naverBlogPackage: state } : item)),
+      )
+      toast.success(done ? '네이버 작업 완료로 표시했습니다.' : '네이버 대기로 되돌렸습니다.')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '네이버 작업 상태 저장에 실패했습니다.')
+    } finally {
+      setNaverMarkingSite(null)
+    }
+  }
+
   const industryRows = useMemo(() => {
     if (!industryFilter) return rows
     return rows.filter((row) => {
@@ -712,13 +739,26 @@ export default function ShowroomCaseStudioPage() {
     return counts
   }, [industryRows])
 
+  const naverCounts = useMemo(() => {
+    const counts: Record<NaverQueueFilter, number> = {
+      all: industryRows.length,
+      pending: 0,
+      done: 0,
+    }
+    for (const row of industryRows) {
+      counts[getNaverQueueStatus(row)] += 1
+    }
+    return counts
+  }, [industryRows])
+
   const cards = useMemo(() => {
     return industryRows.filter((row) => {
       if (focusedSiteName && row.siteName === focusedSiteName) return true
-      if (blogQueueFilter === 'all') return true
-      return getBlogQueueStatus(row) === blogQueueFilter
+      if (blogQueueFilter !== 'all' && getBlogQueueStatus(row) !== blogQueueFilter) return false
+      if (naverQueueFilter !== 'all' && getNaverQueueStatus(row) !== naverQueueFilter) return false
+      return true
     })
-  }, [blogQueueFilter, focusedSiteName, industryRows])
+  }, [blogQueueFilter, focusedSiteName, industryRows, naverQueueFilter])
 
   const selectedRows = useMemo(() => {
     const selected = new Set(selectedSiteNames)
@@ -858,6 +898,19 @@ export default function ShowroomCaseStudioPage() {
             표시 {cards.length} / 업종 {industryRows.length} / 전체 {count}
           </span>
         </div>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          {NAVER_QUEUE_FILTERS.map((filter) => (
+            <button
+              key={`case-studio-naver-${filter.id}`}
+              type="button"
+              onClick={() => setNaverQueueFilter(filter.id)}
+              className={`rounded-full border px-3 py-1 text-xs font-medium ${caseStudioIndustryChipClass(naverQueueFilter === filter.id)}`}
+            >
+              {filter.label}
+              <span className="ml-1 opacity-70">{naverCounts[filter.id]}</span>
+            </button>
+          ))}
+        </div>
         <div className="mt-4 space-y-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
           <div className="flex flex-wrap items-center gap-2">
             <Button type="button" variant="outline" size="sm" onClick={toggleSelectVisible}>
@@ -928,7 +981,32 @@ export default function ShowroomCaseStudioPage() {
       <Dialog open={naverPackageState !== null} onOpenChange={(open) => !open && setNaverPackageState(null)}>
         <DialogContent className="flex max-h-[min(92vh,900px)] w-[min(100vw-1.5rem,52rem)] flex-col gap-0 overflow-hidden border-0 p-0 shadow-xl sm:max-w-3xl">
           <DialogHeader className="shrink-0 border-b border-slate-200 bg-slate-50 px-5 py-4 text-left">
-            <DialogTitle className="text-base font-semibold text-slate-900">네이버 블로그 발행 패키지</DialogTitle>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <DialogTitle className="text-base font-semibold text-slate-900">네이버 블로그 발행 패키지</DialogTitle>
+              {naverPackageState ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={rows.find((row) => row.siteName === naverPackageState.siteName)?.naverBlogPackage.done ? 'outline' : 'default'}
+                  className="gap-1.5"
+                  disabled={naverMarkingSite === naverPackageState.siteName}
+                  onClick={() => {
+                    const row = rows.find((item) => item.siteName === naverPackageState.siteName)
+                    if (!row) return
+                    void handleMarkNaverPackage(row, !row.naverBlogPackage.done)
+                  }}
+                >
+                  {naverMarkingSite === naverPackageState.siteName ? (
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                  ) : (
+                    <Check className="h-4 w-4" aria-hidden />
+                  )}
+                  {rows.find((row) => row.siteName === naverPackageState.siteName)?.naverBlogPackage.done
+                    ? '완료 해제'
+                    : '이 케이스 작업 완료'}
+                </Button>
+              ) : null}
+            </div>
             <p className="mt-1 text-xs text-slate-500">
               {naverPackageState?.displayLabel ? (
                 <>
@@ -1183,6 +1261,13 @@ export default function ShowroomCaseStudioPage() {
                                   {formatShowroomBlogQaSummary(row.canonicalBlogPost.qaReview)}
                                 </span>
                               ) : null}
+                              <span className={`rounded-full px-2.5 py-1 font-medium ${
+                                row.naverBlogPackage.done
+                                  ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200'
+                                  : 'bg-slate-100 text-slate-600'
+                              }`}>
+                                네이버 {row.naverBlogPackage.done ? '완료' : '대기'}
+                              </span>
                               {row.canonicalBlogPost?.qaReview?.localRepairApplied ? (
                                 <span className="rounded-full bg-violet-50 px-2.5 py-1 font-medium text-violet-800 ring-1 ring-violet-200">
                                   자동 수정
@@ -1313,6 +1398,22 @@ export default function ShowroomCaseStudioPage() {
                             >
                               <Send className="h-4 w-4" aria-hidden />
                               네이버 패키지
+                            </Button>
+                            <Button
+                              type="button"
+                              variant={row.naverBlogPackage.done ? 'outline' : 'default'}
+                              size="sm"
+                              className="gap-1.5"
+                              disabled={naverMarkingSite === row.siteName}
+                              onClick={() => void handleMarkNaverPackage(row, !row.naverBlogPackage.done)}
+                              title={row.naverBlogPackage.done ? '네이버 대기로 되돌립니다.' : '네이버에 임시저장까지 끝냈으면 체크합니다.'}
+                            >
+                              {naverMarkingSite === row.siteName ? (
+                                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                              ) : (
+                                <Check className="h-4 w-4" aria-hidden />
+                              )}
+                              {row.naverBlogPackage.done ? '네이버 완료 해제' : '네이버 작업 완료'}
                             </Button>
                           </div>
                         </div>
