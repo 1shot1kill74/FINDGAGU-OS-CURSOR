@@ -182,17 +182,115 @@ function buildImageItems(images: ShowroomCaseCanonicalBlogImageBlock[]): NaverPa
   })
 }
 
-function buildHashtagPool(post: ShowroomCaseCanonicalBlogPost): string[] {
+/** 네이버 블로그 태그: 최대 30개, 공백 포함 합계 100자. */
+const NAVER_HASHTAG_MAX_COUNT = 30
+const NAVER_HASHTAG_MAX_CHARS = 100
+const REQUIRED_HASHTAGS = ['파인드가구', '시공사례']
+const SKIP_HASHTAGS = new Set([
+  '리뉴얼',
+  '공간전략',
+  '밝은공간',
+  '좌석배치',
+  '매출부진',
+  '학습환경',
+  '가구디자인',
+  '공간분리',
+  '책상공간',
+  '좌석개선',
+  '책상배치',
+  '수납책장',
+  '집중력가구',
+  '학습공간인테리어',
+  '아파트리모델링',
+  '파인드가구사례',
+  '교육공간',
+  '공간리뉴얼',
+])
+
+function compactHashtag(raw: string): string {
+  return String(raw || '').replace(/^#/, '').replace(/\s+/g, '').trim()
+}
+
+function caseHaystack(input: BuildNaverPackageInput): string {
+  return [
+    input.displayLabel,
+    input.industryLabel,
+    input.post.siteName,
+    input.post.title,
+    input.post.seo.title,
+    ...(input.post.seo.keywords ?? []),
+  ]
+    .map((value) => String(value || ''))
+    .join(' ')
+}
+
+function collectProductHashtags(input: BuildNaverPackageInput): string[] {
+  const seen = new Set<string>()
+  const names: string[] = []
+  const pushName = (raw: string) => {
+    const compact = compactHashtag(raw)
+    if (!compact || compact.length < 2 || compact.length > 12) return
+    if (/^(기타|미지정|현장|사진)$/.test(compact)) return
+    const key = compact.toLowerCase()
+    if (seen.has(key)) return
+    seen.add(key)
+    names.push(compact)
+  }
+
+  for (const img of input.post.images ?? []) {
+    pushName(img.productName || '')
+    const fromAlt = String(img.alt || '').match(/((?:프라이버시|스마트)\s*[A-Z0-9형]?)/i)
+    if (fromAlt?.[1]) pushName(fromAlt[1])
+    if (names.length >= 3) break
+  }
+  return names
+}
+
+function isEssentialExtraHashtag(compact: string): boolean {
+  if (compact.length < 2 || compact.length > 12) return false
+  if (SKIP_HASHTAGS.has(compact)) return false
+  if (/부진|전략|개선|변화|문제/.test(compact)) return false
+  return true
+}
+
+function pushHashtag(result: string[], seen: Set<string>, compact: string): boolean {
+  const key = compact.toLowerCase()
+  if (!compact || seen.has(key)) return false
+  const tag = `#${compact}`
+  const joined = result.length === 0 ? tag : `${result.join(' ')} ${tag}`
+  if (result.length >= NAVER_HASHTAG_MAX_COUNT) return false
+  if (joined.length > NAVER_HASHTAG_MAX_CHARS) return false
+  seen.add(key)
+  result.push(tag)
+  return true
+}
+
+function buildHashtagPool(input: BuildNaverPackageInput): string[] {
   const seen = new Set<string>()
   const result: string[] = []
-  const seeds = [...(post.seo.keywords ?? []), '파인드가구', '시공사례']
-  for (const raw of seeds) {
-    const compact = String(raw || '').replace(/\s+/g, '').trim()
-    if (!compact || compact.length > 18) continue
-    const key = compact.toLowerCase()
-    if (seen.has(key)) continue
-    seen.add(key)
-    result.push(`#${compact}`)
+  for (const required of REQUIRED_HASHTAGS) {
+    pushHashtag(result, seen, required)
+  }
+
+  const hay = caseHaystack(input)
+  const compactHay = compactHashtag(hay)
+  const industry = compactHashtag(input.industryLabel || '')
+  const isRenewal = /리뉴얼|renewal/i.test(hay)
+  const isStudyCafe = compactHay.includes('스터디카페') || industry.includes('스터디카페')
+
+  const extras: string[] = []
+  if (industry) extras.push(industry)
+  if (isStudyCafe) extras.push('스터디카페')
+  if (isStudyCafe && isRenewal) extras.push('스터디카페리뉴얼')
+  else if (industry && isRenewal && industry !== '스터디카페') extras.push(`${industry}리뉴얼`)
+  extras.push(...collectProductHashtags(input))
+  extras.push(...(input.post.seo.keywords ?? []))
+
+  for (const raw of extras) {
+    const compact = compactHashtag(String(raw || ''))
+    if (REQUIRED_HASHTAGS.includes(compact)) continue
+    if (!isEssentialExtraHashtag(compact)) continue
+    pushHashtag(result, seen, compact)
     if (result.length >= 10) break
   }
   return result
@@ -204,6 +302,7 @@ function buildPublishingChecklist(): string[] {
     '본문은 홈페이지 정본 그대로 붙인다. FAQ·인용 박스·견적명을 덧붙이지 않는다.',
     '본문 안의 [이미지 1], [이미지 2] … 자리에 같은 번호 사진을 끌어다 놓거나 복사해 붙여넣는다.',
     '맨 끝 원본 보기 링크가 공개 쇼룸 사람 슬러그로 열리는지 확인한다.',
+    '해시태그는 브랜드·시공사례·제품명·업종리뉴얼 정도만 붙인다. 30개·100자를 넘기지 않는다.',
     '카테고리/공개범위/검색노출 옵션을 평소 운영 정책대로 설정한다.',
   ]
 }
@@ -299,7 +398,7 @@ export function buildNaverBlogPackage(input: BuildNaverPackageInput): NaverBlogP
   const bodyMarkdown = buildNaverMarkdown(normalizedMarkdown, canonicalSourceUrl)
   const bodyHtml = buildNaverHtml(normalizedMarkdown, canonicalSourceUrl)
   const titleCandidates = [((post.seo.title || post.title || displayLabel).trim())].filter(Boolean)
-  const hashtags = buildHashtagPool(post)
+  const hashtags = buildHashtagPool(input)
   const publishingChecklist = buildPublishingChecklist()
 
   return {

@@ -1025,7 +1025,10 @@ export default function ShowroomCaseStudioPage() {
                   </a>
                 </div>
                 <div className="mb-5">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">추천 해시태그</p>
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">해시태그 (필수)</p>
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    {naverPackageState.pkg.hashtags.length}개 · {naverPackageState.pkg.hashtags.join(' ').length}/100자
+                  </p>
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {naverPackageState.pkg.hashtags.map((tag) => (
                       <span key={tag} className="rounded-full bg-white px-2 py-0.5 text-[11px] text-slate-700 ring-1 ring-slate-200">
