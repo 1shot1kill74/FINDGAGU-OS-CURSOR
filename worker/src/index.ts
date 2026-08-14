@@ -124,12 +124,6 @@ const BGM_POOL_FILES = [
   'bright-lines-new-light-sample-b-24-34.mp3',
 ] as const
 
-/** drawtext는 0xRRGGBB만 허용. 잘못된 값이 오면 필터 그래프가 깨지므로 기본색으로 되돌린다. */
-function normalizeDrawtextColor(value: string | null | undefined, fallback: string): string {
-  const raw = (value ?? '').trim()
-  return /^0x[0-9a-f]{6}$/iu.test(raw) ? raw : fallback
-}
-
 function hashBgmSeed(seed: string): number {
   let hash = 2166136261
   const value = seed.trim() || 'showroom-shorts'
@@ -1529,7 +1523,7 @@ async function markTargetsReady(jobId: string) {
     .update({
       publish_status: 'ready',
       final_video_url: null,
-      preparation_payload: null,
+      preparation_payload: {},
       preparation_error: null,
       prepared_at: null,
       launch_ready_at: null,
@@ -2089,8 +2083,9 @@ async function runFfmpegAfterBeforeTimelapse(input: {
   beforeBeat?: number
   afterHold?: number
 }) {
-  const hookColor = normalizeDrawtextColor(input.hookColor, '0xffd54a')
-  const ctaColor = normalizeDrawtextColor(input.ctaColor, '0xffffff')
+  // 훅 하늘색·CTA 노랑은 브랜드 고정. 예전 스냅샷의 노랑 훅·흰 CTA가 있어도 덮어쓴다.
+  const hookColor = '0x8ce8ff'
+  const ctaColor = '0xffd54a'
   const yShift = Number.isFinite(input.textYShift)
     ? Math.max(-24, Math.min(Number(input.textYShift), 24))
     : 0
@@ -2113,7 +2108,8 @@ async function runFfmpegAfterBeforeTimelapse(input: {
   const beforeEnable = escapeExpression(
     `between(t,${formatSeconds(afterOpen)},${formatSeconds(storyStart)})`,
   )
-  const hookEnable = escapeExpression(`lt(t,${formatSeconds(storyStart + 2.2)})`)
+  // 훅은 전 구간 유지. 타임랩스 들어가도 질문이 중간에 사라지지 않게.
+  const hookEnable = '1'
   const storyEnable = escapeExpression(
     `between(t,${formatSeconds(storyStart)},${formatSeconds(holdStart)})`,
   )

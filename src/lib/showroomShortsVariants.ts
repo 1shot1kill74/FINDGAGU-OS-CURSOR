@@ -66,16 +66,19 @@ export const SHOWROOM_SHORTS_CTA_POOL = [
   '전후 사례 더 있습니다',
 ] as const
 
+/** 훅 본문. 하늘색 고정. ffmpeg drawtext 표기(0xRRGGBB). */
+export const SHOWROOM_SHORTS_HOOK_COLOR = '0x8ce8ff'
+/** CTA 자막. 노랑 고정. */
+export const SHOWROOM_SHORTS_CTA_COLOR = '0xffd54a'
+
 /**
- * 오버레이 색·자막 위치 변형.
- * 컷 순서가 같아도 첫 프레임 색 시그니처가 갈라지도록 회전한다.
- * ffmpeg drawtext 색 표기(0xRRGGBB)를 그대로 쓴다.
+ * 오버레이 변형. 훅·CTA 색은 브랜드 고정, 자막 y만 살짝 돌려 첫 프레임 시그니처를 가른다.
  */
 export const SHOWROOM_SHORTS_OVERLAY_VARIANTS = [
-  { hookColor: '0xffd54a', ctaColor: '0xffffff', textYShift: 0 },
-  { hookColor: '0x8ce8ff', ctaColor: '0xffd54a', textYShift: 12 },
-  { hookColor: '0xffffff', ctaColor: '0xffd54a', textYShift: -12 },
-  { hookColor: '0xffe066', ctaColor: '0xbdf0ff', textYShift: 18 },
+  { hookColor: SHOWROOM_SHORTS_HOOK_COLOR, ctaColor: SHOWROOM_SHORTS_CTA_COLOR, textYShift: 0 },
+  { hookColor: SHOWROOM_SHORTS_HOOK_COLOR, ctaColor: SHOWROOM_SHORTS_CTA_COLOR, textYShift: 12 },
+  { hookColor: SHOWROOM_SHORTS_HOOK_COLOR, ctaColor: SHOWROOM_SHORTS_CTA_COLOR, textYShift: -12 },
+  { hookColor: SHOWROOM_SHORTS_HOOK_COLOR, ctaColor: SHOWROOM_SHORTS_CTA_COLOR, textYShift: 18 },
 ] as const
 
 /**

@@ -64,7 +64,7 @@ export function toOnScreenSiteLine(value: string | null | undefined): string {
  * 프레임 모드별 자막 레이어.
  * full_bleed는 사진 위에 반투명 박스를 깔고 얹는다.
  * message_bands는 위 밴드에 훅·보조 자막, 아래 밴드에 CTA를 넣어 사진을 가리지 않는다.
- * 배지(BEFORE/AFTER)는 두 모드 모두 영상 영역 좌상단에 붙고 yShift를 받지 않는다.
+ * 훅은 전 구간 유지하고, 배지(BEFORE/AFTER)는 영상 영역 좌상단에 붙는다.
  * 현장명은 전 구간 고정 노출이라 훅·배지와 겹치지 않는 위치에 따로 얹는다.
  */
 export function buildAfterBeforeOverlaySteps(input: {
@@ -92,14 +92,15 @@ export function buildAfterBeforeOverlaySteps(input: {
   const hook1Y = (bandMode ? 76 : 1010) + yShift
   const hook2Y = (bandMode ? 122 : 1070) + yShift
   const storyY = (bandMode ? 180 : 1188) + yShift
-  const ctaY = (bandMode ? BAND_BOTTOM_Y + 123 : 1100) + yShift
+  // 훅이 전 구간 남으므로, full_bleed CTA는 훅 아래(보조 자막 자리)에 둔다.
+  const ctaY = (bandMode ? BAND_BOTTOM_Y + 123 : 1188) + yShift
   const hookFontSize = bandMode ? 42 : 46
   const storyFontSize = bandMode ? 24 : 28
   const ctaFontSize = bandMode ? 34 : 30
 
   const steps: string[] = [
     `[story]drawbox=x=28:y=${badgeBoxY}:w=168:h=54:color=black@0.72:t=fill:enable='${input.afterOpenEnable}'[s1]`,
-    `[s1]drawtext=fontfile='${bold}':textfile='${escape(textPaths.afterBadge)}':fontcolor=${hookColor}:fontsize=28:x=64:y=${badgeTextY}:enable='${input.afterOpenEnable}'[s2]`,
+    `[s1]drawtext=fontfile='${bold}':textfile='${escape(textPaths.afterBadge)}':fontcolor=${ctaColor}:fontsize=28:x=64:y=${badgeTextY}:enable='${input.afterOpenEnable}'[s2]`,
     `[s2]drawbox=x=28:y=${badgeBoxY}:w=188:h=54:color=black@0.72:t=fill:enable='${input.beforeEnable}'[s3]`,
     `[s3]drawtext=fontfile='${bold}':textfile='${escape(textPaths.beforeBadge)}':fontcolor=white:fontsize=28:x=58:y=${badgeTextY}:enable='${input.beforeEnable}'[s4]`,
   ]
@@ -116,7 +117,7 @@ export function buildAfterBeforeOverlaySteps(input: {
     `[s6]drawtext=fontfile='${hookFont}':textfile='${escape(textPaths.hookLine2)}':fontcolor=${hookColor}:fontsize=${hookFontSize}:borderw=1.2:bordercolor=black@0.25:shadowcolor=black@0.55:shadowx=0:shadowy=3:x=(w-text_w)/2:y=${hook2Y}:enable='${input.hookEnable}'[s7]`,
     `[s7]drawtext=fontfile='${body}':textfile='${escape(textPaths.storyLine)}':fontcolor=white:fontsize=${storyFontSize}:borderw=1:bordercolor=black@0.2:x=(w-text_w)/2:y=${storyY}:enable='${input.storyEnable}'[s8]`,
     `[s8]drawbox=x=28:y=${badgeBoxY}:w=168:h=54:color=black@0.72:t=fill:enable='${input.holdEnable}'[s9]`,
-    `[s9]drawtext=fontfile='${bold}':textfile='${escape(textPaths.afterBadge)}':fontcolor=${hookColor}:fontsize=28:x=64:y=${badgeTextY}:enable='${input.holdEnable}'[s10]`,
+    `[s9]drawtext=fontfile='${bold}':textfile='${escape(textPaths.afterBadge)}':fontcolor=${ctaColor}:fontsize=28:x=64:y=${badgeTextY}:enable='${input.holdEnable}'[s10]`,
     `[s10]drawtext=fontfile='${hookFont}':textfile='${escape(textPaths.ctaLine)}':fontcolor=${ctaColor}:fontsize=${ctaFontSize}:borderw=1:bordercolor=black@0.2:x=(w-text_w)/2:y=${ctaY}:enable='${input.holdEnable}'[s11]`,
   )
 
