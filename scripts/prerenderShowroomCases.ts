@@ -5,7 +5,8 @@
  * 산출물:
  *   dist/public/showroom/index.html
  *   dist/public/showroom/guide/managed-study-cafe-furniture/index.html
- *   dist/public/showroom/case/<siteName>/index.html  (approved만)
+ *   dist/public/showroom/case/<사람슬러그>/index.html  (approved만)
+ *   dist/public/showroom/case/<견적명>/index.html     (구 URL → 슬러그 리다이렉트)
  *
  * 셸에는 SEO/AEO 정보를 인라인으로 넣는다:
  *   - <title>, <meta name="description">, og:* 메타 (셸 기본값을 교체)
@@ -29,8 +30,10 @@ import path from 'node:path'
 import {
   buildGuidePrerenderPage,
   buildHubPrerenderPage,
+  toPublicShowroomHubCaseLinks,
   type PublicShowroomPrerenderPage,
 } from '../src/lib/publicShowroomSeo.ts'
+import { assignUniqueShowroomCaseSlugs } from '../src/lib/showroomCaseSlug.ts'
 
 type CaseRow = {
   site_name: string | null
@@ -118,6 +121,7 @@ function readFaqArray(obj: unknown, ...keys: string[]): FaqItem[] {
 
 type CasePrerender = {
   siteName: string
+  slug: string
   url: string
   canonicalUrl: string
   title: string
@@ -160,7 +164,8 @@ function buildCasePrerender(row: CaseRow): CasePrerender | null {
   const faqItems = readFaqArray(structured, 'faq_items', 'faqItems', 'faq')
 
   const canonicalPath = readStr(seo, 'canonical_path', 'canonicalPath')
-  const url = `${BASE_URL}/public/showroom/case/${encodeURIComponent(siteName)}`
+  const slug = siteName
+  const url = `${BASE_URL}/public/showroom/case/${encodeURIComponent(slug)}`
   const canonicalUrl = canonicalPath ? `${BASE_URL}${canonicalPath.startsWith('/') ? '' : '/'}${canonicalPath}` : url
 
   const heroImage =
@@ -175,6 +180,7 @@ function buildCasePrerender(row: CaseRow): CasePrerender | null {
 
   return {
     siteName,
+    slug,
     url,
     canonicalUrl,
     title,
@@ -335,6 +341,24 @@ function injectCaseIntoTemplate(template: string, c: CasePrerender): string {
   return injectHeadAndNoscript(template, buildCaseHeadInjection(c), buildCaseNoscriptBody(c))
 }
 
+function buildLegacyCaseRedirectHtml(c: CasePrerender): string {
+  const target = c.canonicalUrl
+  return `<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <title>${escapeHtml(c.title)}</title>
+    <link rel="canonical" href="${escapeAttr(target)}" />
+    <meta http-equiv="refresh" content="0;url=${escapeAttr(target)}" />
+    <script>location.replace(${JSON.stringify(target)})</script>
+  </head>
+  <body>
+    <p><a href="${escapeAttr(target)}">이 사례는 새 주소로 이동했습니다.</a></p>
+  </body>
+</html>
+`
+}
+
 function injectStaticPageIntoTemplate(template: string, page: PublicShowroomPrerenderPage): string {
   return injectHeadAndNoscript(template, buildStaticPageHeadInjection(page), page.noscriptHtml)
 }
@@ -388,28 +412,50 @@ async function main(): Promise<void> {
   const template = await readFile(TEMPLATE_PATH, 'utf8')
   console.log(`[prerender] base=${BASE_URL}`)
 
-  const hub = buildHubPrerenderPage(BASE_URL)
-  const guide = buildGuidePrerenderPage(BASE_URL)
-  await writePrerenderedHtml(hub.relativeDir.split('/'), injectStaticPageIntoTemplate(template, hub))
-  await writePrerenderedHtml(guide.relativeDir.split('/'), injectStaticPageIntoTemplate(template, guide))
-  console.log(`[prerender] hub + guide pages written`)
-
   const rows = await fetchAllRows()
   console.log(`[prerender] case rows=${rows.length}`)
 
-  let written = 0
-  for (const row of rows) {
-    const c = buildCasePrerender(row)
-    if (!c) continue
+  const cases = rows
+    .map((row) => buildCasePrerender(row))
+    .filter((row): row is NonNullable<typeof row> => Boolean(row))
+  const slugs = assignUniqueShowroomCaseSlugs(
+    cases.map((row) => ({ siteName: row.siteName, title: row.title })),
+  )
+  for (const c of cases) {
+    const slug = slugs.get(c.siteName) || c.siteName
+    c.slug = slug
+    c.url = `${BASE_URL}/public/showroom/case/${encodeURIComponent(slug)}`
+    c.canonicalUrl = c.url
+  }
 
+  const hubCases = toPublicShowroomHubCaseLinks(
+    cases.map((row) => ({ siteName: row.siteName, title: row.title })),
+  )
+
+  const hub = buildHubPrerenderPage(BASE_URL, hubCases)
+  const guide = buildGuidePrerenderPage(BASE_URL)
+  await writePrerenderedHtml(hub.relativeDir.split('/'), injectStaticPageIntoTemplate(template, hub))
+  await writePrerenderedHtml(guide.relativeDir.split('/'), injectStaticPageIntoTemplate(template, guide))
+  console.log(`[prerender] hub + guide pages written (hub cases=${hubCases.length})`)
+
+  let written = 0
+  let redirected = 0
+  for (const c of cases) {
     await writePrerenderedHtml(
-      ['public', 'showroom', 'case', c.siteName],
+      ['public', 'showroom', 'case', c.slug],
       injectCaseIntoTemplate(template, c),
     )
     written += 1
+    if (c.siteName !== c.slug) {
+      await writePrerenderedHtml(
+        ['public', 'showroom', 'case', c.siteName],
+        buildLegacyCaseRedirectHtml(c),
+      )
+      redirected += 1
+    }
   }
 
-  console.log(`[prerender] approved case pages prerendered: ${written}`)
+  console.log(`[prerender] approved case pages prerendered: ${written} (legacy redirects: ${redirected})`)
 }
 
 main().catch((err) => {

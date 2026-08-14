@@ -34,7 +34,8 @@ const CHANNEL_LABELS: Record<string, string> = {
   youtube: '유튜브',
   facebook: '페이스북',
   instagram: '인스타그램',
-  direct: '다이렉트',
+  direct: '도메인 직접',
+  organic: '도메인 직접',
   unknown: 'UTM 없음',
 }
 
@@ -43,6 +44,7 @@ const CHANNEL_COLORS: Record<string, string> = {
   facebook: '#2563eb',
   instagram: '#db2777',
   direct: '#0f766e',
+  organic: '#0f766e',
   unknown: '#94a3b8',
 }
 
@@ -309,6 +311,7 @@ export default function ShowroomAbmDashboardPage() {
             <h1 className="text-2xl font-semibold tracking-tight text-slate-900 md:text-3xl">쇼룸 유입</h1>
             <p className="max-w-xl text-sm leading-6 text-slate-600">
               하루에 몇 명이 왔는지, 어느 채널·영상에서 왔는지. 광고 후보를 고르는 화면입니다.
+              「도메인 직접」은 검색이 아니라 URL로 들어온 입장입니다.
             </p>
           </div>
 

@@ -11,6 +11,7 @@ export function describeInternalRoute(path: string) {
   if (normalized.startsWith('/admin/ad-inbox')) return '광고 대기실'
   if (normalized.startsWith('/public/showroom/shorts')) return '숏츠 연속 랜딩'
   if (normalized.startsWith('/public/showroom/case')) return '쇼룸 사례 기획'
+  if (normalized.startsWith('/public/showroom')) return '공개 쇼룸'
   if (normalized.startsWith('/showroom')) return '쇼룸'
   if (normalized.startsWith('/image-assets/upload')) return '이미지 자산 업로드'
   if (normalized.startsWith('/image-assets')) return '이미지 자산 관리'

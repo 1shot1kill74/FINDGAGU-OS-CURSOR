@@ -14,6 +14,11 @@ import {
   type ShowroomCaseProfileDraft,
 } from '@/lib/showroomCaseProfileService'
 import { getInternalShowroomSiteName } from '@/pages/showroom/showroomPageGrouping'
+import {
+  buildPublicShowroomCasePath,
+  draftMatchesShowroomCaseKey,
+  listShowroomCaseSlugAliases,
+} from '@/lib/showroomCaseSlug'
 
 function getPreferredShowroomSiteName(images: ShowroomImageAsset[]): string {
   return getInternalShowroomSiteName(images)
@@ -47,6 +52,11 @@ function getProfileLookupAliases(profile: Pick<
     profile.canonicalBlogPost?.siteName?.trim() ?? '',
     profile.canonicalBlogPost?.title?.trim() ?? '',
     profile.canonicalBlogPost?.seo.title?.trim() ?? '',
+    ...listShowroomCaseSlugAliases({
+      siteName: profile.siteName,
+      title: profile.canonicalBlogPost?.seo.title || profile.canonicalBlogPost?.title,
+      canonicalPath: profile.canonicalBlogPost?.seo.canonicalPath,
+    }),
     ...(profile.legacyPublicDisplayNames ?? []),
   ].filter(Boolean)))
 }
@@ -224,18 +234,18 @@ export function resolvePublicShowroomCaseHref(
   publicAssets: ShowroomImageAsset[],
   internalAssets: ShowroomImageAsset[] = [],
 ): string {
-  const resolved = findPublicCaseUrlKeyForDraft(draft, publicAssets, internalAssets)
-  if (resolved) {
-    return `/public/showroom/case/${encodeURIComponent(resolved)}`
-  }
-
-  const fallback =
-    draft.siteName.trim()
+  const siteName =
+    findPublicCaseUrlKeyForDraft(draft, publicAssets, internalAssets)
+    || draft.siteName.trim()
     || draft.canonicalBlogPost?.siteName?.trim()
     || draft.canonicalSiteName?.trim()
     || draft.cardNewsPublication.siteKey?.trim()
     || '미지정'
-  return `/public/showroom/case/${encodeURIComponent(fallback)}`
+  return buildPublicShowroomCasePath({
+    siteName,
+    title: draft.canonicalBlogPost?.seo.title || draft.canonicalBlogPost?.title,
+    canonicalPath: draft.canonicalBlogPost?.seo.canonicalPath,
+  })
 }
 
 function pickBeforeAfterPair(images: ShowroomImageAsset[]): {
@@ -314,6 +324,29 @@ export async function loadShowroomCaseApproachBundle(
       : await fetchShowroomImageAssets()
 
     let matched = findBeforeAfterGroupForQuery(query, assets)
+
+    if (!matched?.length) {
+      const approved = await fetchApprovedBlogShowroomCaseProfileDrafts()
+      const slugHit = approved.find((draft) =>
+        draftMatchesShowroomCaseKey(
+          {
+            siteName: draft.siteName,
+            title: draft.canonicalBlogPost?.seo.title || draft.canonicalBlogPost?.title,
+            canonicalPath: draft.canonicalBlogPost?.seo.canonicalPath,
+            canonicalSiteName: draft.canonicalSiteName,
+          },
+          query,
+        ),
+      )
+      if (slugHit) {
+        const bySite = findBeforeAfterGroupForQuery(slugHit.siteName, assets)
+        if (bySite?.length) matched = bySite
+        else {
+          const profileBundle = await loadShowroomCaseApproachBundleFromProfileQuery(slugHit.siteName)
+          if (profileBundle) return { ok: true, data: profileBundle }
+        }
+      }
+    }
 
     if (!matched?.length) {
       const profileBundle = await loadShowroomCaseApproachBundleFromProfileQuery(query)

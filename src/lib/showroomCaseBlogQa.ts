@@ -8,6 +8,7 @@
  */
 
 import type { ShowroomCaseCanonicalBlogPost } from '@/lib/showroomCaseCanonicalBlog'
+import { buildPublicShowroomCasePath } from '@/lib/showroomCaseSlug'
 
 /** 이 점수 이상이면 자동 공개(approved) */
 export const SHOWROOM_BLOG_QA_AUTO_PUBLISH_THRESHOLD = 70
@@ -464,7 +465,11 @@ export function repairShowroomCaseBlogForQa(
 
   const canonicalPath =
     (post.seo.canonicalPath || '').trim()
-    || `/public/showroom/case/${encodeURIComponent(post.siteName)}`
+    || buildPublicShowroomCasePath({
+      siteName: post.siteName,
+      title: post.seo.title || post.title,
+      canonicalPath: post.seo.canonicalPath,
+    })
   if (!(post.seo.canonicalPath || '').trim()) {
     repairs.push('canonical 경로 추가')
   }

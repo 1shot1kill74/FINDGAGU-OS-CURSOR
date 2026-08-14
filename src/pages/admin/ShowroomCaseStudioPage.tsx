@@ -17,6 +17,7 @@ import {
   getShowroomCasePublicDisplayName,
 } from '@/lib/showroomCaseContentPackage'
 import { requestDeployHookTrigger } from '@/lib/triggerVercelDeployHook'
+import { buildPublicShowroomCasePath } from '@/lib/showroomCaseSlug'
 import {
   buildNaverBlogPackage,
   downloadNaverPackageAsZip,
@@ -1219,7 +1220,11 @@ export default function ShowroomCaseStudioPage() {
                               <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-emerald-700">
                                 <span>사례 블로그 공개 링크 준비됨</span>
                                 <Link
-                                  to={`/public/showroom/case/${encodeURIComponent(row.siteName)}`}
+                                  to={buildPublicShowroomCasePath({
+                                    siteName: row.siteName,
+                                    title: row.canonicalBlogPost?.seo.title || row.canonicalBlogPost?.title,
+                                    canonicalPath: row.canonicalBlogPost?.seo.canonicalPath,
+                                  })}
                                   target="_blank"
                                   rel="noreferrer"
                                   className="font-medium underline underline-offset-2"

@@ -161,7 +161,7 @@ function RootRedirect() {
   if (isPublicShowroomLandingHost(window.location.hostname)) {
     const params = new URLSearchParams(location.search)
     if (!params.get('utm_source')) params.set('utm_source', 'direct')
-    if (!params.get('utm_medium')) params.set('utm_medium', 'organic')
+    if (!params.get('utm_medium')) params.set('utm_medium', 'direct')
     if (!params.get('utm_campaign')) params.set('utm_campaign', 'showroom_abm_202606')
     if (!params.get('entry')) params.set('entry', 'domain')
 

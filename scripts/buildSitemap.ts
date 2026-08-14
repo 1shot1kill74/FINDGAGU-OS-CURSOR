@@ -3,7 +3,7 @@
  * 빌드 후 `dist/sitemap.xml` 과 `dist/robots.txt` 를 생성한다.
  *
  * 포함 정책:
- * - `/public/showroom/case/<siteName>`  -> `metadata.canonical_blog_post.status === 'approved'`
+ * - `/public/showroom/case/<사람슬러그>`  -> `metadata.canonical_blog_post.status === 'approved'`
  *
  * 환경 변수:
  * - VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY (필수)
@@ -22,6 +22,7 @@ import { createClient } from '@supabase/supabase-js'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
+import { assignUniqueShowroomCaseSlugs } from '../src/lib/showroomCaseSlug.ts'
 
 type CaseRow = {
   site_name: string | null
@@ -69,8 +70,16 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: false },
 })
 
-function encodeSitePath(siteName: string): string {
-  return encodeURIComponent(siteName.trim())
+function encodeSitePath(slug: string): string {
+  return encodeURIComponent(slug.trim())
+}
+
+function readBlogTitle(blog: Record<string, unknown> | null): string {
+  if (!blog) return ''
+  const seo = readNested<Record<string, unknown>>(blog, 'seo')
+  const seoTitle = seo && typeof seo['title'] === 'string' ? seo['title'].trim() : ''
+  const title = typeof blog['title'] === 'string' ? blog['title'].trim() : ''
+  return seoTitle || title
 }
 
 function isoDateOnly(value: unknown): string | null {
@@ -156,29 +165,34 @@ async function main(): Promise<void> {
     changefreq: 'weekly',
     priority: 0.9,
   })
+  entries.push({ loc: `${BASE_URL}/public/showroom/gallery`, changefreq: 'weekly', priority: 0.6 })
   entries.push({ loc: `${BASE_URL}/contact`, changefreq: 'monthly', priority: 0.5 })
 
+  const approvedRows = rows.flatMap((row) => {
+    const siteName = (row.site_name ?? '').trim()
+    if (!siteName) return []
+    const blog = readNested<Record<string, unknown>>(row.metadata, 'canonical_blog_post')
+    const blogStatus = blog && typeof blog['status'] === 'string' ? (blog['status'] as string) : null
+    if (blogStatus !== 'approved') return []
+    return [{
+      siteName,
+      title: readBlogTitle(blog),
+      lastmod: isoDateOnly(blog && typeof blog['updatedAt'] === 'string' ? blog['updatedAt'] : null)
+        ?? isoDateOnly(blog && typeof blog['approvedAt'] === 'string' ? blog['approvedAt'] : null),
+    }]
+  })
+  const slugs = assignUniqueShowroomCaseSlugs(approvedRows)
   let approvedBlogCount = 0
 
-  for (const row of rows) {
-    const siteName = (row.site_name ?? '').trim()
-    if (!siteName) continue
-    const metadata = row.metadata ?? null
-
-    const blog = readNested<Record<string, unknown>>(metadata, 'canonical_blog_post')
-    const blogStatus = blog && typeof blog['status'] === 'string' ? (blog['status'] as string) : null
-    const blogUpdatedAt = blog && typeof blog['updatedAt'] === 'string' ? (blog['updatedAt'] as string) : null
-    const blogApprovedAt = blog && typeof blog['approvedAt'] === 'string' ? (blog['approvedAt'] as string) : null
-
-    if (blogStatus === 'approved') {
-      entries.push({
-        loc: `${BASE_URL}/public/showroom/case/${encodeSitePath(siteName)}`,
-        lastmod: isoDateOnly(blogUpdatedAt) ?? isoDateOnly(blogApprovedAt) ?? undefined,
-        changefreq: 'monthly',
-        priority: 0.8,
-      })
-      approvedBlogCount += 1
-    }
+  for (const row of approvedRows) {
+    const slug = slugs.get(row.siteName) || row.siteName
+    entries.push({
+      loc: `${BASE_URL}/public/showroom/case/${encodeSitePath(slug)}`,
+      lastmod: row.lastmod ?? undefined,
+      changefreq: 'monthly',
+      priority: 0.8,
+    })
+    approvedBlogCount += 1
   }
 
   // 안정적 정렬: URL 사전순
@@ -189,6 +203,7 @@ async function main(): Promise<void> {
     'User-agent: *',
     'Allow: /',
     `Sitemap: ${BASE_URL}/sitemap.xml`,
+    `LLMs: ${BASE_URL}/llms.txt`,
     '',
   ].join('\n')
 

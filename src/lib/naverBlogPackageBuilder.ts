@@ -25,6 +25,7 @@ import type {
   ShowroomCaseCanonicalBlogPost,
   ShowroomCaseCanonicalBlogImageBlock,
 } from '@/lib/showroomCaseCanonicalBlog'
+import { buildPublicShowroomCasePath } from '@/lib/showroomCaseSlug'
 
 const FOOTER_HEADER = '✦ 자세한 비포·애프터와 추가 사진은 원본에서 확인할 수 있어요.'
 
@@ -372,7 +373,11 @@ function resolveCanonicalSourceUrl(input: BuildNaverPackageInput): string {
     const path = explicit.startsWith('/') ? explicit : `/${explicit}`
     return baseUrl ? `${baseUrl}${path}` : path
   }
-  const sitePath = `/public/showroom/case/${encodeURIComponent(input.post.siteName)}`
+  const sitePath = buildPublicShowroomCasePath({
+    siteName: input.post.siteName,
+    title: input.post.seo.title || input.post.title,
+    canonicalPath: input.post.seo.canonicalPath,
+  })
   return baseUrl ? `${baseUrl}${sitePath}` : sitePath
 }
 

@@ -1,5 +1,10 @@
 import type { PageHeadJsonLd, PageHeadMetaTag } from './usePageHead'
 import {
+  assignUniqueShowroomCaseSlugs,
+  buildPublicShowroomCasePath,
+  buildPublicShowroomCasePathFromSlug,
+} from './showroomCaseSlug'
+import {
   FINDGAGU_ENTITY_ONE_LINER,
   MANAGED_STUDY_CAFE_CHECKLIST,
   MANAGED_STUDY_CAFE_FEATURED_ANSWER,
@@ -66,7 +71,7 @@ export const PUBLIC_SHOWROOM_HUB_FAQS = [
   },
   {
     question: '관리형 스터디카페 가구는 어디서 기준을 보면 되나요?',
-    answer: `책상 규격·1인 몰입석 비율·관리 동선 체크리스트와 FAQ는 파인드가구 가이드(${MANAGED_STUDY_CAFE_GUIDE_PATH})에 정리되어 있습니다. 쇼룸에서는 Before/After 사례를 확인할 수 있습니다.`,
+    answer: `책상 규격·1인 몰입석 비율·관리 동선 체크리스트와 FAQ는 파인드가구 가이드(${PUBLIC_SHOWROOM_ORIGIN}${MANAGED_STUDY_CAFE_GUIDE_PATH})에 정리되어 있습니다. 쇼룸에서는 Before/After 사례를 확인할 수 있습니다.`,
   },
   {
     question: '어떤 공간에 가구·공간 시공을 맡길 수 있나요?',
@@ -129,7 +134,7 @@ export function buildOrganizationJsonLd(origin = PUBLIC_SHOWROOM_ORIGIN): PageHe
   const logo = getPublicShowroomDefaultOgImageUrl(base)
   return {
     '@context': 'https://schema.org',
-    '@type': 'Organization',
+    '@type': ['Organization', 'LocalBusiness'],
     name: PUBLIC_SHOWROOM_BRAND,
     legalName: PUBLIC_SHOWROOM_COMPANY.legalName,
     url: base,
@@ -195,6 +200,102 @@ export function buildHubFaqJsonLd(): PageHeadJsonLd {
   }
 }
 
+export type PublicShowroomHubCaseLink = {
+  siteName: string
+  title: string
+  path: string
+}
+
+export function buildHubBreadcrumbJsonLd(origin = PUBLIC_SHOWROOM_ORIGIN): PageHeadJsonLd {
+  const base = origin.replace(/\/+$/, '')
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      {
+        '@type': 'ListItem',
+        position: 1,
+        name: PUBLIC_SHOWROOM_BRAND,
+        item: base,
+      },
+      {
+        '@type': 'ListItem',
+        position: 2,
+        name: '온라인 쇼룸',
+        item: `${base}${PUBLIC_SHOWROOM_HUB_PATH}`,
+      },
+    ],
+  }
+}
+
+export function buildHubCollectionJsonLd(
+  cases: PublicShowroomHubCaseLink[] = [],
+  origin = PUBLIC_SHOWROOM_ORIGIN,
+): PageHeadJsonLd {
+  const base = origin.replace(/\/+$/, '')
+  const pageUrl = `${base}${PUBLIC_SHOWROOM_HUB_PATH}`
+  const itemList =
+    cases.length > 0
+      ? {
+          '@type': 'ItemList',
+          numberOfItems: cases.length,
+          itemListElement: cases.map((item, index) => ({
+            '@type': 'ListItem',
+            position: index + 1,
+            name: item.title,
+            url: absoluteUrl(item.path, base),
+          })),
+        }
+      : undefined
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'CollectionPage',
+    name: PUBLIC_SHOWROOM_HUB_TITLE,
+    description: PUBLIC_SHOWROOM_HUB_DESCRIPTION,
+    url: pageUrl,
+    inLanguage: 'ko-KR',
+    isPartOf: {
+      '@type': 'WebSite',
+      name: `${PUBLIC_SHOWROOM_BRAND} 온라인 쇼룸`,
+      url: pageUrl,
+    },
+    speakable: {
+      '@type': 'SpeakableSpecification',
+      cssSelector: ['#showroom-main-heading', '#showroom-hub-faq'],
+    },
+    ...(itemList ? { mainEntity: itemList } : {}),
+  }
+}
+
+export function toPublicShowroomHubCaseLink(input: {
+  siteName: string
+  title?: string | null
+  slug?: string | null
+}): PublicShowroomHubCaseLink {
+  const siteName = input.siteName.trim()
+  const title = input.title?.trim() || siteName
+  return {
+    siteName,
+    title,
+    path: input.slug?.trim()
+      ? buildPublicShowroomCasePathFromSlug(input.slug.trim())
+      : buildPublicShowroomCasePath({ siteName, title }),
+  }
+}
+
+export function toPublicShowroomHubCaseLinks(
+  rows: Array<{ siteName: string; title?: string | null }>,
+): PublicShowroomHubCaseLink[] {
+  const slugs = assignUniqueShowroomCaseSlugs(rows)
+  return rows.map((row) =>
+    toPublicShowroomHubCaseLink({
+      siteName: row.siteName,
+      title: row.title,
+      slug: slugs.get(row.siteName.trim()),
+    }),
+  )
+}
+
 export function getPublicShowroomCanonicalUrl(path: string): string {
   const origin = typeof window !== 'undefined' ? window.location.origin : PUBLIC_SHOWROOM_ORIGIN
   return absoluteUrl(path, origin)
@@ -222,13 +323,22 @@ function escapePrerenderHtml(value: string): string {
     .replace(/'/g, '&#39;')
 }
 
-export function buildHubPrerenderPage(origin = PUBLIC_SHOWROOM_ORIGIN): PublicShowroomPrerenderPage {
+export function buildHubPrerenderPage(
+  origin = PUBLIC_SHOWROOM_ORIGIN,
+  cases: PublicShowroomHubCaseLink[] = [],
+): PublicShowroomPrerenderPage {
   const base = origin.replace(/\/+$/, '')
   const canonicalUrl = absoluteUrl(PUBLIC_SHOWROOM_HUB_PATH, base)
   const faqHtml = PUBLIC_SHOWROOM_HUB_FAQS.map(
     (item) =>
       `<dt>${escapePrerenderHtml(item.question)}</dt><dd>${escapePrerenderHtml(item.answer)}</dd>`,
   ).join('')
+  const caseHtml = cases
+    .map((item) => {
+      const href = absoluteUrl(item.path, base)
+      return `<li><a href="${escapePrerenderHtml(href)}">${escapePrerenderHtml(item.title)}</a></li>`
+    })
+    .join('')
   return {
     relativeDir: 'public/showroom',
     title: PUBLIC_SHOWROOM_HUB_TITLE,
@@ -236,14 +346,23 @@ export function buildHubPrerenderPage(origin = PUBLIC_SHOWROOM_ORIGIN): PublicSh
     canonicalUrl,
     ogType: 'website',
     ogImage: getPublicShowroomDefaultOgImageUrl(base),
-    jsonLd: [buildOrganizationJsonLd(base), buildWebSiteJsonLd(base), buildHubFaqJsonLd()],
+    jsonLd: [
+      buildOrganizationJsonLd(base),
+      buildWebSiteJsonLd(base),
+      buildHubFaqJsonLd(),
+      buildHubBreadcrumbJsonLd(base),
+      buildHubCollectionJsonLd(cases, base),
+    ],
     noscriptHtml: [
       `<h1>${escapePrerenderHtml(PUBLIC_SHOWROOM_HUB_TITLE)}</h1>`,
       `<p>${escapePrerenderHtml(PUBLIC_SHOWROOM_HUB_DESCRIPTION)}</p>`,
       `<p>${escapePrerenderHtml(FINDGAGU_ENTITY_ONE_LINER)}</p>`,
       `<section><h2>자주 묻는 질문</h2><dl>${faqHtml}</dl></section>`,
+      caseHtml
+        ? `<section><h2>시공 사례</h2><ol>${caseHtml}</ol></section>`
+        : '',
       `<p><a href="${escapePrerenderHtml(canonicalUrl)}">${escapePrerenderHtml(canonicalUrl)}</a></p>`,
-    ].join('\n'),
+    ].filter(Boolean).join('\n'),
   }
 }
 

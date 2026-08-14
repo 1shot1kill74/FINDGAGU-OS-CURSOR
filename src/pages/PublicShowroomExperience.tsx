@@ -30,7 +30,10 @@ import {
 } from '@/pages/showroom/showroomStoryCta'
 import { trackShowroomAbmEvent, trackShowroomAbmHeaderNavClick } from '@/lib/showroomAbmTracking'
 import ShowroomAeoGuideTeaser from '@/components/showroom/ShowroomAeoGuideTeaser'
+import ShowroomHubFaq from '@/components/showroom/ShowroomHubFaq'
+import ShowroomHubCaseIndex from '@/components/showroom/ShowroomHubCaseIndex'
 import { ShowroomBeforeAfterTapPreview } from '@/components/showroom/ShowroomBeforeAfterTapPreview'
+import { PUBLIC_SHOWROOM_HUB_TITLE, type PublicShowroomHubCaseLink } from '@/lib/publicShowroomSeo'
 
 import {
   formatShowroomProductSeriesOptionLabel,
@@ -123,8 +126,10 @@ const PUBLIC_SHOWROOM_GALLERY_HREF = '/public/showroom/gallery'
 
 export default function PublicShowroomExperience({
   surface = 'hub',
+  hubCaseLinks = [],
 }: {
   surface?: PublicShowroomSurface
+  hubCaseLinks?: PublicShowroomHubCaseLink[]
 } = {}) {
   const mode = 'public' as const
   const isHub = surface === 'hub'
@@ -817,11 +822,12 @@ export default function PublicShowroomExperience({
     ].filter((value): value is string => Boolean(value) && value !== '미지정')
     const siteName = candidates[0]
     if (!siteName) return null
+    const linked = hubCaseLinks.find((item) => item.siteName === siteName)
     return appendShowroomConcernQuery(
-      `/public/showroom/case/${encodeURIComponent(siteName)}`,
+      linked?.path ?? `/public/showroom/case/${encodeURIComponent(siteName)}`,
       selectedConcernTag,
     )
-  }, [selectedConcernTag])
+  }, [hubCaseLinks, selectedConcernTag])
 
   const moveIndustryPage = useCallback((industry: string, nextPage: number) => {
     setIndustryPageBySection((prev) => ({
@@ -1310,9 +1316,9 @@ export default function PublicShowroomExperience({
         <div className="max-w-6xl mx-auto flex flex-col gap-4">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <h1 className="text-xl md:text-2xl font-semibold text-neutral-900 tracking-tight">
-                {'시공사례 쇼룸'}
-              </h1>
+              <p className="text-xl md:text-2xl font-semibold text-neutral-900 tracking-tight">
+                시공사례 쇼룸
+              </p>
               
             </div>
           </div>
@@ -1325,9 +1331,12 @@ export default function PublicShowroomExperience({
         {isHub ? (
           <section className="mb-5" aria-labelledby="showroom-main-heading">
             <h1 id="showroom-main-heading" className="text-2xl md:text-3xl font-bold text-neutral-900 leading-tight mb-1">
-              실패하지 않는 공간 기획, 그 차이는 <span className="text-amber-600">디테일</span>에 있습니다.
+              {PUBLIC_SHOWROOM_HUB_TITLE}
             </h1>
-            <p className="text-neutral-600 text-base md:text-lg">
+            <p className="text-neutral-900 text-base md:text-lg leading-snug">
+              실패하지 않는 공간 기획, 그 차이는 <span className="text-amber-600">디테일</span>에 있습니다.
+            </p>
+            <p className="mt-1 text-neutral-600 text-base md:text-lg">
               아래에서 업종을 고르면, 대표 전후 사례부터 바로 볼 수 있습니다.
             </p>
           </section>
@@ -1865,7 +1874,13 @@ export default function PublicShowroomExperience({
         </section>
         )}
 
-        {isHub && <ShowroomAeoGuideTeaser />}
+        {isHub && (
+          <>
+            <ShowroomAeoGuideTeaser />
+            <ShowroomHubFaq />
+            <ShowroomHubCaseIndex cases={hubCaseLinks} />
+          </>
+        )}
 
       </main>
 

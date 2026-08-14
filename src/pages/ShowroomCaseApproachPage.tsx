@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { Link, Navigate, useParams, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, FileText, Images } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -11,6 +11,11 @@ import {
 } from '@/lib/showroomCaseCanonicalBlog'
 import { usePageHead, type PageHeadJsonLd, type PageHeadMetaTag } from '@/lib/usePageHead'
 import { getPublicShowroomDefaultOgImageUrl } from '@/lib/publicShowroomSeo'
+import {
+  buildPublicShowroomCasePath,
+  getShowroomCasePublicSlug,
+  looksLikeLegacyShowroomCaseKey,
+} from '@/lib/showroomCaseSlug'
 import {
   loadShowroomCaseApproachBundle,
   resolvePublicShowroomCaseHref,
@@ -307,10 +312,32 @@ export default function ShowroomCaseApproachPage({ mode = 'public' }: { mode?: M
     (g): g is string => typeof g === 'string' && g.trim().length > 0,
   )
   const heroImageForOg = afterHeroUrl || beforeHeroUrl || getPublicShowroomDefaultOgImageUrl()
+  const publicSlug = mode === 'public' && resolvedBundle.siteName
+    ? getShowroomCasePublicSlug({
+        siteName: resolvedBundle.siteName,
+        title: canonicalBlog?.seo.title || canonicalBlog?.title,
+        canonicalPath: canonicalBlog?.seo.canonicalPath,
+      })
+    : null
+  const publicCasePath = resolvedBundle.siteName
+    ? buildPublicShowroomCasePath({
+        siteName: resolvedBundle.siteName,
+        title: canonicalBlog?.seo.title || canonicalBlog?.title,
+        canonicalPath: canonicalBlog?.seo.canonicalPath,
+      })
+    : null
+  const currentCaseKey = (() => {
+    if (!siteKey) return ''
+    try {
+      return decodeURIComponent(siteKey).trim()
+    } catch {
+      return siteKey.trim()
+    }
+  })()
   const canonicalUrl =
     typeof window !== 'undefined' && mode === 'public' && canonicalBlog?.status === 'approved'
-      ? (canonicalBlog?.seo.canonicalPath?.trim()
-          ? new URL(canonicalBlog.seo.canonicalPath.trim(), window.location.origin).toString()
+      ? (publicCasePath
+          ? new URL(publicCasePath, window.location.origin).toString()
           : `${window.location.origin}${window.location.pathname}`)
       : null
 
@@ -396,6 +423,18 @@ export default function ShowroomCaseApproachPage({ mode = 'public' }: { mode?: M
         </Button>
       </div>
     )
+  }
+
+  if (
+    mode === 'public'
+    && publicSlug
+    && currentCaseKey
+    && currentCaseKey !== publicSlug
+    && looksLikeLegacyShowroomCaseKey(currentCaseKey)
+    && publicCasePath
+  ) {
+    const suffix = searchParams.toString()
+    return <Navigate replace to={`${publicCasePath}${suffix ? `?${suffix}` : ''}`} />
   }
 
   return (
