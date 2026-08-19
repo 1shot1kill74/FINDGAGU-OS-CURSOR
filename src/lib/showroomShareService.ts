@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase'
 import { mapPublicShowroomRpcRowToShowroomAsset, type ShowroomImageAsset } from '@/lib/imageAssetService'
+import { filterVisibleShowroomAssets } from '@/lib/showroomHiddenSites'
 import { broadenPublicDisplayName } from '@/lib/showroomPublicDisplayName'
 import { createShareToken } from '@/lib/shareToken'
 
@@ -189,8 +190,9 @@ async function fetchAllPublicShowroomRpcRows(
 
 export async function fetchPublicShowroomAssets(): Promise<ShowroomImageAsset[]> {
   const rows = await fetchAllPublicShowroomRpcRows('get_public_showroom_assets')
-  return rows
-    .map((r) => mapToProtectedPublicShowroomAsset(mapPublicShowroomRpcRowToShowroomAsset(r)))
+  return filterVisibleShowroomAssets(
+    rows.map((r) => mapToProtectedPublicShowroomAsset(mapPublicShowroomRpcRowToShowroomAsset(r))),
+  )
 }
 
 export async function fetchPublicShowroomAssetsByShareToken(
@@ -204,6 +206,7 @@ export async function fetchPublicShowroomAssetsByShareToken(
     share_token: trimmed,
     include_all: Boolean(options?.includeAll),
   })
-  return rows
-    .map((r) => mapToProtectedPublicShowroomAsset(mapPublicShowroomRpcRowToShowroomAsset(r)))
+  return filterVisibleShowroomAssets(
+    rows.map((r) => mapToProtectedPublicShowroomAsset(mapPublicShowroomRpcRowToShowroomAsset(r))),
+  )
 }

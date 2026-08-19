@@ -6,6 +6,7 @@ import { fetchShowroomImageAssets } from '@/lib/imageAssetService'
 import { loadPublicShowroomCardNewsBundle } from '@/lib/publicShowroomCardNewsService'
 import { collectShowroomAliasNamesFromImages, collectShowroomIdentityKeys, findUniqueProfileByQuoteKey } from '@/lib/showroomCaseAlias'
 import { groupBeforeAfterAssets } from '@/lib/showroomImageAssetGrouping'
+import { matchesHiddenShowroomSite } from '@/lib/showroomHiddenSites'
 import { fetchPublicShowroomAssets } from '@/lib/showroomShareService'
 import { broadenPublicDisplayName } from '@/lib/showroomShareService'
 import {
@@ -317,6 +318,9 @@ export async function loadShowroomCaseApproachBundle(
   }
   const query = decoded.trim()
   if (!query) return { ok: false, reason: 'not_found' }
+  if (source === 'public' && matchesHiddenShowroomSite(query)) {
+    return { ok: false, reason: 'not_found' }
+  }
 
   try {
     const assets = source === 'public'
@@ -339,6 +343,9 @@ export async function loadShowroomCaseApproachBundle(
         ),
       )
       if (slugHit) {
+        if (source === 'public' && matchesHiddenShowroomSite(slugHit.siteName, slugHit.canonicalSiteName)) {
+          return { ok: false, reason: 'not_found' }
+        }
         const bySite = findBeforeAfterGroupForQuery(slugHit.siteName, assets)
         if (bySite?.length) matched = bySite
         else {
@@ -351,6 +358,9 @@ export async function loadShowroomCaseApproachBundle(
     if (!matched?.length) {
       const profileBundle = await loadShowroomCaseApproachBundleFromProfileQuery(query)
       if (profileBundle) {
+        if (source === 'public' && matchesHiddenShowroomSite(profileBundle.siteName, profileBundle.externalLabel)) {
+          return { ok: false, reason: 'not_found' }
+        }
         return { ok: true, data: profileBundle }
       }
       return { ok: false, reason: 'not_found' }

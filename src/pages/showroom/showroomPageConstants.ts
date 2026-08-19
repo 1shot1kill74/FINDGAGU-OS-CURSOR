@@ -93,7 +93,7 @@ export const HUB_FEATURED_BA_INDUSTRY_BLOCKS: readonly {
     industry: '학원',
     title: '학원 자습실',
     blurb: '학원 자습 공간을 스터디카페형으로 바꾼 사례입니다.',
-    featuredKeys: ['5783', '7311', '탑브레인'],
+    featuredKeys: ['5783', '탑브레인'],
   },
   {
     industry: '학교',

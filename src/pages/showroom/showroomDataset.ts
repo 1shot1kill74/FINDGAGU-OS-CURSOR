@@ -4,6 +4,7 @@ import {
   type ShowroomImageAsset,
   type ShowroomSiteOverride,
 } from '@/lib/imageAssetService'
+import { filterVisibleShowroomAssets } from '@/lib/showroomHiddenSites'
 import { fetchPublicShowroomAssets } from '@/lib/showroomShareService'
 
 /** 내부 쇼룸(컨텐츠 공장): image_assets + site override 전체 */
@@ -15,7 +16,7 @@ export async function loadInternalShowroomDataset(): Promise<{
     fetchShowroomImageAssets(),
     fetchShowroomSiteOverrides(),
   ])
-  return { assets, siteOverrides }
+  return { assets: filterVisibleShowroomAssets(assets), siteOverrides }
 }
 
 /**

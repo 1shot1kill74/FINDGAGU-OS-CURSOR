@@ -34,6 +34,7 @@ import {
   type PublicShowroomPrerenderPage,
 } from '../src/lib/publicShowroomSeo.ts'
 import { assignUniqueShowroomCaseSlugs } from '../src/lib/showroomCaseSlug.ts'
+import { matchesHiddenShowroomSite } from '../src/lib/showroomHiddenSites.ts'
 
 type CaseRow = {
   site_name: string | null
@@ -138,7 +139,7 @@ type CasePrerender = {
 
 function buildCasePrerender(row: CaseRow): CasePrerender | null {
   const siteName = (row.site_name ?? '').trim()
-  if (!siteName) return null
+  if (!siteName || matchesHiddenShowroomSite(siteName)) return null
   const blog = readNested<Record<string, unknown>>(row.metadata, 'canonical_blog_post')
   if (!blog) return null
   const status = typeof blog['status'] === 'string' ? (blog['status'] as string) : ''

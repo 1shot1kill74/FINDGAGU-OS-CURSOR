@@ -23,6 +23,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { assignUniqueShowroomCaseSlugs } from '../src/lib/showroomCaseSlug.ts'
+import { matchesHiddenShowroomSite } from '../src/lib/showroomHiddenSites.ts'
 
 type CaseRow = {
   site_name: string | null
@@ -170,7 +171,7 @@ async function main(): Promise<void> {
 
   const approvedRows = rows.flatMap((row) => {
     const siteName = (row.site_name ?? '').trim()
-    if (!siteName) return []
+    if (!siteName || matchesHiddenShowroomSite(siteName)) return []
     const blog = readNested<Record<string, unknown>>(row.metadata, 'canonical_blog_post')
     const blogStatus = blog && typeof blog['status'] === 'string' ? (blog['status'] as string) : null
     if (blogStatus !== 'approved') return []

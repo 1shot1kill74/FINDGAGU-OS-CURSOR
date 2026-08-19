@@ -136,12 +136,25 @@ function mapShowroomImageAsset(row: PublicShowroomAssetRow): ShowroomImageAsset 
   }
 }
 
+function isHiddenHomepageShowroomAsset(asset: ShowroomImageAsset): boolean {
+  const haystack = [
+    asset.site_name,
+    asset.canonical_site_name,
+    asset.external_display_name,
+  ]
+    .map((value) => (value ?? '').trim().toLowerCase())
+    .join(' ')
+  return haystack.includes('7311')
+}
+
 export async function fetchShowroomImageAssets(): Promise<ShowroomImageAsset[]> {
   const { data, error } = await supabase.rpc('get_public_showroom_assets')
 
   if (error || !data) return []
 
-  return (data as PublicShowroomAssetRow[]).map(mapShowroomImageAsset)
+  return (data as PublicShowroomAssetRow[])
+    .map(mapShowroomImageAsset)
+    .filter((asset) => !isHiddenHomepageShowroomAsset(asset))
 }
 
 export async function fetchShowroomImageAssetsByToken(token: string, includeAll = false): Promise<ShowroomImageAsset[]> {
@@ -154,7 +167,9 @@ export async function fetchShowroomImageAssetsByToken(token: string, includeAll 
   })
   if (error || !data) return []
 
-  return (data as PublicShowroomAssetRow[]).map(mapShowroomImageAsset)
+  return (data as PublicShowroomAssetRow[])
+    .map(mapShowroomImageAsset)
+    .filter((asset) => !isHiddenHomepageShowroomAsset(asset))
 }
 
 export async function resolvePublicShowroomShare(token: string): Promise<ResolvedPublicShowroomShare | null> {

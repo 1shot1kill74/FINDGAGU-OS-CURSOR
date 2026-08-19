@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState } from 'react'
 import PublicShowroomExperience from '@/pages/PublicShowroomExperience'
 import { usePublicShowroomChannelTalk } from '@/hooks/usePublicShowroomChannelTalk'
 import { usePageHead } from '@/lib/usePageHead'
+import { matchesHiddenShowroomSite } from '@/lib/showroomHiddenSites'
 import { fetchApprovedBlogShowroomCaseProfileDrafts } from '@/lib/showroomCaseProfileService'
 import {
   PUBLIC_SHOWROOM_HUB_DESCRIPTION,
@@ -36,10 +37,12 @@ export default function PublicShowroomPage() {
         if (cancelled) return
         setCases(
           toPublicShowroomHubCaseLinks(
-            drafts.map((draft) => ({
-              siteName: draft.siteName,
-              title: draft.canonicalBlogPost?.seo.title || draft.canonicalBlogPost?.title,
-            })),
+            drafts
+              .filter((draft) => !matchesHiddenShowroomSite(draft.siteName, draft.canonicalSiteName))
+              .map((draft) => ({
+                siteName: draft.siteName,
+                title: draft.canonicalBlogPost?.seo.title || draft.canonicalBlogPost?.title,
+              })),
           ),
         )
       })

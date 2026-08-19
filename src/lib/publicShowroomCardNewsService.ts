@@ -10,6 +10,7 @@ import {
   type ShowroomCaseProfileDraft,
 } from '@/lib/showroomCaseProfileService'
 import { groupBeforeAfterAssets } from '@/lib/showroomImageAssetGrouping'
+import { matchesHiddenShowroomSite } from '@/lib/showroomHiddenSites'
 import { broadenPublicDisplayName, fetchPublicShowroomAssets } from '@/lib/showroomShareService'
 
 export type PublicShowroomCardNewsListItem = {
@@ -222,7 +223,14 @@ export async function fetchPublicShowroomCardNewsListItems(): Promise<PublicShow
   ])
   const groupedAssets = groupBeforeAfterAssets(publicAssets)
 
-  return profiles.map((profile) => {
+  return profiles
+    .filter((profile) => !matchesHiddenShowroomSite(
+      profile.siteName,
+      profile.canonicalSiteName,
+      profile.cardNewsPublication.siteKey,
+      profile.cardNewsPublication.slug,
+    ))
+    .map((profile) => {
     const context = findPublicContext(profile, groupedAssets)
     const slides = resolvePublishedSlides(profile, context)
     const coverImageUrl = slides.find((slide) => slide.imageUrl?.trim())?.imageUrl?.trim()
@@ -280,6 +288,7 @@ export async function loadPublicShowroomCardNewsBundle(siteKeyParam: string): Pr
   }
   const query = decoded.trim()
   if (!query) return { ok: false, reason: 'not_found' }
+  if (matchesHiddenShowroomSite(query)) return { ok: false, reason: 'not_found' }
 
   try {
     const [profiles, publicAssets] = await Promise.all([
@@ -293,6 +302,14 @@ export async function loadPublicShowroomCardNewsBundle(siteKeyParam: string): Pr
       || profile.canonicalSiteName?.trim() === query
     )
     if (!match) return { ok: false, reason: 'not_found' }
+    if (matchesHiddenShowroomSite(
+      match.siteName,
+      match.canonicalSiteName,
+      match.cardNewsPublication.siteKey,
+      match.cardNewsPublication.slug,
+    )) {
+      return { ok: false, reason: 'not_found' }
+    }
 
     const context = findPublicContext(match, groupBeforeAfterAssets(publicAssets))
 

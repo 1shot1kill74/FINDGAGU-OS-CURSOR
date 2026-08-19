@@ -21,6 +21,7 @@ import {
   resolvePublicShowroomCaseHref,
   type ShowroomCaseApproachBundle,
 } from '@/lib/showroomCaseApproachData'
+import { matchesHiddenShowroomSite } from '@/lib/showroomHiddenSites'
 import { fetchApprovedBlogShowroomCaseProfileDrafts, type ShowroomCaseProfileDraft } from '@/lib/showroomCaseProfileService'
 import { fetchPublicShowroomAssets } from '@/lib/showroomShareService'
 import type { ShowroomImageAsset } from '@/lib/imageAssetService'
@@ -134,6 +135,7 @@ function useRelatedApprovedBlogCases(params: UseRelatedApprovedBlogCasesParams):
     const myTypes = new Set(currentBusinessTypes.map((t) => t.trim()).filter(Boolean))
     const scored = drafts
       .filter((d) => d.siteName.trim() !== currentSiteName.trim())
+      .filter((d) => !matchesHiddenShowroomSite(d.siteName, d.canonicalSiteName))
       .map((d) => {
         let score = 0
         if (currentIndustry && d.industry && d.industry === currentIndustry) score += 3
