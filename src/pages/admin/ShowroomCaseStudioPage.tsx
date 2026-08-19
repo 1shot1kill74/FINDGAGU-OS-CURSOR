@@ -21,6 +21,7 @@ import { buildPublicShowroomCasePath } from '@/lib/showroomCaseSlug'
 import {
   buildNaverBlogPackage,
   downloadNaverPackageAsZip,
+  formatNaverSourceUrlForDisplay,
   type NaverBlogPackage,
 } from '@/lib/naverBlogPackageBuilder'
 import {
@@ -1089,7 +1090,25 @@ export default function ShowroomCaseStudioPage() {
                 </section>
 
                 <section className="mb-5 rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">본문 미리보기 (HTML 렌더링)</p>
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">본문 미리보기 (HTML 렌더링)</p>
+                    <div className="flex shrink-0 items-center gap-3">
+                      <button
+                        type="button"
+                        className="text-[11px] font-medium text-emerald-700 hover:text-emerald-800"
+                        onClick={() => void copyToClipboardSafely(naverPackageState.pkg.bodyMarkdown, '본문 마크다운')}
+                      >
+                        마크다운 복사
+                      </button>
+                      <button
+                        type="button"
+                        className="text-[11px] font-medium text-emerald-700 hover:text-emerald-800"
+                        onClick={() => void copyToClipboardSafely(naverPackageState.pkg.bodyPlainText, '본문 텍스트')}
+                      >
+                        텍스트 복사
+                      </button>
+                    </div>
+                  </div>
                   <div
                     className="mt-3 max-w-none text-[15px] leading-[1.7] text-slate-800 [&_blockquote]:my-3 [&_h1]:mb-3 [&_h1]:mt-0 [&_h1]:text-xl [&_h1]:font-semibold [&_h2]:mb-2 [&_h2]:mt-5 [&_h2]:text-base [&_h2]:font-semibold [&_p]:mb-3"
                     dangerouslySetInnerHTML={{ __html: naverPackageState.pkg.bodyHtml }}
@@ -1120,7 +1139,7 @@ export default function ShowroomCaseStudioPage() {
                     rel="noreferrer noopener"
                     className="mt-1 block break-all text-[12px] font-medium text-emerald-700 hover:text-emerald-800"
                   >
-                    {naverPackageState.pkg.canonicalSourceUrl}
+                    {formatNaverSourceUrlForDisplay(naverPackageState.pkg.canonicalSourceUrl)}
                   </a>
                 </div>
                 <div className="mb-5">

@@ -26,6 +26,7 @@ import type {
   ShowroomCaseCanonicalBlogPost,
   ShowroomCaseCanonicalBlogImageBlock,
 } from '@/lib/showroomCaseCanonicalBlog'
+import { PUBLIC_SHOWROOM_ORIGIN } from '@/lib/publicShowroomSeo'
 import { buildPublicShowroomCasePath } from '@/lib/showroomCaseSlug'
 
 const FOOTER_LINK_LABEL = '원본 보러 가기'
@@ -54,6 +55,8 @@ export type NaverBlogPackage = {
   bodyHtml: string
   /** 클립보드 복사용 본문 마크다운 — 다른 채널 재사용 시 유용 */
   bodyMarkdown: string
+  /** 서식 없는 본문. [이미지 N] 과 원본 링크는 유지 */
+  bodyPlainText: string
   /** 추천 제목 후보 (3~5개) */
   titleCandidates: string[]
   /** 추천 해시태그 (#포함) */
@@ -70,7 +73,7 @@ export type NaverBlogPackage = {
 
 export type BuildNaverPackageInput = {
   post: ShowroomCaseCanonicalBlogPost
-  /** 자가 사이트 베이스 URL. 비어 있으면 window.location.origin 사용. */
+  /** 자가 사이트 베이스 URL. 비어 있으면 공개 쇼룸 정본 호스트(www.findgagu.co.kr). */
   publicBaseUrl?: string
   /** 사람이 보는 표시 라벨 (예: "2505 경기권 관리형 6888"). 비면 post.title 사용. */
   displayLabel?: string
@@ -387,6 +390,18 @@ function buildNaverMarkdown(
   return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim()
 }
 
+/** 네이버에 바로 붙여넣을 수 있게 서식만 걷고, [이미지 N]·원본 링크는 남긴다. */
+export function naverMarkdownToPlainText(markdown: string): string {
+  return String(markdown || '')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^>\s?/gm, '')
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/\*(.+?)\*/g, '$1')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '$1\n$2')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
 function buildNaverHtml(
   normalizedMarkdown: string,
   canonicalUrl: string,
@@ -423,21 +438,35 @@ function buildNaverHtml(
 
 function resolveCanonicalSourceUrl(input: BuildNaverPackageInput): string {
   const trimBase = (s: string) => s.replace(/\/+$/, '')
-  const base =
-    (input.publicBaseUrl && input.publicBaseUrl.trim()) ||
-    (typeof window !== 'undefined' && window.location ? window.location.origin : '')
-  const baseUrl = base ? trimBase(base) : ''
+  const baseUrl = trimBase((input.publicBaseUrl && input.publicBaseUrl.trim()) || PUBLIC_SHOWROOM_ORIGIN)
   const explicit = input.post.seo.canonicalPath?.trim()
   if (explicit) {
+    if (/^https?:\/\//i.test(explicit)) {
+      try {
+        const parsed = new URL(explicit)
+        return `${baseUrl}${parsed.pathname}${parsed.search}`
+      } catch {
+        return explicit
+      }
+    }
     const path = explicit.startsWith('/') ? explicit : `/${explicit}`
-    return baseUrl ? `${baseUrl}${path}` : path
+    return `${baseUrl}${path}`
   }
   const sitePath = buildPublicShowroomCasePath({
     siteName: input.post.siteName,
     title: input.post.seo.title || input.post.title,
     canonicalPath: input.post.seo.canonicalPath,
   })
-  return baseUrl ? `${baseUrl}${sitePath}` : sitePath
+  return `${baseUrl}${sitePath}`
+}
+
+export function formatNaverSourceUrlForDisplay(url: string): string {
+  try {
+    const parsed = new URL(url)
+    return `${parsed.origin}${decodeURIComponent(parsed.pathname)}${parsed.search}`
+  } catch {
+    return url
+  }
 }
 
 export function buildNaverBlogPackage(input: BuildNaverPackageInput): NaverBlogPackage {
@@ -456,6 +485,7 @@ export function buildNaverBlogPackage(input: BuildNaverPackageInput): NaverBlogP
 
   const bodyMarkdown = buildNaverMarkdown(normalizedMarkdown, canonicalSourceUrl)
   const bodyHtml = buildNaverHtml(normalizedMarkdown, canonicalSourceUrl)
+  const bodyPlainText = naverMarkdownToPlainText(bodyMarkdown)
   const titleCandidates = [((post.seo.title || post.title || displayLabel).trim())].filter(Boolean)
   const hashtags = buildHashtagPool(input)
   const publishingChecklist = buildPublishingChecklist()
@@ -463,6 +493,7 @@ export function buildNaverBlogPackage(input: BuildNaverPackageInput): NaverBlogP
   return {
     bodyHtml,
     bodyMarkdown,
+    bodyPlainText,
     titleCandidates,
     hashtags,
     images,
