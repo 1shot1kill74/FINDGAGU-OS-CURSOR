@@ -4,6 +4,8 @@
  *
  * 산출물:
  *   dist/public/showroom/index.html
+ *   dist/public/showroom/gallery/index.html
+ *   dist/contact/index.html
  *   dist/public/showroom/guide/managed-study-cafe-furniture/index.html
  *   dist/public/showroom/case/<사람슬러그>/index.html  (approved만)
  *   dist/public/showroom/case/<견적명>/index.html     (구 URL → 슬러그 리다이렉트)
@@ -28,6 +30,8 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import {
+  buildContactPrerenderPage,
+  buildGalleryPrerenderPage,
   buildGuidePrerenderPage,
   buildHubPrerenderPage,
   toPublicShowroomHubCaseLinks,
@@ -435,9 +439,13 @@ async function main(): Promise<void> {
 
   const hub = buildHubPrerenderPage(BASE_URL, hubCases)
   const guide = buildGuidePrerenderPage(BASE_URL)
+  const gallery = buildGalleryPrerenderPage(BASE_URL, hubCases)
+  const contact = buildContactPrerenderPage(BASE_URL)
   await writePrerenderedHtml(hub.relativeDir.split('/'), injectStaticPageIntoTemplate(template, hub))
   await writePrerenderedHtml(guide.relativeDir.split('/'), injectStaticPageIntoTemplate(template, guide))
-  console.log(`[prerender] hub + guide pages written (hub cases=${hubCases.length})`)
+  await writePrerenderedHtml(gallery.relativeDir.split('/'), injectStaticPageIntoTemplate(template, gallery))
+  await writePrerenderedHtml(contact.relativeDir.split('/'), injectStaticPageIntoTemplate(template, contact))
+  console.log(`[prerender] hub + guide + gallery + contact pages written (hub cases=${hubCases.length})`)
 
   let written = 0
   let redirected = 0

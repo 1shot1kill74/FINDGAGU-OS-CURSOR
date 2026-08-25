@@ -6,6 +6,18 @@
       "has": [{ "type": "host", "value": "os.findgagu.co.kr" }],
       "destination": "https://findgagu-os-cursor.vercel.app/dashboard",
       "permanent": false
+    },
+    {
+      "source": "/",
+      "has": [{ "type": "host", "value": "www.findgagu.co.kr" }],
+      "destination": "/public/showroom",
+      "permanent": true
+    },
+    {
+      "source": "/",
+      "has": [{ "type": "host", "value": "findgagu.co.kr" }],
+      "destination": "https://www.findgagu.co.kr/public/showroom",
+      "permanent": true
     }
   ],
   "headers": [

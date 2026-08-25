@@ -12,7 +12,9 @@ import { Input } from '@/components/ui/input'
 import type { Json } from '@/types/database'
 import { usePageHead } from '@/lib/usePageHead'
 import {
-  PUBLIC_SHOWROOM_BRAND,
+  PUBLIC_SHOWROOM_CONTACT_DESCRIPTION,
+  PUBLIC_SHOWROOM_CONTACT_PATH,
+  PUBLIC_SHOWROOM_CONTACT_TITLE,
   buildOrganizationJsonLd,
   buildPublicShowroomBasicMetas,
   getPublicShowroomCanonicalUrl,
@@ -34,23 +36,20 @@ export default function ContactPage() {
   const showroomFollowupSummary = searchParams.get('showroom_followup_summary') ?? ''
   const showroomBackTo = searchParams.get('showroom_back_to') ?? ''
 
-  const contactTitle = `${PUBLIC_SHOWROOM_BRAND} 상담 문의`
-  const contactDescription =
-    '학원·도서관·아파트 커뮤니티 공간 맞춤 상담을 남겨 주세요. 쇼룸 사례를 보고 온 문의도 함께 접수됩니다.'
   const contactMetas = useMemo(
     () =>
       buildPublicShowroomBasicMetas({
-        title: contactTitle,
-        description: contactDescription,
-        canonicalPath: '/contact',
+        title: PUBLIC_SHOWROOM_CONTACT_TITLE,
+        description: PUBLIC_SHOWROOM_CONTACT_DESCRIPTION,
+        canonicalPath: PUBLIC_SHOWROOM_CONTACT_PATH,
       }),
-    [contactTitle, contactDescription],
+    [],
   )
   const contactJsonLd = useMemo(() => [buildOrganizationJsonLd()], [])
   usePageHead({
-    title: contactTitle,
+    title: PUBLIC_SHOWROOM_CONTACT_TITLE,
     metas: contactMetas,
-    canonicalUrl: getPublicShowroomCanonicalUrl('/contact'),
+    canonicalUrl: getPublicShowroomCanonicalUrl(PUBLIC_SHOWROOM_CONTACT_PATH),
     jsonLd: contactJsonLd,
   })
 

@@ -159,7 +159,7 @@ async function main(): Promise<void> {
   const entries: SitemapEntry[] = []
 
   // 공개 진입점 (내부 /showroom 은 로그인 영역이므로 제외)
-  entries.push({ loc: `${BASE_URL}/`, changefreq: 'weekly', priority: 0.7 })
+  // `/` 는 공개 호스트에서 /public/showroom 으로 308 — 사이트맵에는 정본만
   entries.push({ loc: `${BASE_URL}/public/showroom`, changefreq: 'daily', priority: 1.0 })
   entries.push({
     loc: `${BASE_URL}/public/showroom/guide/managed-study-cafe-furniture`,

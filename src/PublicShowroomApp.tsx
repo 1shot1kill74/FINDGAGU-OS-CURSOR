@@ -67,19 +67,15 @@ function buildShowroomSearchParams(
     const normalizedChannel = normalizeSnsChannel(channel)
     if (!params.get('utm_source')) params.set('utm_source', normalizedChannel)
     if (!params.get('utm_medium')) params.set('utm_medium', getSnsMedium(normalizedChannel, entry))
-  } else {
-    if (!params.get('utm_source')) params.set('utm_source', 'direct')
-    if (!params.get('utm_medium')) params.set('utm_medium', 'direct')
+    if (!params.get('utm_campaign')) params.set('utm_campaign', 'showroom_abm_202606')
+    if (!params.get('entry')) params.set('entry', entry)
   }
-  if (!params.get('utm_campaign')) params.set('utm_campaign', 'showroom_abm_202606')
-  if (!params.get('entry')) params.set('entry', entry)
   return params
 }
 
 function RootRedirect() {
   const location = useLocation()
-  const params = buildShowroomSearchParams(location.search, 'domain')
-  return <Navigate replace to={`/public/showroom?${params.toString()}${location.hash}`} />
+  return <Navigate replace to={`/public/showroom${location.search}${location.hash}`} />
 }
 
 function SnsShowroomRedirect(props: { entry?: 'sns' | 'shorts' }) {

@@ -46,6 +46,7 @@ export const PUBLIC_SHOWROOM_COMPANY = {
 
 export const PUBLIC_SHOWROOM_HUB_PATH = '/public/showroom'
 export const PUBLIC_SHOWROOM_GALLERY_PATH = '/public/showroom/gallery'
+export const PUBLIC_SHOWROOM_CONTACT_PATH = '/contact'
 export const PUBLIC_SHOWROOM_HUB_TITLE =
   '파인드가구 온라인 쇼룸 — 관리형 스터디카페·학원·아파트 공간 사례'
 export const PUBLIC_SHOWROOM_HUB_DESCRIPTION =
@@ -54,6 +55,9 @@ export const PUBLIC_SHOWROOM_GALLERY_TITLE =
   '시공사례 더보기 — 파인드가구 온라인 쇼룸'
 export const PUBLIC_SHOWROOM_GALLERY_DESCRIPTION =
   '업종·제품·색상별로 파인드가구 시공 사례 사진을 더 둘러보세요. 관리형 스터디카페·학원·학교·아파트 커뮤니티 현장 사진을 확인할 수 있습니다.'
+export const PUBLIC_SHOWROOM_CONTACT_TITLE = `${PUBLIC_SHOWROOM_BRAND} 상담 문의`
+export const PUBLIC_SHOWROOM_CONTACT_DESCRIPTION =
+  '학원·도서관·아파트 커뮤니티 공간 맞춤 상담을 남겨 주세요. 쇼룸 사례를 보고 온 문의도 함께 접수됩니다.'
 
 /** 공개 공유 기본 OG (1200×630, `public/og-default.jpg`) */
 export const PUBLIC_SHOWROOM_DEFAULT_OG_PATH = '/og-default.jpg'
@@ -413,6 +417,132 @@ export function buildGuidePrerenderPage(origin = PUBLIC_SHOWROOM_ORIGIN): Public
       `<p>${escapePrerenderHtml(MANAGED_STUDY_CAFE_FEATURED_ANSWER)}</p>`,
       `<section><h2>선택 체크리스트</h2><ul>${checklistHtml}</ul></section>`,
       `<section><h2>자주 묻는 질문</h2><dl>${faqHtml}</dl></section>`,
+      `<p><a href="${escapePrerenderHtml(canonicalUrl)}">${escapePrerenderHtml(canonicalUrl)}</a></p>`,
+    ].join('\n'),
+  }
+}
+
+export function buildGalleryPrerenderPage(
+  origin = PUBLIC_SHOWROOM_ORIGIN,
+  cases: PublicShowroomHubCaseLink[] = [],
+): PublicShowroomPrerenderPage {
+  const base = origin.replace(/\/+$/, '')
+  const canonicalUrl = absoluteUrl(PUBLIC_SHOWROOM_GALLERY_PATH, base)
+  const hubUrl = absoluteUrl(PUBLIC_SHOWROOM_HUB_PATH, base)
+  const contactUrl = absoluteUrl(PUBLIC_SHOWROOM_CONTACT_PATH, base)
+  const caseHtml = cases
+    .map((item) => {
+      const href = absoluteUrl(item.path, base)
+      return `<li><a href="${escapePrerenderHtml(href)}">${escapePrerenderHtml(item.title)}</a></li>`
+    })
+    .join('')
+  return {
+    relativeDir: 'public/showroom/gallery',
+    title: PUBLIC_SHOWROOM_GALLERY_TITLE,
+    description: PUBLIC_SHOWROOM_GALLERY_DESCRIPTION,
+    canonicalUrl,
+    ogType: 'website',
+    ogImage: getPublicShowroomDefaultOgImageUrl(base),
+    jsonLd: [
+      buildOrganizationJsonLd(base),
+      {
+        '@context': 'https://schema.org',
+        '@type': 'CollectionPage',
+        name: PUBLIC_SHOWROOM_GALLERY_TITLE,
+        description: PUBLIC_SHOWROOM_GALLERY_DESCRIPTION,
+        url: canonicalUrl,
+        inLanguage: 'ko-KR',
+        isPartOf: {
+          '@type': 'WebSite',
+          name: `${PUBLIC_SHOWROOM_BRAND} 온라인 쇼룸`,
+          url: hubUrl,
+        },
+      },
+      {
+        '@context': 'https://schema.org',
+        '@type': 'BreadcrumbList',
+        itemListElement: [
+          {
+            '@type': 'ListItem',
+            position: 1,
+            name: PUBLIC_SHOWROOM_BRAND,
+            item: hubUrl,
+          },
+          {
+            '@type': 'ListItem',
+            position: 2,
+            name: '시공사례 더보기',
+            item: canonicalUrl,
+          },
+        ],
+      },
+    ],
+    noscriptHtml: [
+      `<h1>${escapePrerenderHtml(PUBLIC_SHOWROOM_GALLERY_TITLE)}</h1>`,
+      `<p>${escapePrerenderHtml(PUBLIC_SHOWROOM_GALLERY_DESCRIPTION)}</p>`,
+      `<p>${escapePrerenderHtml(FINDGAGU_ENTITY_ONE_LINER)}</p>`,
+      caseHtml
+        ? `<section><h2>시공 사례</h2><ol>${caseHtml}</ol></section>`
+        : '',
+      `<p><a href="${escapePrerenderHtml(hubUrl)}">온라인 쇼룸</a> · <a href="${escapePrerenderHtml(contactUrl)}">상담 문의</a></p>`,
+      `<p><a href="${escapePrerenderHtml(canonicalUrl)}">${escapePrerenderHtml(canonicalUrl)}</a></p>`,
+    ].filter(Boolean).join('\n'),
+  }
+}
+
+export function buildContactPrerenderPage(origin = PUBLIC_SHOWROOM_ORIGIN): PublicShowroomPrerenderPage {
+  const base = origin.replace(/\/+$/, '')
+  const canonicalUrl = absoluteUrl(PUBLIC_SHOWROOM_CONTACT_PATH, base)
+  const hubUrl = absoluteUrl(PUBLIC_SHOWROOM_HUB_PATH, base)
+  const { phone, email, address } = PUBLIC_SHOWROOM_COMPANY
+  return {
+    relativeDir: 'contact',
+    title: PUBLIC_SHOWROOM_CONTACT_TITLE,
+    description: PUBLIC_SHOWROOM_CONTACT_DESCRIPTION,
+    canonicalUrl,
+    ogType: 'website',
+    ogImage: getPublicShowroomDefaultOgImageUrl(base),
+    jsonLd: [
+      buildOrganizationJsonLd(base),
+      {
+        '@context': 'https://schema.org',
+        '@type': 'ContactPage',
+        name: PUBLIC_SHOWROOM_CONTACT_TITLE,
+        description: PUBLIC_SHOWROOM_CONTACT_DESCRIPTION,
+        url: canonicalUrl,
+        inLanguage: 'ko-KR',
+        mainEntity: {
+          '@type': 'LocalBusiness',
+          name: PUBLIC_SHOWROOM_BRAND,
+          telephone: phone,
+          email,
+        },
+      },
+      {
+        '@context': 'https://schema.org',
+        '@type': 'BreadcrumbList',
+        itemListElement: [
+          {
+            '@type': 'ListItem',
+            position: 1,
+            name: PUBLIC_SHOWROOM_BRAND,
+            item: hubUrl,
+          },
+          {
+            '@type': 'ListItem',
+            position: 2,
+            name: '상담 문의',
+            item: canonicalUrl,
+          },
+        ],
+      },
+    ],
+    noscriptHtml: [
+      `<h1>${escapePrerenderHtml(PUBLIC_SHOWROOM_CONTACT_TITLE)}</h1>`,
+      `<p>${escapePrerenderHtml(PUBLIC_SHOWROOM_CONTACT_DESCRIPTION)}</p>`,
+      `<p>${escapePrerenderHtml(FINDGAGU_ENTITY_ONE_LINER)}</p>`,
+      `<section><h2>연락처</h2><p>전화 ${escapePrerenderHtml(phone)} · ${escapePrerenderHtml(email)}</p><p>${escapePrerenderHtml(address)}</p></section>`,
+      `<p><a href="${escapePrerenderHtml(hubUrl)}">온라인 쇼룸 보기</a></p>`,
       `<p><a href="${escapePrerenderHtml(canonicalUrl)}">${escapePrerenderHtml(canonicalUrl)}</a></p>`,
     ].join('\n'),
   }
