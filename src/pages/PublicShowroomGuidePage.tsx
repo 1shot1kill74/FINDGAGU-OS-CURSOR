@@ -1,24 +1,15 @@
 /**
- * AEO 정본 페이지 — 관리형 스터디카페 가구 가이드
- * `/public/showroom` 카탈로그와 분리된 인용·검색용 문서면
+ * AEO 정본 가이드 — 업종별 체크리스트·FAQ
+ * `/public/showroom/guide/:slug`
  */
 import { useMemo } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, Navigate, useParams } from 'react-router-dom'
+import { FINDGAGU_ENTITY_ONE_LINER } from '@/lib/aeo/managedStudyCafeFurnitureGuide'
+import { getRelatedShowroomGuides, getShowroomGuideBySlug } from '@/lib/aeo/showroomGuides'
 import { usePageHead } from '@/lib/usePageHead'
 import {
-  FINDGAGU_COM_TREND_CORPUS,
-} from '@/lib/aeo/findgaguComTrendCorpus'
-import {
-  FINDGAGU_ENTITY_ONE_LINER,
-  MANAGED_STUDY_CAFE_CHECKLIST,
-  MANAGED_STUDY_CAFE_FEATURED_ANSWER,
-  MANAGED_STUDY_CAFE_FAQS,
-  MANAGED_STUDY_CAFE_GUIDE_DESCRIPTION,
-  MANAGED_STUDY_CAFE_GUIDE_PATH,
-  MANAGED_STUDY_CAFE_GUIDE_TITLE,
-} from '@/lib/aeo/managedStudyCafeFurnitureGuide'
-import {
   PUBLIC_SHOWROOM_BRAND,
+  PUBLIC_SHOWROOM_DOMAIN_ROLES,
   PUBLIC_SHOWROOM_HUB_PATH,
   buildOrganizationJsonLd,
   buildPublicShowroomBasicMetas,
@@ -26,64 +17,62 @@ import {
 } from '@/lib/publicShowroomSeo'
 import { openShowroomConsultationChat } from '@/pages/showroom/showroomStoryCta'
 
-export default function PublicManagedStudyCafeFurnitureGuidePage() {
+export default function PublicShowroomGuidePage() {
+  const { slug } = useParams<{ slug: string }>()
+  const guide = getShowroomGuideBySlug(slug)
+  const related = guide ? getRelatedShowroomGuides(guide.slug) : []
+
   const metas = useMemo(
     () =>
-      buildPublicShowroomBasicMetas({
-        title: MANAGED_STUDY_CAFE_GUIDE_TITLE,
-        description: MANAGED_STUDY_CAFE_GUIDE_DESCRIPTION,
-        canonicalPath: MANAGED_STUDY_CAFE_GUIDE_PATH,
-        ogType: 'article',
-      }),
-    [],
+      guide
+        ? buildPublicShowroomBasicMetas({
+            title: guide.title,
+            description: guide.description,
+            canonicalPath: guide.path,
+            ogType: 'article',
+          })
+        : [],
+    [guide],
   )
 
   const jsonLd = useMemo(() => {
-    const pageUrl = getPublicShowroomCanonicalUrl(MANAGED_STUDY_CAFE_GUIDE_PATH)
+    if (!guide) return []
+    const pageUrl = getPublicShowroomCanonicalUrl(guide.path)
     return [
       buildOrganizationJsonLd(),
       {
         '@context': 'https://schema.org',
         '@type': 'Article',
-        headline: MANAGED_STUDY_CAFE_GUIDE_TITLE,
-        description: MANAGED_STUDY_CAFE_GUIDE_DESCRIPTION,
+        headline: guide.title,
+        description: guide.description,
         inLanguage: 'ko-KR',
         mainEntityOfPage: pageUrl,
-        author: {
-          '@type': 'Organization',
-          name: PUBLIC_SHOWROOM_BRAND,
-        },
-        publisher: {
-          '@type': 'Organization',
-          name: PUBLIC_SHOWROOM_BRAND,
-        },
-        about: [
-          '관리형 스터디카페 가구',
-          '관리형 독서실 가구',
-          '스터디카페 가구업체',
-        ],
+        author: { '@type': 'Organization', name: PUBLIC_SHOWROOM_BRAND },
+        publisher: { '@type': 'Organization', name: PUBLIC_SHOWROOM_BRAND },
+        about: [...guide.about],
       },
       {
         '@context': 'https://schema.org',
         '@type': 'FAQPage',
-        mainEntity: MANAGED_STUDY_CAFE_FAQS.map((item) => ({
+        mainEntity: guide.faqs.map((item) => ({
           '@type': 'Question',
           name: item.question,
-          acceptedAnswer: {
-            '@type': 'Answer',
-            text: item.answer,
-          },
+          acceptedAnswer: { '@type': 'Answer', text: item.answer },
         })),
       },
     ]
-  }, [])
+  }, [guide])
 
   usePageHead({
-    title: MANAGED_STUDY_CAFE_GUIDE_TITLE,
+    title: guide?.title ?? PUBLIC_SHOWROOM_BRAND,
     metas,
-    canonicalUrl: getPublicShowroomCanonicalUrl(MANAGED_STUDY_CAFE_GUIDE_PATH),
+    canonicalUrl: guide ? getPublicShowroomCanonicalUrl(guide.path) : undefined,
     jsonLd,
   })
+
+  if (!guide) {
+    return <Navigate replace to={PUBLIC_SHOWROOM_HUB_PATH} />
+  }
 
   return (
     <div className="min-h-screen bg-white text-slate-900">
@@ -104,17 +93,17 @@ export default function PublicManagedStudyCafeFurnitureGuidePage() {
       <main className="mx-auto max-w-3xl px-5 py-10">
         <p className="text-sm font-medium text-slate-500">가이드</p>
         <h1 className="mt-2 text-2xl font-bold leading-snug tracking-tight text-slate-900 md:text-3xl">
-          관리형 스터디카페 가구, 고르기 전에
+          {guide.h1}
         </h1>
         <p className="mt-4 text-base leading-relaxed text-slate-700">{FINDGAGU_ENTITY_ONE_LINER}</p>
-        <p className="mt-4 text-base leading-relaxed text-slate-700">{MANAGED_STUDY_CAFE_FEATURED_ANSWER}</p>
+        <p className="mt-4 text-base leading-relaxed text-slate-700">{guide.featuredAnswer}</p>
 
         <section className="mt-10" aria-labelledby="guide-checklist">
           <h2 id="guide-checklist" className="text-lg font-semibold text-slate-900">
             선택 체크리스트
           </h2>
           <ul className="mt-4 space-y-3 border-t border-slate-200 pt-4">
-            {MANAGED_STUDY_CAFE_CHECKLIST.map((item) => (
+            {guide.checklist.map((item) => (
               <li key={item.label} className="text-sm leading-relaxed text-slate-700 md:text-base">
                 <span className="font-semibold text-slate-900">{item.label}</span>
                 <span className="text-slate-400"> — </span>
@@ -129,7 +118,7 @@ export default function PublicManagedStudyCafeFurnitureGuidePage() {
             자주 묻는 질문
           </h2>
           <dl className="mt-4 space-y-5 border-t border-slate-200 pt-4">
-            {MANAGED_STUDY_CAFE_FAQS.map((faq) => (
+            {guide.faqs.map((faq) => (
               <div key={faq.question}>
                 <dt className="text-sm font-semibold text-slate-900 md:text-base">{faq.question}</dt>
                 <dd className="mt-2 text-sm leading-relaxed text-slate-600 md:text-base">{faq.answer}</dd>
@@ -138,24 +127,52 @@ export default function PublicManagedStudyCafeFurnitureGuidePage() {
           </dl>
         </section>
 
-        <section className="mt-10" aria-labelledby="guide-sources">
-          <h2 id="guide-sources" className="text-lg font-semibold text-slate-900">
-            원문 (파인드가구 트랜드 분석)
+        {guide.sources && guide.sources.length > 0 ? (
+          <section className="mt-10" aria-labelledby="guide-sources">
+            <h2 id="guide-sources" className="text-lg font-semibold text-slate-900">
+              원문 (파인드가구 트랜드 분석)
+            </h2>
+            <ul className="mt-4 space-y-2 border-t border-slate-200 pt-4">
+              {guide.sources.map((entry) => (
+                <li key={entry.url} className="text-sm">
+                  <a
+                    href={entry.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-slate-700 underline-offset-2 hover:underline"
+                  >
+                    {entry.title}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
+
+        {related.length > 0 ? (
+          <section className="mt-10" aria-labelledby="guide-related">
+            <h2 id="guide-related" className="text-lg font-semibold text-slate-900">
+              다른 공간 가이드
+            </h2>
+            <ul className="mt-4 space-y-2 border-t border-slate-200 pt-4">
+              {related.map((item) => (
+                <li key={item.slug} className="text-sm">
+                  <Link to={item.path} className="text-slate-700 underline-offset-2 hover:underline">
+                    {item.teaserLabel} — {item.h1}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
+
+        <section className="mt-10" aria-labelledby="guide-domains">
+          <h2 id="guide-domains" className="text-lg font-semibold text-slate-900">
+            공식 사이트
           </h2>
-          <ul className="mt-4 space-y-2 border-t border-slate-200 pt-4">
-            {FINDGAGU_COM_TREND_CORPUS.map((entry) => (
-              <li key={entry.id} className="text-sm">
-                <a
-                  href={entry.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-slate-700 underline-offset-2 hover:underline"
-                >
-                  {entry.title}
-                </a>
-              </li>
-            ))}
-          </ul>
+          <p className="mt-4 text-sm leading-relaxed text-slate-600 md:text-base">
+            {PUBLIC_SHOWROOM_DOMAIN_ROLES.showroom.summary} {PUBLIC_SHOWROOM_DOMAIN_ROLES.product.summary}
+          </p>
         </section>
 
         <section className="mt-12 border-t border-slate-200 pt-8">
@@ -175,7 +192,7 @@ export default function PublicManagedStudyCafeFurnitureGuidePage() {
               onClick={() =>
                 openShowroomConsultationChat({
                   surface: 'guide_page',
-                  concern: '관리형 창업 또는 전환',
+                  concern: guide.concern,
                 })
               }
             >

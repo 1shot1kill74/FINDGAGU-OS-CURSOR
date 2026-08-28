@@ -4,15 +4,8 @@ import {
   buildPublicShowroomCasePath,
   buildPublicShowroomCasePathFromSlug,
 } from './showroomCaseSlug'
-import {
-  FINDGAGU_ENTITY_ONE_LINER,
-  MANAGED_STUDY_CAFE_CHECKLIST,
-  MANAGED_STUDY_CAFE_FEATURED_ANSWER,
-  MANAGED_STUDY_CAFE_FAQS,
-  MANAGED_STUDY_CAFE_GUIDE_DESCRIPTION,
-  MANAGED_STUDY_CAFE_GUIDE_PATH,
-  MANAGED_STUDY_CAFE_GUIDE_TITLE,
-} from './aeo/managedStudyCafeFurnitureGuide'
+import { FINDGAGU_ENTITY_ONE_LINER, MANAGED_STUDY_CAFE_GUIDE_PATH } from './aeo/managedStudyCafeFurnitureGuide'
+import { SHOWROOM_GUIDES, type ShowroomGuide } from './aeo/showroomGuides'
 
 /**
  * Organization.sameAs — 공식 채널 (findgagu.com 푸터 · 내부 세일즈킷 기준)
@@ -30,6 +23,22 @@ export const PUBLIC_SHOWROOM_ORIGIN = 'https://www.findgagu.co.kr'
 
 /** 제품·회사 이력 에비던스 호스트 (findgagu.com) */
 export const PUBLIC_SHOWROOM_PRODUCT_ORIGIN = 'https://www.findgagu.com'
+
+/** .co.kr = 현장 사례 정본, .com = 제품·회사 소개 */
+export const PUBLIC_SHOWROOM_DOMAIN_ROLES = {
+  showroom: {
+    origin: PUBLIC_SHOWROOM_ORIGIN,
+    role: '현장 사례·가이드·상담 정본',
+    summary:
+      'www.findgagu.co.kr 은 시공 Before/After, 업종 가이드, 상담 접수의 정본입니다.',
+  },
+  product: {
+    origin: PUBLIC_SHOWROOM_PRODUCT_ORIGIN,
+    role: '제품·회사 소개',
+    summary:
+      'www.findgagu.com 은 제품 시리즈·회사 이력·트랜드 원문을 두는 소개 사이트입니다. 사례 검색·인용은 .co.kr을 씁니다.',
+  },
+} as const
 
 export const PUBLIC_SHOWROOM_BRAND = '파인드가구'
 
@@ -57,7 +66,24 @@ export const PUBLIC_SHOWROOM_GALLERY_DESCRIPTION =
   '업종·제품·색상별로 파인드가구 시공 사례 사진을 더 둘러보세요. 관리형 스터디카페·학원·학교·아파트 커뮤니티 현장 사진을 확인할 수 있습니다.'
 export const PUBLIC_SHOWROOM_CONTACT_TITLE = `${PUBLIC_SHOWROOM_BRAND} 상담 문의`
 export const PUBLIC_SHOWROOM_CONTACT_DESCRIPTION =
-  '학원·도서관·아파트 커뮤니티 공간 맞춤 상담을 남겨 주세요. 쇼룸 사례를 보고 온 문의도 함께 접수됩니다.'
+  '관리형 스터디카페·학원 자습실·아파트 커뮤니티 맞춤 가구·배치 상담. 쇼룸 사례를 보고 온 문의도 접수합니다. 전화 031-592-7981.'
+export const PUBLIC_SHOWROOM_CONTACT_FEATURED_ANSWER =
+  '파인드가구 상담은 견적만 받는 창구가 아니라, 평수·좌석 수·관리 동선을 듣고 레이아웃과 가구 구성을 맞춰 드리는 무료 컨설팅입니다. 시공 사례 정본은 www.findgagu.co.kr, 제품·회사 소개는 www.findgagu.com 입니다.'
+export const PUBLIC_SHOWROOM_CONTACT_FAQS = [
+  {
+    question: '파인드가구 상담은 무엇을 해주나요?',
+    answer: PUBLIC_SHOWROOM_CONTACT_FEATURED_ANSWER,
+  },
+  {
+    question: '상담 전에 무엇을 보면 되나요?',
+    answer:
+      '온라인 쇼룸에서 같은 업종 Before/After를 고른 뒤 문의를 남기면 됩니다. 관리형 스터디카페·관리형 독서실·학원 자습실·아파트 커뮤니티 가이드에 체크리스트가 있습니다.',
+  },
+  {
+    question: 'findgagu.com과 findgagu.co.kr은 무엇이 다른가요?',
+    answer: `${PUBLIC_SHOWROOM_DOMAIN_ROLES.showroom.summary} ${PUBLIC_SHOWROOM_DOMAIN_ROLES.product.summary}`,
+  },
+] as const
 
 /** 공개 공유 기본 OG (1200×630, `public/og-default.jpg`) */
 export const PUBLIC_SHOWROOM_DEFAULT_OG_PATH = '/og-default.jpg'
@@ -87,7 +113,16 @@ export const PUBLIC_SHOWROOM_HUB_FAQS = [
     answer:
       '쇼룸에서 관심 사례를 확인한 뒤 상담(채널톡) 버튼으로 문의하거나, 문의 페이지에서 현장·연락처를 남겨 주시면 됩니다.',
   },
+  {
+    question: '학원 자습실·아파트 커뮤니티·관리형 독서실 가이드도 있나요?',
+    answer: `관리형 스터디카페 외에 학원 자습실·아파트 커뮤니티·관리형 독서실 가이드가 있습니다. ${SHOWROOM_GUIDES.map((guide) => `${guide.teaserLabel}(${PUBLIC_SHOWROOM_ORIGIN}${guide.path})`).join(', ')}`,
+  },
+  {
+    question: 'findgagu.com과 findgagu.co.kr은 무엇이 다른가요?',
+    answer: `${PUBLIC_SHOWROOM_DOMAIN_ROLES.showroom.summary} ${PUBLIC_SHOWROOM_DOMAIN_ROLES.product.summary}`,
+  },
 ] as const
+
 function absoluteUrl(pathOrUrl: string, origin = typeof window !== 'undefined' ? window.location.origin : PUBLIC_SHOWROOM_ORIGIN): string {
   if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl
   const base = origin.replace(/\/+$/, '')
@@ -169,6 +204,18 @@ export function buildOrganizationJsonLd(origin = PUBLIC_SHOWROOM_ORIGIN): PageHe
       '아파트 커뮤니티 시설',
       '자습실 인테리어',
       '공간 시공',
+    ],
+    additionalProperty: [
+      {
+        '@type': 'PropertyValue',
+        name: PUBLIC_SHOWROOM_DOMAIN_ROLES.showroom.role,
+        value: PUBLIC_SHOWROOM_DOMAIN_ROLES.showroom.origin,
+      },
+      {
+        '@type': 'PropertyValue',
+        name: PUBLIC_SHOWROOM_DOMAIN_ROLES.product.role,
+        value: PUBLIC_SHOWROOM_DOMAIN_ROLES.product.origin,
+      },
     ],
   }
 }
@@ -370,21 +417,28 @@ export function buildHubPrerenderPage(
   }
 }
 
-export function buildGuidePrerenderPage(origin = PUBLIC_SHOWROOM_ORIGIN): PublicShowroomPrerenderPage {
+export function buildGuidePrerenderPage(
+  guide: ShowroomGuide,
+  origin = PUBLIC_SHOWROOM_ORIGIN,
+): PublicShowroomPrerenderPage {
   const base = origin.replace(/\/+$/, '')
-  const canonicalUrl = absoluteUrl(MANAGED_STUDY_CAFE_GUIDE_PATH, base)
-  const checklistHtml = MANAGED_STUDY_CAFE_CHECKLIST.map(
-    (item) =>
-      `<li><strong>${escapePrerenderHtml(item.label)}</strong> — ${escapePrerenderHtml(item.detail)}</li>`,
-  ).join('')
-  const faqHtml = MANAGED_STUDY_CAFE_FAQS.map(
-    (item) =>
-      `<dt>${escapePrerenderHtml(item.question)}</dt><dd>${escapePrerenderHtml(item.answer)}</dd>`,
-  ).join('')
+  const canonicalUrl = absoluteUrl(guide.path, base)
+  const checklistHtml = guide.checklist
+    .map(
+      (item) =>
+        `<li><strong>${escapePrerenderHtml(item.label)}</strong> — ${escapePrerenderHtml(item.detail)}</li>`,
+    )
+    .join('')
+  const faqHtml = guide.faqs
+    .map(
+      (item) =>
+        `<dt>${escapePrerenderHtml(item.question)}</dt><dd>${escapePrerenderHtml(item.answer)}</dd>`,
+    )
+    .join('')
   return {
-    relativeDir: 'public/showroom/guide/managed-study-cafe-furniture',
-    title: MANAGED_STUDY_CAFE_GUIDE_TITLE,
-    description: MANAGED_STUDY_CAFE_GUIDE_DESCRIPTION,
+    relativeDir: `public/showroom/guide/${guide.slug}`,
+    title: guide.title,
+    description: guide.description,
     canonicalUrl,
     ogType: 'article',
     ogImage: getPublicShowroomDefaultOgImageUrl(base),
@@ -393,18 +447,18 @@ export function buildGuidePrerenderPage(origin = PUBLIC_SHOWROOM_ORIGIN): Public
       {
         '@context': 'https://schema.org',
         '@type': 'Article',
-        headline: MANAGED_STUDY_CAFE_GUIDE_TITLE,
-        description: MANAGED_STUDY_CAFE_GUIDE_DESCRIPTION,
+        headline: guide.title,
+        description: guide.description,
         inLanguage: 'ko-KR',
         mainEntityOfPage: canonicalUrl,
         author: { '@type': 'Organization', name: PUBLIC_SHOWROOM_BRAND },
         publisher: { '@type': 'Organization', name: PUBLIC_SHOWROOM_BRAND },
-        about: ['관리형 스터디카페 가구', '관리형 독서실 가구', '스터디카페 가구업체'],
+        about: [...guide.about],
       },
       {
         '@context': 'https://schema.org',
         '@type': 'FAQPage',
-        mainEntity: MANAGED_STUDY_CAFE_FAQS.map((item) => ({
+        mainEntity: guide.faqs.map((item) => ({
           '@type': 'Question',
           name: item.question,
           acceptedAnswer: { '@type': 'Answer', text: item.answer },
@@ -412,11 +466,12 @@ export function buildGuidePrerenderPage(origin = PUBLIC_SHOWROOM_ORIGIN): Public
       },
     ],
     noscriptHtml: [
-      `<h1>${escapePrerenderHtml(MANAGED_STUDY_CAFE_GUIDE_TITLE)}</h1>`,
+      `<h1>${escapePrerenderHtml(guide.h1)}</h1>`,
       `<p>${escapePrerenderHtml(FINDGAGU_ENTITY_ONE_LINER)}</p>`,
-      `<p>${escapePrerenderHtml(MANAGED_STUDY_CAFE_FEATURED_ANSWER)}</p>`,
+      `<p>${escapePrerenderHtml(guide.featuredAnswer)}</p>`,
       `<section><h2>선택 체크리스트</h2><ul>${checklistHtml}</ul></section>`,
       `<section><h2>자주 묻는 질문</h2><dl>${faqHtml}</dl></section>`,
+      `<p>${escapePrerenderHtml(PUBLIC_SHOWROOM_DOMAIN_ROLES.showroom.summary)} ${escapePrerenderHtml(PUBLIC_SHOWROOM_DOMAIN_ROLES.product.summary)}</p>`,
       `<p><a href="${escapePrerenderHtml(canonicalUrl)}">${escapePrerenderHtml(canonicalUrl)}</a></p>`,
     ].join('\n'),
   }
@@ -520,6 +575,15 @@ export function buildContactPrerenderPage(origin = PUBLIC_SHOWROOM_ORIGIN): Publ
       },
       {
         '@context': 'https://schema.org',
+        '@type': 'FAQPage',
+        mainEntity: PUBLIC_SHOWROOM_CONTACT_FAQS.map((item) => ({
+          '@type': 'Question',
+          name: item.question,
+          acceptedAnswer: { '@type': 'Answer', text: item.answer },
+        })),
+      },
+      {
+        '@context': 'https://schema.org',
         '@type': 'BreadcrumbList',
         itemListElement: [
           {
@@ -539,9 +603,14 @@ export function buildContactPrerenderPage(origin = PUBLIC_SHOWROOM_ORIGIN): Publ
     ],
     noscriptHtml: [
       `<h1>${escapePrerenderHtml(PUBLIC_SHOWROOM_CONTACT_TITLE)}</h1>`,
-      `<p>${escapePrerenderHtml(PUBLIC_SHOWROOM_CONTACT_DESCRIPTION)}</p>`,
+      `<p>${escapePrerenderHtml(PUBLIC_SHOWROOM_CONTACT_FEATURED_ANSWER)}</p>`,
       `<p>${escapePrerenderHtml(FINDGAGU_ENTITY_ONE_LINER)}</p>`,
+      `<section><h2>자주 묻는 질문</h2><dl>${PUBLIC_SHOWROOM_CONTACT_FAQS.map(
+        (item) =>
+          `<dt>${escapePrerenderHtml(item.question)}</dt><dd>${escapePrerenderHtml(item.answer)}</dd>`,
+      ).join('')}</dl></section>`,
       `<section><h2>연락처</h2><p>전화 ${escapePrerenderHtml(phone)} · ${escapePrerenderHtml(email)}</p><p>${escapePrerenderHtml(address)}</p></section>`,
+      `<p>${escapePrerenderHtml(PUBLIC_SHOWROOM_DOMAIN_ROLES.showroom.summary)} ${escapePrerenderHtml(PUBLIC_SHOWROOM_DOMAIN_ROLES.product.summary)}</p>`,
       `<p><a href="${escapePrerenderHtml(hubUrl)}">온라인 쇼룸 보기</a></p>`,
       `<p><a href="${escapePrerenderHtml(canonicalUrl)}">${escapePrerenderHtml(canonicalUrl)}</a></p>`,
     ].join('\n'),

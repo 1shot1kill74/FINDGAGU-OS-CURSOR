@@ -6,7 +6,7 @@
  *   dist/public/showroom/index.html
  *   dist/public/showroom/gallery/index.html
  *   dist/contact/index.html
- *   dist/public/showroom/guide/managed-study-cafe-furniture/index.html
+ *   dist/public/showroom/guide/<slug>/index.html
  *   dist/public/showroom/case/<사람슬러그>/index.html  (approved만)
  *   dist/public/showroom/case/<견적명>/index.html     (구 URL → 슬러그 리다이렉트)
  *
@@ -37,6 +37,7 @@ import {
   toPublicShowroomHubCaseLinks,
   type PublicShowroomPrerenderPage,
 } from '../src/lib/publicShowroomSeo.ts'
+import { SHOWROOM_GUIDES } from '../src/lib/aeo/showroomGuides.ts'
 import { assignUniqueShowroomCaseSlugs } from '../src/lib/showroomCaseSlug.ts'
 import { matchesHiddenShowroomSite } from '../src/lib/showroomHiddenSites.ts'
 
@@ -438,14 +439,16 @@ async function main(): Promise<void> {
   )
 
   const hub = buildHubPrerenderPage(BASE_URL, hubCases)
-  const guide = buildGuidePrerenderPage(BASE_URL)
+  const guides = SHOWROOM_GUIDES.map((guide) => buildGuidePrerenderPage(guide, BASE_URL))
   const gallery = buildGalleryPrerenderPage(BASE_URL, hubCases)
   const contact = buildContactPrerenderPage(BASE_URL)
   await writePrerenderedHtml(hub.relativeDir.split('/'), injectStaticPageIntoTemplate(template, hub))
-  await writePrerenderedHtml(guide.relativeDir.split('/'), injectStaticPageIntoTemplate(template, guide))
+  for (const guide of guides) {
+    await writePrerenderedHtml(guide.relativeDir.split('/'), injectStaticPageIntoTemplate(template, guide))
+  }
   await writePrerenderedHtml(gallery.relativeDir.split('/'), injectStaticPageIntoTemplate(template, gallery))
   await writePrerenderedHtml(contact.relativeDir.split('/'), injectStaticPageIntoTemplate(template, contact))
-  console.log(`[prerender] hub + guide + gallery + contact pages written (hub cases=${hubCases.length})`)
+  console.log(`[prerender] hub + guides(${guides.length}) + gallery + contact pages written (hub cases=${hubCases.length})`)
 
   let written = 0
   let redirected = 0

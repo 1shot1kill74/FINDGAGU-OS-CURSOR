@@ -22,6 +22,7 @@ import { createClient } from '@supabase/supabase-js'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
+import { SHOWROOM_GUIDES } from '../src/lib/aeo/showroomGuides.ts'
 import { assignUniqueShowroomCaseSlugs } from '../src/lib/showroomCaseSlug.ts'
 import { matchesHiddenShowroomSite } from '../src/lib/showroomHiddenSites.ts'
 
@@ -161,11 +162,13 @@ async function main(): Promise<void> {
   // 공개 진입점 (내부 /showroom 은 로그인 영역이므로 제외)
   // `/` 는 공개 호스트에서 /public/showroom 으로 308 — 사이트맵에는 정본만
   entries.push({ loc: `${BASE_URL}/public/showroom`, changefreq: 'daily', priority: 1.0 })
-  entries.push({
-    loc: `${BASE_URL}/public/showroom/guide/managed-study-cafe-furniture`,
-    changefreq: 'weekly',
-    priority: 0.9,
-  })
+  for (const guide of SHOWROOM_GUIDES) {
+    entries.push({
+      loc: `${BASE_URL}${guide.path}`,
+      changefreq: 'weekly',
+      priority: 0.9,
+    })
+  }
   entries.push({ loc: `${BASE_URL}/public/showroom/gallery`, changefreq: 'weekly', priority: 0.6 })
   entries.push({ loc: `${BASE_URL}/contact`, changefreq: 'monthly', priority: 0.5 })
 

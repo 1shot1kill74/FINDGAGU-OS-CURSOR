@@ -19,9 +19,7 @@ const PublicGalleryView = lazy(() => import('@/pages/PublicGalleryView'))
 const ShareRedirect = lazy(() => import('@/pages/ShareRedirect'))
 const PublicShowroomPage = lazy(() => import('@/pages/PublicShowroomPage'))
 const PublicShowroomGalleryPage = lazy(() => import('@/pages/PublicShowroomGalleryPage'))
-const PublicManagedStudyCafeFurnitureGuidePage = lazy(
-  () => import('@/pages/PublicManagedStudyCafeFurnitureGuidePage'),
-)
+const PublicShowroomGuidePage = lazy(() => import('@/pages/PublicShowroomGuidePage'))
 const PublicShowroomShortsLandingPage = lazy(() => import('@/pages/PublicShowroomShortsLandingPage'))
 const ShowroomCaseApproachPage = lazy(() => import('@/pages/ShowroomCaseApproachPage'))
 const InternalShowroomPage = lazy(() => import('@/pages/InternalShowroomPage'))
@@ -182,10 +180,7 @@ function App() {
             <Route path="/public/showroom/cardnews" element={<LegacyPublicShowroomCardNewsListRedirect />} />
             <Route path="/public/showroom/case/:siteKey" element={<ShowroomCaseApproachPage mode="public" />} />
             <Route path="/public/showroom/shorts/:jobId" element={<PublicShowroomShortsLandingPage />} />
-            <Route
-              path="/public/showroom/guide/managed-study-cafe-furniture"
-              element={<PublicManagedStudyCafeFurnitureGuidePage />}
-            />
+            <Route path="/public/showroom/guide/:slug" element={<PublicShowroomGuidePage />} />
             <Route path="/public/showroom/gallery" element={<PublicShowroomGalleryPage />} />
             <Route path="/public/showroom" element={<PublicShowroomPage />} />
             <Route path="/public/showroom/original" element={<OriginalShowroomPage mode="public" />} />

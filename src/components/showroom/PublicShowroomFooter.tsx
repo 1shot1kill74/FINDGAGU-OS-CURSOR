@@ -1,11 +1,10 @@
 import { Link } from 'react-router-dom'
-import {
-  FINDGAGU_ENTITY_ONE_LINER,
-  MANAGED_STUDY_CAFE_GUIDE_PATH,
-} from '@/lib/aeo/managedStudyCafeFurnitureGuide'
+import { FINDGAGU_ENTITY_ONE_LINER } from '@/lib/aeo/managedStudyCafeFurnitureGuide'
+import { SHOWROOM_GUIDES } from '@/lib/aeo/showroomGuides'
 import {
   PUBLIC_SHOWROOM_BRAND,
   PUBLIC_SHOWROOM_COMPANY,
+  PUBLIC_SHOWROOM_DOMAIN_ROLES,
   PUBLIC_SHOWROOM_HUB_PATH,
   PUBLIC_SHOWROOM_PRODUCT_ORIGIN,
   PUBLIC_SHOWROOM_SAME_AS,
@@ -45,11 +44,13 @@ export default function PublicShowroomFooter() {
                   온라인 쇼룸
                 </Link>
               </li>
-              <li>
-                <Link to={MANAGED_STUDY_CAFE_GUIDE_PATH} className="hover:text-slate-900">
-                  관리형 가구 가이드
-                </Link>
-              </li>
+              {SHOWROOM_GUIDES.map((guide) => (
+                <li key={guide.slug}>
+                  <Link to={guide.path} className="hover:text-slate-900">
+                    {guide.teaserLabel} 가이드
+                  </Link>
+                </li>
+              ))}
               <li>
                 <Link to="/contact" className="hover:text-slate-900">
                   상담 문의
@@ -106,7 +107,7 @@ export default function PublicShowroomFooter() {
 
         <div className="mt-8 flex flex-col gap-3 border-t border-slate-200 pt-6 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between">
           <p>
-            © {year} {PUBLIC_SHOWROOM_BRAND}. 현장 사례 쇼룸 · www.findgagu.co.kr
+            © {year} {PUBLIC_SHOWROOM_BRAND}. {PUBLIC_SHOWROOM_DOMAIN_ROLES.showroom.summary}
           </p>
           <ul className="flex flex-wrap gap-x-3 gap-y-1">
             {PUBLIC_SHOWROOM_SAME_AS.map((url) => (

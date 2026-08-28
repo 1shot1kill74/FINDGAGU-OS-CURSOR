@@ -13,12 +13,18 @@ import type { Json } from '@/types/database'
 import { usePageHead } from '@/lib/usePageHead'
 import {
   PUBLIC_SHOWROOM_CONTACT_DESCRIPTION,
+  PUBLIC_SHOWROOM_CONTACT_FAQS,
+  PUBLIC_SHOWROOM_CONTACT_FEATURED_ANSWER,
   PUBLIC_SHOWROOM_CONTACT_PATH,
   PUBLIC_SHOWROOM_CONTACT_TITLE,
+  PUBLIC_SHOWROOM_DOMAIN_ROLES,
+  PUBLIC_SHOWROOM_HUB_PATH,
+  PUBLIC_SHOWROOM_PRODUCT_ORIGIN,
   buildOrganizationJsonLd,
   buildPublicShowroomBasicMetas,
   getPublicShowroomCanonicalUrl,
 } from '@/lib/publicShowroomSeo'
+import { FINDGAGU_ENTITY_ONE_LINER } from '@/lib/aeo/managedStudyCafeFurnitureGuide'
 
 const DEFAULT_MESSAGE = (siteName: string) => `[현장명: ${siteName}]의 시공사례를 보고 문의드립니다.`
 
@@ -45,7 +51,21 @@ export default function ContactPage() {
       }),
     [],
   )
-  const contactJsonLd = useMemo(() => [buildOrganizationJsonLd()], [])
+  const contactJsonLd = useMemo(
+    () => [
+      buildOrganizationJsonLd(),
+      {
+        '@context': 'https://schema.org',
+        '@type': 'FAQPage',
+        mainEntity: PUBLIC_SHOWROOM_CONTACT_FAQS.map((item) => ({
+          '@type': 'Question',
+          name: item.question,
+          acceptedAnswer: { '@type': 'Answer', text: item.answer },
+        })),
+      },
+    ],
+    [],
+  )
   usePageHead({
     title: PUBLIC_SHOWROOM_CONTACT_TITLE,
     metas: contactMetas,
@@ -170,6 +190,28 @@ export default function ContactPage() {
         </div>
       </header>
       <main className="max-w-xl mx-auto w-full px-4 py-8 flex-1">
+        <section className="mb-8 space-y-3 text-sm leading-relaxed text-neutral-700">
+          <p>{FINDGAGU_ENTITY_ONE_LINER}</p>
+          <p>{PUBLIC_SHOWROOM_CONTACT_FEATURED_ANSWER}</p>
+          <p>
+            {PUBLIC_SHOWROOM_DOMAIN_ROLES.showroom.summary}{' '}
+            {PUBLIC_SHOWROOM_DOMAIN_ROLES.product.summary}
+          </p>
+          <p>
+            <Link to={PUBLIC_SHOWROOM_HUB_PATH} className="underline underline-offset-2">
+              온라인 쇼룸
+            </Link>
+            {' · '}
+            <a
+              href={PUBLIC_SHOWROOM_PRODUCT_ORIGIN}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline underline-offset-2"
+            >
+              제품·회사 소개
+            </a>
+          </p>
+        </section>
         <form onSubmit={handleSubmit} className="space-y-5">
           <div>
             <label className="block text-sm font-medium text-neutral-700 mb-1.5">
