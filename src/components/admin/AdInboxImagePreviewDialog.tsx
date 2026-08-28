@@ -63,6 +63,9 @@ type Props = {
   beforeId: string | null
   afterId: string | null
   onPick: (asset: ShowroomImageAsset, slot: 'before' | 'after') => void
+  /** 승격 후에도 쇼룸 대표 After를 다시 지정 */
+  onSetMain?: (asset: ShowroomImageAsset) => void
+  settingMain?: boolean
   /** 가져오기 Dialog 등 위에 띄울 때 */
   stackClassName?: string
   overlayStackClassName?: string
@@ -80,6 +83,8 @@ export default function AdInboxImagePreviewDialog({
   beforeId,
   afterId,
   onPick,
+  onSetMain,
+  settingMain = false,
   stackClassName = 'z-[100]',
   overlayStackClassName = 'z-[100]',
   lockOutsideDismiss = false,
@@ -140,7 +145,7 @@ export default function AdInboxImagePreviewDialog({
           <DialogDescription className="text-xs">
             {mode === 'compare'
               ? '선택한 Before·After를 나란히 확인합니다. 필요하면 닫은 뒤 그리드에서 다시 고르세요.'
-              : '크게 보고 Before / After를 지정할 수 있습니다.'}
+              : '크게 보고 Before / After, 쇼룸 대표 After를 지정할 수 있습니다.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -196,6 +201,17 @@ export default function AdInboxImagePreviewDialog({
               >
                 After로 지정
               </Button>
+              {onSetMain ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={current.is_main ? 'secondary' : 'outline'}
+                  disabled={current.is_main || settingMain}
+                  onClick={() => onSetMain(current)}
+                >
+                  {current.is_main ? '대표 After' : '대표로 지정'}
+                </Button>
+              ) : null}
               <Button type="button" size="sm" variant="ghost" onClick={() => onOpenChange(false)}>
                 <X className="mr-1 h-3.5 w-3.5" />
                 닫기

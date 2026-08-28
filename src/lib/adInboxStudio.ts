@@ -1020,6 +1020,17 @@ export async function updateAdInboxAssetRole(
   }
 }
 
+/**
+ * 승격 후에도 대기실에서 쇼룸 대표(is_main)를 다시 지정한다.
+ * 현장당 대표 1장 — 같은 site_name의 기존 대표는 해제된다.
+ */
+export async function setAdInboxAssetMain(assetId: string, siteName: string): Promise<void> {
+  const { error } = await setImageAssetMain(assetId, siteName)
+  if (error) {
+    throw error
+  }
+}
+
 /** 쇼룸 숏츠 job의 before_after_group_key 형식 */
 export function buildAdInboxShortsGroupKey(batchKey: string): string {
   return `before-after:${batchKey.trim()}`

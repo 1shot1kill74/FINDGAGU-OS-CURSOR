@@ -12,6 +12,7 @@ import {
   RefreshCw,
   Send,
   Sparkles,
+  Star,
   Trash2,
   Upload,
   Video,
@@ -64,6 +65,7 @@ import {
   listAdInboxTimelapseJobsForBatch,
   listAdInboxWorkProgressByBatches,
   resolveAdInboxChannelPostUrl,
+  setAdInboxAssetMain,
   synthesizeBeforeFromAfterImage,
   updateAdInboxAssetRole,
   uploadAdInboxPhotos,
@@ -367,6 +369,7 @@ export default function AdInboxStudioPage() {
   const [recommending, setRecommending] = useState(false)
   const [recommendation, setRecommendation] = useState<AdInboxPairRecommendation | null>(null)
   const [cleaningId, setCleaningId] = useState<string | null>(null)
+  const [settingMainId, setSettingMainId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [deletingSiteId, setDeletingSiteId] = useState<string | null>(null)
   const [jobs, setJobs] = useState<AdInboxTimelapseJob[]>([])
@@ -931,6 +934,36 @@ export default function AdInboxStudioPage() {
       await refresh()
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '태그 저장 실패')
+    }
+  }
+
+  const resolveAssetSiteName = (asset: AdInboxAsset) =>
+    (asset.site_name || asset.raw_site_name || selectedBatch?.shortName || '').trim()
+
+  const handleSetMain = async (asset: AdInboxAsset) => {
+    const siteName = resolveAssetSiteName(asset)
+    if (!siteName) {
+      toast.error('현장명이 없어 대표를 지정할 수 없습니다.')
+      return
+    }
+    const isAfter = asset.before_after_role === 'after' || afterId === asset.id
+    if (!isAfter) {
+      toast.error('쇼룸 대표는 After 컷만 됩니다. 먼저 After로 지정하세요.')
+      return
+    }
+    setSettingMainId(asset.id)
+    try {
+      if (asset.before_after_role !== 'after') {
+        await updateAdInboxAssetRole(asset.id, 'after')
+        setAfterId(asset.id)
+      }
+      await setAdInboxAssetMain(asset.id, siteName)
+      await refresh()
+      toast.success('쇼룸 대표 After로 지정했습니다.')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '대표 지정 실패')
+    } finally {
+      setSettingMainId(null)
     }
   }
 
@@ -2288,14 +2321,24 @@ export default function AdInboxStudioPage() {
                                 확대
                               </span>
                             </button>
-                            {linked ? (
-                              <span className="absolute left-1.5 top-1.5 z-10 rounded bg-violet-600 px-1.5 py-0.5 text-[10px] font-medium text-white">
-                                쇼룸 BA
-                              </span>
-                            ) : asset.is_consultation ? (
-                              <span className="absolute left-1.5 top-1.5 z-10 rounded bg-emerald-600 px-1.5 py-0.5 text-[10px] font-medium text-white">
-                                쇼룸 등록됨
-                              </span>
+                            {linked || asset.is_consultation || asset.is_main ? (
+                              <div className="absolute left-1.5 top-1.5 z-10 flex flex-col items-start gap-1">
+                                {linked ? (
+                                  <span className="rounded bg-violet-600 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                                    쇼룸 BA
+                                  </span>
+                                ) : asset.is_consultation ? (
+                                  <span className="rounded bg-emerald-600 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                                    쇼룸 등록됨
+                                  </span>
+                                ) : null}
+                                {asset.is_main ? (
+                                  <span className="inline-flex items-center gap-0.5 rounded bg-amber-500 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                                    <Star className="h-3 w-3 fill-current" />
+                                    대표
+                                  </span>
+                                ) : null}
+                              </div>
                             ) : null}
                             {!linked ? (
                               <button
@@ -2350,6 +2393,25 @@ export default function AdInboxStudioPage() {
                               >
                                 {cleaningId === asset.id ? '보정중…' : '사람제거'}
                               </button>
+                              {resolveAssetSiteName(asset) &&
+                              (asset.before_after_role === 'after' || afterId === asset.id || asset.is_main) ? (
+                                <button
+                                  type="button"
+                                  disabled={asset.is_main || settingMainId === asset.id}
+                                  className={`rounded-md px-2 py-0.5 text-[10px] font-medium disabled:opacity-60 ${
+                                    asset.is_main
+                                      ? 'bg-amber-500 text-white'
+                                      : 'bg-amber-50 text-amber-900 hover:bg-amber-100'
+                                  }`}
+                                  onClick={() => void handleSetMain(asset)}
+                                >
+                                  {settingMainId === asset.id
+                                    ? '지정중…'
+                                    : asset.is_main
+                                      ? '대표'
+                                      : '대표지정'}
+                                </button>
+                              ) : null}
                             </div>
                             {!isBefore && !isAfter ? (
                               <p className="text-[10px] text-neutral-400">미선택 · 하나를 누르세요</p>
@@ -2415,6 +2477,7 @@ export default function AdInboxStudioPage() {
                     </Button>
                   </div>
                   <p className="mt-2 text-xs text-neutral-500">
+                    After를 고른 뒤 「대표지정」하면 승격 후에도 쇼룸 카드 After를 바꿀 수 있습니다.
                     After만 있으면 「공사 전 Before」또는「빈 방 Before」→「이 Before 쓰기」후
                     타임랩스·쇼룸으로 보내세요. 빈 방 Before면 「빈 방 타임랩스」를 쓰세요.
                     사람이 찍힌 Before는 타임랩스 전에 「사람 제거 보정」→ 새 컷 확인 → 그다음 타임랩스.
@@ -3077,6 +3140,11 @@ export default function AdInboxStudioPage() {
           const inbox = displayAssets.find((a) => a.id === asset.id)
           if (inbox) handlePickForTimelapse(inbox, slot)
         }}
+        onSetMain={(asset) => {
+          const inbox = displayAssets.find((a) => a.id === asset.id)
+          if (inbox) void handleSetMain(inbox)
+        }}
+        settingMain={settingMainId != null}
       />
     </div>
   )
