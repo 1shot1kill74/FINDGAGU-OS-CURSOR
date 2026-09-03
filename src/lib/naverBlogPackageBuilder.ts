@@ -3,7 +3,7 @@
  *
  * 입력: 승인된 (혹은 작업실에서 미리보기 가능한) `ShowroomCaseCanonicalBlogPost`
  * 출력:
- *   - 네이버 친화 본문 HTML (이미지 자리는 [이미지 N] 마커, 자가 사이트 풋터 포함)
+ *   - 스마트에디터 붙여넣기용 HTML (h2/p/a, 인라인 스타일 없음, [이미지 N] 마커, 자가 사이트 풋터)
  *   - 네이버 친화 본문 마크다운 (HTML과 1:1 대응, 같은 [이미지 N] 마커)
  *   - 추천 제목 후보 / 추천 해시태그 / 발행 체크리스트
  *   - 이미지 다운로드 목록 (zip은 호출부에서 fetch + JSZip)
@@ -30,10 +30,6 @@ import { PUBLIC_SHOWROOM_ORIGIN } from '@/lib/publicShowroomSeo'
 import { buildPublicShowroomCasePath } from '@/lib/showroomCaseSlug'
 
 const FOOTER_LINK_LABEL = '원본 보러 가기'
-const BODY_STYLE =
-  "font-family:'마루부리','Nanum MaruBuri',MaruBuri,sans-serif;font-size:16px;line-height:1.8;text-align:left;"
-const HEADING_STYLE =
-  "font-family:'마루부리','Nanum MaruBuri',MaruBuri,sans-serif;font-size:20px;line-height:1.8;text-align:left;font-weight:700;"
 
 export type NaverPackageImageItem = {
   /** 사람이 인식하는 1-base 번호. 본문의 `[이미지 N]` 과 일치한다. */
@@ -51,11 +47,11 @@ export type NaverPackageImageItem = {
 }
 
 export type NaverBlogPackage = {
-  /** 클립보드 복사용 본문 HTML — 네이버 에디터에 그대로 붙여넣기 가능 */
+  /** 스마트에디터 붙여넣기용 번역본. 인라인 스타일 없는 h2/p/a 만. */
   bodyHtml: string
   /** 클립보드 복사용 본문 마크다운 — 다른 채널 재사용 시 유용 */
   bodyMarkdown: string
-  /** 서식 없는 본문. [이미지 N] 과 원본 링크는 유지 */
+  /** 서식 없는 본문. [이미지 N] 과 원본 링크는 유지. text/html 실패 시 fallback */
   bodyPlainText: string
   /** 추천 제목 후보 (3~5개) */
   titleCandidates: string[]
@@ -359,8 +355,10 @@ function buildHashtagPool(input: BuildNaverPackageInput): string[] {
 function buildPublishingChecklist(): string[] {
   return [
     '제목은 홈페이지 SEO 제목 그대로 쓴다.',
-    '본문은 홈페이지 정본 그대로 붙인다. FAQ·인용 박스·견적명을 덧붙이지 않는다.',
+    '본문은 「네이버에 붙여넣기 복사」만 쓴다. HTML 원문·마크다운·미리보기 드래그 복사는 쓰지 않는다.',
+    '스마트에디터 본문란에 붙여넣는다. 제목란과 섞지 않는다.',
     '본문 안의 [이미지 1], [이미지 2] … 자리에 같은 번호 사진을 끌어다 놓거나 복사해 붙여넣는다.',
+    '글꼴·정렬은 붙여넣은 뒤 에디터 툴바에서 한 번만 맞춘다. 패키지 스타일을 기대하지 않는다.',
     '맨 끝 원본 보기 링크가 공개 쇼룸 사람 슬러그로 열리는지 확인한다.',
     '사진 설명은 캡션 정리표에서 복사해 같은 번호 사진에 붙인다.',
     '해시태그는 브랜드·시공사례·제품명·업종리뉴얼 정도만 붙인다. 30개·100자를 넘기지 않는다.',
@@ -402,6 +400,15 @@ export function naverMarkdownToPlainText(markdown: string): string {
     .trim()
 }
 
+/** 스마트에디터가 오역하는 인라인 스타일·인용박스를 빼고, 제목/본문/링크만 남긴다. */
+function inlineMarkdownToPasteHtml(raw: string): string {
+  return escapeHtml(raw)
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2">$1</a>')
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/\*(.+?)\*/g, '$1')
+    .replace(/\n/g, '<br />')
+}
+
 function buildNaverHtml(
   normalizedMarkdown: string,
   canonicalUrl: string,
@@ -411,29 +418,78 @@ function buildNaverHtml(
   for (const block of blocks) {
     const imgMatch = block.match(/^\[\[IMG:(\d+)\]\]$/)
     if (imgMatch) {
-      out.push(`<p style="${BODY_STYLE}">[이미지 ${imgMatch[1]}]</p>`)
+      out.push(`<p>[이미지 ${imgMatch[1]}]</p>`)
       continue
     }
     if (/^#{1,6}\s/.test(block)) {
       const level = block.match(/^#+/)?.[0].length ?? 1
       const safeLevel = Math.min(Math.max(level, 2), 3)
       const text = block.replace(/^#+\s+/, '').trim()
-      out.push(`<h${safeLevel} style="${HEADING_STYLE}">${escapeHtml(text)}</h${safeLevel}>`)
+      out.push(`<h${safeLevel}>${escapeHtml(text)}</h${safeLevel}>`)
       continue
     }
     if (/^>\s/.test(block)) {
       const text = block.replace(/^>\s?/, '').trim()
-      out.push(`<blockquote style="${BODY_STYLE}">${escapeHtml(text)}</blockquote>`)
+      out.push(`<p>${inlineMarkdownToPasteHtml(text)}</p>`)
       continue
     }
-    const safe = escapeHtml(block).replace(/\n/g, '<br />')
-    out.push(`<p style="${BODY_STYLE}">${safe}</p>`)
+    out.push(`<p>${inlineMarkdownToPasteHtml(block)}</p>`)
   }
 
   out.push(
-    `<p style="${BODY_STYLE}"><a href="${escapeHtml(canonicalUrl)}" rel="noopener noreferrer" target="_blank">${escapeHtml(FOOTER_LINK_LABEL)}</a></p>`,
+    `<p><a href="${escapeHtml(canonicalUrl)}">${escapeHtml(FOOTER_LINK_LABEL)}</a></p>`,
   )
   return out.join('\n')
+}
+
+/** 브라우저가 ‘서식 있는 복사’로 인식하게 조각 마커를 씌운다. */
+export function wrapNaverPasteHtmlForClipboard(fragment: string): string {
+  return `<html><body><!--StartFragment-->\n${fragment}\n<!--EndFragment--></body></html>`
+}
+
+/**
+ * 스마트에디터 본문란용. text/html + text/plain 을 같이 넣는다.
+ * writeText(HTML 원문) 는 쓰지 않는다. 태그가 글자로 붙거나 서식이 깨진다.
+ */
+export async function copyNaverBodyForSmartEditor(html: string, plain: string): Promise<void> {
+  const fragment = String(html || '').trim()
+  const fallback = String(plain || '').trim()
+  if (!fragment && !fallback) {
+    throw new Error('복사할 본문이 없습니다.')
+  }
+
+  if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+    const htmlBlob = new Blob([wrapNaverPasteHtmlForClipboard(fragment || fallback)], { type: 'text/html' })
+    const plainBlob = new Blob([fallback || fragment.replace(/<[^>]+>/g, '')], { type: 'text/plain' })
+    try {
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'text/html': htmlBlob,
+          'text/plain': plainBlob,
+        }),
+      ])
+      return
+    } catch {
+      try {
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            'text/html': Promise.resolve(htmlBlob),
+            'text/plain': Promise.resolve(plainBlob),
+          }),
+        ])
+        return
+      } catch {
+        /* writeText fallback */
+      }
+    }
+  }
+
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(fallback || fragment)
+    return
+  }
+
+  throw new Error('클립보드에 복사할 수 없습니다.')
 }
 
 function resolveCanonicalSourceUrl(input: BuildNaverPackageInput): string {

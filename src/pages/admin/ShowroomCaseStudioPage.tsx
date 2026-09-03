@@ -20,6 +20,7 @@ import { requestDeployHookTrigger } from '@/lib/triggerVercelDeployHook'
 import { buildPublicShowroomCasePath } from '@/lib/showroomCaseSlug'
 import {
   buildNaverBlogPackage,
+  copyNaverBodyForSmartEditor,
   downloadNaverPackageAsZip,
   formatNaverSourceUrlForDisplay,
   type NaverBlogPackage,
@@ -149,6 +150,17 @@ export default function ShowroomCaseStudioPage() {
     } catch (err) {
       console.warn('clipboard failed', err)
       toast.error(`${label} 복사 실패`)
+    }
+  }
+
+  async function copyNaverPasteTranslation() {
+    if (!naverPackageState) return
+    try {
+      await copyNaverBodyForSmartEditor(naverPackageState.pkg.bodyHtml, naverPackageState.pkg.bodyPlainText)
+      toast.success('네이버 붙여넣기용 본문을 복사했습니다. 스마트에디터 본문란에 붙여넣으세요.')
+    } catch (err) {
+      console.warn('naver paste clipboard failed', err)
+      toast.error(err instanceof Error ? err.message : '네이버 붙여넣기 복사 실패')
     }
   }
 
@@ -1015,7 +1027,7 @@ export default function ShowroomCaseStudioPage() {
                   <span className="text-slate-400"> · </span>
                 </>
               ) : null}
-              본문·해시태그·사진을 한 번에 챙깁니다. 사진은 아래 썸네일을 네이버 에디터의 [이미지 N] 자리로 끌어다 놓거나 복사해 붙여넣으면 됩니다. 본문 끝에는 자가 사이트 사례 페이지 백링크가 들어갑니다.
+              「네이버에 붙여넣기 복사」가 스마트에디터 번역본입니다. 본문란에 붙여넣은 뒤, 사진은 [이미지 N] 자리에 끌어다 놓습니다. 본문 끝 백링크는 번역본에 들어 있습니다.
             </p>
           </DialogHeader>
           {naverPackageState ? (
@@ -1025,11 +1037,19 @@ export default function ShowroomCaseStudioPage() {
                   <Button
                     type="button"
                     size="sm"
+                    className="gap-1.5"
+                    onClick={() => void copyNaverPasteTranslation()}
+                  >
+                    <Copy className="h-4 w-4" /> 네이버에 붙여넣기 복사
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
                     variant="outline"
                     className="gap-1.5"
-                    onClick={() => void copyToClipboardSafely(naverPackageState.pkg.bodyHtml, '네이버 본문 HTML')}
+                    onClick={() => void copyToClipboardSafely(naverPackageState.pkg.bodyHtml, '네이버 본문 HTML 원문')}
                   >
-                    <Copy className="h-4 w-4" /> HTML 복사
+                    <Copy className="h-4 w-4" /> HTML 원문
                   </Button>
                   <Button
                     type="button"
@@ -1038,7 +1058,7 @@ export default function ShowroomCaseStudioPage() {
                     className="gap-1.5"
                     onClick={() => void copyToClipboardSafely(naverPackageState.pkg.bodyMarkdown, '네이버 본문 마크다운')}
                   >
-                    <Copy className="h-4 w-4" /> 마크다운 복사
+                    <Copy className="h-4 w-4" /> 마크다운
                   </Button>
                   <Button
                     type="button"
@@ -1091,7 +1111,7 @@ export default function ShowroomCaseStudioPage() {
 
                 <section className="mb-5 rounded-2xl border border-slate-200 bg-white px-4 py-3">
                   <div className="flex flex-wrap items-start justify-between gap-3">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">본문 미리보기 (HTML 렌더링)</p>
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">본문 미리보기 (스마트에디터 번역본)</p>
                     <div className="flex shrink-0 items-center gap-3">
                       <button
                         type="button"
