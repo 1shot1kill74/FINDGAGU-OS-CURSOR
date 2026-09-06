@@ -21,6 +21,10 @@ import {
   isDemoInstallSplit,
   parseSplitState,
 } from "../_shared/klingSplitState.ts"
+import {
+  getReplicateModel,
+  submitReplicateVideo,
+} from "../_shared/replicateVideo.ts"
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -28,9 +32,6 @@ const CORS = {
 }
 
 type JsonRecord = Record<string, unknown>
-const DEFAULT_KLING_API_BASE_URL = "https://api.klingai.com"
-const FALLBACK_KLING_API_BASE_URL = "https://api-beijing.klingai.com"
-type KlingApiMode = "legacy-multi-image" | "image-to-video-v3" | "omni"
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -50,216 +51,8 @@ function getEnv(name: string, required = true) {
   return value
 }
 
-function base64UrlEncodeBytes(bytes: Uint8Array) {
-  let binary = ""
-  for (const byte of bytes) binary += String.fromCharCode(byte)
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "")
-}
-
-function base64UrlEncodeJson(input: unknown) {
-  return base64UrlEncodeBytes(new TextEncoder().encode(JSON.stringify(input)))
-}
-
-async function createKlingJwt(accessKey: string, secretKey: string) {
-  const header = { alg: "HS256", typ: "JWT" }
-  const now = Math.floor(Date.now() / 1000)
-  const payload = {
-    iss: accessKey,
-    iat: now,
-    nbf: now - 5,
-    exp: now + 1800,
-  }
-  const headerPart = base64UrlEncodeJson(header)
-  const payloadPart = base64UrlEncodeJson(payload)
-  const message = `${headerPart}.${payloadPart}`
-  const cryptoKey = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secretKey),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  )
-  const signature = await crypto.subtle.sign("HMAC", cryptoKey, new TextEncoder().encode(message))
-  const signaturePart = base64UrlEncodeBytes(new Uint8Array(signature))
-  return `${message}.${signaturePart}`
-}
-
-function getRecord(value: unknown): JsonRecord | null {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : null
-}
-
 function getString(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : ""
-}
-
-function getOptionalString(value: unknown): string | null {
-  return typeof value === "string" && value.trim() ? value.trim() : null
-}
-
-function normalizeKlingModelName(value: string) {
-  return value.trim().toLowerCase()
-}
-
-function resolveKlingApiMode(modelName: string): KlingApiMode {
-  const normalized = normalizeKlingModelName(modelName)
-  if (normalized.includes("omni")) return "omni"
-  if (normalized.includes("v3")) return "image-to-video-v3"
-  return "legacy-multi-image"
-}
-
-function getKlingCreatePath(mode: KlingApiMode) {
-  if (mode === "omni") return "/v1/videos/omni"
-  if (mode === "image-to-video-v3") return "/v1/videos/image2video"
-  return "/v1/videos/multi-image2video"
-}
-
-function buildKlingRequestBody(input: {
-  mode: KlingApiMode
-  modelName: string
-  beforeUrl: string
-  afterUrl: string | null
-  promptText: string
-  negativePrompt: string
-  durationSeconds: number
-  aspectRatio: string
-  externalTaskId: string
-  callbackUrl: string | null
-}) {
-  const common = {
-    model_name: input.modelName,
-    aspect_ratio: input.aspectRatio,
-    external_task_id: input.externalTaskId,
-  }
-  const negativePrompt = input.negativePrompt.trim() || SHOWROOM_SHORTS_COMMON_NEGATIVE_PROMPT
-
-  if (input.mode === "omni") {
-    const imageUrls = input.afterUrl ? [input.beforeUrl, input.afterUrl] : [input.beforeUrl]
-    const requestBody: JsonRecord = {
-      ...common,
-      prompt: input.promptText,
-      negative_prompt: negativePrompt,
-      image_urls: imageUrls,
-      duration: input.durationSeconds,
-      generate_audio: false,
-    }
-    if (input.callbackUrl) {
-      requestBody.callback_url = input.callbackUrl
-      requestBody.webhook_url = input.callbackUrl
-    }
-    return requestBody
-  }
-
-  if (input.mode === "image-to-video-v3") {
-    const requestBody: JsonRecord = {
-      ...common,
-      image: input.beforeUrl,
-      prompt: input.promptText,
-      negative_prompt: negativePrompt,
-      mode: "pro",
-      duration: String(input.durationSeconds),
-      sound: "off",
-    }
-    if (input.afterUrl) {
-      requestBody.image_tail = input.afterUrl
-    }
-    if (input.callbackUrl) {
-      requestBody.callback_url = input.callbackUrl
-    }
-    return requestBody
-  }
-
-  const requestBody: JsonRecord = {
-    ...common,
-    image_list: input.afterUrl
-      ? [{ image: input.beforeUrl }, { image: input.afterUrl }]
-      : [{ image: input.beforeUrl }],
-    prompt: input.promptText,
-    negative_prompt: negativePrompt,
-    mode: "pro",
-    duration: String(input.durationSeconds),
-    watermark_info: { enabled: false },
-  }
-  if (input.callbackUrl) {
-    requestBody.callback_url = input.callbackUrl
-  }
-  return requestBody
-}
-
-async function postKlingCreate(input: {
-  token: string
-  baseUrls: string[]
-  requestPath: string
-  requestBody: JsonRecord
-}) {
-  let activeBaseUrl = input.baseUrls[0]
-  let response = await fetch(`${activeBaseUrl}${input.requestPath}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${input.token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(input.requestBody),
-  })
-  let rawText = await response.text()
-  let parsed: JsonRecord | null = parseJsonRecord(rawText)
-
-  if (!response.ok && shouldRetryWithFallback(response.status, parsed, rawText) && input.baseUrls.length > 1) {
-    for (const candidate of input.baseUrls.slice(1)) {
-      activeBaseUrl = candidate
-      response = await fetch(`${activeBaseUrl}${input.requestPath}`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${input.token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(input.requestBody),
-      })
-      rawText = await response.text()
-      parsed = parseJsonRecord(rawText)
-      if (response.ok || !shouldRetryWithFallback(response.status, parsed, rawText)) {
-        break
-      }
-    }
-  }
-
-  return { response, rawText, parsed, activeBaseUrl }
-}
-
-function buildKlingApiBaseUrls(preferredBaseUrl: string | null) {
-  const candidates = [preferredBaseUrl || DEFAULT_KLING_API_BASE_URL, DEFAULT_KLING_API_BASE_URL, FALLBACK_KLING_API_BASE_URL]
-  return Array.from(new Set(candidates.map((value) => value.replace(/\/+$/, "")).filter(Boolean)))
-}
-
-function parseJsonRecord(rawText: string): JsonRecord | null {
-  try {
-    return rawText ? JSON.parse(rawText) as JsonRecord : null
-  } catch {
-    return null
-  }
-}
-
-function getKlingErrorMessage(payload: JsonRecord | null, rawText: string, status: number) {
-  return (
-    getString(payload?.message) ||
-    getString(payload?.error) ||
-    getOptionalString(getRecord(payload?.data)?.message) ||
-    rawText.trim() ||
-    `원본 생성 요청 실패 (${status})`
-  )
-}
-
-function shouldRetryWithFallback(status: number, payload: JsonRecord | null, rawText: string) {
-  if (status !== 401) return false
-  const message = getKlingErrorMessage(payload, rawText, status).toLowerCase()
-  return message.includes("access key not found") || message.includes("authorization") || message.includes("jwt")
-}
-
-function extractTaskId(payload: JsonRecord | null): string | null {
-  if (!payload) return null
-  const direct = getString(payload.task_id) || getString(payload.taskId) || getString(payload.id)
-  if (direct) return direct
-  const data = getRecord(payload.data)
-  return data ? extractTaskId(data) : null
 }
 
 async function insertLog(
@@ -285,11 +78,7 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = getEnv("SUPABASE_URL")
     const serviceRoleKey = getEnv("SUPABASE_SERVICE_ROLE_KEY")
-    const klingAccessKey = getEnv("KLING_ACCESS_KEY")
-    const klingSecretKey = getEnv("KLING_SECRET_KEY")
-    const klingApiBaseUrl = getEnv("KLING_API_BASE_URL", false) || DEFAULT_KLING_API_BASE_URL
-    const klingModelName = getEnv("KLING_MODEL_NAME", false) || "kling-v3"
-    const callbackUrl = getEnv("SHOWROOM_SHORTS_CALLBACK_URL", false)
+    const modelName = getReplicateModel()
 
     const supabase = createClient(supabaseUrl, serviceRoleKey)
     const body = await req.json().catch(() => null) as {
@@ -319,18 +108,12 @@ Deno.serve(async (req) => {
       return json({ ok: false, message: "Before/After 이미지 URL이 없습니다." }, 400)
     }
 
-    const token = await createKlingJwt(klingAccessKey, klingSecretKey)
-    const apiMode = resolveKlingApiMode(klingModelName)
-    const requestPath = getKlingCreatePath(apiMode)
-    const candidateBaseUrls = buildKlingApiBaseUrls(klingApiBaseUrl)
-    const stamp = Date.now()
     const aspectRatio = getString(job.source_aspect_ratio) || "16:9"
-    const callback = getOptionalString(callbackUrl)
     const emptyRoom = isEmptyRoomTimelapsePrompt(getString(job.prompt_text))
     const requestedPhase = getString(body?.phase)
     const phase = requestedPhase || (emptyRoom ? "align" : "demolish")
     // 10초 1방이면 후반 설치가 무너짐 → 분할(철거/구도 + 설치)
-    const useSplit = Number(job.duration_seconds ?? 10) >= 10 && apiMode === "image-to-video-v3"
+    const useSplit = Number(job.duration_seconds ?? 10) >= 10
 
     if (useSplit && phase === "install") {
       const existing = parseSplitState(job.kling_job_id)
@@ -374,11 +157,9 @@ Deno.serve(async (req) => {
       const installSeconds = emptyInstall
         ? (existing.install.duration || KLING_EMPTY_INSTALL_SECONDS)
         : (existing.install.duration || KLING_SPLIT_SEGMENT_SECONDS)
-      const installBody = buildKlingRequestBody({
-        mode: apiMode,
-        modelName: klingModelName,
-        beforeUrl: startImageUrl,
-        afterUrl,
+      const installResult = await submitReplicateVideo({
+        startImageUrl,
+        endImageUrl: afterUrl,
         promptText: emptyInstall
           ? SHOWROOM_SHORTS_EMPTY_INSTALL_PROMPT
           : SHOWROOM_SHORTS_INSTALL_PROMPT,
@@ -387,18 +168,9 @@ Deno.serve(async (req) => {
           : SHOWROOM_SHORTS_INSTALL_NEGATIVE_PROMPT,
         durationSeconds: installSeconds,
         aspectRatio,
-        externalTaskId: `${jobId}-install-${stamp}`,
-        callbackUrl: callback,
       })
 
-      const installResult = await postKlingCreate({
-        token,
-        baseUrls: candidateBaseUrls,
-        requestPath,
-        requestBody: installBody,
-      })
-
-      if (!installResult.response.ok) {
+      if (!installResult.ok) {
         await supabase
           .from("showroom_shorts_jobs")
           .update({
@@ -409,27 +181,21 @@ Deno.serve(async (req) => {
           .eq("id", jobId)
         await insertLog(supabase, {
           jobId,
-          stage: "kling_request_failed",
-          message: `설치 ${installSeconds}초 생성 요청 실패 (${installResult.response.status})`,
+          stage: "video_request_failed",
+          message: `설치 ${installSeconds}초 생성 요청 실패 (${installResult.status})`,
           payload: {
-            install: installResult.parsed ?? { rawText: installResult.rawText },
+            install: installResult.raw ?? { rawText: installResult.rawText },
             start_image_url: startImageUrl,
-            request_path: requestPath,
-            model_name: klingModelName,
+            model_name: modelName,
             empty_room: emptyInstall,
           },
         })
         return json({
           ok: false,
-          provider: "kling",
-          upstreamStatus: installResult.response.status,
-          message: getKlingErrorMessage(installResult.parsed, installResult.rawText, installResult.response.status),
+          provider: "replicate",
+          upstreamStatus: installResult.status,
+          message: installResult.message,
         })
-      }
-
-      const installTaskId = extractTaskId(installResult.parsed)
-      if (!installTaskId) {
-        return json({ ok: false, message: "설치 생성 task_id를 받지 못했습니다." }, 502)
       }
 
       const firstStatus = isAlignInstallSplit(existing)
@@ -439,7 +205,7 @@ Deno.serve(async (req) => {
         ...existing,
         startFrameUrl: startImageUrl,
         install: {
-          taskId: installTaskId,
+          taskId: installResult.taskId,
           status: "submitted",
           url: null,
           duration: installSeconds,
@@ -459,16 +225,17 @@ Deno.serve(async (req) => {
 
       await insertLog(supabase, {
         jobId,
-        stage: "kling_requested_install",
+        stage: "video_requested_install",
         message: emptyInstall
           ? `구도 맞춤 마지막 프레임을 시작으로 설치 ${installSeconds}초 생성을 요청했습니다.`
           : `철거 마지막 프레임을 시작으로 설치 ${installSeconds}초 생성을 요청했습니다.`,
         payload: {
-          install_task_id: installTaskId,
+          install_task_id: installResult.taskId,
           start_image_url: startImageUrl,
           first_task_id: firstTaskId,
           segment_seconds: installSeconds,
           empty_room: emptyInstall,
+          model_name: installResult.model,
         },
       })
 
@@ -478,7 +245,7 @@ Deno.serve(async (req) => {
         status: "generating",
         split: true,
         phase: "install",
-        installTaskId,
+        installTaskId: installResult.taskId,
         message: `설치 ${installSeconds}초 생성을 시작했습니다. 완료되면 앞 세그먼트와 이어붙입니다.`,
       })
     }
@@ -487,29 +254,18 @@ Deno.serve(async (req) => {
       // 빈 방: 기존 워커 호환을 위해 mode는 demo/install 구조를 쓰되, 프롬프트·길이만 구도맞춤/설치로 바꾼다.
       const firstSeconds = emptyRoom ? KLING_EMPTY_ALIGN_SECONDS : KLING_SPLIT_SEGMENT_SECONDS
       const secondSeconds = emptyRoom ? KLING_EMPTY_INSTALL_SECONDS : KLING_SPLIT_SEGMENT_SECONDS
-      const firstBody = buildKlingRequestBody({
-        mode: apiMode,
-        modelName: klingModelName,
-        beforeUrl,
-        afterUrl: null,
+      const firstResult = await submitReplicateVideo({
+        startImageUrl: beforeUrl,
+        endImageUrl: null,
         promptText: emptyRoom ? SHOWROOM_SHORTS_ALIGN_PROMPT : SHOWROOM_SHORTS_DEMOLISH_PROMPT,
         negativePrompt: emptyRoom
           ? SHOWROOM_SHORTS_ALIGN_NEGATIVE_PROMPT
           : SHOWROOM_SHORTS_DEMOLISH_NEGATIVE_PROMPT,
         durationSeconds: firstSeconds,
         aspectRatio,
-        externalTaskId: `${jobId}-${emptyRoom ? "align" : "demo"}-${stamp}`,
-        callbackUrl: callback,
       })
 
-      const firstResult = await postKlingCreate({
-        token,
-        baseUrls: candidateBaseUrls,
-        requestPath,
-        requestBody: firstBody,
-      })
-
-      if (!firstResult.response.ok) {
+      if (!firstResult.ok) {
         await supabase
           .from("showroom_shorts_jobs")
           .update({
@@ -520,41 +276,29 @@ Deno.serve(async (req) => {
           .eq("id", jobId)
         await insertLog(supabase, {
           jobId,
-          stage: "kling_request_failed",
+          stage: "video_request_failed",
           message: emptyRoom
-            ? `구도 맞춤 ${firstSeconds}초 생성 요청 실패 (${firstResult.response.status})`
-            : `철거 5초 생성 요청 실패 (${firstResult.response.status})`,
+            ? `구도 맞춤 ${firstSeconds}초 생성 요청 실패 (${firstResult.status})`
+            : `철거 5초 생성 요청 실패 (${firstResult.status})`,
           payload: {
-            first: firstResult.parsed ?? { rawText: firstResult.rawText },
-            request_path: requestPath,
-            request_mode: apiMode,
-            model_name: klingModelName,
+            first: firstResult.raw ?? { rawText: firstResult.rawText },
+            model_name: modelName,
             empty_room: emptyRoom,
           },
         })
         return json({
           ok: false,
-          provider: "kling",
-          upstreamStatus: firstResult.response.status,
-          message: getKlingErrorMessage(firstResult.parsed, firstResult.rawText, firstResult.response.status),
+          provider: "replicate",
+          upstreamStatus: firstResult.status,
+          message: firstResult.message,
         })
-      }
-
-      const demoTaskId = extractTaskId(firstResult.parsed)
-      if (!demoTaskId) {
-        return json({
-          ok: false,
-          message: emptyRoom
-            ? "구도 맞춤 생성 task_id를 받지 못했습니다."
-            : "철거 생성 task_id를 받지 못했습니다.",
-        }, 502)
       }
 
       const splitState = encodeSplitState({
         mode: "split_demo_install_v1",
         startFrameUrl: null,
         demo: {
-          taskId: demoTaskId,
+          taskId: firstResult.taskId,
           status: "submitted",
           url: null,
           duration: firstSeconds,
@@ -581,17 +325,16 @@ Deno.serve(async (req) => {
 
       await insertLog(supabase, {
         jobId,
-        stage: emptyRoom ? "kling_requested_align" : "kling_requested_demolish",
+        stage: emptyRoom ? "video_requested_align" : "video_requested_demolish",
         message: emptyRoom
           ? `빈 방 구도 맞춤 ${firstSeconds}초를 먼저 요청했습니다. 완료 후 마지막 프레임으로 설치 ${secondSeconds}초를 시작합니다.`
           : "철거 5초 생성을 먼저 요청했습니다. 완료 후 마지막 프레임으로 설치를 시작합니다.",
         payload: {
-          demo_task_id: demoTaskId,
+          demo_task_id: firstResult.taskId,
           first_seconds: firstSeconds,
           install_seconds: secondSeconds,
           empty_room: emptyRoom,
-          request_path: requestPath,
-          model_name: klingModelName,
+          model_name: firstResult.model,
         },
       })
 
@@ -599,39 +342,26 @@ Deno.serve(async (req) => {
         ok: true,
         jobId,
         status: "generating",
-        klingTaskId: demoTaskId,
+        klingTaskId: firstResult.taskId,
         split: true,
         phase: emptyRoom ? "align" : "demolish",
-        demoTaskId,
+        demoTaskId: firstResult.taskId,
         message: emptyRoom
           ? `구도 맞춤 ${firstSeconds}초 생성을 시작했습니다. 끝나면 설치 ${secondSeconds}초를 만듭니다.`
           : "철거 5초 생성을 시작했습니다. 끝나면 마지막 프레임으로 설치 5초를 만듭니다.",
       })
     }
 
-    // Kling은 external_task_id 재사용을 거부함 → 재생성마다 고유값 사용
-    const externalTaskId = `${jobId}-${stamp}`
-    const requestBody = buildKlingRequestBody({
-      mode: apiMode,
-      modelName: klingModelName,
-      beforeUrl,
-      afterUrl,
+    const single = await submitReplicateVideo({
+      startImageUrl: beforeUrl,
+      endImageUrl: afterUrl,
       promptText: getString(job.prompt_text),
       negativePrompt: SHOWROOM_SHORTS_COMMON_NEGATIVE_PROMPT,
       durationSeconds: Number(job.duration_seconds ?? 10),
       aspectRatio,
-      externalTaskId,
-      callbackUrl: callback,
     })
 
-    const single = await postKlingCreate({
-      token,
-      baseUrls: candidateBaseUrls,
-      requestPath,
-      requestBody,
-    })
-
-    if (!single.response.ok) {
+    if (!single.ok) {
       await supabase
         .from("showroom_shorts_jobs")
         .update({
@@ -642,46 +372,38 @@ Deno.serve(async (req) => {
         .eq("id", jobId)
       await insertLog(supabase, {
         jobId,
-        stage: "kling_request_failed",
-        message: `원본 생성 요청 실패 (${single.response.status})`,
+        stage: "video_request_failed",
+        message: `원본 생성 요청 실패 (${single.status})`,
         payload: {
-          ...(single.parsed ?? { rawText: single.rawText }),
-          request_path: requestPath,
-          request_mode: apiMode,
-          model_name: klingModelName,
-          request_base_url: single.activeBaseUrl,
+          ...(single.raw ?? { rawText: single.rawText }),
+          model_name: modelName,
         },
       })
       return json({
         ok: false,
-        provider: "kling",
-        upstreamStatus: single.response.status,
-        requestBaseUrl: single.activeBaseUrl,
-        message: getKlingErrorMessage(single.parsed, single.rawText, single.response.status),
+        provider: "replicate",
+        upstreamStatus: single.status,
+        message: single.message,
       })
     }
 
-    const taskId = extractTaskId(single.parsed)
     await supabase
       .from("showroom_shorts_jobs")
       .update({
         status: "generating",
         kling_status: "submitted",
-        kling_job_id: taskId,
+        kling_job_id: single.taskId,
         updated_at: new Date().toISOString(),
       })
       .eq("id", jobId)
 
     await insertLog(supabase, {
       jobId,
-      stage: "kling_requested",
+      stage: "video_requested",
       message: "원본 영상 생성 작업을 요청했습니다.",
       payload: {
-        ...(single.parsed ?? { rawText: single.rawText }),
-        request_path: requestPath,
-        request_mode: apiMode,
-        model_name: klingModelName,
-        request_base_url: single.activeBaseUrl,
+        ...(single.raw ?? {}),
+        model_name: single.model,
       },
     })
 
@@ -689,9 +411,7 @@ Deno.serve(async (req) => {
       ok: true,
       jobId,
       status: "generating",
-      klingTaskId: taskId,
-      requestBaseUrl: single.activeBaseUrl,
-      requestPath,
+      klingTaskId: single.taskId,
       message: "원본 생성 요청을 전달했습니다.",
     })
   } catch (error) {

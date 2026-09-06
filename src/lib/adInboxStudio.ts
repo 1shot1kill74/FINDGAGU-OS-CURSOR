@@ -1,6 +1,6 @@
 /**
  * 광고 대기실(덧붙임) — 기존 쇼룸/케이스 스튜디오와 분리.
- * 현장 카드 → 사진 입고 → BA 페어 → 클링 숏츠 job 연결.
+ * 현장 카드 → 사진 입고 → BA 페어 → 숏츠 job 연결.
  */
 import { supabase } from '@/lib/supabase'
 import { uploadEngine } from '@/lib/uploadEngine'
@@ -491,7 +491,7 @@ function isAdInboxCompositionDone(job: ShowroomShortsJobRecord): boolean {
 }
 
 /**
- * 대기중: 사진만(또는 실패만) / 작업중: 클링·합성 진행 / 작업완료: 합성(최종 MP4) 완료
+ * 대기중: 사진만(또는 실패만) / 작업중: 원본·합성 진행 / 작업완료: 합성(최종 MP4) 완료
  * 채널 업로드는 channels[]로 따로 본다.
  */
 export function deriveAdInboxWorkProgress(jobs: ShowroomShortsJobRecord[]): AdInboxWorkProgress {

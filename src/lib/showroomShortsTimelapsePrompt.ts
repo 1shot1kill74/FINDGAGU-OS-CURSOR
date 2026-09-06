@@ -192,7 +192,7 @@ Rules:
 - no morph, no furniture rising from floor, no popping into existence
 - do NOT show demolition or clearing of old furniture (room starts empty)
 - do NOT add exit signs, watermarks, logos, or UI icons`
-/** UI/레거시용 요약 (실제 클링 호출은 위 두 프롬프트 사용) */
+/** UI/레거시용 요약 (실제 원본 생성 호출은 위 두 프롬프트 사용) */
 export const SHOWROOM_SHORTS_TIMELAPSE_PROMPT = `Sequential 5s demolish + 5s install worker timelapse (stitched to 10s).
 Demolish from BEFORE, then install starts from demolish last frame and ends at AFTER.
 No morph / no furniture rising from floor.`

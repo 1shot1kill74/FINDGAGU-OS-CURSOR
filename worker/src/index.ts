@@ -1356,7 +1356,7 @@ async function renderAfterBeforeTimelapseTest(
 ): Promise<{ videos: VariantTestVideo[]; structure: string }> {
   const job = await getJob(jobId)
   if (!job?.source_video_url || !job.before_asset_url || !job.after_asset_url) {
-    throw new Error('비교 렌더에는 Kling 원본과 Before·After 이미지가 모두 필요합니다.')
+    throw new Error('비교 렌더에는 원본 영상과 Before·After 이미지가 모두 필요합니다.')
   }
 
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'showroom-after-before-'))

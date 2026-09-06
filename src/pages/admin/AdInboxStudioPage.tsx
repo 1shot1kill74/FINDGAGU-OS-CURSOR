@@ -1036,7 +1036,7 @@ export default function AdInboxStudioPage() {
       toast.success(
         mode === 'empty_room'
           ? '빈 방 타임랩스(구도 맞춤→설치)를 시작했습니다. 아래에서 원본을 검수하세요.'
-          : '클링 생성을 시작했습니다. 아래에서 원본을 검수하세요.',
+          : '원본 생성을 시작했습니다. 아래에서 원본을 검수하세요.',
         {
           action: {
             label: '쇼룸으로',
@@ -1577,7 +1577,7 @@ export default function AdInboxStudioPage() {
             </Link>
             <h1 className="text-2xl font-semibold tracking-tight text-neutral-900">광고 대기실</h1>
             <p className="mt-1 max-w-2xl text-sm text-neutral-500">
-              클링 원본만 확인하면 됩니다. 합성·업로드 준비는 자동, 최종 게시 직전에 준비 패키지를 확인한 뒤
+              원본만 확인하면 됩니다. 합성·업로드 준비는 자동, 최종 게시 직전에 준비 패키지를 확인한 뒤
               론칭하세요.
             </p>
           </div>
@@ -2542,7 +2542,7 @@ export default function AdInboxStudioPage() {
                                 {jobStatusLabel(activeJob)}
                               </span>
                               <span className="text-neutral-500">
-                                kling: {activeJob.kling_status ?? '—'} · job {activeJob.status}
+                                원본: {activeJob.kling_status ?? '—'} · job {activeJob.status}
                               </span>
                             </div>
 
@@ -3083,7 +3083,7 @@ export default function AdInboxStudioPage() {
                               </div>
                             ) : (
                               <p className="text-[11px] text-neutral-500">
-                                클링 원본이 괜찮으면 「원본 OK · 합성·업로드준비」를 누르세요. 이후 합성과
+                                원본이 괜찮으면 「원본 OK · 합성·업로드준비」를 누르세요. 이후 합성과
                                 채널 업로드 준비는 자동으로 이어집니다.
                               </p>
                             )}

@@ -321,7 +321,7 @@ export default function DashboardPage() {
     },
     {
       title: '광고 대기실',
-      description: '분류 전 BA 사진 입고 후 클링 타임랩스로 보냅니다.',
+      description: '분류 전 BA 사진 입고 후 타임랩스로 보냅니다.',
       to: '/admin/ad-inbox',
       icon: Video,
     },

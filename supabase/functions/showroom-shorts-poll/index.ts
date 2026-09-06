@@ -10,6 +10,10 @@ import {
   parseSplitState,
   type SplitKlingState,
 } from "../_shared/klingSplitState.ts"
+import {
+  looksLikeLegacyKlingTaskId,
+  pollReplicateVideo,
+} from "../_shared/replicateVideo.ts"
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -17,10 +21,7 @@ const CORS = {
 }
 
 type JsonRecord = Record<string, unknown>
-const DEFAULT_KLING_API_BASE_URL = "https://api.klingai.com"
-const FALLBACK_KLING_API_BASE_URL = "https://api-beijing.klingai.com"
 const SHOWROOM_SHORTS_VIDEO_BUCKET = "showroom-shorts-videos"
-type KlingApiMode = "legacy-multi-image" | "image-to-video-v3" | "omni"
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -38,72 +39,12 @@ function getEnv(name: string, required = true) {
   return value
 }
 
-function base64UrlEncodeBytes(bytes: Uint8Array) {
-  let binary = ""
-  for (const byte of bytes) binary += String.fromCharCode(byte)
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "")
-}
-
-function base64UrlEncodeJson(input: unknown) {
-  return base64UrlEncodeBytes(new TextEncoder().encode(JSON.stringify(input)))
-}
-
-async function createKlingJwt(accessKey: string, secretKey: string) {
-  const header = { alg: "HS256", typ: "JWT" }
-  const now = Math.floor(Date.now() / 1000)
-  const payload = { iss: accessKey, iat: now, nbf: now - 5, exp: now + 1800 }
-  const headerPart = base64UrlEncodeJson(header)
-  const payloadPart = base64UrlEncodeJson(payload)
-  const message = `${headerPart}.${payloadPart}`
-  const cryptoKey = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secretKey),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  )
-  const signature = await crypto.subtle.sign("HMAC", cryptoKey, new TextEncoder().encode(message))
-  return `${message}.${base64UrlEncodeBytes(new Uint8Array(signature))}`
-}
-
-function getRecord(value: unknown): JsonRecord | null {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : null
-}
-
 function getString(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : ""
 }
 
 function getOptionalString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null
-}
-
-function normalizeKlingModelName(value: string) {
-  return value.trim().toLowerCase()
-}
-
-function resolveKlingApiMode(modelName: string): KlingApiMode {
-  const normalized = normalizeKlingModelName(modelName)
-  if (normalized.includes("omni")) return "omni"
-  if (normalized.includes("v3")) return "image-to-video-v3"
-  return "legacy-multi-image"
-}
-
-function getKlingPollPath(mode: KlingApiMode, taskId: string) {
-  if (mode === "omni") return `/v1/videos/omni/${taskId}`
-  if (mode === "image-to-video-v3") return `/v1/videos/image2video/${taskId}`
-  return `/v1/videos/multi-image2video/${taskId}`
-}
-
-function buildKlingPollPathCandidates(modelName: string, taskId: string) {
-  const preferredMode = resolveKlingApiMode(modelName)
-  const orderedModes: KlingApiMode[] = [
-    preferredMode,
-    "image-to-video-v3",
-    "legacy-multi-image",
-    "omni",
-  ]
-  return Array.from(new Set(orderedModes.map((mode) => getKlingPollPath(mode, taskId))))
 }
 
 function sanitizePathSegment(value: string) {
@@ -118,121 +59,12 @@ function inferVideoExtension(contentType: string | null, url: string) {
   return urlMatch?.[1]?.toLowerCase() || "mp4"
 }
 
-function buildKlingApiBaseUrls(preferredBaseUrl: string | null) {
-  const candidates = [preferredBaseUrl || DEFAULT_KLING_API_BASE_URL, DEFAULT_KLING_API_BASE_URL, FALLBACK_KLING_API_BASE_URL]
-  return Array.from(new Set(candidates.map((value) => value.replace(/\/+$/, "")).filter(Boolean)))
-}
-
-function parseJsonRecord(rawText: string): JsonRecord | null {
-  try {
-    return rawText ? JSON.parse(rawText) as JsonRecord : null
-  } catch {
-    return null
+function mapJobStatus(providerStatus: string) {
+  if (["failed", "error", "canceled", "cancelled"].includes(providerStatus)) return "failed"
+  if (["succeed", "success", "succeeded", "completed", "done", "finished"].includes(providerStatus)) {
+    return "generated"
   }
-}
-
-function getKlingErrorMessage(payload: JsonRecord | null, rawText: string, status: number) {
-  return (
-    getString(payload?.message) ||
-    getString(payload?.error) ||
-    getOptionalString(getRecord(payload?.data)?.message) ||
-    rawText.trim() ||
-    `원본 생성 상태 조회 실패 (${status})`
-  )
-}
-
-function shouldRetryWithFallback(status: number, payload: JsonRecord | null, rawText: string) {
-  if (status !== 401) return false
-  const message = getKlingErrorMessage(payload, rawText, status).toLowerCase()
-  return message.includes("access key not found") || message.includes("authorization") || message.includes("jwt")
-}
-
-function normalizeKlingStatus(value: string) {
-  const normalized = value.trim().toLowerCase()
-  if (!normalized) return "submitted"
-  return normalized
-}
-
-function mapJobStatus(klingStatus: string) {
-  if (["failed", "error", "canceled", "cancelled"].includes(klingStatus)) return "failed"
-  if (["succeed", "success", "completed", "done", "finished"].includes(klingStatus)) return "generated"
   return "generating"
-}
-
-function extractStatus(payload: JsonRecord | null): string {
-  if (!payload) return "submitted"
-  const direct = getString(payload.status) || getString(payload.task_status) || getString(payload.taskStatus)
-  if (direct) return normalizeKlingStatus(direct)
-  const data = getRecord(payload.data)
-  return data ? extractStatus(data) : "submitted"
-}
-
-function extractVideoUrl(payload: JsonRecord | null): string | null {
-  if (!payload) return null
-  const direct =
-    getOptionalString(payload.video_url) ||
-    getOptionalString(payload.videoUrl) ||
-    getOptionalString(payload.url) ||
-    getOptionalString(payload.output)
-  if (direct) return direct
-
-  const data = getRecord(payload.data)
-  const dataUrl =
-    getOptionalString(data?.video_url) ||
-    getOptionalString(data?.videoUrl) ||
-    getOptionalString(data?.url) ||
-    getOptionalString(data?.output)
-  if (dataUrl) return dataUrl
-
-  const result = getRecord(data?.result ?? payload.result)
-  const resultUrl =
-    getOptionalString(result?.video_url) ||
-    getOptionalString(result?.videoUrl) ||
-    getOptionalString(result?.url) ||
-    getOptionalString(result?.output)
-  if (resultUrl) return resultUrl
-
-  const taskResult = getRecord(data?.task_result)
-  const taskResultUrl =
-    getOptionalString(taskResult?.video_url) ||
-    getOptionalString(taskResult?.videoUrl) ||
-    getOptionalString(taskResult?.url) ||
-    getOptionalString(taskResult?.output)
-  if (taskResultUrl) return taskResultUrl
-
-  const videos = Array.isArray(taskResult?.videos) ? taskResult?.videos : []
-  for (const video of videos) {
-    const record = getRecord(video)
-    const candidate =
-      getOptionalString(record?.url) ||
-      getOptionalString(record?.video_url) ||
-      getOptionalString(record?.videoUrl)
-    if (candidate) return candidate
-  }
-
-  const works = Array.isArray(data?.works) ? data?.works : Array.isArray(payload.works) ? payload.works : []
-  for (const work of works) {
-    const record = getRecord(work)
-    const resource = getRecord(record?.resource)
-    const candidate =
-      getOptionalString(resource?.resource) ||
-      getOptionalString(resource?.url) ||
-      getOptionalString(resource?.video_url) ||
-      getOptionalString(resource?.videoUrl) ||
-      getOptionalString(record?.url)
-    if (candidate) return candidate
-  }
-  const outputs = Array.isArray(data?.outputs) ? data?.outputs : Array.isArray(payload.outputs) ? payload.outputs : []
-  for (const output of outputs) {
-    const record = getRecord(output)
-    const candidate =
-      getOptionalString(record?.url) ||
-      getOptionalString(record?.video_url) ||
-      getOptionalString(record?.videoUrl) ||
-      getOptionalString(record?.output)
-    if (candidate) return candidate
-  }
-  return null
 }
 
 async function insertLog(
@@ -263,7 +95,7 @@ async function persistSourceVideoToStorage(
   const contentType = getOptionalString(response.headers.get("content-type")) || "video/mp4"
   const extension = inferVideoExtension(contentType, input.sourceVideoUrl)
   const label = input.segmentLabel ? `${sanitizePathSegment(input.segmentLabel)}-` : ""
-  const objectPath = `source/${sanitizePathSegment(input.jobId)}/${label}kling-source-${Date.now()}.${extension}`
+  const objectPath = `source/${sanitizePathSegment(input.jobId)}/${label}source-${Date.now()}.${extension}`
   const buffer = new Uint8Array(await response.arrayBuffer())
 
   const { error: uploadError } = await supabase.storage
@@ -280,6 +112,17 @@ async function persistSourceVideoToStorage(
   return supabase.storage.from(SHOWROOM_SHORTS_VIDEO_BUCKET).getPublicUrl(objectPath).data.publicUrl
 }
 
+function collectLegacyKlingTaskIds(rawJobId: unknown): string[] {
+  const split = parseSplitState(rawJobId)
+  if (split) {
+    return [getFirstSegment(split).taskId, split.install.taskId].filter((value) =>
+      looksLikeLegacyKlingTaskId(value)
+    )
+  }
+  const single = getString(rawJobId)
+  return looksLikeLegacyKlingTaskId(single) ? [single] : []
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS })
   if (req.method !== "POST") return json({ ok: false, message: "POST 요청만 지원합니다." }, 405)
@@ -287,10 +130,6 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = getEnv("SUPABASE_URL")
     const serviceRoleKey = getEnv("SUPABASE_SERVICE_ROLE_KEY")
-    const klingAccessKey = getEnv("KLING_ACCESS_KEY")
-    const klingSecretKey = getEnv("KLING_SECRET_KEY")
-    const klingApiBaseUrl = getEnv("KLING_API_BASE_URL", false) || DEFAULT_KLING_API_BASE_URL
-    const klingModelName = getEnv("KLING_MODEL_NAME", false) || "kling-v3"
 
     const supabase = createClient(supabaseUrl, serviceRoleKey)
     const body = await req.json().catch(() => null) as { jobId?: string } | null
@@ -312,72 +151,42 @@ Deno.serve(async (req) => {
       return json({ ok: false, message: "아직 생성 작업 ID가 없습니다. 먼저 생성 요청을 실행하세요." }, 400)
     }
 
-    const token = await createKlingJwt(klingAccessKey, klingSecretKey)
-    const apiMode = resolveKlingApiMode(klingModelName)
-    const candidateBaseUrls = buildKlingApiBaseUrls(klingApiBaseUrl)
+    const legacyTaskIds = collectLegacyKlingTaskIds(rawKlingJobId)
+    if (legacyTaskIds.length > 0) {
+      return json({
+        ok: false,
+        provider: "replicate",
+        message: "이전 클링 직결 작업입니다. 클링 API는 더 이상 쓰지 않으니 원본을 다시 생성해 주세요.",
+      }, 409)
+    }
+
     const nowIso = new Date().toISOString()
     const splitState = parseSplitState(rawKlingJobId)
 
     if (splitState) {
-      const pollSegment = async (taskId: string) => {
-        const requestPaths = buildKlingPollPathCandidates(klingModelName, taskId)
-        let activeBaseUrl = candidateBaseUrls[0]
-        let requestPath = requestPaths[0]
-        let response!: Response
-        let rawText = ""
-        let parsed: JsonRecord | null = null
-
-        for (const candidatePath of requestPaths) {
-          requestPath = candidatePath
-          activeBaseUrl = candidateBaseUrls[0]
-          response = await fetch(`${activeBaseUrl}${requestPath}`, {
-            method: "GET",
-            headers: { Authorization: `Bearer ${token}` },
-          })
-          rawText = await response.text()
-          parsed = parseJsonRecord(rawText)
-
-          if (!response.ok && shouldRetryWithFallback(response.status, parsed, rawText) && candidateBaseUrls.length > 1) {
-            for (const candidate of candidateBaseUrls.slice(1)) {
-              activeBaseUrl = candidate
-              response = await fetch(`${activeBaseUrl}${requestPath}`, {
-                method: "GET",
-                headers: { Authorization: `Bearer ${token}` },
-              })
-              rawText = await response.text()
-              parsed = parseJsonRecord(rawText)
-              if (response.ok || !shouldRetryWithFallback(response.status, parsed, rawText)) break
-            }
-          }
-          if (response.ok || ![400, 404].includes(response.status)) break
-        }
-
-        return { response, rawText, parsed, activeBaseUrl, requestPath }
-      }
-
       const first = getFirstSegment(splitState)
       const firstLabel = getFirstSegmentLabel(splitState)
-      const firstPoll = await pollSegment(first.taskId)
+      const firstPoll = await pollReplicateVideo(first.taskId)
       const installPoll = splitState.install.taskId
-        ? await pollSegment(splitState.install.taskId)
+        ? await pollReplicateVideo(splitState.install.taskId)
         : null
 
-      if (!firstPoll.response.ok || (installPoll && !installPoll.response.ok)) {
-        const failed = !firstPoll.response.ok ? firstPoll : installPoll!
+      if (!firstPoll.ok || (installPoll && !installPoll.ok)) {
+        const failed = !firstPoll.ok ? firstPoll : installPoll!
         await insertLog(supabase, {
           jobId,
-          stage: "kling_poll_failed",
-          message: `분할 원본 상태 조회 실패 (${failed.response.status})`,
+          stage: "video_poll_failed",
+          message: `분할 원본 상태 조회 실패 (${failed.status})`,
           payload: {
-            [firstLabel]: firstPoll.parsed ?? { rawText: firstPoll.rawText },
-            install: installPoll ? (installPoll.parsed ?? { rawText: installPoll.rawText }) : null,
+            [firstLabel]: firstPoll.raw ?? { rawText: firstPoll.rawText },
+            install: installPoll ? (installPoll.raw ?? { rawText: installPoll.rawText }) : null,
           },
         })
         return json({
           ok: false,
-          provider: "kling",
-          upstreamStatus: failed.response.status,
-          message: getKlingErrorMessage(failed.parsed, failed.rawText, failed.response.status),
+          provider: "replicate",
+          upstreamStatus: failed.status,
+          message: failed.message,
         })
       }
 
@@ -387,14 +196,14 @@ Deno.serve(async (req) => {
           startFrameUrl: splitState.startFrameUrl ?? null,
           align: {
             taskId: splitState.align.taskId,
-            status: extractStatus(firstPoll.parsed),
+            status: firstPoll.mappedStatus,
             url: splitState.align.url ?? null,
             duration: splitState.align.duration,
           },
           install: {
             taskId: splitState.install.taskId,
             status: installPoll
-              ? extractStatus(installPoll.parsed)
+              ? installPoll.mappedStatus
               : (splitState.install.status || "pending"),
             url: splitState.install.url ?? null,
             duration: splitState.install.duration,
@@ -405,14 +214,14 @@ Deno.serve(async (req) => {
           startFrameUrl: splitState.startFrameUrl ?? null,
           demo: {
             taskId: splitState.demo.taskId,
-            status: extractStatus(firstPoll.parsed),
+            status: firstPoll.mappedStatus,
             url: splitState.demo.url ?? null,
             duration: splitState.demo.duration,
           },
           install: {
             taskId: splitState.install.taskId,
             status: installPoll
-              ? extractStatus(installPoll.parsed)
+              ? installPoll.mappedStatus
               : (splitState.install.status || "pending"),
             url: splitState.install.url ?? null,
             duration: splitState.install.duration,
@@ -444,19 +253,16 @@ Deno.serve(async (req) => {
       }
 
       try {
-        const firstRemote = extractVideoUrl(firstPoll.parsed)
-        const installRemote = installPoll ? extractVideoUrl(installPoll.parsed) : null
-        const firstSeg = getFirstSegment(next)
         const firstUrl = await persistIfReady(
           firstLabel,
-          firstSeg.status || "",
-          firstRemote,
-          firstSeg.url,
+          getFirstSegment(next).status || "",
+          firstPoll.videoUrl,
+          getFirstSegment(next).url,
         )
         const installUrl = await persistIfReady(
           "install",
           next.install.status || "",
-          installRemote,
+          installPoll?.videoUrl ?? null,
           next.install.url,
         )
         if (firstUrl) {
@@ -493,7 +299,6 @@ Deno.serve(async (req) => {
         status = "failed"
         klingStatus = "request_failed"
       } else if (ready) {
-        // 워커가 concat 후 source_video_url을 채움
         status = getString(job.source_video_url) ? "generated" : "generating"
         klingStatus = getString(job.source_video_url) ? "succeed" : "segments_ready"
       }
@@ -511,7 +316,7 @@ Deno.serve(async (req) => {
 
       await insertLog(supabase, {
         jobId,
-        stage: "kling_polled_split",
+        stage: "video_polled_split",
         message: ready
           ? emptyRoom
             ? "구도 맞춤·설치 세그먼트가 준비됐습니다. 이어붙이기를 진행합니다."
@@ -550,78 +355,30 @@ Deno.serve(async (req) => {
       })
     }
 
-    const klingTaskId = getString(rawKlingJobId)
-    if (!klingTaskId) {
+    const providerTaskId = getString(rawKlingJobId)
+    if (!providerTaskId) {
       return json({ ok: false, message: "아직 생성 작업 ID가 없습니다. 먼저 생성 요청을 실행하세요." }, 400)
     }
 
-    const requestPaths = buildKlingPollPathCandidates(klingModelName, klingTaskId)
-    let activeBaseUrl = candidateBaseUrls[0]
-    let requestPath = requestPaths[0]
-    let response!: Response
-    let rawText = ""
-    let parsed: JsonRecord | null = null
-
-    for (const candidatePath of requestPaths) {
-      requestPath = candidatePath
-      activeBaseUrl = candidateBaseUrls[0]
-      response = await fetch(`${activeBaseUrl}${requestPath}`, {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      })
-
-      rawText = await response.text()
-      parsed = parseJsonRecord(rawText)
-
-      if (!response.ok && shouldRetryWithFallback(response.status, parsed, rawText) && candidateBaseUrls.length > 1) {
-        for (const candidate of candidateBaseUrls.slice(1)) {
-          activeBaseUrl = candidate
-          response = await fetch(`${activeBaseUrl}${requestPath}`, {
-            method: "GET",
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
-          })
-          rawText = await response.text()
-          parsed = parseJsonRecord(rawText)
-          if (response.ok || !shouldRetryWithFallback(response.status, parsed, rawText)) {
-            break
-          }
-        }
-      }
-
-      if (response.ok || ![400, 404].includes(response.status)) {
-        break
-      }
-    }
-
-    if (!response.ok) {
+    const polled = await pollReplicateVideo(providerTaskId)
+    if (!polled.ok) {
       await insertLog(supabase, {
         jobId,
-        stage: "kling_poll_failed",
-        message: `원본 생성 상태 조회 실패 (${response.status})`,
-        payload: {
-          ...(parsed ?? { rawText }),
-          request_path: requestPath,
-          request_mode: apiMode,
-          model_name: klingModelName,
-          request_base_url: activeBaseUrl,
-        },
+        stage: "video_poll_failed",
+        message: `원본 생성 상태 조회 실패 (${polled.status})`,
+        payload: polled.raw ?? { rawText: polled.rawText },
       })
       return json({
         ok: false,
-        provider: "kling",
-        upstreamStatus: response.status,
-        requestBaseUrl: activeBaseUrl,
-        message: getKlingErrorMessage(parsed, rawText, response.status),
+        provider: "replicate",
+        upstreamStatus: polled.status,
+        message: polled.message,
       })
     }
 
-    const klingStatus = extractStatus(parsed)
-    const sourceVideoUrl = extractVideoUrl(parsed)
-    const nextStatus = mapJobStatus(klingStatus)
+    const providerStatus = polled.mappedStatus
+    const sourceVideoUrl = polled.videoUrl
+    const nextStatus = mapJobStatus(providerStatus)
 
     let persistedSourceVideoUrl = sourceVideoUrl
     let storageCopyError: string | null = null
@@ -660,7 +417,7 @@ Deno.serve(async (req) => {
       .from("showroom_shorts_jobs")
       .update({
         status: nextStatus,
-        kling_status: klingStatus,
+        kling_status: providerStatus,
         source_video_url: persistedSourceVideoUrl,
         updated_at: nowIso,
       })
@@ -668,14 +425,10 @@ Deno.serve(async (req) => {
 
     await insertLog(supabase, {
       jobId,
-      stage: "kling_polled",
-      message: `원본 생성 상태 조회 완료: ${klingStatus}`,
+      stage: "video_polled",
+      message: `원본 생성 상태 조회 완료: ${providerStatus}`,
       payload: {
-        ...(parsed ?? { rawText }),
-        request_base_url: activeBaseUrl,
-        request_path: requestPath,
-        request_mode: apiMode,
-        model_name: klingModelName,
+        ...(polled.raw ?? { rawText: polled.rawText }),
         original_source_video_url: sourceVideoUrl,
         persisted_source_video_url: persistedSourceVideoUrl,
         storage_copy_error: storageCopyError,
@@ -686,11 +439,9 @@ Deno.serve(async (req) => {
       ok: true,
       jobId,
       status: nextStatus,
-      klingStatus,
+      klingStatus: providerStatus,
       sourceVideoUrl: persistedSourceVideoUrl,
       finalVideoUrl: getOptionalString(job.final_video_url),
-      requestBaseUrl: activeBaseUrl,
-      requestPath,
       message:
         nextStatus === "generated"
           ? !persistedSourceVideoUrl
